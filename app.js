@@ -1,4 +1,4 @@
-const API_BASE = "https://edu-giga-school-management-system-1.onrender.com/docs";   // ← CHANGE THIS
+const API_BASE = "https://edu-giga-school-management-system-1.onrender.com";   // ← CHANGE THIS
 
 let token = "";
 
