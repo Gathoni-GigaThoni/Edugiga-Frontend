@@ -2,6 +2,7 @@
 
 const API_BASE = "https://edu-giga-school-management-system-1.onrender.com";
 let token = "";
+let currentUser = null;   // will store the decoded JWT payload after login
 
 // ==================== AUTH ====================
 async function login() {
@@ -19,6 +20,9 @@ async function login() {
     if (!res.ok) throw new Error("Invalid credentials");
     const data = await res.json();
     token = data.access_token;
+    // Decode the JWT to get user info (clearance, role, etc.)
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    currentUser = payload;
     showDashboard();
   } catch (err) {
     document.getElementById("error").innerText = err.message;
@@ -27,11 +31,13 @@ async function login() {
 
 function logout() {
   token = "";
+  currentUser = null;
   location.reload();
 }
 
 // ==================== DASHBOARD ====================
 function showDashboard() {
+  const isSuperAdmin = currentUser?.clearance_level === 1;
   document.body.innerHTML = `
     <div class="container">
       <nav class="sidebar">
@@ -41,8 +47,16 @@ function showDashboard() {
           <li onclick="loadView('attendance')">Attendance</li>
           <li onclick="loadView('transport')">Transport</li>
           <li onclick="loadView('academics')">Academic Setup</li>
-          <li onclick="loadView('fees')">Fees</li>
+          <li class="dropdown">
+            <span onclick="toggleDropdown('finance-dropdown')">Finance ▾</span>
+            <ul id="finance-dropdown" class="dropdown-menu" style="display:none;">
+              <li onclick="loadView('report-back')">Report Back Students</li>
+              <li onclick="loadView('view-invoices')">View Invoices</li>
+              <li onclick="loadView('create-invoice')">Create Invoice</li>
+            </ul>
+          </li>
           <li onclick="loadView('reports')">Reports</li>
+          ${isSuperAdmin ? '<li onclick="loadView(\'administration\')">Administration</li>' : ''}
           <li onclick="logout()">Logout</li>
         </ul>
       </nav>
@@ -62,12 +76,20 @@ async function loadView(view) {
     case 'attendance': await loadAttendanceView(main); break;
     case 'transport': await loadTransportView(main); break;
     case 'academics': await loadAcademicsView(main); break;
-    case 'fees': await loadFeesView(main); break;
+    case 'report-back': await loadReportBackView(main); break;
+    case 'view-invoices': await loadViewInvoicesView(main); break;
+    case 'create-invoice': await loadCreateInvoiceView(main); break;
     case 'reports': await loadReportsView(main); break;
+    case 'administration': await loadAdministrationView(main); break;
   }
 }
 
-// ==================== STUDENTS ====================
+function toggleDropdown(id) {
+  const menu = document.getElementById(id);
+  menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+}
+
+// ==================== STUDENTS (unchanged) ====================
 async function loadStudentsView(container) {
   container.innerHTML = `
     <h2>Student Management</h2>
@@ -142,7 +164,6 @@ function showStudentForm() {
     <textarea id="s_chronic" placeholder="Chronic Symptoms"></textarea>
     <button onclick="registerStudent()">Save Student</button>
   `;
-  // Load classes based on level selection
   document.getElementById("s_level").onchange = loadClasses;
   document.getElementById("s_uses_transport").onchange = toggleTransport;
   loadRoutes();
@@ -167,7 +188,6 @@ async function registerStudent() {
       }
     ]
   };
-  // Add second parent if filled
   const p2name = document.getElementById("s_parent2_name").value;
   if (p2name) {
     payload.parents.push({
@@ -227,7 +247,7 @@ async function viewStudentProfile(studentId) {
   `;
 }
 
-// ==================== ATTENDANCE ====================
+// ==================== ATTENDANCE (unchanged) ====================
 async function loadAttendanceView(container) {
   container.innerHTML = `
     <h2>Attendance Register</h2>
@@ -294,7 +314,7 @@ async function submitAttendance() {
   }
 }
 
-// ==================== TRANSPORT ====================
+// ==================== TRANSPORT (unchanged) ====================
 async function loadTransportView(container) {
   container.innerHTML = `
     <h2>Transport Management</h2>
@@ -322,7 +342,6 @@ async function loadRoutes() {
   });
   html += `</table>`;
   document.getElementById("route-list").innerHTML = html;
-  // Also populate route dropdown in student form if exists
   const routeSelect = document.getElementById("s_route");
   if (routeSelect) {
     routeSelect.innerHTML = routes.map(r => `<option value="${r.id}">${r.name}</option>`).join('');
@@ -372,7 +391,7 @@ function toggleTransport() {
   section.style.display = document.getElementById("s_uses_transport").checked ? "block" : "none";
 }
 
-// ==================== ACADEMICS ====================
+// ==================== ACADEMICS (unchanged) ====================
 async function loadAcademicsView(container) {
   container.innerHTML = `
     <h2>Academic Setup</h2>
@@ -448,66 +467,232 @@ async function loadTerms(yearId) {
   document.getElementById("terms-view").innerHTML = html;
 }
 
-// ==================== FEES ====================
-async function loadFeesView(container) {
+// ==================== FINANCE – REPORT BACK ====================
+async function loadReportBackView(container) {
   container.innerHTML = `
-    <h2>Fee Management</h2>
-    <button onclick="triggerTermlyFees()">Trigger Termly Fees</button>
-    <button onclick="triggerYearlyFees()">Trigger Yearly Fees</button>
-    <hr>
-    <h3>Record Payment</h3>
-    <select id="payment_student"></select>
-    <input id="payment_amount" placeholder="Amount">
-    <select id="payment_method">
-      <option value="CASH">Cash</option>
-      <option value="BANK_TRANSFER">Bank Transfer</option>
-      <option value="MPESA">M-Pesa</option>
+    <h2>Report Back Students (New Term)</h2>
+    <select id="rb_term" onchange="loadReportBackList()">
+      <option value="">Select Term</option>
     </select>
-    <button onclick="recordPayment()">Record Payment</button>
-    <hr>
-    <h3>Student Balance</h3>
-    <input id="balance_student_id" placeholder="Student ID">
-    <input id="balance_term_id" placeholder="Term ID">
-    <button onclick="checkBalance()">Check Balance</button>
-    <div id="balance-result"></div>
+    <div id="report-back-list"></div>
+    <button onclick="submitReportBack()">Save Reported Students</button>
+    <p id="rb-status"></p>
   `;
-  // Load student list for payment dropdown
-  const res = await fetch(`${API_BASE}/students/`, {
+  // Load terms into dropdown
+  const res = await fetch(`${API_BASE}/terms/`, {
+    headers: { "Authorization": `Bearer ${token}` }
+  });
+  const terms = await res.json();
+  document.getElementById("rb_term").innerHTML = '<option value="">Select Term</option>' +
+    terms.map(t => `<option value="${t.id}">${t.name} (${t.automatic_start} - ${t.automatic_end})</option>`).join('');
+}
+
+async function loadReportBackList() {
+  const termId = document.getElementById("rb_term").value;
+  if (!termId) return;
+  const res = await fetch(`${API_BASE}/students/?active=true`, {
     headers: { "Authorization": `Bearer ${token}` }
   });
   const students = await res.json();
-  document.getElementById("payment_student").innerHTML = students.map(s => `<option value="${s.id}">${s.first_name} ${s.last_name}</option>`).join('');
+  // For each student, check if they are already reported back for this term
+  let html = `<table><tr><th>Select</th><th>Name</th><th>Class</th><th>Already Reported?</th></tr>`;
+  students.forEach(s => {
+    // We'll need a backend endpoint to check reported status; for now, assume a flag on student or a separate table.
+    // Simulate: just show a checkbox
+    html += `<tr>
+      <td><input type="checkbox" class="rb-checkbox" value="${s.id}"></td>
+      <td>${s.first_name} ${s.last_name}</td>
+      <td>${s.class_name || s.level || ''}</td>
+      <td id="rb-status-${s.id}">Unknown</td>
+    </tr>`;
+  });
+  html += `</table>`;
+  document.getElementById("report-back-list").innerHTML = html;
+  // Now check each student's reported-back status
+  students.forEach(async s => {
+    const statusRes = await fetch(`${API_BASE}/finance/is-reported-back/${s.id}?term_id=${termId}`, {
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    if (statusRes.ok) {
+      const data = await statusRes.json();
+      document.getElementById(`rb-status-${s.id}`).innerText = data.reported ? 'Yes' : 'No';
+    }
+  });
 }
 
-async function triggerTermlyFees() {
+async function submitReportBack() {
+  const termId = document.getElementById("rb_term").value;
+  const checkboxes = document.querySelectorAll(".rb-checkbox:checked");
+  const studentIds = Array.from(checkboxes).map(cb => parseInt(cb.value));
+  const res = await fetch(`${API_BASE}/finance/report-back-bulk`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${token}`
+    },
+    body: JSON.stringify({ term_id: termId, student_ids: studentIds })
+  });
+  if (res.ok) {
+    document.getElementById("rb-status").innerText = "Students reported back successfully!";
+    loadReportBackList();
+  } else {
+    const err = await res.json();
+    document.getElementById("rb-status").innerText = err.detail || "Error";
+  }
+}
+
+// ==================== FINANCE – VIEW INVOICES ====================
+async function loadViewInvoicesView(container) {
+  container.innerHTML = `
+    <h2>Student Invoices</h2>
+    <input id="invoice_search" placeholder="Search by student name or ID" onkeyup="filterInvoices()">
+    <div id="invoice-list"></div>
+  `;
+  loadInvoices();
+}
+
+async function loadInvoices() {
+  const res = await fetch(`${API_BASE}/finance/invoices`, {
+    headers: { "Authorization": `Bearer ${token}` }
+  });
+  const invoices = await res.json();
+  window.allInvoices = invoices;  // store for filtering
+  renderInvoices(invoices);
+}
+
+function renderInvoices(invoices) {
+  const canEdit = currentUser?.clearance_level <= 3;
+  let html = `<table>
+    <tr><th>Invoice #</th><th>Student</th><th>Term</th><th>Total</th><th>Paid</th><th>Balance</th><th>Actions</th></tr>`;
+  invoices.forEach(inv => {
+    html += `<tr>
+      <td>${inv.id}</td>
+      <td>${inv.student_name} (${inv.student_id})</td>
+      <td>${inv.term_name || inv.term_id}</td>
+      <td>${inv.total_amount}</td>
+      <td>${inv.total_paid}</td>
+      <td>${inv.balance}</td>
+      <td>
+        <button onclick="viewInvoice(${inv.id})">View</button>
+        ${canEdit ? `<button onclick="editInvoice(${inv.id})">Edit</button>` : ''}
+        <button onclick="printInvoice(${inv.id})">Print PDF</button>
+      </td>
+    </tr>`;
+  });
+  html += `</table>`;
+  document.getElementById("invoice-list").innerHTML = html;
+}
+
+function filterInvoices() {
+  const query = document.getElementById("invoice_search").value.toLowerCase();
+  const filtered = window.allInvoices.filter(inv =>
+    inv.student_name.toLowerCase().includes(query) ||
+    inv.student_id.toLowerCase().includes(query)
+  );
+  renderInvoices(filtered);
+}
+
+async function viewInvoice(invoiceId) {
+  const res = await fetch(`${API_BASE}/finance/invoices/${invoiceId}`, {
+    headers: { "Authorization": `Bearer ${token}` }
+  });
+  const inv = await res.json();
+  alert(JSON.stringify(inv, null, 2));  // Simple display; later you can replace with a modal
+}
+
+function editInvoice(invoiceId) {
+  // Open a form pre-filled with invoice data; for brevity, prompt for new total
+  const newTotal = prompt("Enter new total amount:");
+  if (newTotal) {
+    fetch(`${API_BASE}/finance/invoices/${invoiceId}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify({ total_amount: newTotal })
+    }).then(res => {
+      if (res.ok) {
+        alert("Invoice updated!");
+        loadInvoices();
+      } else {
+        alert("Error updating invoice");
+      }
+    });
+  }
+}
+
+function printInvoice(invoiceId) {
+  // Open PDF in new tab
+  window.open(`${API_BASE}/finance/invoices/${invoiceId}/pdf`, '_blank');
+}
+
+// ==================== FINANCE – CREATE INVOICE ====================
+async function loadCreateInvoiceView(container) {
+  container.innerHTML = `
+    <h2>Create Invoice for New Student</h2>
+    <select id="ci_student" onchange="loadStudentFeeDetails()">
+      <option value="">Select Student</option>
+    </select>
+    <div id="ci-student-info"></div>
+    <div id="ci-fee-items"></div>
+    <button onclick="createInvoice()">Generate Invoice</button>
+    <p id="ci-status"></p>
+  `;
+  // Load all active students
+  const res = await fetch(`${API_BASE}/students/?active=true`, {
+    headers: { "Authorization": `Bearer ${token}` }
+  });
+  const students = await res.json();
+  document.getElementById("ci_student").innerHTML = '<option value="">Select Student</option>' +
+    students.map(s => `<option value="${s.id}">${s.first_name} ${s.last_name} (${s.student_id})</option>`).join('');
+}
+
+async function loadStudentFeeDetails() {
+  const studentId = document.getElementById("ci_student").value;
+  if (!studentId) return;
+  // Fetch student info (level, class, transport, clubs)
+  const res = await fetch(`${API_BASE}/students/${studentId}`, {
+    headers: { "Authorization": `Bearer ${token}` }
+  });
+  const student = await res.json();
+  document.getElementById("ci-student-info").innerHTML = `
+    <p><strong>Name:</strong> ${student.first_name} ${student.last_name}</p>
+    <p><strong>Level:</strong> ${student.level_name || student.level}</p>
+    <p><strong>Class:</strong> ${student.class_name || ''}</p>
+    <p><strong>Transport:</strong> ${student.transport_route || 'None'}</p>
+  `;
+  // Load applicable fee items based on level
+  const feesRes = await fetch(`${API_BASE}/finance/fee-schedules?level_id=${student.level_id}`, {
+    headers: { "Authorization": `Bearer ${token}` }
+  });
+  const feeSchedules = await feesRes.json();
+  let html = `<h4>Applicable Fees</h4><table><tr><th>Fee Item</th><th>Amount</th><th>Category</th><th>Include</th></tr>`;
+  feeSchedules.forEach(fs => {
+    html += `<tr>
+      <td>${fs.fee_item_name}</td>
+      <td>${fs.amount}</td>
+      <td>${fs.category}</td>
+      <td><input type="checkbox" class="ci-fee-check" value="${fs.id}" data-amount="${fs.amount}" checked></td>
+    </tr>`;
+  });
+  html += `</table>`;
+  document.getElementById("ci-fee-items").innerHTML = html;
+}
+
+async function createInvoice() {
+  const studentId = document.getElementById("ci_student").value;
   const termId = prompt("Enter Term ID:");
-  const res = await fetch(`${API_BASE}/finance/trigger-termly-fees?term_id=${termId}`, {
-    method: "POST",
-    headers: { "Authorization": `Bearer ${token}` }
-  });
-  if (res.ok) alert("Termly fees posted!");
-  else alert("Error");
-}
-
-async function triggerYearlyFees() {
-  const termId = prompt("Enter Term ID (should be Term 1):");
-  const res = await fetch(`${API_BASE}/finance/trigger-yearly-fees?term_id=${termId}`, {
-    method: "POST",
-    headers: { "Authorization": `Bearer ${token}` }
-  });
-  if (res.ok) alert("Yearly fees posted!");
-  else alert("Error");
-}
-
-async function recordPayment() {
+  const selectedFees = Array.from(document.querySelectorAll(".ci-fee-check:checked")).map(cb => ({
+    fee_schedule_id: parseInt(cb.value),
+    amount: parseFloat(cb.dataset.amount)
+  }));
   const payload = {
-    student_id: parseInt(document.getElementById("payment_student").value),
-    amount: document.getElementById("payment_amount").value,
-    payment_method: document.getElementById("payment_method").value,
-    payment_date: new Date().toISOString().split('T')[0],
-    allocations: []  // Can be enhanced later
+    student_id: parseInt(studentId),
+    term_id: parseInt(termId),
+    fee_items: selectedFees
   };
-  const res = await fetch(`${API_BASE}/finance/payments`, {
+  const res = await fetch(`${API_BASE}/finance/invoices`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -516,27 +701,14 @@ async function recordPayment() {
     body: JSON.stringify(payload)
   });
   if (res.ok) {
-    alert("Payment recorded!");
+    document.getElementById("ci-status").innerText = "Invoice created!";
   } else {
-    alert("Error recording payment");
+    const err = await res.json();
+    document.getElementById("ci-status").innerText = err.detail || "Error";
   }
 }
 
-async function checkBalance() {
-  const studentId = document.getElementById("balance_student_id").value;
-  const termId = document.getElementById("balance_term_id").value;
-  const res = await fetch(`${API_BASE}/finance/balance/${studentId}?term_id=${termId}`, {
-    headers: { "Authorization": `Bearer ${token}` }
-  });
-  const data = await res.json();
-  document.getElementById("balance-result").innerHTML = `
-    <p>Total Fees: ${data.total_fees}</p>
-    <p>Total Paid: ${data.total_paid}</p>
-    <p>Balance: ${data.balance}</p>
-  `;
-}
-
-// ==================== REPORTS ====================
+// ==================== REPORTS (unchanged) ====================
 async function loadReportsView(container) {
   container.innerHTML = `
     <h2>Reports</h2>
@@ -563,7 +735,96 @@ async function loadDebtors() {
   document.getElementById("report-output").innerHTML = `<pre>${JSON.stringify(data, null, 2)}</pre>`;
 }
 
-// ==================== UTILS ====================
+// ==================== ADMINISTRATION (SUPER ADMIN ONLY) ====================
+async function loadAdministrationView(container) {
+  if (currentUser?.clearance_level !== 1) {
+    container.innerHTML = "<p>Access denied. Only Super Admin can access this section.</p>";
+    return;
+  }
+  container.innerHTML = `
+    <h2>Staff Management</h2>
+    <button onclick="showStaffForm()">Add New Staff</button>
+    <div id="staff-list"></div>
+    <div id="staff-form" style="display:none;"></div>
+  `;
+  loadStaffList();
+}
+
+async function loadStaffList() {
+  const res = await fetch(`${API_BASE}/team/`, {
+    headers: { "Authorization": `Bearer ${token}` }
+  });
+  const staff = await res.json();
+  let html = `<table><tr><th>Name</th><th>Email</th><th>Role</th><th>Clearance</th></tr>`;
+  staff.forEach(member => {
+    html += `<tr>
+      <td>${member.first_name} ${member.last_name}</td>
+      <td>${member.email}</td>
+      <td>${member.role}</td>
+      <td>${member.clearance_level}</td>
+    </tr>`;
+  });
+  html += `</table>`;
+  document.getElementById("staff-list").innerHTML = html;
+}
+
+function showStaffForm() {
+  const form = document.getElementById("staff-form");
+  form.style.display = "block";
+  form.innerHTML = `
+    <h3>Create Staff Member</h3>
+    <input id="staff_first_name" placeholder="First Name">
+    <input id="staff_last_name" placeholder="Last Name">
+    <input id="staff_email" type="email" placeholder="Email">
+    <input id="staff_password" type="password" placeholder="Password">
+    <select id="staff_role">
+      <option value="super_admin">Super Admin</option>
+      <option value="manager">Manager</option>
+      <option value="teacher">Teacher</option>
+      <option value="kitchen">Kitchen</option>
+      <option value="utility">Utility</option>
+    </select>
+    <select id="staff_clearance">
+      <option value="1">Level 1 (Highest)</option>
+      <option value="2">Level 2</option>
+      <option value="3">Level 3</option>
+      <option value="4" selected>Level 4</option>
+      <option value="5">Level 5 (Lowest)</option>
+    </select>
+    <input id="staff_location" placeholder="Location">
+    <button onclick="createStaff()">Save Staff</button>
+  `;
+}
+
+async function createStaff() {
+  const payload = {
+    first_name: document.getElementById("staff_first_name").value,
+    last_name: document.getElementById("staff_last_name").value,
+    email: document.getElementById("staff_email").value,
+    password: document.getElementById("staff_password").value,
+    role: document.getElementById("staff_role").value,
+    clearance_level: parseInt(document.getElementById("staff_clearance").value),
+    location: document.getElementById("staff_location").value,
+    is_active: true
+  };
+  const res = await fetch(`${API_BASE}/team/`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${token}`
+    },
+    body: JSON.stringify(payload)
+  });
+  if (res.ok) {
+    alert("Staff created!");
+    loadAdministrationView(document.getElementById("main-content"));
+  } else {
+    const err = await res.json();
+    alert("Error: " + JSON.stringify(err.detail));
+  }
+}
+
+// ==================== UTILS (unchanged) ====================
 async function loadClasses() {
   const levelId = document.getElementById("s_level").value;
   const res = await fetch(`${API_BASE}/classes/?level_id=${levelId}`, {
