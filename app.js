@@ -41,12 +41,18 @@ function showDashboard() {
   document.body.innerHTML = `
     <div class="container">
       <nav class="sidebar">
-        <h2>Seven Oaks</h2>
+        <h2>EduGiga - Seven Oaks International School</h2>
+        <div class="sidebar-section">Dashboard</div>
         <ul>
-          <li onclick="loadView('students')">Students</li>
-          <li onclick="loadView('attendance')">Attendance</li>
-          <li onclick="loadView('transport')">Transport</li>
-          <li onclick="loadView('academics')">Academic Setup</li>
+          <li onclick="loadView('student-management')">Student Management</li>
+          <li class="dropdown">
+            <span onclick="toggleDropdown('student-academics-dropdown')">Student Academics ▾</span>
+            <ul id="student-academics-dropdown" class="dropdown-menu" style="display:none;">
+              <li onclick="loadView('attendance-register')">Attendance Register</li>
+              <li onclick="loadView('academic-year-setup')">Academic Year Setup</li>
+            </ul>
+          </li>
+          <li onclick="loadView('transport-management')">Transport Management</li>
           <li class="dropdown">
             <span onclick="toggleDropdown('finance-dropdown')">Finance ▾</span>
             <ul id="finance-dropdown" class="dropdown-menu" style="display:none;">
@@ -55,13 +61,18 @@ function showDashboard() {
               <li onclick="loadView('create-invoice')">Create Invoice</li>
             </ul>
           </li>
-          <li onclick="loadView('reports')">Reports</li>
+          <li onclick="loadView('inventory-management')">Inventory Management</li>
+          <li onclick="loadView('procurement')">Procurement</li>
+          <li onclick="loadView('human-resource')">Human Resource</li>
+          <li onclick="loadView('payroll')">Payroll</li>
+          <li onclick="loadView('asset-management')">Asset Management</li>
+          <li onclick="loadView('communication')">Communication</li>
           ${isSuperAdmin ? '<li onclick="loadView(\'administration\')">Administration</li>' : ''}
           <li onclick="logout()">Logout</li>
         </ul>
       </nav>
       <main id="main-content">
-        <h2>Welcome to Seven Oaks Management System</h2>
+        <h2>Welcome to EduGiga - Seven Oaks International School</h2>
         <p>Select a module from the sidebar.</p>
       </main>
     </div>
@@ -72,15 +83,25 @@ function showDashboard() {
 async function loadView(view) {
   const main = document.getElementById("main-content");
   switch(view) {
-    case 'students': await loadStudentsView(main); break;
-    case 'attendance': await loadAttendanceView(main); break;
-    case 'transport': await loadTransportView(main); break;
-    case 'academics': await loadAcademicsView(main); break;
+    case 'student-management': await loadStudentManagementView(main); break;
+    case 'attendance-register': await loadAttendanceView(main); break;
+    case 'academic-year-setup': await loadAcademicsView(main); break;
+    case 'transport-management': await loadTransportView(main); break;
     case 'report-back': await loadReportBackView(main); break;
     case 'view-invoices': await loadViewInvoicesView(main); break;
     case 'create-invoice': await loadCreateInvoiceView(main); break;
     case 'reports': await loadReportsView(main); break;
     case 'administration': await loadAdministrationView(main); break;
+    // New empty modules
+    case 'inventory-management':
+    case 'procurement':
+    case 'human-resource':
+    case 'payroll':
+    case 'asset-management':
+    case 'communication':
+      main.innerHTML = `<h2>${view.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</h2><p>This module is under construction.</p>`;
+      break;
+    default: main.innerHTML = "<p>Module not found.</p>";
   }
 }
 
@@ -89,8 +110,8 @@ function toggleDropdown(id) {
   menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
 }
 
-// ==================== STUDENTS (unchanged) ====================
-async function loadStudentsView(container) {
+// ==================== STUDENT MANAGEMENT ====================
+async function loadStudentManagementView(container) {
   container.innerHTML = `
     <h2>Student Management</h2>
     <button onclick="showStudentForm()">Register New Student</button>
@@ -247,7 +268,7 @@ async function viewStudentProfile(studentId) {
   `;
 }
 
-// ==================== ATTENDANCE (unchanged) ====================
+// ==================== ATTENDANCE REGISTER ====================
 async function loadAttendanceView(container) {
   container.innerHTML = `
     <h2>Attendance Register</h2>
@@ -314,7 +335,7 @@ async function submitAttendance() {
   }
 }
 
-// ==================== TRANSPORT (unchanged) ====================
+// ==================== TRANSPORT MANAGEMENT ====================
 async function loadTransportView(container) {
   container.innerHTML = `
     <h2>Transport Management</h2>
@@ -391,10 +412,10 @@ function toggleTransport() {
   section.style.display = document.getElementById("s_uses_transport").checked ? "block" : "none";
 }
 
-// ==================== ACADEMICS (unchanged) ====================
+// ==================== ACADEMIC YEAR SETUP ====================
 async function loadAcademicsView(container) {
   container.innerHTML = `
-    <h2>Academic Setup</h2>
+    <h2>Academic Year Setup</h2>
     <button onclick="showAcademicYearForm()">Create Academic Year</button>
     <div id="academic-year-list"></div>
     <div id="academic-year-form" style="display:none;"></div>
@@ -497,8 +518,6 @@ async function loadReportBackList() {
   // For each student, check if they are already reported back for this term
   let html = `<table><tr><th>Select</th><th>Name</th><th>Class</th><th>Already Reported?</th></tr>`;
   students.forEach(s => {
-    // We'll need a backend endpoint to check reported status; for now, assume a flag on student or a separate table.
-    // Simulate: just show a checkbox
     html += `<tr>
       <td><input type="checkbox" class="rb-checkbox" value="${s.id}"></td>
       <td>${s.first_name} ${s.last_name}</td>
@@ -601,7 +620,6 @@ async function viewInvoice(invoiceId) {
 }
 
 function editInvoice(invoiceId) {
-  // Open a form pre-filled with invoice data; for brevity, prompt for new total
   const newTotal = prompt("Enter new total amount:");
   if (newTotal) {
     fetch(`${API_BASE}/finance/invoices/${invoiceId}`, {
@@ -623,7 +641,6 @@ function editInvoice(invoiceId) {
 }
 
 function printInvoice(invoiceId) {
-  // Open PDF in new tab
   window.open(`${API_BASE}/finance/invoices/${invoiceId}/pdf`, '_blank');
 }
 
@@ -708,7 +725,7 @@ async function createInvoice() {
   }
 }
 
-// ==================== REPORTS (unchanged) ====================
+// ==================== REPORTS (kept but hidden from sidebar) ====================
 async function loadReportsView(container) {
   container.innerHTML = `
     <h2>Reports</h2>
@@ -824,7 +841,7 @@ async function createStaff() {
   }
 }
 
-// ==================== UTILS (unchanged) ====================
+// ==================== UTILS ====================
 async function loadClasses() {
   const levelId = document.getElementById("s_level").value;
   const res = await fetch(`${API_BASE}/classes/?level_id=${levelId}`, {
