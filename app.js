@@ -67,6 +67,7 @@ function showDashboard() {
               <li onclick="loadView('student-finance')">Student Finance</li>
               <li onclick="loadView('cash-bank-management')">Cash and Bank Management</li>
               <li onclick="loadView('payables')">Payables</li>
+              <li onclick="loadView('receivables')">Receivables</li>
               <li onclick="loadView('cancellations')">Cancellations</li>
               <li onclick="loadView('journal-entries')">Journal Entries</li>
               <li onclick="loadView('utilities')">Utilities</li>
@@ -105,12 +106,13 @@ async function loadView(view) {
     case 'academic-year-setup': await loadAcademicsView(main); break;
     // Transport
     case 'transport-management': await loadTransportView(main); break;
-    // Finance (NEW)
+    // Finance (NEW sub-modules)
     case 'student-fees-status': await loadStudentFeesStatusView(main); break;
     case 'summarized-fee-statement': showPlaceholder(main, 'Summarized Fee Statement'); break;
     case 'student-finance': showPlaceholder(main, 'Student Finance'); break;
     case 'cash-bank-management': showPlaceholder(main, 'Cash and Bank Management'); break;
     case 'payables': showPlaceholder(main, 'Payables'); break;
+    case 'receivables': showPlaceholder(main, 'Receivables'); break;
     case 'cancellations': showPlaceholder(main, 'Cancellations'); break;
     case 'journal-entries': showPlaceholder(main, 'Journal Entries'); break;
     case 'utilities': showPlaceholder(main, 'Utilities'); break;
