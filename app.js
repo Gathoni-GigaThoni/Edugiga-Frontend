@@ -2,7 +2,7 @@
 
 const API_BASE = "https://edu-giga-school-management-system-1.onrender.com";
 let token = "";
-let currentUser = null;   // will store the decoded JWT payload after login
+let currentUser = null;   // decoded JWT payload after login
 
 // ==================== AUTH ====================
 async function login() {
@@ -20,7 +20,6 @@ async function login() {
     if (!res.ok) throw new Error("Invalid credentials");
     const data = await res.json();
     token = data.access_token;
-    // Decode the JWT to get user info (clearance, role, etc.)
     const payload = JSON.parse(atob(token.split('.')[1]));
     currentUser = payload;
     showDashboard();
@@ -44,7 +43,14 @@ function showDashboard() {
         <h2>EduGiga - Seven Oaks International School</h2>
         <div class="sidebar-section">Dashboard</div>
         <ul>
-          <li onclick="loadView('student-management')">Student Management</li>
+          <li class="dropdown">
+            <span onclick="toggleDropdown('student-management-dropdown')">Student Management ▾</span>
+            <ul id="student-management-dropdown" class="dropdown-menu" style="display:none;">
+              <li onclick="loadView('students-list')">Students</li>
+              <li onclick="loadView('student-search')">Student Search</li>
+              <li onclick="loadView('student-reporting')">Student Reporting</li>
+            </ul>
+          </li>
           <li class="dropdown">
             <span onclick="toggleDropdown('student-academics-dropdown')">Student Academics ▾</span>
             <ul id="student-academics-dropdown" class="dropdown-menu" style="display:none;">
@@ -83,16 +89,24 @@ function showDashboard() {
 async function loadView(view) {
   const main = document.getElementById("main-content");
   switch(view) {
-    case 'student-management': await loadStudentManagementView(main); break;
+    // Student Management sub-modules
+    case 'students-list': await loadStudentsListView(main); break;
+    case 'student-search': await loadStudentSearchView(main); break;
+    case 'student-reporting': await loadStudentReportingView(main); break;
+    // Student Academics
     case 'attendance-register': await loadAttendanceView(main); break;
     case 'academic-year-setup': await loadAcademicsView(main); break;
+    // Transport
     case 'transport-management': await loadTransportView(main); break;
+    // Finance
     case 'report-back': await loadReportBackView(main); break;
     case 'view-invoices': await loadViewInvoicesView(main); break;
     case 'create-invoice': await loadCreateInvoiceView(main); break;
+    // Reports (hidden from sidebar but kept)
     case 'reports': await loadReportsView(main); break;
+    // Administration
     case 'administration': await loadAdministrationView(main); break;
-    // New empty modules
+    // Empty modules
     case 'inventory-management':
     case 'procurement':
     case 'human-resource':
@@ -110,84 +124,228 @@ function toggleDropdown(id) {
   menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
 }
 
-// ==================== STUDENT MANAGEMENT ====================
-async function loadStudentManagementView(container) {
+// ==================== STUDENT MANAGEMENT – STUDENTS LIST ====================
+let currentStudentPage = 1;
+const STUDENTS_PER_PAGE = 7;
+let allStudentsData = [];
+let filteredStudentsData = [];
+
+async function loadStudentsListView(container) {
   container.innerHTML = `
-    <h2>Student Management</h2>
-    <button onclick="showStudentForm()">Register New Student</button>
-    <div id="student-list"></div>
-    <div id="student-form" style="display:none;"></div>
-    <div id="student-profile" style="display:none;"></div>
+    <h2>Students</h2>
+    <div style="display:flex; justify-content:flex-end; margin-bottom:10px;">
+      <button onclick="showAddStudentForm()">Add</button>
+    </div>
+    <div style="display:flex; gap:10px; margin-bottom:15px;">
+      <input id="student-search-input" placeholder="Search..." onkeyup="handleStudentSearch()" style="flex:1;">
+      <button onclick="showFilterModal()">Filter</button>
+    </div>
+    <div id="student-table-container"></div>
+    <div id="student-pagination"></div>
+    <div id="student-form-modal" class="modal" style="display:none;"></div>
+    <div id="student-profile-modal" class="modal" style="display:none;"></div>
+    <div id="filter-modal" class="modal" style="display:none;"></div>
   `;
-  await refreshStudentList();
+  await refreshStudentTable();
 }
 
-async function refreshStudentList() {
+async function refreshStudentTable() {
   const res = await fetch(`${API_BASE}/students/`, {
     headers: { "Authorization": `Bearer ${token}` }
   });
+  if (!res.ok) { document.getElementById("student-table-container").innerHTML = "<p>Error loading students.</p>"; return; }
   const students = await res.json();
-  let html = `<table><tr><th>ID</th><th>Name</th><th>Class</th><th>Actions</th></tr>`;
-  students.forEach(s => {
+  allStudentsData = students;
+  filteredStudentsData = students;
+  renderStudentPage(1);
+}
+
+function renderStudentPage(page) {
+  currentStudentPage = page;
+  const start = (page - 1) * STUDENTS_PER_PAGE;
+  const end = start + STUDENTS_PER_PAGE;
+  const pageData = filteredStudentsData.slice(start, end);
+  
+  let html = `<table><thead><tr>
+    <th>Student ID</th><th>Student Name</th><th>Gender</th><th>Cohort</th><th>Class</th><th>Session</th><th>Stream</th><th>Sports House</th><th>Academic Status</th><th>Personnel</th><th>Action</th>
+  </tr></thead><tbody>`;
+  
+  pageData.forEach(s => {
     html += `<tr>
       <td>${s.student_id}</td>
       <td>${s.first_name} ${s.last_name}</td>
-      <td>${s.level || s.class_name || ''}</td>
+      <td>${s.gender || ''}</td>
+      <td>${s.cohort || ''}</td>
+      <td>${s.class_name || ''}</td>
+      <td>${s.session || ''}</td>
+      <td>${s.stream || ''}</td>
+      <td>${s.sports_house || ''}</td>
+      <td>${s.is_active ? 'Active' : 'Inactive'}</td>
+      <td>${s.created_by || ''}</td>
       <td>
-        <button onclick="viewStudentProfile(${s.id})">View</button>
-        <button onclick="editStudent(${s.id})">Edit</button>
+        <div class="dropdown">
+          <button onclick="toggleActionDropdown(event, ${s.id})">...</button>
+          <div id="action-dropdown-${s.id}" class="dropdown-menu" style="display:none;">
+            ${currentUser?.clearance_level <= 3 ? `<a href="#" onclick="openStudentProfile(${s.id}, 'edit')">Edit</a>` : ''}
+            <a href="#" onclick="openStudentProfile(${s.id}, 'view')">View Detail</a>
+          </div>
+        </div>
       </td>
     </tr>`;
   });
-  html += `</table>`;
-  document.getElementById("student-list").innerHTML = html;
+  html += `</tbody></table>`;
+  document.getElementById("student-table-container").innerHTML = html;
+  
+  // Pagination
+  const totalPages = Math.ceil(filteredStudentsData.length / STUDENTS_PER_PAGE);
+  let pagHtml = '';
+  for (let i = 1; i <= totalPages; i++) {
+    pagHtml += `<button onclick="renderStudentPage(${i})" ${i === currentStudentPage ? 'disabled' : ''}>${i}</button>`;
+  }
+  document.getElementById("student-pagination").innerHTML = pagHtml;
 }
 
-function showStudentForm() {
-  const form = document.getElementById("student-form");
-  form.style.display = "block";
-  form.innerHTML = `
-    <h3>Register Student</h3>
-    <input id="s_first_name" placeholder="First Name">
-    <input id="s_last_name" placeholder="Last Name">
-    <input id="s_dob" type="date" placeholder="Date of Birth">
-    <select id="s_level">
-      <option value="">Select Level</option>
-      <option value="1">Maple</option>
-      <option value="2">Acorn</option>
-    </select>
-    <select id="s_class">
-      <option value="">Select Class</option>
-    </select>
-    <input id="s_stream" placeholder="Stream (e.g. East)">
-    <label>Uses Transport?</label>
-    <input type="checkbox" id="s_uses_transport">
-    <div id="transport-section" style="display:none;">
-      <select id="s_route"></select>
-      <select id="s_direction">
-        <option value="TWO_WAY">Two-Way</option>
-        <option value="ONE_WAY_MORNING">Morning Only</option>
-        <option value="ONE_WAY_EVENING">Evening Only</option>
-      </select>
+function handleStudentSearch() {
+  const query = document.getElementById("student-search-input").value.toLowerCase();
+  filteredStudentsData = allStudentsData.filter(s => 
+    (s.first_name + ' ' + s.last_name).toLowerCase().includes(query) ||
+    s.student_id.toLowerCase().includes(query)
+  );
+  renderStudentPage(1);
+}
+
+function showFilterModal() {
+  const modal = document.getElementById("filter-modal");
+  modal.style.display = "block";
+  modal.innerHTML = `
+    <div class="modal-content">
+      <span class="close" onclick="closeModal('filter-modal')">&times;</span>
+      <h3>Filter Students</h3>
+      <label>Level Enrolled:</label>
+      <select id="filter_level"><option value="">All</option><option value="Acorn">Acorn</option><option value="Willow">Willow</option><option value="Maple">Maple</option><option value="Oak">Oak</option></select>
+      <label>Class:</label>
+      <input id="filter_class" placeholder="e.g. Maple 26">
+      <label>Gender:</label>
+      <select id="filter_gender"><option value="">All</option><option value="Male">Male</option><option value="Female">Female</option></select>
+      <label>Clubs Enrolled:</label>
+      <input id="filter_club" placeholder="Club name">
+      <label>Nationality:</label>
+      <input id="filter_nationality" placeholder="Nationality">
+      <button onclick="applyFilters()">Apply</button>
     </div>
-    <h4>Parent Information</h4>
-    <input id="s_parent1_name" placeholder="Primary Parent Full Name (Mother)" required>
-    <input id="s_parent1_email" type="email" placeholder="Parent Email" required>
-    <input id="s_parent1_phone" placeholder="Parent Phone" required>
-    <input id="s_parent1_id_doc" type="file" accept=".pdf,.jpg,.png">
-    <hr>
-    <input id="s_parent2_name" placeholder="Second Parent Full Name (optional)">
-    <input id="s_parent2_email" type="email" placeholder="Second Parent Email">
-    <input id="s_parent2_phone" placeholder="Second Parent Phone">
-    <input id="s_parent2_id_doc" type="file" accept=".pdf,.jpg,.png">
-    <h4>Medical Information</h4>
-    <textarea id="s_allergies" placeholder="Allergies"></textarea>
-    <textarea id="s_chronic" placeholder="Chronic Symptoms"></textarea>
-    <button onclick="registerStudent()">Save Student</button>
   `;
-  document.getElementById("s_level").onchange = loadClasses;
-  document.getElementById("s_uses_transport").onchange = toggleTransport;
-  loadRoutes();
+}
+
+function applyFilters() {
+  const level = document.getElementById("filter_level").value;
+  const cls = document.getElementById("filter_class").value.toLowerCase();
+  const gender = document.getElementById("filter_gender").value;
+  const club = document.getElementById("filter_club").value.toLowerCase();
+  const nationality = document.getElementById("filter_nationality").value.toLowerCase();
+  
+  filteredStudentsData = allStudentsData.filter(s => {
+    if (level && s.level !== level) return false;
+    if (cls && !(s.class_name || '').toLowerCase().includes(cls)) return false;
+    if (gender && s.gender !== gender) return false;
+    if (club && !(s.clubs || '').toLowerCase().includes(club)) return false;
+    if (nationality && !(s.nationality || '').toLowerCase().includes(nationality)) return false;
+    return true;
+  });
+  renderStudentPage(1);
+  closeModal('filter-modal');
+}
+
+function toggleActionDropdown(event, studentId) {
+  event.stopPropagation();
+  const dropdown = document.getElementById(`action-dropdown-${studentId}`);
+  dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
+}
+
+// Close all action dropdowns when clicking elsewhere
+document.addEventListener('click', () => {
+  document.querySelectorAll('[id^="action-dropdown-"]').forEach(d => d.style.display = 'none');
+});
+
+// ==================== ADD STUDENT FORM ====================
+function showAddStudentForm() {
+  const modal = document.getElementById("student-form-modal");
+  modal.style.display = "block";
+  modal.innerHTML = `
+    <div class="modal-content" style="max-width:700px;">
+      <span class="close" onclick="closeModal('student-form-modal')">&times;</span>
+      <h3>Register New Student</h3>
+      <input id="s_first_name" placeholder="First Name">
+      <input id="s_last_name" placeholder="Last Name">
+      <input id="s_dob" type="date" placeholder="Date of Birth">
+      <input id="s_joining_date" type="date" placeholder="Joining Date">
+      <select id="s_gender"><option value="">Gender</option><option value="Male">Male</option><option value="Female">Female</option></select>
+      <input id="s_nationality" placeholder="Nationality">
+      <select id="s_level">
+        <option value="">Select Level</option>
+        <option value="Acorn">Acorn (Baby Class)</option>
+        <option value="Willow">Willow (PlayGroup)</option>
+        <option value="Maple">Maple (PP1)</option>
+        <option value="Oak">Oak (PP2)</option>
+      </select>
+      <select id="s_class"><option value="">Select Class</option></select>
+      <select id="s_stream"><option value="">Stream</option><option value="A">A</option><option value="B">B</option></select>
+      <label>Uses Transport?</label>
+      <input type="checkbox" id="s_uses_transport" onchange="toggleTransportSection()">
+      <div id="transport-section" style="display:none;">
+        <select id="s_route"></select>
+        <select id="s_direction">
+          <option value="TWO_WAY">Two-Way</option>
+          <option value="ONE_WAY_MORNING">Morning Only</option>
+          <option value="ONE_WAY_EVENING">Evening Only</option>
+        </select>
+      </div>
+      <h4>Parent Information</h4>
+      <input id="s_parent1_name" placeholder="Primary Parent Full Name (Mother)" required>
+      <input id="s_parent1_email" type="email" placeholder="Parent Email" required>
+      <input id="s_parent1_phone" placeholder="Parent Phone" required>
+      <input id="s_parent1_id_doc" type="file" accept=".pdf,.jpg,.png">
+      <hr>
+      <input id="s_parent2_name" placeholder="Second Parent Full Name (optional)">
+      <input id="s_parent2_email" type="email" placeholder="Second Parent Email">
+      <input id="s_parent2_phone" placeholder="Second Parent Phone">
+      <input id="s_parent2_id_doc" type="file" accept=".pdf,.jpg,.png">
+      <h4>Medical Information</h4>
+      <textarea id="s_allergies" placeholder="Allergies"></textarea>
+      <textarea id="s_chronic" placeholder="Chronic Symptoms"></textarea>
+      <textarea id="s_insurance" placeholder="Health Insurance"></textarea>
+      <button onclick="registerStudent()">Save Student</button>
+    </div>
+  `;
+  document.getElementById("s_level").onchange = loadClassesForForm;
+  loadRoutesForForm();
+}
+
+function toggleTransportSection() {
+  const section = document.getElementById("transport-section");
+  section.style.display = document.getElementById("s_uses_transport").checked ? "block" : "none";
+}
+
+async function loadClassesForForm() {
+  const level = document.getElementById("s_level").value;
+  const res = await fetch(`${API_BASE}/classes/?level=${level}`, {
+    headers: { "Authorization": `Bearer ${token}` }
+  });
+  if (res.ok) {
+    const classes = await res.json();
+    document.getElementById("s_class").innerHTML = '<option value="">Select Class</option>' +
+      classes.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+  }
+}
+
+async function loadRoutesForForm() {
+  const res = await fetch(`${API_BASE}/routes/`, {
+    headers: { "Authorization": `Bearer ${token}` }
+  });
+  if (res.ok) {
+    const routes = await res.json();
+    document.getElementById("s_route").innerHTML = '<option value="">Select Route</option>' +
+      routes.map(r => `<option value="${r.id}">${r.name}</option>`).join('');
+  }
 }
 
 async function registerStudent() {
@@ -195,10 +353,15 @@ async function registerStudent() {
     first_name: document.getElementById("s_first_name").value,
     last_name: document.getElementById("s_last_name").value,
     date_of_birth: document.getElementById("s_dob").value,
-    level_id: parseInt(document.getElementById("s_level").value),
-    class_id: parseInt(document.getElementById("s_class").value),
+    joining_date: document.getElementById("s_joining_date").value,
+    gender: document.getElementById("s_gender").value,
+    nationality: document.getElementById("s_nationality").value,
+    level: document.getElementById("s_level").value,
+    class_id: parseInt(document.getElementById("s_class").value) || null,
     stream: document.getElementById("s_stream").value,
     uses_transport: document.getElementById("s_uses_transport").checked,
+    route_id: document.getElementById("s_uses_transport").checked ? parseInt(document.getElementById("s_route").value) : null,
+    direction: document.getElementById("s_uses_transport").checked ? document.getElementById("s_direction").value : null,
     parents: [
       {
         full_name: document.getElementById("s_parent1_name").value,
@@ -207,7 +370,12 @@ async function registerStudent() {
         relationship: "MOTHER",
         is_primary: true
       }
-    ]
+    ],
+    medical: {
+      allergies: document.getElementById("s_allergies").value,
+      chronic_symptoms: document.getElementById("s_chronic").value,
+      health_insurance: document.getElementById("s_insurance").value
+    }
   };
   const p2name = document.getElementById("s_parent2_name").value;
   if (p2name) {
@@ -219,53 +387,245 @@ async function registerStudent() {
       is_primary: false
     });
   }
-  if (document.getElementById("s_uses_transport").checked) {
-    payload.route_id = parseInt(document.getElementById("s_route").value);
-    payload.direction = document.getElementById("s_direction").value;
-  }
-  payload.medical = {
-    allergies: document.getElementById("s_allergies").value,
-    chronic_symptoms: document.getElementById("s_chronic").value
-  };
-
   const res = await fetch(`${API_BASE}/students/`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${token}`
-    },
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
     body: JSON.stringify(payload)
   });
   if (res.ok) {
     alert("Student registered!");
-    document.getElementById("student-form").style.display = "none";
-    refreshStudentList();
+    closeModal('student-form-modal');
+    refreshStudentTable();
   } else {
     const err = await res.json();
     alert("Error: " + JSON.stringify(err.detail));
   }
 }
 
-async function viewStudentProfile(studentId) {
+// ==================== FULL STUDENT PROFILE (EDIT / VIEW) ====================
+async function openStudentProfile(studentId, mode) {
   const res = await fetch(`${API_BASE}/students/${studentId}/full-profile`, {
     headers: { "Authorization": `Bearer ${token}` }
   });
+  if (!res.ok) { alert("Could not load profile."); return; }
   const data = await res.json();
-  const profile = document.getElementById("student-profile");
-  profile.style.display = "block";
-  profile.innerHTML = `
-    <h3>${data.first_name} ${data.last_name}</h3>
-    <p>ID: ${data.student_id}</p>
-    <p>Age: ${data.age_months} months</p>
-    <h4>Parents</h4>
-    <ul>${data.parents.map(p => `<li>${p.full_name} - ${p.relationship} (${p.email})</li>`).join('')}</ul>
-    <h4>Medical</h4>
-    <p>Allergies: ${data.medical?.allergies || 'None'}</p>
-    <p>Chronic: ${data.medical?.chronic_symptoms || 'None'}</p>
-    <h4>Attendance</h4>
-    <p>Present: ${data.attendance_summary?.present || 0} | Absent: ${data.attendance_summary?.absent || 0}</p>
-    <button onclick="document.getElementById('student-profile').style.display='none'">Close</button>
+  const canEdit = currentUser?.clearance_level <= 3 && mode === 'edit';
+  
+  const modal = document.getElementById("student-profile-modal");
+  modal.style.display = "block";
+  modal.innerHTML = `
+    <div class="modal-content" style="max-width:900px; max-height:80vh; overflow-y:auto;">
+      <span class="close" onclick="closeModal('student-profile-modal')">&times;</span>
+      <h2>${data.first_name} ${data.last_name} ${canEdit ? '(Editing)' : '(View Only)'}</h2>
+      <div class="tab">
+        <button class="tablinks active" onclick="openTab(event, 'personal-info')">Personal Information</button>
+        <button class="tablinks" onclick="openTab(event, 'academic-info')">Academic Information</button>
+        <button class="tablinks" onclick="openTab(event, 'previous-education')">Previous Education</button>
+        <button class="tablinks" onclick="openTab(event, 'guardian-family')">Guardian/Family</button>
+        <button class="tablinks" onclick="openTab(event, 'medical-info')">Medical Information</button>
+        <button class="tablinks" onclick="openTab(event, 'documents')">Documents</button>
+      </div>
+      <div id="personal-info" class="tabcontent" style="display:block;">
+        <p><strong>Student ID:</strong> ${data.student_id}</p>
+        <p><strong>Full Name:</strong> ${data.first_name} ${data.last_name}</p>
+        <p><strong>Birth Date:</strong> ${data.date_of_birth}</p>
+        <p><strong>Joining Date:</strong> ${data.joining_date || ''}</p>
+        <p><strong>Gender:</strong> ${data.gender || ''}</p>
+        <p><strong>Transport:</strong> ${data.uses_transport ? 'Yes' : 'No'}</p>
+        ${data.uses_transport ? `<p><strong>Route:</strong> ${data.transport_route || ''}</p><p><strong>Direction:</strong> ${data.direction || ''}</p>` : ''}
+        <p><strong>Nationality:</strong> ${data.nationality || ''}</p>
+      </div>
+      <div id="academic-info" class="tabcontent" style="display:none;">
+        <p><strong>Level:</strong> ${data.level || ''}</p>
+        <p><strong>Session:</strong> ${data.session || ''}</p>
+        <p><strong>Class:</strong> ${data.class_name || ''}</p>
+        <p><strong>Clubs:</strong> ${(data.clubs || []).join(', ') || 'None'}</p>
+        <h4>Academic Reports</h4>
+        <div id="academic-reports">${(data.academic_reports || []).map(r => `<p>${r.date}: ${r.title}</p>`).join('') || 'No reports yet.'}</div>
+      </div>
+      <div id="previous-education" class="tabcontent" style="display:none;">
+        ${data.previous_education ? `
+          <p><strong>Previous School:</strong> ${data.previous_education.school_name}</p>
+          <p><strong>Level Completed:</strong> ${data.previous_education.level_completed}</p>
+        ` : '<p>This is the student\'s first school.</p>'}
+      </div>
+      <div id="guardian-family" class="tabcontent" style="display:none;">
+        <h4>Parents/Guardians</h4>
+        ${(data.parents || []).map(p => `
+          <div style="border:1px solid #ddd; padding:10px; margin:5px 0;">
+            <p><strong>Name:</strong> ${p.full_name}</p>
+            <p><strong>Relationship:</strong> ${p.relationship}</p>
+            <p><strong>Email:</strong> ${p.email}</p>
+            <p><strong>Phone:</strong> ${p.phone}</p>
+            <p><strong>Residence:</strong> ${p.address || ''}</p>
+          </div>
+        `).join('')}
+        <h4>Siblings Enrolled</h4>
+        ${(data.siblings || []).map(sib => `<p>${sib.full_name} - ${sib.student_id}</p>`).join('') || '<p>No siblings enrolled.</p>'}
+      </div>
+      <div id="medical-info" class="tabcontent" style="display:none;">
+        <p><strong>Allergies:</strong> ${data.medical?.allergies || 'None'}</p>
+        <p><strong>Chronic Symptoms:</strong> ${data.medical?.chronic_symptoms || 'None'}</p>
+        <p><strong>Health Insurance:</strong> ${data.medical?.health_insurance || 'None'}</p>
+        <h4>Incident Reports</h4>
+        ${(data.incident_reports || []).map(inc => `
+          <div style="border:1px solid #ddd; padding:10px; margin:5px 0;">
+            <p><strong>Date:</strong> ${inc.date}</p>
+            <p><strong>Homeroom Tutor:</strong> ${inc.homeroom_tutor}</p>
+            <p><strong>Witness Teacher:</strong> ${inc.witness}</p>
+            <p><strong>Report:</strong> ${inc.report}</p>
+            <p><strong>Outcome:</strong> ${inc.outcome}</p>
+          </div>
+        `).join('') || '<p>No incidents reported.</p>'}
+      </div>
+      <div id="documents" class="tabcontent" style="display:none;">
+        ${(data.documents || []).map(doc => `<p><a href="${doc.url}" target="_blank">${doc.name}</a></p>`).join('') || '<p>No documents uploaded.</p>'}
+      </div>
+      ${canEdit ? '<button onclick="saveStudentChanges(' + studentId + ')" style="margin-top:20px;">Save Changes</button>' : ''}
+    </div>
   `;
+}
+
+function openTab(evt, tabName) {
+  document.querySelectorAll(".tabcontent").forEach(tc => tc.style.display = "none");
+  document.querySelectorAll(".tablinks").forEach(tl => tl.classList.remove("active"));
+  document.getElementById(tabName).style.display = "block";
+  evt.currentTarget.classList.add("active");
+}
+
+// ==================== STUDENT SEARCH (GRID VIEW) ====================
+async function loadStudentSearchView(container) {
+  container.innerHTML = `<h2>Student Search</h2><div id="student-grid"></div>`;
+  const res = await fetch(`${API_BASE}/students/`, {
+    headers: { "Authorization": `Bearer ${token}` }
+  });
+  if (!res.ok) { container.innerHTML += "<p>Error loading students.</p>"; return; }
+  const students = await res.json();
+  let html = '<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(250px, 1fr)); gap:15px;">';
+  students.forEach(s => {
+    html += `
+      <div class="student-card" onclick="openStudentProfile(${s.id}, 'view')" style="border:1px solid #ddd; padding:15px; cursor:pointer; border-radius:8px;">
+        <h4>${s.first_name} ${s.last_name}</h4>
+        <p><strong>ID:</strong> ${s.student_id}</p>
+        <p><strong>Gender:</strong> ${s.gender || ''}</p>
+        <p><strong>Class:</strong> ${s.class_name || ''} ${s.session || ''} ${s.cohort || ''}</p>
+        <p><strong>Parent Phone:</strong> ${s.parent_phone || ''}</p>
+        <p><strong>Parent Email:</strong> ${s.parent_email || ''}</p>
+        <p><a href="#" onclick="event.stopPropagation(); openFeeStatement(${s.id})" style="color:#0070f3;">Fee Statement</a></p>
+      </div>
+    `;
+  });
+  html += '</div>';
+  document.getElementById("student-grid").innerHTML = html;
+}
+
+async function openFeeStatement(studentId) {
+  const res = await fetch(`${API_BASE}/finance/statement/${studentId}`, {
+    headers: { "Authorization": `Bearer ${token}` }
+  });
+  if (res.ok) {
+    const data = await res.json();
+    const w = window.open('', '_blank', 'width=600,height=400');
+    w.document.write(`<pre>${JSON.stringify(data, null, 2)}</pre>`);
+  } else {
+    alert("Could not load fee statement.");
+  }
+}
+
+// ==================== STUDENT REPORTING (BULK REPORT) ====================
+async function loadStudentReportingView(container) {
+  container.innerHTML = `
+    <h2>Student Reporting</h2>
+    <div style="display:flex; justify-content:flex-end; margin-bottom:10px;">
+      <button onclick="showBulkReportModal()">Bulk Report</button>
+    </div>
+    <div id="reporting-table-container"></div>
+    <div id="bulk-report-modal" class="modal" style="display:none;"></div>
+  `;
+  await loadReportingTable();
+}
+
+async function loadReportingTable() {
+  const res = await fetch(`${API_BASE}/students/`, {
+    headers: { "Authorization": `Bearer ${token}` }
+  });
+  if (!res.ok) return;
+  const students = await res.json();
+  let html = `<table><thead><tr>
+    <th>Student ID</th><th>Student Name</th><th>Gender</th><th>Cohort</th><th>Class</th><th>Session</th><th>Stream</th><th>Sports House</th><th>Academic Status</th><th>Personnel</th>
+  </tr></thead><tbody>`;
+  students.forEach(s => {
+    html += `<tr>
+      <td>${s.student_id}</td>
+      <td>${s.first_name} ${s.last_name}</td>
+      <td>${s.gender || ''}</td>
+      <td>${s.cohort || ''}</td>
+      <td>${s.class_name || ''}</td>
+      <td>${s.session || ''}</td>
+      <td>${s.stream || ''}</td>
+      <td>${s.sports_house || ''}</td>
+      <td>${s.is_active ? 'Active' : 'Inactive'}</td>
+      <td>${s.created_by || ''}</td>
+    </tr>`;
+  });
+  html += `</tbody></table>`;
+  document.getElementById("reporting-table-container").innerHTML = html;
+}
+
+function showBulkReportModal() {
+  const modal = document.getElementById("bulk-report-modal");
+  modal.style.display = "block";
+  modal.innerHTML = `
+    <div class="modal-content">
+      <span class="close" onclick="closeModal('bulk-report-modal')">&times;</span>
+      <h3>Bulk Report Back</h3>
+      <label>Class Code:</label>
+      <input id="br_class" placeholder="e.g. Maple 26">
+      <label>Cohort:</label>
+      <input id="br_cohort" placeholder="e.g. Acorn Term 3 2025/2026">
+      <button onclick="loadBulkReportStudents()">Load Students</button>
+      <div id="br-student-list"></div>
+      <button onclick="submitBulkReport()">Submit Report Back</button>
+      <p id="br-status"></p>
+    </div>
+  `;
+}
+
+async function loadBulkReportStudents() {
+  const cls = document.getElementById("br_class").value;
+  const cohort = document.getElementById("br_cohort").value;
+  // Fetch students filtered by class/cohort
+  const res = await fetch(`${API_BASE}/students/?class=${encodeURIComponent(cls)}&cohort=${encodeURIComponent(cohort)}`, {
+    headers: { "Authorization": `Bearer ${token}` }
+  });
+  if (!res.ok) { alert("Error loading students."); return; }
+  const students = await res.json();
+  let html = '<table><tr><th>Select</th><th>Student ID</th><th>Name</th></tr>';
+  students.forEach(s => {
+    html += `<tr>
+      <td><input type="checkbox" class="br-checkbox" value="${s.id}" checked></td>
+      <td>${s.student_id}</td>
+      <td>${s.first_name} ${s.last_name}</td>
+    </tr>`;
+  });
+  html += '</table>';
+  document.getElementById("br-student-list").innerHTML = html;
+}
+
+async function submitBulkReport() {
+  const checkboxes = document.querySelectorAll(".br-checkbox:checked");
+  const studentIds = Array.from(checkboxes).map(cb => parseInt(cb.value));
+  const termId = prompt("Enter Term ID:");
+  const res = await fetch(`${API_BASE}/finance/report-back-bulk`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+    body: JSON.stringify({ term_id: parseInt(termId), student_ids: studentIds })
+  });
+  if (res.ok) {
+    document.getElementById("br-status").innerText = "Report back submitted!";
+  } else {
+    document.getElementById("br-status").innerText = "Error submitting report.";
+  }
 }
 
 // ==================== ATTENDANCE REGISTER ====================
@@ -288,10 +648,7 @@ async function loadClassSheet() {
     headers: { "Authorization": `Bearer ${token}` }
   });
   const data = await res.json();
-  if (!res.ok) {
-    document.getElementById("attendanceStatus").innerText = data.detail || "Error";
-    return;
-  }
+  if (!res.ok) { document.getElementById("attendanceStatus").innerText = data.detail || "Error"; return; }
   let html = `<table><tr><th>Student</th><th>Status</th><th>Select</th></tr>`;
   data.students.forEach(s => {
     html += `<tr>
@@ -313,17 +670,13 @@ async function loadClassSheet() {
 async function submitAttendance() {
   const date = document.getElementById("attendanceDate").value;
   const entries = [];
-  const selects = document.querySelectorAll("select[id^='status_']");
-  selects.forEach(sel => {
+  document.querySelectorAll("select[id^='status_']").forEach(sel => {
     const studentId = parseInt(sel.id.split('_')[1]);
     entries.push({ student_id: studentId, status: sel.value, notes: "" });
   });
   const res = await fetch(`${API_BASE}/attendance/bulk?class_date=${date}`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${token}`
-    },
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
     body: JSON.stringify(entries)
   });
   if (res.ok) {
@@ -347,26 +700,14 @@ async function loadTransportView(container) {
 }
 
 async function loadRoutes() {
-  const res = await fetch(`${API_BASE}/routes/`, {
-    headers: { "Authorization": `Bearer ${token}` }
-  });
+  const res = await fetch(`${API_BASE}/routes/`, { headers: { "Authorization": `Bearer ${token}` } });
   const routes = await res.json();
   let html = `<table><tr><th>Name</th><th>Two-Way</th><th>Morning</th><th>Evening</th><th>Daily</th></tr>`;
   routes.forEach(r => {
-    html += `<tr>
-      <td>${r.name}</td>
-      <td>${r.two_way_price}</td>
-      <td>${r.one_way_morning_price}</td>
-      <td>${r.one_way_evening_price}</td>
-      <td>${r.daily_rate}</td>
-    </tr>`;
+    html += `<tr><td>${r.name}</td><td>${r.two_way_price}</td><td>${r.one_way_morning_price}</td><td>${r.one_way_evening_price}</td><td>${r.daily_rate}</td></tr>`;
   });
   html += `</table>`;
   document.getElementById("route-list").innerHTML = html;
-  const routeSelect = document.getElementById("s_route");
-  if (routeSelect) {
-    routeSelect.innerHTML = routes.map(r => `<option value="${r.id}">${r.name}</option>`).join('');
-  }
 }
 
 function showRouteForm() {
@@ -392,24 +733,10 @@ async function addRoute() {
     daily_rate: parseFloat(document.getElementById("route_daily").value)
   };
   const res = await fetch(`${API_BASE}/routes/`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${token}`
-    },
-    body: JSON.stringify(payload)
+    method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` }, body: JSON.stringify(payload)
   });
-  if (res.ok) {
-    alert("Route added!");
-    loadTransportView(document.getElementById("main-content"));
-  } else {
-    alert("Error adding route");
-  }
-}
-
-function toggleTransport() {
-  const section = document.getElementById("transport-section");
-  section.style.display = document.getElementById("s_uses_transport").checked ? "block" : "none";
+  if (res.ok) { alert("Route added!"); loadTransportView(document.getElementById("main-content")); }
+  else { alert("Error adding route"); }
 }
 
 // ==================== ACADEMIC YEAR SETUP ====================
@@ -424,18 +751,11 @@ async function loadAcademicsView(container) {
 }
 
 async function loadAcademicYears() {
-  const res = await fetch(`${API_BASE}/academic-years/`, {
-    headers: { "Authorization": `Bearer ${token}` }
-  });
+  const res = await fetch(`${API_BASE}/academic-years/`, { headers: { "Authorization": `Bearer ${token}` } });
   const years = await res.json();
   let html = `<table><tr><th>Name</th><th>Start</th><th>End</th><th>Terms</th></tr>`;
   years.forEach(y => {
-    html += `<tr>
-      <td>${y.name}</td>
-      <td>${y.start_date}</td>
-      <td>${y.end_date}</td>
-      <td><button onclick="loadTerms(${y.id})">View Terms</button></td>
-    </tr>`;
+    html += `<tr><td>${y.name}</td><td>${y.start_date}</td><td>${y.end_date}</td><td><button onclick="loadTerms(${y.id})">View Terms</button></td></tr>`;
   });
   html += `</table><div id="terms-view"></div>`;
   document.getElementById("academic-year-list").innerHTML = html;
@@ -454,31 +774,16 @@ function showAcademicYearForm() {
 }
 
 async function createAcademicYear() {
-  const payload = {
-    name: document.getElementById("ay_name").value,
-    start_date: document.getElementById("ay_start").value,
-    end_date: document.getElementById("ay_end").value
-  };
+  const payload = { name: document.getElementById("ay_name").value, start_date: document.getElementById("ay_start").value, end_date: document.getElementById("ay_end").value };
   const res = await fetch(`${API_BASE}/academic-years/`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${token}`
-    },
-    body: JSON.stringify(payload)
+    method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` }, body: JSON.stringify(payload)
   });
-  if (res.ok) {
-    alert("Academic year created with terms!");
-    loadAcademicsView(document.getElementById("main-content"));
-  } else {
-    alert("Error");
-  }
+  if (res.ok) { alert("Academic year created with terms!"); loadAcademicsView(document.getElementById("main-content")); }
+  else { alert("Error"); }
 }
 
 async function loadTerms(yearId) {
-  const res = await fetch(`${API_BASE}/academic-years/${yearId}/terms`, {
-    headers: { "Authorization": `Bearer ${token}` }
-  });
+  const res = await fetch(`${API_BASE}/academic-years/${yearId}/terms`, { headers: { "Authorization": `Bearer ${token}` } });
   const terms = await res.json();
   let html = `<h4>Terms</h4><table><tr><th>Name</th><th>Auto Start</th><th>Auto End</th><th>Actual Start</th><th>Actual End</th></tr>`;
   terms.forEach(t => {
@@ -492,46 +797,29 @@ async function loadTerms(yearId) {
 async function loadReportBackView(container) {
   container.innerHTML = `
     <h2>Report Back Students (New Term)</h2>
-    <select id="rb_term" onchange="loadReportBackList()">
-      <option value="">Select Term</option>
-    </select>
+    <select id="rb_term" onchange="loadReportBackList()"><option value="">Select Term</option></select>
     <div id="report-back-list"></div>
     <button onclick="submitReportBack()">Save Reported Students</button>
     <p id="rb-status"></p>
   `;
-  // Load terms into dropdown
-  const res = await fetch(`${API_BASE}/terms/`, {
-    headers: { "Authorization": `Bearer ${token}` }
-  });
+  const res = await fetch(`${API_BASE}/terms/`, { headers: { "Authorization": `Bearer ${token}` } });
   const terms = await res.json();
-  document.getElementById("rb_term").innerHTML = '<option value="">Select Term</option>' +
-    terms.map(t => `<option value="${t.id}">${t.name} (${t.automatic_start} - ${t.automatic_end})</option>`).join('');
+  document.getElementById("rb_term").innerHTML = '<option value="">Select Term</option>' + terms.map(t => `<option value="${t.id}">${t.name} (${t.automatic_start} - ${t.automatic_end})</option>`).join('');
 }
 
 async function loadReportBackList() {
   const termId = document.getElementById("rb_term").value;
   if (!termId) return;
-  const res = await fetch(`${API_BASE}/students/?active=true`, {
-    headers: { "Authorization": `Bearer ${token}` }
-  });
+  const res = await fetch(`${API_BASE}/students/?active=true`, { headers: { "Authorization": `Bearer ${token}` } });
   const students = await res.json();
-  // For each student, check if they are already reported back for this term
   let html = `<table><tr><th>Select</th><th>Name</th><th>Class</th><th>Already Reported?</th></tr>`;
   students.forEach(s => {
-    html += `<tr>
-      <td><input type="checkbox" class="rb-checkbox" value="${s.id}"></td>
-      <td>${s.first_name} ${s.last_name}</td>
-      <td>${s.class_name || s.level || ''}</td>
-      <td id="rb-status-${s.id}">Unknown</td>
-    </tr>`;
+    html += `<tr><td><input type="checkbox" class="rb-checkbox" value="${s.id}"></td><td>${s.first_name} ${s.last_name}</td><td>${s.class_name || s.level || ''}</td><td id="rb-status-${s.id}">Unknown</td></tr>`;
   });
   html += `</table>`;
   document.getElementById("report-back-list").innerHTML = html;
-  // Now check each student's reported-back status
   students.forEach(async s => {
-    const statusRes = await fetch(`${API_BASE}/finance/is-reported-back/${s.id}?term_id=${termId}`, {
-      headers: { "Authorization": `Bearer ${token}` }
-    });
+    const statusRes = await fetch(`${API_BASE}/finance/is-reported-back/${s.id}?term_id=${termId}`, { headers: { "Authorization": `Bearer ${token}` } });
     if (statusRes.ok) {
       const data = await statusRes.json();
       document.getElementById(`rb-status-${s.id}`).innerText = data.reported ? 'Yes' : 'No';
@@ -541,23 +829,12 @@ async function loadReportBackList() {
 
 async function submitReportBack() {
   const termId = document.getElementById("rb_term").value;
-  const checkboxes = document.querySelectorAll(".rb-checkbox:checked");
-  const studentIds = Array.from(checkboxes).map(cb => parseInt(cb.value));
+  const studentIds = Array.from(document.querySelectorAll(".rb-checkbox:checked")).map(cb => parseInt(cb.value));
   const res = await fetch(`${API_BASE}/finance/report-back-bulk`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${token}`
-    },
-    body: JSON.stringify({ term_id: termId, student_ids: studentIds })
+    method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` }, body: JSON.stringify({ term_id: termId, student_ids: studentIds })
   });
-  if (res.ok) {
-    document.getElementById("rb-status").innerText = "Students reported back successfully!";
-    loadReportBackList();
-  } else {
-    const err = await res.json();
-    document.getElementById("rb-status").innerText = err.detail || "Error";
-  }
+  if (res.ok) { document.getElementById("rb-status").innerText = "Students reported back successfully!"; loadReportBackList(); }
+  else { const err = await res.json(); document.getElementById("rb-status").innerText = err.detail || "Error"; }
 }
 
 // ==================== FINANCE – VIEW INVOICES ====================
@@ -571,32 +848,22 @@ async function loadViewInvoicesView(container) {
 }
 
 async function loadInvoices() {
-  const res = await fetch(`${API_BASE}/finance/invoices`, {
-    headers: { "Authorization": `Bearer ${token}` }
-  });
+  const res = await fetch(`${API_BASE}/finance/invoices`, { headers: { "Authorization": `Bearer ${token}` } });
   const invoices = await res.json();
-  window.allInvoices = invoices;  // store for filtering
+  window.allInvoices = invoices;
   renderInvoices(invoices);
 }
 
 function renderInvoices(invoices) {
   const canEdit = currentUser?.clearance_level <= 3;
-  let html = `<table>
-    <tr><th>Invoice #</th><th>Student</th><th>Term</th><th>Total</th><th>Paid</th><th>Balance</th><th>Actions</th></tr>`;
+  let html = `<table><tr><th>Invoice #</th><th>Student</th><th>Term</th><th>Total</th><th>Paid</th><th>Balance</th><th>Actions</th></tr>`;
   invoices.forEach(inv => {
-    html += `<tr>
-      <td>${inv.id}</td>
-      <td>${inv.student_name} (${inv.student_id})</td>
-      <td>${inv.term_name || inv.term_id}</td>
-      <td>${inv.total_amount}</td>
-      <td>${inv.total_paid}</td>
-      <td>${inv.balance}</td>
+    html += `<tr><td>${inv.id}</td><td>${inv.student_name} (${inv.student_id})</td><td>${inv.term_name || inv.term_id}</td><td>${inv.total_amount}</td><td>${inv.total_paid}</td><td>${inv.balance}</td>
       <td>
         <button onclick="viewInvoice(${inv.id})">View</button>
         ${canEdit ? `<button onclick="editInvoice(${inv.id})">Edit</button>` : ''}
         <button onclick="printInvoice(${inv.id})">Print PDF</button>
-      </td>
-    </tr>`;
+      </td></tr>`;
   });
   html += `</table>`;
   document.getElementById("invoice-list").innerHTML = html;
@@ -604,94 +871,53 @@ function renderInvoices(invoices) {
 
 function filterInvoices() {
   const query = document.getElementById("invoice_search").value.toLowerCase();
-  const filtered = window.allInvoices.filter(inv =>
-    inv.student_name.toLowerCase().includes(query) ||
-    inv.student_id.toLowerCase().includes(query)
-  );
+  const filtered = window.allInvoices.filter(inv => inv.student_name.toLowerCase().includes(query) || inv.student_id.toLowerCase().includes(query));
   renderInvoices(filtered);
 }
 
 async function viewInvoice(invoiceId) {
-  const res = await fetch(`${API_BASE}/finance/invoices/${invoiceId}`, {
-    headers: { "Authorization": `Bearer ${token}` }
-  });
+  const res = await fetch(`${API_BASE}/finance/invoices/${invoiceId}`, { headers: { "Authorization": `Bearer ${token}` } });
   const inv = await res.json();
-  alert(JSON.stringify(inv, null, 2));  // Simple display; later you can replace with a modal
+  alert(JSON.stringify(inv, null, 2));
 }
 
 function editInvoice(invoiceId) {
   const newTotal = prompt("Enter new total amount:");
   if (newTotal) {
     fetch(`${API_BASE}/finance/invoices/${invoiceId}`, {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`
-      },
-      body: JSON.stringify({ total_amount: newTotal })
-    }).then(res => {
-      if (res.ok) {
-        alert("Invoice updated!");
-        loadInvoices();
-      } else {
-        alert("Error updating invoice");
-      }
-    });
+      method: "PATCH", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` }, body: JSON.stringify({ total_amount: newTotal })
+    }).then(res => { if (res.ok) { alert("Invoice updated!"); loadInvoices(); } else { alert("Error updating invoice"); } });
   }
 }
 
-function printInvoice(invoiceId) {
-  window.open(`${API_BASE}/finance/invoices/${invoiceId}/pdf`, '_blank');
-}
+function printInvoice(invoiceId) { window.open(`${API_BASE}/finance/invoices/${invoiceId}/pdf`, '_blank'); }
 
 // ==================== FINANCE – CREATE INVOICE ====================
 async function loadCreateInvoiceView(container) {
   container.innerHTML = `
     <h2>Create Invoice for New Student</h2>
-    <select id="ci_student" onchange="loadStudentFeeDetails()">
-      <option value="">Select Student</option>
-    </select>
+    <select id="ci_student" onchange="loadStudentFeeDetails()"><option value="">Select Student</option></select>
     <div id="ci-student-info"></div>
     <div id="ci-fee-items"></div>
     <button onclick="createInvoice()">Generate Invoice</button>
     <p id="ci-status"></p>
   `;
-  // Load all active students
-  const res = await fetch(`${API_BASE}/students/?active=true`, {
-    headers: { "Authorization": `Bearer ${token}` }
-  });
+  const res = await fetch(`${API_BASE}/students/?active=true`, { headers: { "Authorization": `Bearer ${token}` } });
   const students = await res.json();
-  document.getElementById("ci_student").innerHTML = '<option value="">Select Student</option>' +
-    students.map(s => `<option value="${s.id}">${s.first_name} ${s.last_name} (${s.student_id})</option>`).join('');
+  document.getElementById("ci_student").innerHTML = '<option value="">Select Student</option>' + students.map(s => `<option value="${s.id}">${s.first_name} ${s.last_name} (${s.student_id})</option>`).join('');
 }
 
 async function loadStudentFeeDetails() {
   const studentId = document.getElementById("ci_student").value;
   if (!studentId) return;
-  // Fetch student info (level, class, transport, clubs)
-  const res = await fetch(`${API_BASE}/students/${studentId}`, {
-    headers: { "Authorization": `Bearer ${token}` }
-  });
+  const res = await fetch(`${API_BASE}/students/${studentId}`, { headers: { "Authorization": `Bearer ${token}` } });
   const student = await res.json();
-  document.getElementById("ci-student-info").innerHTML = `
-    <p><strong>Name:</strong> ${student.first_name} ${student.last_name}</p>
-    <p><strong>Level:</strong> ${student.level_name || student.level}</p>
-    <p><strong>Class:</strong> ${student.class_name || ''}</p>
-    <p><strong>Transport:</strong> ${student.transport_route || 'None'}</p>
-  `;
-  // Load applicable fee items based on level
-  const feesRes = await fetch(`${API_BASE}/finance/fee-schedules?level_id=${student.level_id}`, {
-    headers: { "Authorization": `Bearer ${token}` }
-  });
+  document.getElementById("ci-student-info").innerHTML = `<p><strong>Name:</strong> ${student.first_name} ${student.last_name}</p><p><strong>Level:</strong> ${student.level_name || student.level}</p><p><strong>Class:</strong> ${student.class_name || ''}</p><p><strong>Transport:</strong> ${student.transport_route || 'None'}</p>`;
+  const feesRes = await fetch(`${API_BASE}/finance/fee-schedules?level_id=${student.level_id}`, { headers: { "Authorization": `Bearer ${token}` } });
   const feeSchedules = await feesRes.json();
   let html = `<h4>Applicable Fees</h4><table><tr><th>Fee Item</th><th>Amount</th><th>Category</th><th>Include</th></tr>`;
   feeSchedules.forEach(fs => {
-    html += `<tr>
-      <td>${fs.fee_item_name}</td>
-      <td>${fs.amount}</td>
-      <td>${fs.category}</td>
-      <td><input type="checkbox" class="ci-fee-check" value="${fs.id}" data-amount="${fs.amount}" checked></td>
-    </tr>`;
+    html += `<tr><td>${fs.fee_item_name}</td><td>${fs.amount}</td><td>${fs.category}</td><td><input type="checkbox" class="ci-fee-check" value="${fs.id}" data-amount="${fs.amount}" checked></td></tr>`;
   });
   html += `</table>`;
   document.getElementById("ci-fee-items").innerHTML = html;
@@ -700,32 +926,16 @@ async function loadStudentFeeDetails() {
 async function createInvoice() {
   const studentId = document.getElementById("ci_student").value;
   const termId = prompt("Enter Term ID:");
-  const selectedFees = Array.from(document.querySelectorAll(".ci-fee-check:checked")).map(cb => ({
-    fee_schedule_id: parseInt(cb.value),
-    amount: parseFloat(cb.dataset.amount)
-  }));
-  const payload = {
-    student_id: parseInt(studentId),
-    term_id: parseInt(termId),
-    fee_items: selectedFees
-  };
+  const selectedFees = Array.from(document.querySelectorAll(".ci-fee-check:checked")).map(cb => ({ fee_schedule_id: parseInt(cb.value), amount: parseFloat(cb.dataset.amount) }));
+  const payload = { student_id: parseInt(studentId), term_id: parseInt(termId), fee_items: selectedFees };
   const res = await fetch(`${API_BASE}/finance/invoices`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${token}`
-    },
-    body: JSON.stringify(payload)
+    method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` }, body: JSON.stringify(payload)
   });
-  if (res.ok) {
-    document.getElementById("ci-status").innerText = "Invoice created!";
-  } else {
-    const err = await res.json();
-    document.getElementById("ci-status").innerText = err.detail || "Error";
-  }
+  if (res.ok) { document.getElementById("ci-status").innerText = "Invoice created!"; }
+  else { const err = await res.json(); document.getElementById("ci-status").innerText = err.detail || "Error"; }
 }
 
-// ==================== REPORTS (kept but hidden from sidebar) ====================
+// ==================== REPORTS (hidden from sidebar) ====================
 async function loadReportsView(container) {
   container.innerHTML = `
     <h2>Reports</h2>
@@ -737,27 +947,20 @@ async function loadReportsView(container) {
 
 async function loadDailyCollections() {
   const date = prompt("Enter date (YYYY-MM-DD):", new Date().toISOString().split('T')[0]);
-  const res = await fetch(`${API_BASE}/finance/reports/daily-collections?date=${date}`, {
-    headers: { "Authorization": `Bearer ${token}` }
-  });
+  const res = await fetch(`${API_BASE}/finance/reports/daily-collections?date=${date}`, { headers: { "Authorization": `Bearer ${token}` } });
   const data = await res.json();
   document.getElementById("report-output").innerHTML = `<pre>${JSON.stringify(data, null, 2)}</pre>`;
 }
 
 async function loadDebtors() {
-  const res = await fetch(`${API_BASE}/finance/reports/debtors`, {
-    headers: { "Authorization": `Bearer ${token}` }
-  });
+  const res = await fetch(`${API_BASE}/finance/reports/debtors`, { headers: { "Authorization": `Bearer ${token}` } });
   const data = await res.json();
   document.getElementById("report-output").innerHTML = `<pre>${JSON.stringify(data, null, 2)}</pre>`;
 }
 
-// ==================== ADMINISTRATION (SUPER ADMIN ONLY) ====================
+// ==================== ADMINISTRATION ====================
 async function loadAdministrationView(container) {
-  if (currentUser?.clearance_level !== 1) {
-    container.innerHTML = "<p>Access denied. Only Super Admin can access this section.</p>";
-    return;
-  }
+  if (currentUser?.clearance_level !== 1) { container.innerHTML = "<p>Access denied.</p>"; return; }
   container.innerHTML = `
     <h2>Staff Management</h2>
     <button onclick="showStaffForm()">Add New Staff</button>
@@ -768,85 +971,43 @@ async function loadAdministrationView(container) {
 }
 
 async function loadStaffList() {
-  const res = await fetch(`${API_BASE}/team/`, {
-    headers: { "Authorization": `Bearer ${token}` }
-  });
+  const res = await fetch(`${API_BASE}/team/`, { headers: { "Authorization": `Bearer ${token}` } });
   const staff = await res.json();
   let html = `<table><tr><th>Name</th><th>Email</th><th>Role</th><th>Clearance</th></tr>`;
-  staff.forEach(member => {
-    html += `<tr>
-      <td>${member.first_name} ${member.last_name}</td>
-      <td>${member.email}</td>
-      <td>${member.role}</td>
-      <td>${member.clearance_level}</td>
-    </tr>`;
-  });
+  staff.forEach(m => { html += `<tr><td>${m.first_name} ${m.last_name}</td><td>${m.email}</td><td>${m.role}</td><td>${m.clearance_level}</td></tr>`; });
   html += `</table>`;
   document.getElementById("staff-list").innerHTML = html;
 }
 
 function showStaffForm() {
-  const form = document.getElementById("staff-form");
-  form.style.display = "block";
+  const form = document.getElementById("staff-form"); form.style.display = "block";
   form.innerHTML = `
     <h3>Create Staff Member</h3>
-    <input id="staff_first_name" placeholder="First Name">
-    <input id="staff_last_name" placeholder="Last Name">
-    <input id="staff_email" type="email" placeholder="Email">
-    <input id="staff_password" type="password" placeholder="Password">
+    <input id="staff_first_name" placeholder="First Name"><input id="staff_last_name" placeholder="Last Name">
+    <input id="staff_email" type="email" placeholder="Email"><input id="staff_password" type="password" placeholder="Password">
     <select id="staff_role">
-      <option value="super_admin">Super Admin</option>
-      <option value="manager">Manager</option>
-      <option value="teacher">Teacher</option>
-      <option value="kitchen">Kitchen</option>
-      <option value="utility">Utility</option>
+      <option value="super_admin">Super Admin</option><option value="manager">Manager</option><option value="teacher">Teacher</option><option value="kitchen">Kitchen</option><option value="utility">Utility</option>
     </select>
     <select id="staff_clearance">
-      <option value="1">Level 1 (Highest)</option>
-      <option value="2">Level 2</option>
-      <option value="3">Level 3</option>
-      <option value="4" selected>Level 4</option>
-      <option value="5">Level 5 (Lowest)</option>
+      <option value="1">Level 1</option><option value="2">Level 2</option><option value="3">Level 3</option><option value="4" selected>Level 4</option><option value="5">Level 5</option>
     </select>
-    <input id="staff_location" placeholder="Location">
-    <button onclick="createStaff()">Save Staff</button>
+    <input id="staff_location" placeholder="Location"><button onclick="createStaff()">Save Staff</button>
   `;
 }
 
 async function createStaff() {
   const payload = {
-    first_name: document.getElementById("staff_first_name").value,
-    last_name: document.getElementById("staff_last_name").value,
-    email: document.getElementById("staff_email").value,
-    password: document.getElementById("staff_password").value,
-    role: document.getElementById("staff_role").value,
-    clearance_level: parseInt(document.getElementById("staff_clearance").value),
-    location: document.getElementById("staff_location").value,
-    is_active: true
+    first_name: document.getElementById("staff_first_name").value, last_name: document.getElementById("staff_last_name").value,
+    email: document.getElementById("staff_email").value, password: document.getElementById("staff_password").value,
+    role: document.getElementById("staff_role").value, clearance_level: parseInt(document.getElementById("staff_clearance").value),
+    location: document.getElementById("staff_location").value, is_active: true
   };
   const res = await fetch(`${API_BASE}/team/`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${token}`
-    },
-    body: JSON.stringify(payload)
+    method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` }, body: JSON.stringify(payload)
   });
-  if (res.ok) {
-    alert("Staff created!");
-    loadAdministrationView(document.getElementById("main-content"));
-  } else {
-    const err = await res.json();
-    alert("Error: " + JSON.stringify(err.detail));
-  }
+  if (res.ok) { alert("Staff created!"); loadAdministrationView(document.getElementById("main-content")); }
+  else { const err = await res.json(); alert("Error: " + JSON.stringify(err.detail)); }
 }
 
 // ==================== UTILS ====================
-async function loadClasses() {
-  const levelId = document.getElementById("s_level").value;
-  const res = await fetch(`${API_BASE}/classes/?level_id=${levelId}`, {
-    headers: { "Authorization": `Bearer ${token}` }
-  });
-  const classes = await res.json();
-  document.getElementById("s_class").innerHTML = classes.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
-}
+function closeModal(modalId) { document.getElementById(modalId).style.display = "none"; }
