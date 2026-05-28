@@ -36,7 +36,7 @@ function logout() {
 
 // ==================== DASHBOARD ====================
 function showDashboard() {
-  const isSuperAdmin = currentUser?.clearance_level === 1;
+  const isSuperAdmin = currentUser?.permissions?.includes("*");
   document.body.innerHTML = `
     <div class="container">
       <nav class="sidebar">
