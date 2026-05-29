@@ -49,7 +49,12 @@ function showDashboard() {
               <li id="sidebar-hr-utilities" onclick="loadView('hr-utilities')">Utilities</li>
             </ul>
           </li>
-          <li onclick="loadView('payroll')">Payroll</li>
+          <li class="dropdown">
+            <span onclick="toggleDropdown('payroll-dropdown')">Payroll ▾</span>
+            <ul id="payroll-dropdown" class="dropdown-menu" style="display:none;">
+              <li id="sidebar-payroll-esp" onclick="loadView('payroll-esp')">Employee Service Profile</li>
+            </ul>
+          </li>
           <li onclick="loadView('asset-management')">Asset Management</li>
           <li onclick="loadView('communication')">Communication</li>
           ${isSuperAdmin ? `
@@ -101,6 +106,8 @@ async function loadView(view) {
     case 'finance-reports': showPlaceholder(main, 'Reports'); break;
     // Reports (hidden from sidebar but kept)
     case 'reports': await loadReportsView(main); break;
+    // Payroll
+    case 'payroll-esp': loadPayrollEspListingView(main); break;
     // Human Resource
     case 'hr-employee-directory': loadHrEmployeeDirectoryView(main); break;
     case 'hr-staff-attendance': showPlaceholder(main, 'Staff Attendance'); break;
@@ -113,7 +120,6 @@ async function loadView(view) {
     // Empty modules
     case 'inventory-management':
     case 'procurement':
-    case 'payroll':
     case 'asset-management':
     case 'communication':
       main.innerHTML = `<h2>${view.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</h2><p>This module is under construction.</p>`;

@@ -6,3 +6,5 @@ let currentUser = null;   // decoded JWT payload after login
 
 // ==================== DATA STORES ====================
 const employeesData = [];
+const employeeServiceProfilesData = [];
+const financialInstitutionsData = [];

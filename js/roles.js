@@ -33,7 +33,9 @@ const NAV_STRUCTURE = [
     { id: 'hr-staff-attendance',   label: 'Staff Attendance' },
     { id: 'hr-utilities',          label: 'Utilities' }
   ]},
-  { id: 'payroll',              label: 'Payroll' },
+  { id: 'payroll', label: 'Payroll', children: [
+    { id: 'payroll-esp', label: 'Employee Service Profile' }
+  ]},
   { id: 'asset-management',     label: 'Asset Management' },
   { id: 'communication',        label: 'Communication' },
   { id: 'administration', label: 'Administration', children: [
