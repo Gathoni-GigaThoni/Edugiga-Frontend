@@ -53,6 +53,18 @@ function showDashboard() {
             <span onclick="toggleDropdown('payroll-dropdown')">Payroll ▾</span>
             <ul id="payroll-dropdown" class="dropdown-menu" style="display:none;">
               <li id="sidebar-payroll-esp" onclick="loadView('payroll-esp')">Employee Service Profile</li>
+              <li class="dropdown">
+                <span onclick="toggleDropdown('payroll-utilities-dropdown')">Utilities ▾</span>
+                <ul id="payroll-utilities-dropdown" class="dropdown-menu" style="display:none;">
+                  <li id="sidebar-payroll-pay-accounts"        class="sidebar-sub-sub" onclick="loadView('payroll-pay-accounts')">Pay Accounts</li>
+                  <li id="sidebar-payroll-pay-grades"          class="sidebar-sub-sub" onclick="loadView('payroll-pay-grades')">Pay Grades</li>
+                  <li id="sidebar-payroll-salary-periods"      class="sidebar-sub-sub" onclick="loadView('payroll-salary-periods')">Salary Periods</li>
+                  <li id="sidebar-payroll-salary-disbursement" class="sidebar-sub-sub" onclick="loadView('payroll-salary-disbursement')">Salary Disbursement Mode</li>
+                  <li id="sidebar-payroll-fi"                  class="sidebar-sub-sub" onclick="loadView('payroll-fi')">Financial Institutions</li>
+                  <li id="sidebar-payroll-employee-events"     class="sidebar-sub-sub" onclick="loadView('payroll-employee-events')">Employee Events</li>
+                  <li id="sidebar-payroll-employee-status"     class="sidebar-sub-sub" onclick="loadView('payroll-employee-status')">Employee Status</li>
+                </ul>
+              </li>
             </ul>
           </li>
           <li onclick="loadView('asset-management')">Asset Management</li>
@@ -108,6 +120,25 @@ async function loadView(view) {
     case 'reports': await loadReportsView(main); break;
     // Payroll
     case 'payroll-esp': loadPayrollEspListingView(main); break;
+    case 'payroll-fi':  loadPayrollFiListingView(main); break;
+    case 'payroll-pay-accounts':
+      setActiveSidebarItem('sidebar-payroll-pay-accounts'); openPayrollDropdowns();
+      showPlaceholder(main, 'Pay Accounts'); break;
+    case 'payroll-pay-grades':
+      setActiveSidebarItem('sidebar-payroll-pay-grades'); openPayrollDropdowns();
+      showPlaceholder(main, 'Pay Grades'); break;
+    case 'payroll-salary-periods':
+      setActiveSidebarItem('sidebar-payroll-salary-periods'); openPayrollDropdowns();
+      showPlaceholder(main, 'Salary Periods'); break;
+    case 'payroll-salary-disbursement':
+      setActiveSidebarItem('sidebar-payroll-salary-disbursement'); openPayrollDropdowns();
+      showPlaceholder(main, 'Salary Disbursement Mode'); break;
+    case 'payroll-employee-events':
+      setActiveSidebarItem('sidebar-payroll-employee-events'); openPayrollDropdowns();
+      showPlaceholder(main, 'Employee Events'); break;
+    case 'payroll-employee-status':
+      setActiveSidebarItem('sidebar-payroll-employee-status'); openPayrollDropdowns();
+      showPlaceholder(main, 'Employee Status'); break;
     // Human Resource
     case 'hr-employee-directory': loadHrEmployeeDirectoryView(main); break;
     case 'hr-staff-attendance': showPlaceholder(main, 'Staff Attendance'); break;

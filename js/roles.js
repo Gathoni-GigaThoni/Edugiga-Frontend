@@ -34,7 +34,16 @@ const NAV_STRUCTURE = [
     { id: 'hr-utilities',          label: 'Utilities' }
   ]},
   { id: 'payroll', label: 'Payroll', children: [
-    { id: 'payroll-esp', label: 'Employee Service Profile' }
+    { id: 'payroll-esp', label: 'Employee Service Profile' },
+    { id: 'payroll-utilities', label: 'Utilities', children: [
+      { id: 'payroll-pay-accounts',        label: 'Pay Accounts' },
+      { id: 'payroll-pay-grades',          label: 'Pay Grades' },
+      { id: 'payroll-salary-periods',      label: 'Salary Periods' },
+      { id: 'payroll-salary-disbursement', label: 'Salary Disbursement Mode' },
+      { id: 'payroll-fi',                  label: 'Financial Institutions' },
+      { id: 'payroll-employee-events',     label: 'Employee Events' },
+      { id: 'payroll-employee-status',     label: 'Employee Status' }
+    ]}
   ]},
   { id: 'asset-management',     label: 'Asset Management' },
   { id: 'communication',        label: 'Communication' },

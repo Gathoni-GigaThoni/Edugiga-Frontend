@@ -2,3 +2,87 @@
 .payroll-page {
   width: 100%;
 }
+
+/* ==================== PAYROLL — UTILITIES SIDEBAR INDENT ==================== */
+.sidebar .sidebar-sub-sub {
+  padding-left: 36px;
+  font-size: 0.88rem;
+}
+
+/* ==================== FINANCIAL INSTITUTIONS — PAGE ==================== */
+.fi-page {
+  width: 100%;
+}
+
+/* ==================== FINANCIAL INSTITUTIONS — TABLE ==================== */
+.fi-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+  margin-top: 0;
+  min-width: 600px;
+}
+
+.fi-table th {
+  background: #2c3e50;
+  color: white;
+  padding: 10px 12px;
+  text-align: left;
+  font-size: 0.82rem;
+  font-weight: bold;
+  border-bottom: 2px solid #1a2634;
+  white-space: nowrap;
+}
+
+.fi-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #eee;
+  font-size: 0.9rem;
+  color: #333;
+}
+
+.fi-table tbody tr:nth-child(even) td {
+  background: #f9f9f9;
+}
+
+.fi-table tbody tr:hover td {
+  background: #f0f7f7;
+}
+
+/* ==================== FINANCIAL INSTITUTIONS — STATUS PILL ==================== */
+.fi-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.fi-pill-active {
+  background: #2db3b3;
+  color: white;
+}
+
+.fi-pill-inactive {
+  background: #f2f2f2;
+  color: #777;
+}
+
+.fi-pill-toggle {
+  background: transparent !important;
+  border: none !important;
+  color: inherit !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  width: auto !important;
+  font-size: 0.7rem;
+  cursor: pointer;
+  line-height: 1;
+}
+.fi-pill-toggle:hover {
+  opacity: 0.75;
+}
