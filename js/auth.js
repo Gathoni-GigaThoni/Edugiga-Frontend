@@ -13,7 +13,7 @@ async function login() {
     });
     if (!res.ok) throw new Error("Invalid credentials");
     const data = await res.json();
-    token = data.access_token;
+    token = data.token;
     if (!token) throw new Error("Login failed: no token received");
     const payload = JSON.parse(atob(token.split('.')[1]));
     currentUser = payload;
