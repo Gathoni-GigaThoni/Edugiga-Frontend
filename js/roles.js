@@ -10,7 +10,16 @@ const NAV_STRUCTURE = [
   ]},
   { id: 'student-academics', label: 'Student Academics', children: [
     { id: 'attendance-register', label: 'Attendance Register' },
-    { id: 'academic-year-setup', label: 'Academic Year Setup' }
+    { id: 'attendance-reports',  label: 'Attendance Reports', children: [
+      { id: 'attendance-register-report', label: 'Attendance Register Report' }
+    ]},
+    { id: 'formative-assessment',  label: 'Formative Assessment' },
+    { id: 'sa-subjects',           label: 'Subjects' },
+    { id: 'sa-utilities',          label: 'Utilities' },
+    { id: 'sa-setup',              label: 'Set-up' },
+    { id: 'sa-sessions',           label: 'Sessions' },
+    { id: 'sa-session-types',      label: 'Session Types' },
+    { id: 'sa-academic-years',     label: 'Academic Years' }
   ]},
   { id: 'transport-management', label: 'Transport Management' },
   { id: 'finance', label: 'Finance', children: [

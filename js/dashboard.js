@@ -18,8 +18,26 @@ function showDashboard() {
           <li class="dropdown">
             <span onclick="toggleDropdown('student-academics-dropdown')">Student Academics ▾</span>
             <ul id="student-academics-dropdown" class="dropdown-menu" style="display:none;">
-              <li onclick="loadView('attendance-register')">Attendance Register</li>
-              <li onclick="loadView('academic-year-setup')">Academic Year Setup</li>
+              <li id="sidebar-att-register" onclick="loadView('attendance-register')">Attendance Register</li>
+              <li class="dropdown">
+                <span onclick="toggleDropdown('att-reports-dropdown')">Attendance Reports ▾</span>
+                <ul id="att-reports-dropdown" class="dropdown-menu" style="display:none;">
+                  <li id="sidebar-att-reg-report" class="sa-sub-sub" onclick="loadView('attendance-register-report')">Attendance Register Report</li>
+                </ul>
+              </li>
+              <li id="sidebar-formative-assessment" onclick="loadView('formative-assessment')">Formative Assessment</li>
+              <li id="sidebar-sa-subjects"     onclick="loadView('sa-subjects')">Subjects</li>
+              <li class="dropdown">
+                <span onclick="toggleDropdown('sa-utilities-dropdown')">Utilities ▾</span>
+                <ul id="sa-utilities-dropdown" class="dropdown-menu" style="display:none;"></ul>
+              </li>
+              <li class="dropdown">
+                <span onclick="toggleDropdown('sa-setup-dropdown')">Set-up ▾</span>
+                <ul id="sa-setup-dropdown" class="dropdown-menu" style="display:none;"></ul>
+              </li>
+              <li id="sidebar-sa-sessions"     onclick="loadView('sa-sessions')">Sessions</li>
+              <li id="sidebar-sa-session-types" onclick="loadView('sa-session-types')">Session Types</li>
+              <li id="sidebar-sa-academic-years" onclick="loadView('sa-academic-years')">Academic Years</li>
             </ul>
           </li>
           <li onclick="loadView('transport-management')">Transport Management</li>
@@ -100,8 +118,26 @@ async function loadView(view) {
     case 'student-search': await loadStudentSearchView(main); break;
     case 'student-reporting': await loadStudentReportingView(main); break;
     // Student Academics
-    case 'attendance-register': await loadAttendanceView(main); break;
-    case 'academic-year-setup': await loadAcademicsView(main); break;
+    case 'attendance-register':
+      setActiveSidebarItem('sidebar-att-register'); await loadAttendanceView(main); break;
+    case 'attendance-register-report':
+      setActiveSidebarItem('sidebar-att-reg-report'); await loadAttendanceRegisterReportView(main); break;
+    case 'formative-assessment':
+      setActiveSidebarItem('sidebar-formative-assessment');
+      loadSaPlaceholderView(main, 'Formative Assessment'); break;
+    case 'sa-subjects':
+      setActiveSidebarItem('sidebar-sa-subjects');
+      loadSaPlaceholderView(main, 'Subjects'); break;
+    case 'sa-utilities':
+      loadSaPlaceholderView(main, 'Utilities'); break;
+    case 'sa-setup':
+      loadSaPlaceholderView(main, 'Set-up'); break;
+    case 'sa-sessions':
+      setActiveSidebarItem('sidebar-sa-sessions'); await loadSessionsView(main); break;
+    case 'sa-session-types':
+      setActiveSidebarItem('sidebar-sa-session-types'); loadSessionTypesView(main); break;
+    case 'sa-academic-years':
+      setActiveSidebarItem('sidebar-sa-academic-years'); await loadAcademicYearsView(main); break;
     // Transport
     case 'transport-management': await loadTransportView(main); break;
     // Finance (NEW sub-modules)
@@ -161,6 +197,22 @@ async function loadView(view) {
 
 function showPlaceholder(container, title) {
   container.innerHTML = `<h2>${title}</h2><p>This module is under construction.</p>`;
+}
+
+function loadSaPlaceholderView(container, title) {
+  container.innerHTML = `
+    <div class="sa-page">
+      <div class="sa-header-row">
+        <h2 class="sa-title">${title}</h2>
+        <div class="sa-breadcrumb">Dashboard &rsaquo; Student Academics &rsaquo; ${title}</div>
+      </div>
+      <div style="background:white;border-radius:6px;padding:48px 24px;text-align:center;
+                  color:#888;border:1px solid #eee;box-shadow:0 1px 4px rgba(0,0,0,0.04);">
+        <p style="font-size:1rem;font-weight:600;margin:0;">Coming Soon</p>
+        <p style="font-size:0.88rem;margin-top:8px;">This module is currently under development.</p>
+      </div>
+    </div>
+  `;
 }
 
 function toggleDropdown(id) {

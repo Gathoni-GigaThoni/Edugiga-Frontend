@@ -1,0 +1,624 @@
+/* ==================== STUDENT ACADEMICS MODULE ==================== */
+
+/* Page wrapper */
+.sa-page { width: 100%; }
+
+/* Header row */
+.sa-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 18px;
+}
+.sa-title { margin: 0; font-size: 1.4rem; color: #2c3e50; }
+.sa-breadcrumb { font-size: 0.85rem; color: #777; text-align: right; padding-top: 6px; }
+.sa-bc-link { color: #0070f3; text-decoration: none; }
+.sa-bc-link:hover { text-decoration: underline; }
+
+/* Controls row */
+.sa-controls-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.sa-controls-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  color: #444;
+}
+.sa-controls-left select {
+  width: auto !important;
+  max-width: none !important;
+  display: inline-block !important;
+  padding: 6px 8px !important;
+  margin: 0 !important;
+  font-size: 0.9rem;
+}
+.sa-controls-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* Buttons */
+.sa-btn-add {
+  background: #2db3b3 !important;
+  color: white !important;
+  border: none !important;
+  padding: 8px 16px !important;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 600;
+  width: auto !important;
+  margin: 0 !important;
+  white-space: nowrap;
+}
+.sa-btn-add:hover { background: #249a9a !important; }
+
+.sa-btn-load {
+  background: #2db3b3 !important;
+  color: white !important;
+  border: none !important;
+  padding: 8px 22px !important;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 600;
+  width: auto !important;
+  margin: 0 !important;
+}
+.sa-btn-load:hover { background: #249a9a !important; }
+
+.sa-btn-clear {
+  background: white !important;
+  color: #2c3e50 !important;
+  border: 1px solid #bbb !important;
+  padding: 8px 22px !important;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  width: auto !important;
+  margin: 0 !important;
+}
+.sa-btn-clear:hover { background: #f0f0f0 !important; }
+
+.sa-btn-submit {
+  background: #2db3b3 !important;
+  color: white !important;
+  border: none !important;
+  padding: 10px 28px !important;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.95rem;
+  font-weight: 600;
+  width: auto !important;
+  margin: 0 !important;
+}
+.sa-btn-submit:hover { background: #249a9a !important; }
+
+.sa-btn-cancel {
+  background: #e0534a !important;
+  color: white !important;
+  border: none !important;
+  padding: 10px 28px !important;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.95rem;
+  width: auto !important;
+  margin: 0 !important;
+}
+.sa-btn-cancel:hover { background: #c0392b !important; }
+
+/* Table */
+.sa-table-wrap { overflow-x: auto; width: 100%; }
+.sa-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+  margin-top: 0;
+  min-width: 480px;
+}
+.sa-table th {
+  background: #2c3e50;
+  color: white;
+  padding: 10px 12px;
+  text-align: left;
+  font-size: 0.82rem;
+  font-weight: bold;
+  letter-spacing: 0.04em;
+  border-bottom: 2px solid #1a2634;
+  white-space: nowrap;
+}
+.sa-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #eee;
+  font-size: 0.9rem;
+  color: #333;
+}
+.sa-table tbody tr:nth-child(even) td { background: #f9f9f9; }
+.sa-table tbody tr:hover td { background: #f0f7f7; }
+.sa-empty {
+  text-align: center !important;
+  color: #888;
+  padding: 32px !important;
+  font-style: italic;
+}
+
+/* Action column */
+.sa-action-cell { width: 60px; text-align: center; }
+.sa-action-wrap { position: relative; display: inline-block; }
+.sa-action-btn {
+  background: #f0f2f5 !important;
+  color: #333 !important;
+  border: 1px solid #ccc !important;
+  border-radius: 4px;
+  padding: 4px 10px !important;
+  cursor: pointer;
+  font-size: 1rem;
+  width: auto !important;
+  margin: 0 !important;
+  line-height: 1.2;
+}
+.sa-action-btn:hover { background: #e0e3e8 !important; }
+.sa-action-dropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 2px);
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  box-shadow: 0 3px 8px rgba(0,0,0,0.12);
+  z-index: 200;
+  min-width: 110px;
+}
+.sa-action-dropdown a {
+  display: block;
+  padding: 9px 14px;
+  color: #333;
+  text-decoration: none;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+.sa-action-dropdown a:hover { background: #f5f5f5; }
+
+/* Status pills */
+.sa-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.sa-pill-active { background: #2db3b3; color: white; }
+.sa-pill-inactive { background: #f2f2f2; color: #777; }
+
+/* Form */
+.sa-form-wrap { max-width: 560px; }
+.sa-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 16px;
+}
+.sa-form-label { font-size: 0.85rem; font-weight: bold; color: #444; }
+.sa-required { color: #e0534a; margin-left: 2px; }
+.sa-form-input {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 8px 10px !important;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  display: block !important;
+  box-sizing: border-box;
+}
+.sa-form-select {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 8px 10px !important;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  display: block !important;
+  box-sizing: border-box;
+}
+.sa-form-check-group { margin-bottom: 20px; }
+.sa-form-check-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  color: #444;
+  cursor: pointer;
+}
+.sa-form-cb {
+  width: auto !important;
+  max-width: none !important;
+  display: inline-block !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.sa-form-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid #eee;
+}
+
+/* Inline error text */
+.sa-field-error {
+  color: #e0534a;
+  font-size: 0.82rem;
+  margin-top: 2px;
+  display: block;
+  min-height: 16px;
+}
+
+/* ==================== ATTENDANCE FILTER BAR ==================== */
+.sa-filter-bar {
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  padding: 20px;
+  margin-bottom: 24px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+}
+.sa-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(175px, 1fr));
+  gap: 14px 16px;
+  margin-bottom: 16px;
+}
+.sa-filter-field { display: flex; flex-direction: column; gap: 4px; }
+.sa-filter-label { font-size: 0.83rem; font-weight: bold; color: #444; }
+.sa-filter-select {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 7px 9px !important;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.88rem;
+  display: block !important;
+  box-sizing: border-box;
+}
+.sa-filter-input {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 7px 9px !important;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.88rem;
+  display: block !important;
+  box-sizing: border-box;
+}
+.sa-filter-actions { display: flex; gap: 10px; align-items: center; }
+
+/* Attendance student table cells */
+.sa-table-select {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 6px 8px !important;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.88rem;
+  min-width: 130px;
+  box-sizing: border-box;
+}
+.sa-table-input {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 6px 8px !important;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.88rem;
+  min-width: 140px;
+  box-sizing: border-box;
+}
+
+/* Mark Attendance button row */
+.sa-mark-attend-row {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #eee;
+}
+.sa-btn-mark-attend {
+  background: #2db3b3 !important;
+  color: white !important;
+  border: none !important;
+  padding: 10px 32px !important;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.95rem;
+  font-weight: 600;
+  width: auto !important;
+  margin: 0 !important;
+}
+.sa-btn-mark-attend:hover { background: #249a9a !important; }
+
+/* Toast notifications */
+.sa-toast {
+  padding: 12px 18px;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin-top: 14px;
+  display: inline-block;
+}
+.sa-toast-success { background: #eafaf1; color: #27ae60; border: 1px solid #a9dfbf; }
+.sa-toast-error   { background: #fdecea; color: #c0392b; border: 1px solid #f1948a; }
+
+/* Loading / empty / error inline states */
+.sa-loading    { color: #666; font-style: italic; padding: 20px 0; }
+.sa-empty-msg  { color: #888; font-style: italic; padding: 20px 0; }
+.sa-error-msg  { color: #c0392b; padding: 10px 0; }
+
+/* ==================== ACADEMIC YEARS — TERMS TABLE ==================== */
+.sa-terms-section { margin-top: 28px; }
+.sa-terms-title {
+  font-size: 1rem;
+  font-weight: bold;
+  color: #2c3e50;
+  margin-bottom: 12px;
+}
+.sa-terms-input {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 6px 8px !important;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.88rem;
+  min-width: 120px;
+  box-sizing: border-box;
+}
+.sa-btn-save-term {
+  background: #2db3b3 !important;
+  color: white !important;
+  border: none !important;
+  padding: 6px 14px !important;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  width: auto !important;
+  margin: 0 !important;
+}
+.sa-btn-save-term:hover { background: #249a9a !important; }
+.sa-term-save-msg {
+  font-size: 0.82rem;
+  color: #27ae60;
+  margin-top: 4px;
+  font-weight: 600;
+}
+
+/* Sidebar sub-sub indent for Attendance Reports child */
+.sidebar .sa-sub-sub {
+  padding-left: 36px;
+  font-size: 0.88rem;
+}
+
+/* ==================== SUMMARY STAT CARDS ==================== */
+.sa-stats-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.sa-stat-card {
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  padding: 20px 24px;
+  text-align: center;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+}
+.sa-stat-label {
+  font-size: 0.75rem;
+  font-weight: bold;
+  color: #666;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+.sa-stat-value {
+  font-size: 2.2rem;
+  font-weight: 700;
+  color: #2c3e50;
+  line-height: 1;
+}
+
+/* ==================== INLINE STATUS TOGGLE BADGE ==================== */
+.sa-status-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  border: none !important;
+  width: auto !important;
+  margin: 0 !important;
+  line-height: 1.4;
+}
+.sa-status-btn-active   { background: #d4edda; color: #27ae60; }
+.sa-status-btn-active:hover   { background: #c3e6cb !important; }
+.sa-status-btn-deactive { background: #fde8e8; color: #c0392b; }
+.sa-status-btn-deactive:hover { background: #fbd3d3 !important; }
+
+/* ==================== COLLAPSIBLE FILTERS PANEL ==================== */
+.sa-filter-panel {
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  padding: 16px 20px;
+  margin-bottom: 14px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+}
+.sa-filter-panel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 14px 16px;
+}
+
+/* ==================== TWO-COLUMN FORM GRID ==================== */
+.sa-form-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px 28px;
+  margin-bottom: 16px;
+}
+.sa-form-textarea {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 8px 10px !important;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  display: block !important;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 80px;
+}
+
+/* ==================== TOOLBAR SEARCH + FILTER BUTTON ==================== */
+.sa-search-input {
+  width: 200px !important;
+  max-width: 200px !important;
+  display: inline-block !important;
+  padding: 7px 10px !important;
+  margin: 0 !important;
+  font-size: 0.9rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-sizing: border-box;
+}
+.sa-btn-filter {
+  background: #2c3e50 !important;
+  color: white !important;
+  border: none !important;
+  padding: 8px 16px !important;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  width: auto !important;
+  margin: 0 !important;
+  white-space: nowrap;
+}
+.sa-btn-filter:hover { background: #34495e !important; }
+
+/* ==================== EXPORT BUTTONS ==================== */
+.sa-export-row { display: flex; gap: 8px; align-items: center; }
+.sa-btn-export {
+  background: white !important;
+  color: #555 !important;
+  border: 1px solid #bbb !important;
+  padding: 7px 12px !important;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.88rem;
+  width: auto !important;
+  margin: 0 !important;
+  white-space: nowrap;
+}
+.sa-btn-export:hover { background: #f5f5f5 !important; }
+
+/* Clear button — dark/navy variant (used in report filter bar) */
+.sa-btn-clear-dark {
+  background: #2c3e50 !important;
+  color: white !important;
+  border: none !important;
+  padding: 8px 22px !important;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  width: auto !important;
+  margin: 0 !important;
+}
+.sa-btn-clear-dark:hover { background: #34495e !important; }
+
+/* Report filter row 3 — student + buttons flex row */
+.sa-rpt-actions-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.sa-rpt-student-field {
+  flex: 1;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Report table toolbar */
+.sa-rpt-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.sa-rpt-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  color: #444;
+}
+.sa-rpt-toolbar-left select {
+  width: auto !important;
+  max-width: none !important;
+  display: inline-block !important;
+  padding: 6px 8px !important;
+  margin: 0 !important;
+  font-size: 0.9rem;
+}
+.sa-rpt-toolbar-right { display: flex; align-items: center; }
+
+/* Pagination row */
+.sa-pagination {
+  display: flex;
+  gap: 6px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.sa-pagination button {
+  background: white !important;
+  color: #333 !important;
+  border: 1px solid #ddd !important;
+  padding: 6px 12px !important;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  width: auto !important;
+  margin: 0 !important;
+}
+.sa-pagination button:hover  { background: #f0f0f0 !important; }
+.sa-pagination button:disabled { opacity: 0.5; cursor: default; }
+.sa-pg-active { background: #2c3e50 !important; color: white !important; border-color: #2c3e50 !important; }
