@@ -46,7 +46,17 @@ function showDashboard() {
             <ul id="finance-dropdown" class="dropdown-menu" style="display:none;">
               <li onclick="loadView('student-fees-status')">Student Fees Status</li>
               <li onclick="loadView('summarized-fee-statement')">Summarized Fee Statement</li>
-              <li onclick="loadView('student-finance')">Student Finance</li>
+              <li class="dropdown">
+                <span onclick="toggleDropdown('fin-sf-dropdown')">Student Finance ▾</span>
+                <ul id="fin-sf-dropdown" class="dropdown-menu" style="display:none;">
+                  <li id="sidebar-fin-invoices"       class="sidebar-sub-sub" onclick="loadView('fin-student-invoices')">Student Invoices</li>
+                  <li id="sidebar-fin-bulk"           class="sidebar-sub-sub" onclick="loadView('fin-student-bulk-invoicing')">Student Bulk Invoicing</li>
+                  <li id="sidebar-fin-inv-adj"        class="sidebar-sub-sub" onclick="loadView('fin-invoice-adjustments')">Student Invoice Adjustments</li>
+                  <li id="sidebar-fin-spon-alloc"     class="sidebar-sub-sub" onclick="loadView('fin-sponsorship-allocations')">Sponsorship Allocations</li>
+                  <li id="sidebar-fin-spon-mgmt"      class="sidebar-sub-sub" onclick="loadView('fin-sponsorship-managements')">Sponsorship Managements</li>
+                  <li id="sidebar-fin-fee-setup"      class="sidebar-sub-sub" onclick="loadView('fin-fee-setup-per-class')">Fee Set-up per Class</li>
+                </ul>
+              </li>
               <li onclick="loadView('cash-bank-management')">Cash and Bank Management</li>
               <li onclick="loadView('payables')">Payables</li>
               <li onclick="loadView('receivables')">Receivables</li>
@@ -142,8 +152,27 @@ async function loadView(view) {
     case 'transport-management': await loadTransportView(main); break;
     // Finance (NEW sub-modules)
     case 'student-fees-status': await loadStudentFeesStatusView(main); break;
-    case 'summarized-fee-statement': showPlaceholder(main, 'Summarized Fee Statement'); break;
+    case 'summarized-fee-statement': await loadSummarizedFeeStatementView(main); break;
     case 'student-finance': showPlaceholder(main, 'Student Finance'); break;
+    // Student Finance sub-modules
+    case 'fin-student-invoices':
+      setActiveSidebarItem('sidebar-fin-invoices'); openFinStudentFinanceDropdown();
+      loadStudentInvoicesView(main); break;
+    case 'fin-student-bulk-invoicing':
+      setActiveSidebarItem('sidebar-fin-bulk'); openFinStudentFinanceDropdown();
+      loadStudentBulkInvoicingView(main); break;
+    case 'fin-invoice-adjustments':
+      setActiveSidebarItem('sidebar-fin-inv-adj'); openFinStudentFinanceDropdown();
+      loadFinPlaceholderView(main, 'Student Invoice Adjustments'); break;
+    case 'fin-sponsorship-allocations':
+      setActiveSidebarItem('sidebar-fin-spon-alloc'); openFinStudentFinanceDropdown();
+      loadFinPlaceholderView(main, 'Sponsorship Allocations'); break;
+    case 'fin-sponsorship-managements':
+      setActiveSidebarItem('sidebar-fin-spon-mgmt'); openFinStudentFinanceDropdown();
+      loadFinPlaceholderView(main, 'Sponsorship Managements'); break;
+    case 'fin-fee-setup-per-class':
+      setActiveSidebarItem('sidebar-fin-fee-setup'); openFinStudentFinanceDropdown();
+      loadFinPlaceholderView(main, 'Fee Set-up per Class'); break;
     case 'cash-bank-management': showPlaceholder(main, 'Cash and Bank Management'); break;
     case 'payables': showPlaceholder(main, 'Payables'); break;
     case 'receivables': showPlaceholder(main, 'Receivables'); break;

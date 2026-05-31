@@ -25,7 +25,14 @@ const NAV_STRUCTURE = [
   { id: 'finance', label: 'Finance', children: [
     { id: 'student-fees-status',       label: 'Student Fees Status' },
     { id: 'summarized-fee-statement',  label: 'Summarized Fee Statement' },
-    { id: 'student-finance',           label: 'Student Finance' },
+    { id: 'student-finance', label: 'Student Finance', children: [
+      { id: 'fin-student-invoices',         label: 'Student Invoices' },
+      { id: 'fin-student-bulk-invoicing',   label: 'Student Bulk Invoicing' },
+      { id: 'fin-invoice-adjustments',      label: 'Student Invoice Adjustments' },
+      { id: 'fin-sponsorship-allocations',  label: 'Sponsorship Allocations' },
+      { id: 'fin-sponsorship-managements',  label: 'Sponsorship Managements' },
+      { id: 'fin-fee-setup-per-class',      label: 'Fee Set-up per Class' }
+    ]},
     { id: 'cash-bank-management',      label: 'Cash and Bank Management' },
     { id: 'payables',                  label: 'Payables' },
     { id: 'receivables',               label: 'Receivables' },

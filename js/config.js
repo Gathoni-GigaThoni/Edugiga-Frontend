@@ -8,3 +8,8 @@ let currentUser = null;   // decoded JWT payload after login
 const employeesData = [];
 const employeeServiceProfilesData = [];
 const financialInstitutionsData = [];
+
+// Finance
+let studentInvoicesData = [];
+let sessionData         = [];
+let studentClassesData  = [];
