@@ -35,10 +35,22 @@ const NAV_STRUCTURE = [
     ]},
     { id: 'cash-bank-management',      label: 'Cash and Bank Management' },
     { id: 'payables',                  label: 'Payables' },
-    { id: 'receivables',               label: 'Receivables' },
+    { id: 'receivables', label: 'Receivables', children: [
+      { id: 'fin-receive-payments', label: 'Receive Payments' },
+      { id: 'fin-transactions',     label: 'Transactions' },
+      { id: 'fin-deposit-slip',     label: 'Deposit Slip' },
+      { id: 'fin-credit-notes',     label: 'Credit Notes' }
+    ]},
     { id: 'cancellations',             label: 'Cancellations' },
     { id: 'journal-entries',           label: 'Journal Entries' },
-    { id: 'utilities',                 label: 'Utilities' },
+    { id: 'utilities', label: 'Utilities', children: [
+      { id: 'fin-chart-of-accounts', label: 'Chart of Accounts' },
+      { id: 'fin-fee-accounts',      label: 'Fee Accounts' },
+      { id: 'fin-groups',            label: 'Groups' },
+      { id: 'fin-sub-groups',        label: 'Sub Groups' },
+      { id: 'fin-fiscal-years',      label: 'Fiscal Years' },
+      { id: 'fin-payment-modes',     label: 'Payment Modes' }
+    ]},
     { id: 'finance-setup',             label: 'Set-up' },
     { id: 'finance-reports',           label: 'Reports' }
   ]},

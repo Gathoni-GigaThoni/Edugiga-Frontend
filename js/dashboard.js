@@ -59,10 +59,28 @@ function showDashboard() {
               </li>
               <li onclick="loadView('cash-bank-management')">Cash and Bank Management</li>
               <li onclick="loadView('payables')">Payables</li>
-              <li onclick="loadView('receivables')">Receivables</li>
+              <li class="dropdown">
+                <span onclick="toggleDropdown('fin-receivables-dropdown')">Receivables ▾</span>
+                <ul id="fin-receivables-dropdown" class="dropdown-menu" style="display:none;">
+                  <li id="sidebar-fin-rcv-pay"   class="sidebar-sub-sub" onclick="loadView('fin-receive-payments')">Receive Payments</li>
+                  <li id="sidebar-fin-txns"       class="sidebar-sub-sub" onclick="loadView('fin-transactions')">Transactions</li>
+                  <li id="sidebar-fin-deposit"    class="sidebar-sub-sub" onclick="loadView('fin-deposit-slip')">Deposit Slip</li>
+                  <li id="sidebar-fin-credit"     class="sidebar-sub-sub" onclick="loadView('fin-credit-notes')">Credit Notes</li>
+                </ul>
+              </li>
               <li onclick="loadView('cancellations')">Cancellations</li>
               <li onclick="loadView('journal-entries')">Journal Entries</li>
-              <li onclick="loadView('utilities')">Utilities</li>
+              <li class="dropdown">
+                <span onclick="toggleDropdown('fin-utilities-dropdown')">Utilities ▾</span>
+                <ul id="fin-utilities-dropdown" class="dropdown-menu" style="display:none;">
+                  <li id="sidebar-fin-coa"        class="sidebar-sub-sub" onclick="loadView('fin-chart-of-accounts')">Chart of Accounts</li>
+                  <li id="sidebar-fin-fee-accts"  class="sidebar-sub-sub" onclick="loadView('fin-fee-accounts')">Fee Accounts</li>
+                  <li id="sidebar-fin-groups"     class="sidebar-sub-sub" onclick="loadView('fin-groups')">Groups</li>
+                  <li id="sidebar-fin-subgroups"  class="sidebar-sub-sub" onclick="loadView('fin-sub-groups')">Sub Groups</li>
+                  <li id="sidebar-fin-fiscal"     class="sidebar-sub-sub" onclick="loadView('fin-fiscal-years')">Fiscal Years</li>
+                  <li id="sidebar-fin-pay-modes"  class="sidebar-sub-sub" onclick="loadView('fin-payment-modes')">Payment Modes</li>
+                </ul>
+              </li>
               <li onclick="loadView('finance-setup')">Set-up</li>
               <li onclick="loadView('finance-reports')">Reports</li>
             </ul>
@@ -163,16 +181,48 @@ async function loadView(view) {
       loadStudentBulkInvoicingView(main); break;
     case 'fin-invoice-adjustments':
       setActiveSidebarItem('sidebar-fin-inv-adj'); openFinStudentFinanceDropdown();
-      loadFinPlaceholderView(main, 'Student Invoice Adjustments'); break;
+      loadInvoiceAdjustmentsView(main); break;
     case 'fin-sponsorship-allocations':
       setActiveSidebarItem('sidebar-fin-spon-alloc'); openFinStudentFinanceDropdown();
-      loadFinPlaceholderView(main, 'Sponsorship Allocations'); break;
+      loadSponsorshipAllocationsView(main); break;
     case 'fin-sponsorship-managements':
       setActiveSidebarItem('sidebar-fin-spon-mgmt'); openFinStudentFinanceDropdown();
       loadFinPlaceholderView(main, 'Sponsorship Managements'); break;
     case 'fin-fee-setup-per-class':
       setActiveSidebarItem('sidebar-fin-fee-setup'); openFinStudentFinanceDropdown();
-      loadFinPlaceholderView(main, 'Fee Set-up per Class'); break;
+      loadFeeSetupPerClassView(main); break;
+    // Receivables sub-modules
+    case 'fin-receive-payments':
+      setActiveSidebarItem('sidebar-fin-rcv-pay'); openFinReceivablesDropdown();
+      await loadReceivePaymentsView(main); break;
+    case 'fin-transactions':
+      setActiveSidebarItem('sidebar-fin-txns'); openFinReceivablesDropdown();
+      loadFinPlaceholderView(main, 'Transactions'); break;
+    case 'fin-deposit-slip':
+      setActiveSidebarItem('sidebar-fin-deposit'); openFinReceivablesDropdown();
+      loadFinPlaceholderView(main, 'Deposit Slip'); break;
+    case 'fin-credit-notes':
+      setActiveSidebarItem('sidebar-fin-credit'); openFinReceivablesDropdown();
+      loadFinPlaceholderView(main, 'Credit Notes'); break;
+    // Utilities sub-modules
+    case 'fin-chart-of-accounts':
+      setActiveSidebarItem('sidebar-fin-coa'); openFinUtilitiesDropdown();
+      loadChartOfAccountsView(main); break;
+    case 'fin-fee-accounts':
+      setActiveSidebarItem('sidebar-fin-fee-accts'); openFinUtilitiesDropdown();
+      loadFeeAccountsView(main); break;
+    case 'fin-groups':
+      setActiveSidebarItem('sidebar-fin-groups'); openFinUtilitiesDropdown();
+      loadFinPlaceholderView(main, 'Groups'); break;
+    case 'fin-sub-groups':
+      setActiveSidebarItem('sidebar-fin-subgroups'); openFinUtilitiesDropdown();
+      loadFinPlaceholderView(main, 'Sub Groups'); break;
+    case 'fin-fiscal-years':
+      setActiveSidebarItem('sidebar-fin-fiscal'); openFinUtilitiesDropdown();
+      loadFinPlaceholderView(main, 'Fiscal Years'); break;
+    case 'fin-payment-modes':
+      setActiveSidebarItem('sidebar-fin-pay-modes'); openFinUtilitiesDropdown();
+      loadFinPlaceholderView(main, 'Payment Modes'); break;
     case 'cash-bank-management': showPlaceholder(main, 'Cash and Bank Management'); break;
     case 'payables': showPlaceholder(main, 'Payables'); break;
     case 'receivables': showPlaceholder(main, 'Receivables'); break;
