@@ -653,41 +653,6 @@ function _stuTabPrevEdu(d) {
         <label>Year Left Previous School</label>
         <input id="se-year-left" class="fin-search-input" style="width:100%!important" value="${_esc(d.year_left_prev_school||'')}">
       </div>
-      <div></div>
-
-      <div class="stu-form-group" style="grid-column:span 2;">
-        <label style="font-weight:600;color:#2c3e50;padding-bottom:6px;border-bottom:1px solid #eee;display:block;">KCPE</label>
-      </div>
-      <div class="stu-form-group">
-        <label>KCPE Index Number</label>
-        <input id="se-kcpe-index" class="fin-search-input" style="width:100%!important" value="${_esc(d.kcpe_index||'')}">
-      </div>
-      <div class="stu-form-group">
-        <label>KCPE Year</label>
-        <input id="se-kcpe-year" class="fin-search-input" style="width:100%!important" value="${_esc(d.kcpe_year||'')}">
-      </div>
-      <div class="stu-form-group">
-        <label>KCPE Grade</label>
-        <input id="se-kcpe-grade" class="fin-search-input" style="width:100%!important" value="${_esc(d.kcpe_grade||'')}">
-      </div>
-      <div></div>
-
-      <div class="stu-form-group" style="grid-column:span 2;">
-        <label style="font-weight:600;color:#2c3e50;padding-bottom:6px;border-bottom:1px solid #eee;display:block;">KCSE</label>
-      </div>
-      <div class="stu-form-group">
-        <label>KCSE Index Number</label>
-        <input id="se-kcse-index" class="fin-search-input" style="width:100%!important" value="${_esc(d.kcse_index||'')}">
-      </div>
-      <div class="stu-form-group">
-        <label>KCSE Year</label>
-        <input id="se-kcse-year" class="fin-search-input" style="width:100%!important" value="${_esc(d.kcse_year||'')}">
-      </div>
-      <div class="stu-form-group">
-        <label>KCSE Grade</label>
-        <input id="se-kcse-grade" class="fin-search-input" style="width:100%!important" value="${_esc(d.kcse_grade||'')}">
-      </div>
-      <div></div>
     </div>
   `;
 }
@@ -879,8 +844,6 @@ async function submitStudentForm() {
     prev_school_name:      _fv('se-prev-school'),
     prev_school_type:      _fv('se-prev-school-type'),
     year_left_prev_school: _fv('se-year-left'),
-    kcpe_index: _fv('se-kcpe-index'), kcpe_year: _fv('se-kcpe-year'), kcpe_grade: _fv('se-kcpe-grade'),
-    kcse_index: _fv('se-kcse-index'), kcse_year: _fv('se-kcse-year'), kcse_grade: _fv('se-kcse-grade'),
     medical: {
       allergies:               _fv('se-allergies'),
       chronic_symptoms:        _fv('se-chronic'),
