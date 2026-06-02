@@ -13,6 +13,16 @@ function showDashboard() {
               <li onclick="loadView('students-list')">Students</li>
               <li onclick="loadView('student-search')">Student Search</li>
               <li onclick="loadView('student-reporting')">Student Reporting</li>
+              <li class="dropdown">
+                <span onclick="toggleDropdown('stu-reports-dropdown')">Reports ▾</span>
+                <ul id="stu-reports-dropdown" class="dropdown-menu" style="display:none;">
+                  <li id="sidebar-stu-report"          class="sa-sub-sub" onclick="loadView('student-report')">Students Report</li>
+                  <li id="sidebar-app-report"          class="sa-sub-sub" onclick="loadView('applicants-report')">Applicants Report</li>
+                  <li id="sidebar-stu-gua-report"      class="sa-sub-sub" onclick="loadView('student-guardian-report')">Students Guardian Report</li>
+                  <li id="sidebar-stu-report-settings" class="sa-sub-sub" onclick="loadView('student-report-settings')">Student Report Settings</li>
+                  <li id="sidebar-app-report-settings" class="sa-sub-sub" onclick="loadView('applicant-report-settings')">Applicant Report Settings</li>
+                </ul>
+              </li>
             </ul>
           </li>
           <li class="dropdown">
@@ -145,6 +155,22 @@ async function loadView(view) {
     case 'students-list': await loadStudentsListView(main); break;
     case 'student-search': await loadStudentSearchView(main); break;
     case 'student-reporting': await loadStudentReportingView(main); break;
+    // Student Management – Reports
+    case 'student-report':
+      setActiveSidebarItem('sidebar-stu-report'); openStuReportsDropdown();
+      await loadStudentReportView(main); break;
+    case 'applicants-report':
+      setActiveSidebarItem('sidebar-app-report'); openStuReportsDropdown();
+      loadStuReportPlaceholderView(main, 'Applicants Report'); break;
+    case 'student-guardian-report':
+      setActiveSidebarItem('sidebar-stu-gua-report'); openStuReportsDropdown();
+      await loadStudentGuardianReportView(main); break;
+    case 'student-report-settings':
+      setActiveSidebarItem('sidebar-stu-report-settings'); openStuReportsDropdown();
+      loadStuReportPlaceholderView(main, 'Student Report Settings'); break;
+    case 'applicant-report-settings':
+      setActiveSidebarItem('sidebar-app-report-settings'); openStuReportsDropdown();
+      loadStuReportPlaceholderView(main, 'Applicant Report Settings'); break;
     // Student Academics
     case 'attendance-register':
       setActiveSidebarItem('sidebar-att-register'); await loadAttendanceView(main); break;

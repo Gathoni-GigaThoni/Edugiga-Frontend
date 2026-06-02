@@ -499,3 +499,249 @@ async function submitBulkReport() {
   }
 }
 
+// ==================== STUDENT MANAGEMENT – REPORTS HELPERS ====================
+
+function openStuReportsDropdown() {
+  const parent = document.getElementById('student-management-dropdown');
+  if (parent) parent.style.display = 'block';
+  const child = document.getElementById('stu-reports-dropdown');
+  if (child) child.style.display = 'block';
+}
+
+function loadStuReportPlaceholderView(container, title) {
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">${title}</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; ${title}</div>
+      </div>
+      <div style="background:white;border-radius:6px;padding:48px 24px;text-align:center;
+                  color:#888;border:1px solid #eee;box-shadow:0 1px 4px rgba(0,0,0,0.04);">
+        <p style="font-size:1rem;font-weight:600;margin:0;">Coming Soon</p>
+        <p style="font-size:0.88rem;margin-top:8px;">This module is currently under development.</p>
+      </div>
+    </div>
+  `;
+}
+
+function _stuEsc(str) {
+  return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ==================== STUDENT REPORT ====================
+
+let _stuRptPerPage = 10;
+let _stuRptPage    = 1;
+let _stuRptSearch  = '';
+let _stuRptData    = [];
+
+async function loadStudentReportView(container) {
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Student Report</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Student Report &rsaquo; Listing</div>
+      </div>
+      <div class="fin-controls-row">
+        <div class="fin-controls-left">
+          Show <select id="str-per-page" onchange="changeStuRptPerPage(this.value)">
+            ${[10,25,50,100].map(n=>`<option value="${n}">${n}</option>`).join('')}
+          </select> entries
+          &nbsp;|&nbsp; Total <span id="str-total-count">0</span> entries
+        </div>
+        <div class="fin-controls-right">
+          <button class="fin-export-btn" title="Export PDF">&#128438;</button>
+          <button class="fin-export-btn" title="Export CSV">&#128202;</button>
+          <input type="text" class="fin-search-input" id="str-search" placeholder="&#128269; Search&#8230;"
+                 oninput="onStuRptSearch(this.value)">
+          <button class="fin-btn-filter">&#9776; Filters</button>
+        </div>
+      </div>
+      <div id="str-table-container"><p class="fin-loading">Loading&#8230;</p></div>
+      <div id="str-pagination"></div>
+    </div>
+  `;
+  await _loadStuRptTable();
+}
+
+async function _loadStuRptTable() {
+  const c = document.getElementById('str-table-container');
+  if (!c) return;
+  try {
+    const res = await fetch(`${API_BASE}/students/`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) { c.innerHTML = '<p class="fin-error">Error loading student report.</p>'; return; }
+    _stuRptData = await res.json();
+    _stuRptPage = 1;
+    _renderStuRptTable();
+  } catch(_) { c.innerHTML = '<p class="fin-error">Failed to load student report.</p>'; }
+}
+
+function _stuRptFiltered() {
+  if (!_stuRptSearch) return _stuRptData;
+  const q = _stuRptSearch;
+  return _stuRptData.filter(s =>
+    (`${s.first_name} ${s.last_name}`).toLowerCase().includes(q) ||
+    (s.student_id || '').toLowerCase().includes(q)
+  );
+}
+
+function _renderStuRptTable() {
+  const filtered = _stuRptFiltered();
+  const totalEl  = document.getElementById('str-total-count');
+  if (totalEl) totalEl.textContent = filtered.length;
+
+  const start = (_stuRptPage - 1) * _stuRptPerPage;
+  const paged = filtered.slice(start, start + _stuRptPerPage);
+  const pages = Math.max(1, Math.ceil(filtered.length / _stuRptPerPage));
+
+  let rows = '';
+  if (paged.length === 0) {
+    rows = `<tr><td colspan="7" class="fin-empty">No records found.</td></tr>`;
+  } else {
+    paged.forEach(s => {
+      rows += `<tr>
+        <td>${_stuEsc(s.student_id || '')}</td>
+        <td>${_stuEsc((s.first_name || '') + ' ' + (s.last_name || ''))}</td>
+        <td>${_stuEsc(s.joining_date || '-')}</td>
+        <td>${_stuEsc(s.gender || '-')}</td>
+        <td>${_stuEsc(s.date_of_birth || '-')}</td>
+        <td>${_stuEsc(s.admission_date || s.joining_date || '-')}</td>
+        <td>${s.is_active ? 'Active' : 'Inactive'}</td>
+      </tr>`;
+    });
+  }
+
+  const tbl = document.getElementById('str-table-container');
+  if (tbl) tbl.innerHTML = `
+    <div class="fin-table-wrap">
+      <table class="fin-table">
+        <thead><tr>
+          <th>ADMISSION NO.</th><th>FULL NAME</th><th>JOINING DATE</th>
+          <th>GENDER</th><th>BIRTH DATE</th><th>ADMISSION DATE</th><th>STATUS</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+
+  let pgBtns = '';
+  for (let i = 1; i <= pages; i++) {
+    pgBtns += `<button class="${i===_stuRptPage?'fin-pg-active':''}" onclick="stuRptGoPage(${i})">${i}</button>`;
+  }
+  const pgEl = document.getElementById('str-pagination');
+  if (pgEl) pgEl.innerHTML = `<div class="fin-pagination">${pgBtns}</div>`;
+}
+
+function changeStuRptPerPage(val) { _stuRptPerPage = parseInt(val); _stuRptPage = 1; _renderStuRptTable(); }
+function onStuRptSearch(val)      { _stuRptSearch = val.trim().toLowerCase(); _stuRptPage = 1; _renderStuRptTable(); }
+function stuRptGoPage(p)          { _stuRptPage = p; _renderStuRptTable(); }
+
+// ==================== STUDENT GUARDIAN REPORT ====================
+
+let _stuGuaPerPage = 10;
+let _stuGuaPage    = 1;
+let _stuGuaSearch  = '';
+let _stuGuaData    = [];
+
+async function loadStudentGuardianReportView(container) {
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Student Guardian Report</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Student Guardian Report &rsaquo; Listing</div>
+      </div>
+      <div class="fin-controls-row">
+        <div class="fin-controls-left">
+          Show <select id="sgr-per-page" onchange="changeStuGuaPerPage(this.value)">
+            ${[10,25,50,100].map(n=>`<option value="${n}">${n}</option>`).join('')}
+          </select> entries
+          &nbsp;|&nbsp; Total <span id="sgr-total-count">0</span> entries
+        </div>
+        <div class="fin-controls-right">
+          <button class="fin-export-btn" title="Browse file to update">&#128193; Browse file to update</button>
+          <button class="fin-export-btn" title="Export PDF">&#128438;</button>
+          <button class="fin-export-btn" title="Export CSV">&#128202;</button>
+          <input type="text" class="fin-search-input" id="sgr-search" placeholder="&#128269; Search&#8230;"
+                 oninput="onStuGuaSearch(this.value)">
+          <button class="fin-btn-filter">&#9776; Filters</button>
+        </div>
+      </div>
+      <div id="sgr-table-container"><p class="fin-loading">Loading&#8230;</p></div>
+      <div id="sgr-pagination"></div>
+    </div>
+  `;
+  await _loadStuGuaTable();
+}
+
+async function _loadStuGuaTable() {
+  const c = document.getElementById('sgr-table-container');
+  if (!c) return;
+  try {
+    const res = await fetch(`${API_BASE}/students/guardians/`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) { c.innerHTML = '<p class="fin-error">Error loading guardian report.</p>'; return; }
+    _stuGuaData = await res.json();
+    _stuGuaPage = 1;
+    _renderStuGuaTable();
+  } catch(_) { c.innerHTML = '<p class="fin-error">Failed to load guardian report.</p>'; }
+}
+
+function _stuGuaFiltered() {
+  if (!_stuGuaSearch) return _stuGuaData;
+  const q = _stuGuaSearch;
+  return _stuGuaData.filter(g =>
+    (g.admission_number || '').toLowerCase().includes(q) ||
+    (g.contact_name     || '').toLowerCase().includes(q) ||
+    (g.email            || '').toLowerCase().includes(q)
+  );
+}
+
+function _renderStuGuaTable() {
+  const filtered = _stuGuaFiltered();
+  const totalEl  = document.getElementById('sgr-total-count');
+  if (totalEl) totalEl.textContent = filtered.length;
+
+  const start = (_stuGuaPage - 1) * _stuGuaPerPage;
+  const paged = filtered.slice(start, start + _stuGuaPerPage);
+  const pages = Math.max(1, Math.ceil(filtered.length / _stuGuaPerPage));
+
+  let rows = '';
+  if (paged.length === 0) {
+    rows = `<tr><td colspan="7" class="fin-empty">No records found.</td></tr>`;
+  } else {
+    paged.forEach(g => {
+      rows += `<tr>
+        <td>${_stuEsc(g.admission_number        || '')}</td>
+        <td>${_stuEsc(g.contact_name            || '')}</td>
+        <td>${_stuEsc(g.sibling_admission_number || '')}</td>
+        <td>${_stuEsc(g.relationship            || '')}</td>
+        <td>${_stuEsc(g.primary_phone           || '')}</td>
+        <td>${_stuEsc(g.secondary_phone         || '')}</td>
+        <td>${_stuEsc(g.email                   || '')}</td>
+      </tr>`;
+    });
+  }
+
+  const tbl = document.getElementById('sgr-table-container');
+  if (tbl) tbl.innerHTML = `
+    <div class="fin-table-wrap">
+      <table class="fin-table">
+        <thead><tr>
+          <th>ADMISSION NUMBER</th><th>CONTACT NAME</th><th>SIBLING ADMISSION NUMBER</th>
+          <th>RELATIONSHIP</th><th>PRIMARY PHONE NO.</th><th>SECONDARY PHONE NO.</th><th>EMAIL ADDRESS</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+
+  let pgBtns = '';
+  for (let i = 1; i <= pages; i++) {
+    pgBtns += `<button class="${i===_stuGuaPage?'fin-pg-active':''}" onclick="stuGuaGoPage(${i})">${i}</button>`;
+  }
+  const pgEl = document.getElementById('sgr-pagination');
+  if (pgEl) pgEl.innerHTML = `<div class="fin-pagination">${pgBtns}</div>`;
+}
+
+function changeStuGuaPerPage(val) { _stuGuaPerPage = parseInt(val); _stuGuaPage = 1; _renderStuGuaTable(); }
+function onStuGuaSearch(val)      { _stuGuaSearch = val.trim().toLowerCase(); _stuGuaPage = 1; _renderStuGuaTable(); }
+function stuGuaGoPage(p)          { _stuGuaPage = p; _renderStuGuaTable(); }
