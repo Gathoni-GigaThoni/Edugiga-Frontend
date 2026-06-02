@@ -10,21 +10,27 @@ function showDashboard() {
           <li class="dropdown">
             <span onclick="toggleDropdown('student-management-dropdown')">Student Management ▾</span>
             <ul id="student-management-dropdown" class="dropdown-menu" style="display:none;">
-              <li id="sidebar-stu-search"     onclick="loadView('student-search')">Student Search</li>
-              <li id="sidebar-stu-list"       onclick="loadView('students-list')">Students</li>
-              <li id="sidebar-stu-reporting"  onclick="loadView('student-reporting')">Student Reporting</li>
+              <li id="sidebar-stu-search"        onclick="loadView('student-search')">Student Search</li>
+              <li id="sidebar-stu-id-cards"      onclick="loadView('student-id-cards')">ID Cards</li>
+              <li id="sidebar-stu-list"          onclick="loadView('students-list')">Students</li>
+              <li id="sidebar-stu-applicants"    onclick="loadView('student-applicants')">Applicants</li>
+              <li id="sidebar-stu-reporting"     onclick="loadView('student-reporting')">Student Reporting</li>
+              <li id="sidebar-stu-cohort"        onclick="loadView('student-cohort-planner')">Cohort Session Planner</li>
+              <li id="sidebar-stu-classes"       onclick="loadView('student-classes')">Classes</li>
+              <li id="sidebar-stu-close-records" onclick="loadView('student-close-records')">Close Records Per Class</li>
               <li class="dropdown">
                 <span onclick="toggleDropdown('stu-utilities-dropdown')">Utilities ▾</span>
                 <ul id="stu-utilities-dropdown" class="dropdown-menu" style="display:none;">
-                  <li id="sidebar-stu-streams"  class="sa-sub-sub" onclick="loadView('stu-streams')">Streams</li>
-                  <li id="sidebar-stu-funding"  class="sa-sub-sub" onclick="loadView('stu-funding-sources')">Funding Sources</li>
+                  <li id="sidebar-stu-sources" class="sa-sub-sub" onclick="loadView('utilities-student-sources')">Student Sources</li>
+                  <li id="sidebar-stu-streams" class="sa-sub-sub" onclick="loadView('utilities-streams')">Streams</li>
+                  <li id="sidebar-stu-funding" class="sa-sub-sub" onclick="loadView('utilities-funding-sources')">Funding Sources</li>
                 </ul>
               </li>
               <li class="dropdown">
                 <span onclick="toggleDropdown('stu-reports-dropdown')">Reports ▾</span>
                 <ul id="stu-reports-dropdown" class="dropdown-menu" style="display:none;">
-                  <li id="sidebar-stu-report"     class="sa-sub-sub" onclick="loadView('student-report')">Students Report</li>
-                  <li id="sidebar-stu-gua-report" class="sa-sub-sub" onclick="loadView('student-guardian-report')">Students Guardian Report</li>
+                  <li id="sidebar-stu-report"     class="sa-sub-sub" onclick="loadView('reports-student')">Student Report</li>
+                  <li id="sidebar-stu-gua-report" class="sa-sub-sub" onclick="loadView('reports-guardian')">Student Guardian Report</li>
                 </ul>
               </li>
             </ul>
@@ -155,27 +161,66 @@ async function loadView(view) {
   const main = document.getElementById("main-content");
   clearSidebarActiveItems();
   switch(view) {
-    // Student Management sub-modules
+    // Student Management – main views
     case 'students-list':
       setActiveSidebarItem('sidebar-stu-list'); openStuMgmtDropdowns();
       await loadStudentsListView(main); break;
+    case 'students-add':
+      _currentEditStudentId = null; _stuEditActiveTab = 'personal';
+      openStuMgmtDropdowns();
+      await loadStudentFormView(main); break;
+    case 'students-edit':
+      openStuMgmtDropdowns();
+      await loadStudentFormView(main); break;
+    case 'students-view':
+      openStuMgmtDropdowns();
+      await loadStudentViewPage(main); break;
     case 'student-search':
       setActiveSidebarItem('sidebar-stu-search'); openStuMgmtDropdowns();
       await loadStudentSearchView(main); break;
     case 'student-reporting':
       setActiveSidebarItem('sidebar-stu-reporting'); openStuMgmtDropdowns();
       await loadStudentReportingView(main); break;
+    case 'student-reporting-add':
+      openStuMgmtDropdowns();
+      await loadSingleReportingView(main); break;
+    case 'student-reporting-bulk':
+      openStuMgmtDropdowns();
+      await loadBulkReportingView(main); break;
+    // Placeholder sidebar items (not yet implemented)
+    case 'student-id-cards':
+      setActiveSidebarItem('sidebar-stu-id-cards'); openStuMgmtDropdowns();
+      showPlaceholder(main, 'ID Cards'); break;
+    case 'student-applicants':
+      setActiveSidebarItem('sidebar-stu-applicants'); openStuMgmtDropdowns();
+      showPlaceholder(main, 'Applicants'); break;
+    case 'student-cohort-planner':
+      setActiveSidebarItem('sidebar-stu-cohort'); openStuMgmtDropdowns();
+      showPlaceholder(main, 'Cohort Session Planner'); break;
+    case 'student-classes':
+      setActiveSidebarItem('sidebar-stu-classes'); openStuMgmtDropdowns();
+      showPlaceholder(main, 'Classes'); break;
+    case 'student-close-records':
+      setActiveSidebarItem('sidebar-stu-close-records'); openStuMgmtDropdowns();
+      showPlaceholder(main, 'Close Records Per Class'); break;
     // Student Management – Utilities
+    case 'utilities-student-sources':
+      setActiveSidebarItem('sidebar-stu-sources'); openStuUtilitiesDropdown();
+      await loadStudentSourcesView(main); break;
+    case 'utilities-streams':
     case 'stu-streams':
       setActiveSidebarItem('sidebar-stu-streams'); openStuUtilitiesDropdown();
       await loadStreamsView(main); break;
+    case 'utilities-funding-sources':
     case 'stu-funding-sources':
       setActiveSidebarItem('sidebar-stu-funding'); openStuUtilitiesDropdown();
       await loadFundingSourcesView(main); break;
     // Student Management – Reports
+    case 'reports-student':
     case 'student-report':
       setActiveSidebarItem('sidebar-stu-report'); openStuReportsDropdown();
       await loadStudentReportView(main); break;
+    case 'reports-guardian':
     case 'student-guardian-report':
       setActiveSidebarItem('sidebar-stu-gua-report'); openStuReportsDropdown();
       await loadStudentGuardianReportView(main); break;

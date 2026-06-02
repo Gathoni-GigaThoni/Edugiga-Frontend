@@ -4,9 +4,23 @@
 // Adding a module/sub-module here automatically adds it to every role's Permissions table.
 const NAV_STRUCTURE = [
   { id: 'student-management', label: 'Student Management', children: [
-    { id: 'students-list',      label: 'Students' },
-    { id: 'student-search',     label: 'Student Search' },
-    { id: 'student-reporting',  label: 'Student Reporting' }
+    { id: 'student-search',          label: 'Student Search' },
+    { id: 'student-id-cards',        label: 'ID Cards' },
+    { id: 'students-list',           label: 'Students' },
+    { id: 'student-applicants',      label: 'Applicants' },
+    { id: 'student-reporting',       label: 'Student Reporting' },
+    { id: 'student-cohort-planner',  label: 'Cohort Session Planner' },
+    { id: 'student-classes',         label: 'Classes' },
+    { id: 'student-close-records',   label: 'Close Records Per Class' },
+    { id: 'student-management-utilities', label: 'Utilities', children: [
+      { id: 'utilities-student-sources',   label: 'Student Sources' },
+      { id: 'utilities-streams',           label: 'Streams' },
+      { id: 'utilities-funding-sources',   label: 'Funding Sources' },
+    ]},
+    { id: 'student-management-reports', label: 'Reports', children: [
+      { id: 'reports-student',  label: 'Student Report' },
+      { id: 'reports-guardian', label: 'Student Guardian Report' },
+    ]},
   ]},
   { id: 'student-academics', label: 'Student Academics', children: [
     { id: 'attendance-register', label: 'Attendance Register' },

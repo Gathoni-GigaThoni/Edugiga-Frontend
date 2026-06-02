@@ -1,19 +1,31 @@
 // ==================== STUDENT MANAGEMENT ====================
 
-// ── In-memory stores ──────────────────────────────────────────────────────────
-let allStudentsData   = [];
-let filteredStudentsData = [];
-let _stuListPage      = 1;
-let _stuListPerPage   = 10;
-let _stuListSearch    = '';
-
-let streamsData       = [];
-let fundingSourcesData = [];
+// ── Module-level state ────────────────────────────────────────────────────────
+let allStudentsData      = [];
+let streamsData          = [];
+let fundingSourcesData   = [];
+let studentSourcesData   = [];
 let studentReportingData = [];
 
+let _stuListPage    = 1;
+let _stuListPerPage = 10;
+let _stuListSearch  = '';
+let _stuListFilters = {};
+
+let _currentEditStudentId = null; // null = Add mode
+let _stuEditActiveTab     = 'personal';
+let _stuEditDirty         = false;
+
+// Cached dropdown data for the edit form
+let _stuFormClasses       = [];
+let _stuFormStreams        = [];
+let _stuFormFundingSources = [];
+let _stuFormTransportRoutes = [];
+let _stuFormExtraCurriculum = [];
+
 // ── Shared helpers ────────────────────────────────────────────────────────────
-function _sEsc(v) {
-  return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+function _esc(v) {
+  return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function calculateAge(birthDateStr) {
@@ -21,11 +33,27 @@ function calculateAge(birthDateStr) {
   const birth = new Date(birthDateStr);
   const now   = new Date();
   let years   = now.getFullYear() - birth.getFullYear();
-  let months  = now.getMonth()    - birth.getMonth();
+  let months  = now.getMonth() - birth.getMonth();
   if (months < 0) { years--; months += 12; }
-  if (now.getDate() < birth.getDate()) months--;
-  if (months < 0)  { years--; months += 12; }
+  if (now.getDate() < birth.getDate()) { months--; if (months < 0) { years--; months += 12; } }
   return `${years} year(s) ${months} month(s)`;
+}
+
+function _fv(id)    { return document.getElementById(id)?.value ?? ''; }
+function _fc(id)    { return !!document.getElementById(id)?.checked; }
+function _fradio(name) {
+  const el = document.querySelector(`input[name="${name}"]:checked`);
+  return el ? el.value : '';
+}
+
+function _mkPagination(containerId, page, pages, goFn) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  let btns = '';
+  for (let i = 1; i <= pages; i++) {
+    btns += `<button class="${i === page ? 'fin-pg-active' : ''}" onclick="${goFn}(${i})">${i}</button>`;
+  }
+  el.innerHTML = `<div class="fin-pagination">${btns}</div>`;
 }
 
 function openStuMgmtDropdowns() {
@@ -53,13 +81,13 @@ async function loadStudentsListView(container) {
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
-        <h2 class="fin-title">Student</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Student &rsaquo; Listing</div>
+        <h2 class="fin-title">Students</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Students &rsaquo; Listing</div>
       </div>
       <div class="fin-controls-row">
         <div class="fin-controls-left">
           Show <select id="stu-per-page" onchange="changeStuPerPage(this.value)">
-            ${[10,25,50,100].map(n=>`<option value="${n}">${n}</option>`).join('')}
+            ${[10,25,50,100].map(n => `<option value="${n}"${n===_stuListPerPage?' selected':''}>${n}</option>`).join('')}
           </select> entries
           &nbsp;|&nbsp; Total <span id="stu-total-count">0</span> entries
         </div>
@@ -68,15 +96,16 @@ async function loadStudentsListView(container) {
           <button class="fin-export-btn" title="Browse file to upload">&#128228; Browse file to upload</button>
           <button class="fin-export-btn" title="Export PDF">&#128438;</button>
           <button class="fin-export-btn" title="Export CSV" onclick="exportStudentsCSV()">&#128202;</button>
-          <button class="fin-btn-teal" onclick="showStudentForm(null)">+ Add</button>
+          <button class="fin-btn-teal" onclick="loadView('students-add')">+ Add</button>
           <input type="text" class="fin-search-input" id="stu-search" placeholder="&#128269; Search&#8230;"
-                 oninput="onStuSearch(this.value)">
+                 value="${_esc(_stuListSearch)}" oninput="onStuSearch(this.value)">
           <button class="fin-btn-filter" onclick="showStuFilterPanel()">&#9776; Filters</button>
         </div>
       </div>
-      <div id="stu-table-container"><p class="fin-loading">Loading&#8230;</p></div>
+      <div id="stu-table-container"></div>
       <div id="stu-pagination"></div>
     </div>
+
     <div id="stu-filter-overlay" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.35);z-index:400;" onclick="closeStuFilterPanel(event)">
       <div class="hr-filter-panel" onclick="event.stopPropagation()">
         <div class="hr-filter-panel-header">
@@ -84,22 +113,22 @@ async function loadStudentsListView(container) {
           <button class="hr-filter-close-btn" onclick="closeStuFilterPanel()">&#x2715;</button>
         </div>
         <div class="hr-filter-panel-body">
-          <div class="hr-filter-group"><label class="hr-filter-label">Level Enrolled</label>
-            <select id="sf-level" class="hr-filter-select">
-              <option value="">All</option>
-              <option>Acorn</option><option>Willow</option><option>Maple</option><option>Oak</option>
-            </select>
-          </div>
-          <div class="hr-filter-group"><label class="hr-filter-label">Class</label>
-            <input id="sf-class" class="hr-filter-input" placeholder="e.g. Class 026">
-          </div>
-          <div class="hr-filter-group"><label class="hr-filter-label">Gender</label>
+          <div class="hr-filter-group">
+            <label class="hr-filter-label">Gender</label>
             <select id="sf-gender" class="hr-filter-select">
-              <option value="">All</option><option>Male</option><option>Female</option>
+              <option value="">All</option>
+              <option value="Male">Male</option>
+              <option value="Female">Female</option>
+              <option value="Other">Other</option>
             </select>
           </div>
-          <div class="hr-filter-group"><label class="hr-filter-label">Nationality</label>
-            <input id="sf-nationality" class="hr-filter-input" placeholder="Nationality">
+          <div class="hr-filter-group">
+            <label class="hr-filter-label">Status</label>
+            <select id="sf-status" class="hr-filter-select">
+              <option value="">All</option>
+              <option value="true">Active</option>
+              <option value="false">Inactive</option>
+            </select>
           </div>
         </div>
         <div style="padding:14px 20px;display:flex;gap:10px;">
@@ -108,8 +137,9 @@ async function loadStudentsListView(container) {
         </div>
       </div>
     </div>
-    <div id="stu-edit-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.45);z-index:500;overflow-y:auto;"></div>
   `;
+
+  renderSkeletonRows('stu-table-container', 8);
   await refreshStudentsListing();
 }
 
@@ -117,13 +147,12 @@ async function refreshStudentsListing() {
   const c = document.getElementById('stu-table-container');
   if (!c) return;
   try {
-    const res = await fetch(`${API_BASE}/students/`, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) { c.innerHTML = '<p class="fin-error">Error loading students.</p>'; return; }
+    const res = await apiFetch(`${API_BASE}/students/`);
+    if (!res || !res.ok) { c.innerHTML = '<p class="fin-error">Error loading students.</p>'; return; }
     allStudentsData = await res.json();
-    filteredStudentsData = [...allStudentsData];
-    _stuListPage = 1;
-    _renderStuTable();
-  } catch(_) { c.innerHTML = '<p class="fin-error">Failed to load students.</p>'; }
+  } catch (_) { c.innerHTML = '<p class="fin-error">Failed to load students.</p>'; return; }
+  _stuListPage = 1;
+  _renderStuTable();
 }
 
 function _stuFiltered() {
@@ -135,6 +164,9 @@ function _stuFiltered() {
       (s.student_id || '').toLowerCase().includes(q)
     );
   }
+  if (_stuListFilters.gender) d = d.filter(s => (s.gender || '') === _stuListFilters.gender);
+  if (_stuListFilters.status !== undefined && _stuListFilters.status !== '')
+    d = d.filter(s => String(s.is_active) === _stuListFilters.status);
   return d;
 }
 
@@ -146,30 +178,29 @@ function _renderStuTable() {
   const start = (_stuListPage - 1) * _stuListPerPage;
   const paged = filtered.slice(start, start + _stuListPerPage);
   const pages = Math.max(1, Math.ceil(filtered.length / _stuListPerPage));
+  const COLS  = 8;
 
   let rows = '';
   if (paged.length === 0) {
-    rows = `<tr><td colspan="11" class="fin-empty">No records found.</td></tr>`;
+    rows = `<tr><td colspan="${COLS}" class="fin-empty">No records found.</td></tr>`;
   } else {
     paged.forEach(s => {
-      const canEdit = currentUser?.clearance_level <= 3;
+      const statusColor = s.is_active ? '#27ae60' : '#e74c3c';
+      const statusText  = s.is_active ? 'Active' : 'Inactive';
       rows += `<tr>
-        <td>${_sEsc(s.student_id||'')}</td>
-        <td>${_sEsc((s.first_name||'')+' '+(s.last_name||''))}</td>
-        <td>${_sEsc(s.gender||'-')}</td>
-        <td>${_sEsc(s.cohort||'-')}</td>
-        <td>${_sEsc(s.class_name||'-')}</td>
-        <td>${_sEsc(s.session||'-')}</td>
-        <td>${_sEsc(s.stream||'-')}</td>
-        <td>${_sEsc(s.sports_house||'-')}</td>
-        <td><span style="color:${s.is_active?'#27ae60':'#e74c3c'}">${s.is_active?'Active':'Inactive'}</span></td>
-        <td>${_sEsc(s.created_by||'-')}</td>
+        <td>${_esc(s.student_id || '')}</td>
+        <td>${_esc(`${s.first_name || ''} ${s.last_name || ''}`.trim())}</td>
+        <td>${_esc(s.gender || '-')}</td>
+        <td>${_esc(s.cohort || s.session || '-')}</td>
+        <td>${_esc(s.class_name || s.level_of_academics || '-')}</td>
+        <td>${_esc(s.stream || '-')}</td>
+        <td><span style="color:${statusColor};font-weight:600;">${statusText}</span></td>
         <td class="fin-action-cell">
           <div class="fin-action-wrap">
             <button class="fin-action-btn" onclick="toggleStuDd(event,${s.id})">&#8230;</button>
             <div id="stu-dd-${s.id}" class="fin-action-dropdown" style="display:none;">
-              ${canEdit ? `<a href="#" onclick="showStudentForm(${s.id});return false;">&#9998; Edit</a>` : ''}
-              <a href="#" onclick="openStudentDetailView(${s.id});return false;">&#128065; View Detail</a>
+              <a href="#" onclick="stuOpenEdit(${s.id});return false;">&#9998; Edit</a>
+              <a href="#" onclick="stuOpenView(${s.id});return false;">&#128065; View</a>
             </div>
           </div>
         </td>
@@ -182,21 +213,15 @@ function _renderStuTable() {
     <div class="fin-table-wrap">
       <table class="fin-table">
         <thead><tr>
-          <th>STUDENT ID</th><th>STUDENT NAME</th><th>GENDER</th><th>COHORT</th>
-          <th>CLASS</th><th>SESSION</th><th>STREAM</th><th>SPORTS HOUSE</th>
-          <th>ACADEMIC STATUS</th><th>PERSONNEL</th><th>ACTION</th>
+          <th>STUDENT ID</th><th>STUDENT NAME</th><th>GENDER</th><th>SESSION</th>
+          <th>LEVEL OF ACADEMICS</th><th>STREAM</th><th>STATUS</th><th>ACTION</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>
   `;
 
-  let pgBtns = '';
-  for (let i = 1; i <= pages; i++) {
-    pgBtns += `<button class="${i===_stuListPage?'fin-pg-active':''}" onclick="stuListGoPage(${i})">${i}</button>`;
-  }
-  const pgEl = document.getElementById('stu-pagination');
-  if (pgEl) pgEl.innerHTML = `<div class="fin-pagination">${pgBtns}</div>`;
+  _mkPagination('stu-pagination', _stuListPage, pages, 'stuListGoPage');
 }
 
 function toggleStuDd(event, id) {
@@ -207,243 +232,305 @@ function toggleStuDd(event, id) {
   const dd = document.getElementById(`stu-dd-${id}`);
   if (dd) dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
 }
-function changeStuPerPage(v)  { _stuListPerPage = parseInt(v); _stuListPage = 1; _renderStuTable(); }
-function onStuSearch(v)       { _stuListSearch = v.trim().toLowerCase(); _stuListPage = 1; _renderStuTable(); }
-function stuListGoPage(p)     { _stuListPage = p; _renderStuTable(); }
 
-function showStuFilterPanel()    { const o = document.getElementById('stu-filter-overlay'); if (o) o.style.display = 'block'; }
-function closeStuFilterPanel(e)  { if (e && e.target !== document.getElementById('stu-filter-overlay')) return; const o = document.getElementById('stu-filter-overlay'); if (o) o.style.display = 'none'; }
-
-function applyStuFilters() {
-  const level       = (document.getElementById('sf-level')?.value||'').toLowerCase();
-  const cls         = (document.getElementById('sf-class')?.value||'').toLowerCase();
-  const gender      = (document.getElementById('sf-gender')?.value||'').toLowerCase();
-  const nationality = (document.getElementById('sf-nationality')?.value||'').toLowerCase();
-  filteredStudentsData = allStudentsData.filter(s => {
-    if (level && (s.level||'').toLowerCase() !== level) return false;
-    if (cls && !(s.class_name||'').toLowerCase().includes(cls)) return false;
-    if (gender && (s.gender||'').toLowerCase() !== gender) return false;
-    if (nationality && !(s.nationality||'').toLowerCase().includes(nationality)) return false;
-    return true;
-  });
-  _stuListPage = 1;
-  _renderStuTable();
-  document.getElementById('stu-filter-overlay').style.display = 'none';
+function stuOpenEdit(id) {
+  _currentEditStudentId = id;
+  loadView('students-edit');
+}
+function stuOpenView(id) {
+  _currentEditStudentId = id;
+  loadView('students-view');
 }
 
-function clearStuFilters() {
-  ['sf-level','sf-class','sf-gender','sf-nationality'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.value = '';
-  });
-  filteredStudentsData = [...allStudentsData];
+function changeStuPerPage(v) { _stuListPerPage = parseInt(v); _stuListPage = 1; _renderStuTable(); }
+function onStuSearch(v)      { _stuListSearch  = v.trim().toLowerCase(); _stuListPage = 1; _renderStuTable(); }
+function stuListGoPage(p)    { _stuListPage = p; _renderStuTable(); }
+
+function showStuFilterPanel()   { const o = document.getElementById('stu-filter-overlay'); if (o) o.style.display = 'block'; }
+function closeStuFilterPanel(e) {
+  if (e && e.target !== document.getElementById('stu-filter-overlay')) return;
+  const o = document.getElementById('stu-filter-overlay');
+  if (o) o.style.display = 'none';
+}
+function applyStuFilters() {
+  _stuListFilters.gender = document.getElementById('sf-gender')?.value || '';
+  _stuListFilters.status = document.getElementById('sf-status')?.value ?? '';
   _stuListPage = 1;
   _renderStuTable();
-  document.getElementById('stu-filter-overlay').style.display = 'none';
+  closeStuFilterPanel();
+}
+function clearStuFilters() {
+  _stuListFilters = {};
+  ['sf-gender','sf-status'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  _stuListPage = 1;
+  _renderStuTable();
+  closeStuFilterPanel();
 }
 
 function exportStudentsCSV() {
-  const cols = ['Student ID','Full Name','Gender','Cohort','Class','Session','Stream','Sports House','Status','Personnel'];
-  const rows = filteredStudentsData.map(s => [
-    s.student_id||'', `${s.first_name||''} ${s.last_name||''}`,
-    s.gender||'', s.cohort||'', s.class_name||'', s.session||'',
-    s.stream||'', s.sports_house||'', s.is_active?'Active':'Inactive', s.created_by||''
+  const cols = ['Student ID','Full Name','Gender','Session','Level of Academics','Stream','Status'];
+  const rows = _stuFiltered().map(s => [
+    s.student_id || '',
+    `${s.first_name || ''} ${s.last_name || ''}`.trim(),
+    s.gender || '',
+    s.cohort || s.session || '',
+    s.class_name || s.level_of_academics || '',
+    s.stream || '',
+    s.is_active ? 'Active' : 'Inactive'
   ]);
   exportTableCSV(cols, rows, 'students.csv');
 }
 
-// ==================== 2. STUDENT EDIT / ADD FORM ====================
-// Tabs: Personal Data | Academic Background | Guardian/Family | Disability/Medical | Disciplinary | Documents | Application Documents
+// ==================== 2. EDIT / ADD STUDENT FORM ====================
 
-let _stuEditData = null;
-let _stuEditActiveTab = 'personal';
-const _STU_EDIT_TABS = [
-  { id:'personal',     label:'Personal Data' },
-  { id:'academic',     label:'Academic Background' },
-  { id:'guardian',     label:'Guardian/Family' },
-  { id:'medical',      label:'Disability/Medical' },
-  { id:'disciplinary', label:'Disciplinary' },
-  { id:'documents',    label:'Documents' },
-  { id:'app-docs',     label:'Application Documents' },
+const _STU_TABS = [
+  { id: 'personal',   label: 'Personal Data' },
+  { id: 'prev-edu',   label: 'Previous Education' },
+  { id: 'guardian',   label: 'Guardian/Family' },
+  { id: 'medical',    label: 'Medical Information' },
+  { id: 'documents',  label: 'Document Uploads' },
 ];
 
-async function showStudentForm(studentId) {
-  const modal = document.getElementById('stu-edit-modal');
-  if (!modal) return;
-  modal.style.display = 'block';
-  modal.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;"><p style="color:white;font-size:1.1rem;">Loading&#8230;</p></div>`;
+async function loadStudentFormView(container) {
+  const isEdit = !!_currentEditStudentId;
+  const title  = isEdit ? 'Edit Student' : 'Add Student';
 
-  let data = {};
-  if (studentId) {
-    try {
-      const res = await fetch(`${API_BASE}/students/${studentId}/full-profile`, { headers: { Authorization: `Bearer ${token}` } });
-      if (res.ok) data = await res.json();
-    } catch(_) {}
-  }
-  _stuEditData   = data;
-  _stuEditActiveTab = 'personal';
-  _renderStudentFormModal(modal, studentId, data);
-}
-
-function _renderStudentFormModal(modal, studentId, data) {
-  const isEdit = !!studentId;
-  const tabBar = _STU_EDIT_TABS.map(t =>
-    `<button class="stu-tab-btn${_stuEditActiveTab===t.id?' stu-tab-btn--active':''}"
-       onclick="switchStuEditTab('${t.id}')">${t.label}</button>`
-  ).join('');
-
-  modal.innerHTML = `
-    <div class="stu-edit-shell">
-      <div class="fin-header-row" style="padding:20px 28px 0;margin:0;">
-        <h2 class="fin-title">${isEdit?'Edit':'Add'} Student</h2>
-        <div style="display:flex;align-items:center;gap:16px;">
-          <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Student &rsaquo; ${isEdit?'Edit':'Add'}</div>
-          <button class="fin-action-btn" onclick="closeStuEditModal()" style="font-size:1.2rem;padding:4px 10px;">&#x2715;</button>
+  container.innerHTML = `
+    <div class="fin-page" style="padding:0;">
+      <div class="stu-edit-shell">
+        <div class="fin-header-row" style="padding:20px 28px 0;margin:0;">
+          <h2 class="fin-title">${title}</h2>
+          <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Students &rsaquo; ${title}</div>
         </div>
-      </div>
-      <div class="stu-tab-bar" id="stu-edit-tab-bar">${tabBar}</div>
-      <div class="stu-edit-body" id="stu-edit-tab-content"></div>
-      <div class="stu-edit-footer">
-        <button class="fin-btn-teal" onclick="submitStudentForm(${studentId||'null'})">${isEdit?'Update':'Save'}</button>
-        <button class="fin-btn-cancel" onclick="closeStuEditModal()">Cancel</button>
+        <div class="stu-tab-bar" id="stu-edit-tab-bar">
+          ${_STU_TABS.map(t =>
+            `<button class="stu-tab-btn${_stuEditActiveTab===t.id?' stu-tab-btn--active':''}"
+               id="stu-tab-btn-${t.id}" onclick="switchStuEditTab('${t.id}')">${t.label}</button>`
+          ).join('')}
+        </div>
+        <div class="stu-edit-body" id="stu-edit-tab-content">
+          <p class="fin-loading">Loading&#8230;</p>
+        </div>
+        <div class="stu-edit-footer">
+          <button class="fin-btn-teal" id="stu-form-submit-btn" onclick="submitStudentForm()">
+            ${isEdit ? 'Update' : 'Save'}
+          </button>
+          <button class="fin-btn-cancel" onclick="cancelStudentForm()">Cancel</button>
+        </div>
       </div>
     </div>
   `;
+
+  await _loadStuFormDropdowns();
+
+  let data = {};
+  if (isEdit) {
+    const res = await apiFetch(`${API_BASE}/students/${_currentEditStudentId}/full-profile`);
+    if (res && res.ok) data = await res.json();
+    else { const r2 = await apiFetch(`${API_BASE}/students/${_currentEditStudentId}`); if (r2 && r2.ok) data = await r2.json(); }
+  }
+  window._stuFormData = data;
+  _stuEditDirty = false;
   _renderStuEditTabContent(_stuEditActiveTab);
 }
 
-function closeStuEditModal() {
-  const m = document.getElementById('stu-edit-modal');
-  if (m) m.style.display = 'none';
+async function _loadStuFormDropdowns() {
+  const [clsRes, strRes, fsRes, trRes, ecRes] = await Promise.all([
+    apiFetch(`${API_BASE}/academics/classes`),
+    apiFetch(`${API_BASE}/student-management/streams`),
+    apiFetch(`${API_BASE}/student-management/funding-sources`),
+    apiFetch(`${API_BASE}/transport/routes`),
+    apiFetch(`${API_BASE}/finance/extra-curriculum-activities`),
+  ]);
+  _stuFormClasses        = (clsRes && clsRes.ok) ? await clsRes.json() : [];
+  _stuFormStreams         = (strRes && strRes.ok) ? await strRes.json() : [];
+  _stuFormFundingSources  = (fsRes  && fsRes.ok)  ? await fsRes.json()  : [];
+  _stuFormTransportRoutes = (trRes  && trRes.ok)  ? await trRes.json()  : [];
+  _stuFormExtraCurriculum = (ecRes  && ecRes.ok)  ? await ecRes.json()  : [];
 }
 
 function switchStuEditTab(tabId) {
   _stuEditActiveTab = tabId;
-  document.querySelectorAll('.stu-tab-btn').forEach(b => b.classList.toggle('stu-tab-btn--active', b.textContent === _STU_EDIT_TABS.find(t=>t.id===tabId)?.label));
+  document.querySelectorAll('.stu-tab-btn').forEach(b => {
+    b.classList.toggle('stu-tab-btn--active', b.id === `stu-tab-btn-${tabId}`);
+  });
   _renderStuEditTabContent(tabId);
 }
 
 function _renderStuEditTabContent(tabId) {
   const c = document.getElementById('stu-edit-tab-content');
   if (!c) return;
-  switch(tabId) {
-    case 'personal':     c.innerHTML = _stuTabPersonal();   break;
-    case 'academic':     c.innerHTML = _stuTabAcademic();   break;
-    case 'guardian':     c.innerHTML = _stuTabGuardian();   break;
-    case 'medical':      c.innerHTML = _stuTabMedical();    break;
-    case 'disciplinary': c.innerHTML = _stuTabDisciplinary(); break;
-    case 'documents':    c.innerHTML = _stuTabDocuments();  break;
-    case 'app-docs':     c.innerHTML = _stuTabAppDocs();    break;
-    default: c.innerHTML = '<p style="padding:24px">Coming soon.</p>';
+  const d = window._stuFormData || {};
+  switch (tabId) {
+    case 'personal':  c.innerHTML = _stuTabPersonal(d);    _wireStuPersonalTab(); break;
+    case 'prev-edu':  c.innerHTML = _stuTabPrevEdu(d);     break;
+    case 'guardian':  c.innerHTML = _stuTabGuardian(d);    _wireStuGuardianTab(); break;
+    case 'medical':   c.innerHTML = _stuTabMedical(d);     break;
+    case 'documents': c.innerHTML = _stuTabDocuments(d);   break;
+    default: c.innerHTML = '<p style="padding:24px;">Coming soon.</p>';
   }
-  // wire age calc
-  const dob = document.getElementById('se-dob');
-  if (dob) {
-    dob.addEventListener('change', () => {
-      const ageEl = document.getElementById('se-age-display');
-      if (ageEl) ageEl.textContent = calculateAge(dob.value);
-    });
-  }
-  // wire sibling checkbox
-  const sibChk = document.getElementById('se-has-sibling');
-  if (sibChk) sibChk.addEventListener('change', toggleSiblingSection);
+  c.querySelectorAll('input,select,textarea').forEach(el => {
+    el.addEventListener('change', () => { _stuEditDirty = true; });
+    el.addEventListener('input',  () => { _stuEditDirty = true; });
+  });
 }
 
-function _f(id) { return document.getElementById(id)?.value || ''; }
-function _fcheck(id) { return !!document.getElementById(id)?.checked; }
+function _opts(items, valueKey, labelKey, selectedVal) {
+  return items.map(it =>
+    `<option value="${_esc(String(it[valueKey]))}"${String(it[valueKey])===String(selectedVal)?' selected':''}>${_esc(it[labelKey])}</option>`
+  ).join('');
+}
 
-function _stuTabPersonal() {
-  const d = _stuEditData || {};
+function _stuTabPersonal(d) {
+  const classOpts   = `<option value="">Please Select</option>${_opts(_stuFormClasses, 'id', 'name', d.class_id)}`;
+  const streamOpts  = `<option value="">Please Select</option>${_opts(_stuFormStreams.filter(s=>!s.is_inactive), 'id', 'title', d.stream_id)}`;
+  const fsOpts      = `<option value="">Please Select</option>${_opts(_stuFormFundingSources.filter(f=>!f.is_inactive), 'id', 'title', d.funding_source_id)}`;
+  const transOpts   = `<option value="">Please Select</option>${_opts(_stuFormTransportRoutes, 'id', 'name', d.transport_route_id)}`;
+  const natOpts     = ['Kenya','Uganda','Tanzania','Rwanda','Ethiopia','Other'].map(n =>
+    `<option${d.nationality===n?' selected':''}>${n}</option>`).join('');
+  const relOpts     = ['Christian','Muslim','Hindu','Other'].map(r =>
+    `<option${d.religion===r?' selected':''}>${r}</option>`).join('');
+  const statusOpts  = ['Active','Inactive','Graduated','Transferred'].map(s =>
+    `<option value="${s}"${(d.status||'Active')===s?' selected':''}>${s}</option>`).join('');
+  const genderOpts  = ['Male','Female','Other'].map(g =>
+    `<option${d.gender===g?' selected':''}>${g}</option>`).join('');
+
+  const ecIds = d.extra_curriculum_ids || (d.extra_curriculum_id ? [d.extra_curriculum_id] : []);
+  const ecOpts = _stuFormExtraCurriculum.map(e =>
+    `<option value="${_esc(String(e.id))}"${ecIds.includes(e.id)?' selected':''}>${_esc(e.title)}</option>`).join('');
+
+  const hasSibling    = !!(d.siblings && d.siblings.length);
+  const siblingName   = hasSibling ? _esc(d.siblings[0].full_name || '') : '';
+  const siblingId     = hasSibling ? _esc(d.siblings[0].student_id || '') : '';
+  const sibDisplay    = hasSibling ? 'block' : 'none';
+
+  const isEdit = !!_currentEditStudentId;
+  const admVal  = isEdit ? _esc(d.student_id || '') : '';
+  const admAttr = 'readonly';
+
   return `
     <div class="stu-form-grid">
       <div class="stu-form-group">
-        <label>Admission No.</label>
-        <input id="se-admission" class="fin-search-input" style="width:100%!important" value="${_sEsc(d.student_id||'')}" readonly>
+        <label>Student ID</label>
+        <input id="se-student-id" class="fin-search-input" style="width:100%!important"
+               value="${admVal}" placeholder="Auto-generated" ${admAttr}>
       </div>
       <div class="stu-form-group">
-        <label>Surname*</label>
-        <input id="se-surname" class="fin-search-input" style="width:100%!important" value="${_sEsc(d.last_name||'')}">
+        <label>Surname <span style="color:#e74c3c">*</span></label>
+        <input id="se-surname" class="fin-search-input" style="width:100%!important" value="${_esc(d.last_name||'')}">
+        <span class="stu-field-error" id="err-se-surname"></span>
       </div>
+
       <div class="stu-form-group">
-        <label>Other Name*</label>
-        <input id="se-other-name" class="fin-search-input" style="width:100%!important" value="${_sEsc(d.first_name||'')}">
+        <label>Other Name <span style="color:#e74c3c">*</span></label>
+        <input id="se-other-name" class="fin-search-input" style="width:100%!important" value="${_esc(d.first_name||'')}">
+        <span class="stu-field-error" id="err-se-other-name"></span>
       </div>
       <div class="stu-form-group">
         <label>Joining Date</label>
-        <input id="se-joining-date" type="date" class="fin-search-input" style="width:100%!important" value="${_sEsc(d.joining_date||'')}">
+        <input id="se-joining-date" type="date" class="fin-search-input" style="width:100%!important" value="${_esc(d.joining_date||'')}">
       </div>
+
       <div class="stu-form-group">
-        <label>Gender*</label>
+        <label>Gender <span style="color:#e74c3c">*</span></label>
         <select id="se-gender" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
-          <option value="">Select</option>
-          ${['Male','Female'].map(g=>`<option${d.gender===g?' selected':''}>${g}</option>`).join('')}
+          <option value="">Select</option>${genderOpts}
         </select>
+        <span class="stu-field-error" id="err-se-gender"></span>
       </div>
       <div class="stu-form-group">
-        <label>Birth Date*</label>
-        <input id="se-dob" type="date" class="fin-search-input" style="width:100%!important" value="${_sEsc(d.date_of_birth||'')}">
+        <label>Birth Date <span style="color:#e74c3c">*</span></label>
+        <input id="se-dob" type="date" class="fin-search-input" style="width:100%!important" value="${_esc(d.date_of_birth||'')}">
         <small id="se-age-display" style="color:#555;font-size:0.82rem;">${calculateAge(d.date_of_birth)}</small>
-        <label style="margin-top:8px;font-size:0.85rem;">Birth Certificate (PDF)</label>
-        <input type="file" id="se-birth-cert" accept=".pdf,.jpg,.png" style="margin-top:4px;">
+        <span class="stu-field-error" id="err-se-dob"></span>
       </div>
+
       <div class="stu-form-group">
-        <label>Nationality*</label>
+        <label>Nationality <span style="color:#e74c3c">*</span></label>
         <select id="se-nationality" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
-          <option value="">Select</option>
-          ${['Kenya','Uganda','Tanzania','Rwanda','Ethiopia','Other'].map(n=>`<option${d.nationality===n?' selected':''}>${n}</option>`).join('')}
+          <option value="">Select</option>${natOpts}
         </select>
-      </div>
-      <div class="stu-form-group">
-        <label>Birth Cert No.</label>
-        <input id="se-birth-cert-no" class="fin-search-input" style="width:100%!important" value="${_sEsc(d.birth_cert_no||'')}">
-      </div>
-      <div class="stu-form-group">
-        <label>Tel/Mobile No</label>
-        <div style="display:flex;gap:6px;">
-          <select id="se-phone-code" class="fin-search-input" style="width:160px!important;padding:7px 8px!important;">
-            ${[['Kenya (+254)','254'],['Uganda (+256)','256'],['Tanzania (+255)','255']].map(([l,v])=>`<option value="${v}"${(d.phone_code||'254')===v?' selected':''}>${l}</option>`).join('')}
-          </select>
-          <input id="se-phone" class="fin-search-input" style="flex:1!important;width:auto!important;" value="${_sEsc(d.phone||'')}">
-        </div>
+        <span class="stu-field-error" id="err-se-nationality"></span>
       </div>
       <div class="stu-form-group">
         <label>Religion</label>
         <select id="se-religion" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
-          <option value="">Select</option>
-          ${['Christian','Muslim','Hindu','Other'].map(r=>`<option${d.religion===r?' selected':''}>${r}</option>`).join('')}
+          <option value="">Select</option>${relOpts}
         </select>
+      </div>
+
+      <div class="stu-form-group">
+        <label>Email Address</label>
+        <input id="se-email" type="email" class="fin-search-input" style="width:100%!important" value="${_esc(d.email||'')}">
       </div>
       <div class="stu-form-group">
         <label>Physical Address</label>
-        <input id="se-physical-address" class="fin-search-input" style="width:100%!important" value="${_sEsc(d.physical_address||'')}">
+        <input id="se-physical-address" class="fin-search-input" style="width:100%!important" value="${_esc(d.physical_address||'')}">
       </div>
-      <div class="stu-form-group">
-        <label>Email Address</label>
-        <input id="se-email" type="email" class="fin-search-input" style="width:100%!important" value="${_sEsc(d.email||'')}">
-      </div>
-      <div class="stu-form-group">
-        <label>Extra Curriculum</label>
-        <select id="se-extra-curriculum" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
-          <option value="">Please Select</option>
-          ${(typeof extraCurricularData !== 'undefined' ? extraCurricularData : []).map(e=>`<option value="${e.id}"${d.extra_curriculum_id===e.id?' selected':''}>${_sEsc(e.title)}</option>`).join('')}
-        </select>
-      </div>
+
       <div class="stu-form-group">
         <label>Funding Source</label>
         <select id="se-funding-source" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
-          <option value="">Please Select</option>
-          ${fundingSourcesData.filter(f=>!f.is_inactive).map(f=>`<option value="${f.id}"${d.funding_source_id===f.id?' selected':''}>${_sEsc(f.title)}</option>`).join('')}
+          ${fsOpts}
         </select>
       </div>
+      <div class="stu-form-group">
+        <label>Student Status <span style="color:#e74c3c">*</span></label>
+        <select id="se-status" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
+          ${statusOpts}
+        </select>
+        <span class="stu-field-error" id="err-se-status"></span>
+      </div>
+
+      <div class="stu-form-group">
+        <label>Level of Academics <span style="color:#e74c3c">*</span></label>
+        <select id="se-class" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;"
+                onchange="onStuClassChange(this.value)">
+          ${classOpts}
+        </select>
+        <span class="stu-field-error" id="err-se-class"></span>
+      </div>
+      <div class="stu-form-group">
+        <label>Stream</label>
+        <select id="se-stream" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
+          ${streamOpts}
+        </select>
+      </div>
+
+      <div class="stu-form-group">
+        <label>Session</label>
+        <input id="se-session" class="fin-search-input" style="width:100%!important"
+               value="${_esc(d.cohort||d.session||'')}" readonly placeholder="Auto-filled">
+      </div>
+      <div class="stu-form-group">
+        <label>Sports House</label>
+        <select id="se-sports-house" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
+          <option value="">Please Select</option>
+          ${(d.sports_house ? `<option selected>${_esc(d.sports_house)}</option>` : '')}
+        </select>
+      </div>
+
+      <div class="stu-form-group">
+        <label>Extra Curriculum</label>
+        <select id="se-extra-curriculum" class="stu-multiselect" multiple>${ecOpts}</select>
+      </div>
+      <div class="stu-form-group">
+        <label>Transportation</label>
+        <select id="se-transport" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
+          ${transOpts}
+        </select>
+      </div>
+
       <div class="stu-form-group" style="grid-column:span 2;">
         <label>Photo</label>
         <div style="display:flex;align-items:center;gap:16px;">
           <div id="se-photo-preview" style="width:80px;height:80px;border-radius:50%;background:#e0e0e0;overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:2rem;color:#aaa;">
-            ${d.photo_url ? `<img src="${_sEsc(d.photo_url)}" style="width:100%;height:100%;object-fit:cover;">` : '&#128100;'}
+            ${d.photo_url ? `<img src="${_esc(d.photo_url)}" style="width:100%;height:100%;object-fit:cover;">` : '&#128100;'}
           </div>
           <input type="file" id="se-photo" accept="image/*" onchange="handleStuPhotoPreview(this)">
         </div>
       </div>
+
       <div class="stu-form-group">
         <label><input type="checkbox" id="se-record-closed"${d.record_closed?' checked':''}> Record Closed</label>
       </div>
@@ -454,18 +541,84 @@ function _stuTabPersonal() {
           <label><input type="radio" name="se-meal" value="no"${!d.meal_program?' checked':''}> No</label>
         </div>
       </div>
+
       <div class="stu-form-group" style="grid-column:span 2;">
-        <label>Parent Consents to Use of Student Photo?</label>
-        <div style="display:flex;gap:16px;margin-top:6px;">
-          <label><input type="checkbox" id="se-photo-consent"${d.photo_consent?' checked':''}> Yes</label>
+        <label><input type="checkbox" id="se-photo-consent"${d.photo_consent?' checked':''}> Parent Consents to Use of Student Photo?</label>
+      </div>
+
+      <div class="stu-form-group" style="grid-column:span 2;">
+        <label><input type="checkbox" id="se-has-sibling"${hasSibling?' checked':''} onchange="toggleSiblingSection()"> Has Sibling Enrolled?</label>
+        <div id="se-sibling-section" style="display:${sibDisplay};margin-top:10px;padding:14px;background:#f9fafb;border-radius:6px;border:1px solid #e0e0e0;">
+          <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <div class="stu-form-group" style="flex:1;min-width:180px;">
+              <label>Sibling Student Name</label>
+              <input id="se-sibling-name" class="fin-search-input" style="width:100%!important" value="${siblingName}">
+            </div>
+            <div class="stu-form-group" style="flex:1;min-width:140px;">
+              <label>Sibling Student ID</label>
+              <input id="se-sibling-id" class="fin-search-input" style="width:100%!important" value="${siblingId}">
+            </div>
+          </div>
+          <p class="stu-sibling-note">Sibling discount will be applied automatically based on age order.</p>
         </div>
       </div>
+
       <div class="stu-form-group" style="grid-column:span 2;">
         <label>Notes</label>
-        <textarea id="se-notes" style="width:100%;min-height:80px;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:0.9rem;">${_sEsc(d.notes||'')}</textarea>
+        <textarea id="se-notes" style="width:100%;min-height:80px;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:0.9rem;">${_esc(d.notes||'')}</textarea>
       </div>
     </div>
   `;
+}
+
+function _wireStuPersonalTab() {
+  const dob = document.getElementById('se-dob');
+  if (dob) {
+    dob.addEventListener('change', () => {
+      const ageEl = document.getElementById('se-age-display');
+      if (ageEl) ageEl.textContent = calculateAge(dob.value);
+    });
+  }
+  // If editing and class already selected, load sports houses
+  const cls = document.getElementById('se-class');
+  if (cls && cls.value) onStuClassChange(cls.value, false);
+}
+
+async function onStuClassChange(classId, clearHouse = true) {
+  const houseSelect = document.getElementById('se-sports-house');
+  const sessionInput = document.getElementById('se-session');
+  if (!houseSelect) return;
+
+  // Auto-fill session from the selected class data
+  if (sessionInput) {
+    const cls = _stuFormClasses.find(c => String(c.id) === String(classId));
+    if (cls) sessionInput.value = cls.cohort || cls.session || cls.name || '';
+  }
+
+  houseSelect.innerHTML = '<option value="">Loading&#8230;</option>';
+  if (!classId) { houseSelect.innerHTML = '<option value="">Please Select</option>'; return; }
+
+  const d = window._stuFormData || {};
+  const currentHouse = clearHouse ? '' : (d.sports_house || '');
+
+  try {
+    const res = await apiFetch(`${API_BASE}/academics/classes/${classId}/sports-houses`);
+    if (res && res.ok) {
+      const houses = await res.json();
+      houseSelect.innerHTML = `<option value="">Please Select</option>` +
+        houses.map(h =>
+          `<option value="${_esc(h.name||h.title||String(h.id))}"${(h.name||h.title)===currentHouse?' selected':''}>${_esc(h.name||h.title)}</option>`
+        ).join('');
+    } else {
+      houseSelect.innerHTML = '<option value="">No houses found</option>';
+    }
+  } catch (_) { houseSelect.innerHTML = '<option value="">Error loading</option>'; }
+}
+
+function toggleSiblingSection() {
+  const chk = document.getElementById('se-has-sibling');
+  const sec = document.getElementById('se-sibling-section');
+  if (sec) sec.style.display = chk?.checked ? 'block' : 'none';
 }
 
 function handleStuPhotoPreview(input) {
@@ -481,436 +634,426 @@ function handleStuPhotoPreview(input) {
   preview.appendChild(img);
 }
 
-function _stuTabAcademic() {
-  const d = _stuEditData || {};
+function _stuTabPrevEdu(d) {
+  const typeOpts = ['Primary','Secondary','Tertiary','Other'].map(t =>
+    `<option${d.prev_school_type===t?' selected':''}>${t}</option>`).join('');
   return `
     <div class="stu-form-grid">
+      <div class="stu-form-group">
+        <label>Previous School Name</label>
+        <input id="se-prev-school" class="fin-search-input" style="width:100%!important" value="${_esc(d.prev_school_name||'')}">
+      </div>
+      <div class="stu-form-group">
+        <label>Previous School Type</label>
+        <select id="se-prev-school-type" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
+          <option value="">Select</option>${typeOpts}
+        </select>
+      </div>
+      <div class="stu-form-group">
+        <label>Year Left Previous School</label>
+        <input id="se-year-left" class="fin-search-input" style="width:100%!important" value="${_esc(d.year_left_prev_school||'')}">
+      </div>
+      <div></div>
+
       <div class="stu-form-group" style="grid-column:span 2;">
-        <label>KCPE</label>
-        <div style="display:flex;gap:10px;">
-          <input class="fin-search-input" style="flex:1!important;width:auto!important;" placeholder="Index No." id="se-kcpe-index" value="${_sEsc(d.kcpe_index||'')}">
-          <input class="fin-search-input" style="flex:1!important;width:auto!important;" placeholder="Year" id="se-kcpe-year" value="${_sEsc(d.kcpe_year||'')}">
-          <input class="fin-search-input" style="flex:1!important;width:auto!important;" placeholder="Grade" id="se-kcpe-grade" value="${_sEsc(d.kcpe_grade||'')}">
-        </div>
+        <label style="font-weight:600;color:#2c3e50;padding-bottom:6px;border-bottom:1px solid #eee;display:block;">KCPE</label>
       </div>
+      <div class="stu-form-group">
+        <label>KCPE Index Number</label>
+        <input id="se-kcpe-index" class="fin-search-input" style="width:100%!important" value="${_esc(d.kcpe_index||'')}">
+      </div>
+      <div class="stu-form-group">
+        <label>KCPE Year</label>
+        <input id="se-kcpe-year" class="fin-search-input" style="width:100%!important" value="${_esc(d.kcpe_year||'')}">
+      </div>
+      <div class="stu-form-group">
+        <label>KCPE Grade</label>
+        <input id="se-kcpe-grade" class="fin-search-input" style="width:100%!important" value="${_esc(d.kcpe_grade||'')}">
+      </div>
+      <div></div>
+
       <div class="stu-form-group" style="grid-column:span 2;">
-        <label>KCSE</label>
-        <div style="display:flex;gap:10px;">
-          <input class="fin-search-input" style="flex:1!important;width:auto!important;" placeholder="Index No." id="se-kcse-index" value="${_sEsc(d.kcse_index||'')}">
-          <input class="fin-search-input" style="flex:1!important;width:auto!important;" placeholder="Year" id="se-kcse-year" value="${_sEsc(d.kcse_year||'')}">
-          <input class="fin-search-input" style="flex:1!important;width:auto!important;" placeholder="Grade" id="se-kcse-grade" value="${_sEsc(d.kcse_grade||'')}">
-        </div>
+        <label style="font-weight:600;color:#2c3e50;padding-bottom:6px;border-bottom:1px solid #eee;display:block;">KCSE</label>
       </div>
       <div class="stu-form-group">
-        <label>Class*</label>
-        <select id="se-class" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
-          <option value="">Please Select</option>
-          ${(typeof studentClassesData!=='undefined'?studentClassesData:[]).map(c=>`<option value="${c.id}"${d.class_id===c.id?' selected':''}>${_sEsc(c.name)}</option>`).join('')}
-        </select>
+        <label>KCSE Index Number</label>
+        <input id="se-kcse-index" class="fin-search-input" style="width:100%!important" value="${_esc(d.kcse_index||'')}">
       </div>
       <div class="stu-form-group">
-        <label>Stream</label>
-        <select id="se-stream" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
-          <option value="">Please Select</option>
-          ${streamsData.filter(s=>!s.is_inactive).map(s=>`<option value="${s.id}"${d.stream_id===s.id?' selected':''}>${_sEsc(s.title)}</option>`).join('')}
-        </select>
+        <label>KCSE Year</label>
+        <input id="se-kcse-year" class="fin-search-input" style="width:100%!important" value="${_esc(d.kcse_year||'')}">
       </div>
       <div class="stu-form-group">
-        <label>Cohort (Session)</label>
-        <input id="se-cohort" class="fin-search-input" style="width:100%!important" value="${_sEsc(d.cohort||'')}" readonly>
+        <label>KCSE Grade</label>
+        <input id="se-kcse-grade" class="fin-search-input" style="width:100%!important" value="${_esc(d.kcse_grade||'')}">
       </div>
-      <div class="stu-form-group">
-        <label>Programme</label>
-        <input id="se-programme" class="fin-search-input" style="width:100%!important" value="${_sEsc(d.programme||'')}" readonly>
-      </div>
-      <div class="stu-form-group">
-        <label>Department</label>
-        <input id="se-department" class="fin-search-input" style="width:100%!important" value="${_sEsc(d.department||'')}" readonly>
-      </div>
-      <div class="stu-form-group">
-        <label>Status*</label>
-        <select id="se-status" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
-          <option value="true"${d.is_active!==false?' selected':''}>Active</option>
-          <option value="false"${d.is_active===false?' selected':''}>Inactive</option>
-        </select>
-      </div>
-      <div class="stu-form-group">
-        <label>Sports House</label>
-        <select id="se-sports-house" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
-          <option value="">Please Select</option>
-          ${['Simba','Cheetah','Eagle','Falcon','Lion','Leopard'].map(h=>`<option${d.sports_house===h?' selected':''}>${h}</option>`).join('')}
-        </select>
-      </div>
-      <div class="stu-form-group">
-        <label>Transportation</label>
-        <select id="se-transport" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;" onchange="toggleStuTransport(this.value)">
-          <option value="">Please Select</option>
-          <option value="yes"${d.uses_transport?' selected':''}>Yes</option>
-          <option value="no"${!d.uses_transport?' selected':''}>No</option>
-        </select>
-      </div>
-      <div id="se-transport-details" style="grid-column:span 2;display:${d.uses_transport?'grid':'none'};grid-template-columns:1fr 1fr;gap:16px;">
-        <div class="stu-form-group">
-          <label>Route</label>
-          <input id="se-route" class="fin-search-input" style="width:100%!important" value="${_sEsc(d.transport_route||'')}">
-        </div>
-        <div class="stu-form-group">
-          <label>Direction</label>
-          <select id="se-direction" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
-            <option value="">Select</option>
-            <option value="TWO_WAY"${d.direction==='TWO_WAY'?' selected':''}>Two-Way</option>
-            <option value="ONE_WAY_MORNING"${d.direction==='ONE_WAY_MORNING'?' selected':''}>Morning Only</option>
-            <option value="ONE_WAY_EVENING"${d.direction==='ONE_WAY_EVENING'?' selected':''}>Evening Only</option>
-          </select>
-        </div>
-      </div>
+      <div></div>
     </div>
   `;
 }
-function toggleStuTransport(v) {
-  const d = document.getElementById('se-transport-details');
-  if (d) d.style.display = v === 'yes' ? 'grid' : 'none';
-}
 
-function _stuTabGuardian() {
-  const d = _stuEditData || {};
-  const p1 = (d.parents||[])[0] || {};
-  const p2 = (d.parents||[])[1] || {};
-  const siblings = d.siblings || [];
-  const sibRows = siblings.map((s,i) => `
-    <div class="stu-sibling-row" id="sib-row-${i}" style="display:flex;gap:10px;align-items:center;margin-bottom:8px;">
-      <input class="fin-search-input sib-name" style="flex:1!important;width:auto!important;" placeholder="Sibling Student Name" value="${_sEsc(s.full_name||'')}">
-      <input class="fin-search-input sib-id" style="width:130px!important;" placeholder="Student ID" value="${_sEsc(s.student_id||'')}">
-      <button class="fin-btn-cancel" style="padding:6px 10px!important;" onclick="removeSiblingRow(${i})">&#x2715;</button>
-    </div>`).join('');
+function _stuTabGuardian(d) {
+  const p1 = (d.parents || [])[0] || {};
+  const p2 = (d.parents || [])[1] || {};
+  const relOpts = (sel) => ['Mother','Father','Guardian','Other'].map(r =>
+    `<option${sel===r?' selected':''}>${r}</option>`).join('');
   return `
     <div class="stu-form-grid">
-      <div class="stu-form-group" style="font-weight:600;grid-column:span 2;color:#2c3e50;border-bottom:1px solid #eee;padding-bottom:6px;">Primary Guardian</div>
+      <div class="stu-form-group" style="grid-column:span 2;font-weight:600;color:#2c3e50;border-bottom:1px solid #eee;padding-bottom:6px;">
+        Primary Guardian
+      </div>
       <div class="stu-form-group">
-        <label>Full Name*</label>
-        <input id="se-p1-name" class="fin-search-input" style="width:100%!important" value="${_sEsc(p1.full_name||'')}">
+        <label>Full Name <span style="color:#e74c3c">*</span></label>
+        <input id="se-p1-name" class="fin-search-input" style="width:100%!important" value="${_esc(p1.full_name||'')}">
       </div>
       <div class="stu-form-group">
         <label>Relationship</label>
         <select id="se-p1-rel" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
-          ${['Mother','Father','Guardian','Other'].map(r=>`<option${p1.relationship===r?' selected':''}>${r}</option>`).join('')}
+          ${relOpts(p1.relationship)}
         </select>
       </div>
       <div class="stu-form-group">
         <label>Email</label>
-        <input id="se-p1-email" type="email" class="fin-search-input" style="width:100%!important" value="${_sEsc(p1.email||'')}">
+        <input id="se-p1-email" type="email" class="fin-search-input" style="width:100%!important" value="${_esc(p1.email||'')}">
       </div>
       <div class="stu-form-group">
         <label>Phone</label>
-        <input id="se-p1-phone" class="fin-search-input" style="width:100%!important" value="${_sEsc(p1.phone||'')}">
+        <input id="se-p1-phone" class="fin-search-input" style="width:100%!important" value="${_esc(p1.phone||'')}">
       </div>
-      <div class="stu-form-group" style="font-weight:600;grid-column:span 2;color:#2c3e50;border-bottom:1px solid #eee;padding-bottom:6px;margin-top:8px;">Secondary Guardian <small style="font-weight:400;color:#888;">(optional)</small></div>
+
+      <div class="stu-form-group" style="grid-column:span 2;font-weight:600;color:#2c3e50;border-bottom:1px solid #eee;padding-bottom:6px;margin-top:8px;">
+        Secondary Guardian <small style="font-weight:400;color:#888;">(optional)</small>
+      </div>
       <div class="stu-form-group">
         <label>Full Name</label>
-        <input id="se-p2-name" class="fin-search-input" style="width:100%!important" value="${_sEsc(p2.full_name||'')}">
+        <input id="se-p2-name" class="fin-search-input" style="width:100%!important" value="${_esc(p2.full_name||'')}">
       </div>
       <div class="stu-form-group">
         <label>Relationship</label>
         <select id="se-p2-rel" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
-          ${['Mother','Father','Guardian','Other'].map(r=>`<option${p2.relationship===r?' selected':''}>${r}</option>`).join('')}
+          ${relOpts(p2.relationship)}
         </select>
       </div>
       <div class="stu-form-group">
         <label>Email</label>
-        <input id="se-p2-email" type="email" class="fin-search-input" style="width:100%!important" value="${_sEsc(p2.email||'')}">
+        <input id="se-p2-email" type="email" class="fin-search-input" style="width:100%!important" value="${_esc(p2.email||'')}">
       </div>
       <div class="stu-form-group">
         <label>Phone</label>
-        <input id="se-p2-phone" class="fin-search-input" style="width:100%!important" value="${_sEsc(p2.phone||'')}">
-      </div>
-      <div class="stu-form-group" style="grid-column:span 2;margin-top:8px;">
-        <label><input type="checkbox" id="se-has-sibling"${siblings.length?' checked':''} onchange="toggleSiblingSection()"> Have Sibling Enrolled</label>
-      </div>
-      <div id="se-sibling-section" style="grid-column:span 2;display:${siblings.length?'block':'none'};">
-        <div id="se-sibling-rows">${sibRows}</div>
-        <button class="fin-btn-outline" onclick="addSiblingRow()" style="margin-top:6px;">+ Add Sibling</button>
+        <input id="se-p2-phone" class="fin-search-input" style="width:100%!important" value="${_esc(p2.phone||'')}">
       </div>
     </div>
   `;
 }
+function _wireStuGuardianTab() {} // placeholder for future autocomplete
 
-function toggleSiblingSection() {
-  const chk = document.getElementById('se-has-sibling');
-  const sec = document.getElementById('se-sibling-section');
-  if (sec) sec.style.display = chk?.checked ? 'block' : 'none';
-  if (chk?.checked) {
-    const rows = document.getElementById('se-sibling-rows');
-    if (rows && rows.children.length === 0) addSiblingRow();
-  }
-}
-
-let _sibIdx = 100;
-function addSiblingRow() {
-  const rows = document.getElementById('se-sibling-rows');
-  if (!rows) return;
-  const idx = _sibIdx++;
-  const div = document.createElement('div');
-  div.className = 'stu-sibling-row';
-  div.id = `sib-row-${idx}`;
-  div.style.cssText = 'display:flex;gap:10px;align-items:center;margin-bottom:8px;';
-  div.innerHTML = `
-    <input class="fin-search-input sib-name" style="flex:1!important;width:auto!important;" placeholder="Sibling Student Name"
-           oninput="stuSiblingAutocomplete(this)">
-    <input class="fin-search-input sib-id" style="width:130px!important;" placeholder="Student ID">
-    <button class="fin-btn-cancel" style="padding:6px 10px!important;" onclick="this.parentElement.remove()">&#x2715;</button>
-  `;
-  rows.appendChild(div);
-}
-
-function removeSiblingRow(idx) {
-  const r = document.getElementById(`sib-row-${idx}`);
-  if (r) r.remove();
-}
-
-function stuSiblingAutocomplete(input) {
-  const q = input.value.toLowerCase();
-  const idInput = input.nextElementSibling;
-  if (!idInput) return;
-  const match = allStudentsData.find(s =>
-    (`${s.first_name} ${s.last_name}`).toLowerCase().includes(q)
-  );
-  if (match) idInput.value = match.student_id;
-}
-
-function _stuTabMedical() {
-  const d = (_stuEditData||{}).medical || {};
+function _stuTabMedical(d) {
+  const med = d.medical || {};
   return `
     <div class="stu-form-grid">
       <div class="stu-form-group" style="grid-column:span 2;">
         <label>Allergies</label>
-        <textarea id="se-allergies" style="width:100%;min-height:70px;padding:8px;border:1px solid #ccc;border-radius:4px;">${_sEsc(d.allergies||'')}</textarea>
+        <textarea id="se-allergies" style="width:100%;min-height:70px;padding:8px;border:1px solid #ccc;border-radius:4px;">${_esc(med.allergies||'')}</textarea>
       </div>
       <div class="stu-form-group" style="grid-column:span 2;">
         <label>Chronic Symptoms</label>
-        <textarea id="se-chronic" style="width:100%;min-height:70px;padding:8px;border:1px solid #ccc;border-radius:4px;">${_sEsc(d.chronic_symptoms||'')}</textarea>
+        <textarea id="se-chronic" style="width:100%;min-height:70px;padding:8px;border:1px solid #ccc;border-radius:4px;">${_esc(med.chronic_symptoms||'')}</textarea>
       </div>
       <div class="stu-form-group">
         <label>Health Insurance</label>
-        <input id="se-insurance" class="fin-search-input" style="width:100%!important" value="${_sEsc(d.health_insurance||'')}">
+        <input id="se-insurance" class="fin-search-input" style="width:100%!important" value="${_esc(med.health_insurance||'')}">
       </div>
       <div class="stu-form-group">
         <label>Blood Group</label>
         <select id="se-blood-group" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
           <option value="">Select</option>
-          ${['A+','A-','B+','B-','AB+','AB-','O+','O-'].map(b=>`<option${d.blood_group===b?' selected':''}>${b}</option>`).join('')}
+          ${['A+','A-','B+','B-','AB+','AB-','O+','O-'].map(b => `<option${med.blood_group===b?' selected':''}>${b}</option>`).join('')}
         </select>
       </div>
       <div class="stu-form-group">
         <label>Emergency Contact Name</label>
-        <input id="se-emrg-name" class="fin-search-input" style="width:100%!important" value="${_sEsc(d.emergency_contact_name||'')}">
+        <input id="se-emrg-name" class="fin-search-input" style="width:100%!important" value="${_esc(med.emergency_contact_name||'')}">
       </div>
       <div class="stu-form-group">
         <label>Emergency Contact Phone</label>
-        <input id="se-emrg-phone" class="fin-search-input" style="width:100%!important" value="${_sEsc(d.emergency_contact_phone||'')}">
+        <input id="se-emrg-phone" class="fin-search-input" style="width:100%!important" value="${_esc(med.emergency_contact_phone||'')}">
       </div>
     </div>
   `;
 }
 
-function _stuTabDisciplinary() {
-  return `<div style="padding:24px;color:#888;text-align:center;">
-    <p style="font-weight:600;">Disciplinary Records</p>
-    <p style="font-size:0.88rem;">No disciplinary records for this student.</p>
-  </div>`;
-}
-
-function _stuTabDocuments() {
-  const docs = (_stuEditData||{}).documents || [];
-  const existing = docs.map(doc => `
-    <div style="display:flex;align-items:center;gap:10px;padding:8px;background:#f9f9f9;border-radius:4px;margin-bottom:6px;">
-      <span style="flex:1;">${_sEsc(doc.name)}</span>
-      <a href="${_sEsc(doc.url)}" target="_blank" class="fin-btn-outline" style="padding:4px 10px!important;font-size:0.82rem;">View</a>
-    </div>`).join('') || '<p style="color:#888;font-size:0.88rem;">No documents uploaded.</p>';
+function _stuTabDocuments(d) {
+  const docs = d.documents || [];
+  const existing = docs.length
+    ? docs.map(doc => `
+        <div style="display:flex;align-items:center;gap:10px;padding:8px;background:#f9f9f9;border-radius:4px;margin-bottom:6px;">
+          <span style="flex:1;">${_esc(doc.name)}</span>
+          <a href="${_esc(doc.url)}" target="_blank" class="fin-btn-outline" style="padding:4px 10px!important;font-size:0.82rem;">View</a>
+        </div>`).join('')
+    : '<p style="color:#888;font-size:0.88rem;">No documents uploaded.</p>';
   return `
     <div style="padding:4px;">
       <p style="font-weight:600;color:#2c3e50;margin-bottom:12px;">Existing Documents</p>
       ${existing}
       <p style="font-weight:600;color:#2c3e50;margin:16px 0 8px;">Upload New Documents</p>
-      <div class="stu-form-group"><label>Passport Photo</label><input type="file" id="se-doc-photo" accept="image/*"></div>
-      <div class="stu-form-group"><label>Previous School Report (PDF)</label><input type="file" id="se-doc-report" accept=".pdf"></div>
-      <div class="stu-form-group"><label>Other Document</label><input type="file" id="se-doc-other"></div>
+      <div class="stu-form-group" style="margin-bottom:12px;">
+        <label>Passport Photo</label>
+        <input type="file" id="se-doc-photo" accept="image/*">
+      </div>
+      <div class="stu-form-group" style="margin-bottom:12px;">
+        <label>Previous School Report (PDF)</label>
+        <input type="file" id="se-doc-report" accept=".pdf">
+      </div>
+      <div class="stu-form-group">
+        <label>Other Document</label>
+        <input type="file" id="se-doc-other">
+      </div>
     </div>
   `;
 }
 
-function _stuTabAppDocs() {
-  return `<div style="padding:24px;color:#888;text-align:center;">
-    <p style="font-weight:600;">Application Documents</p>
-    <p style="font-size:0.88rem;">No application documents on file.</p>
-  </div>`;
+function _stuValidatePersonal() {
+  const required = [
+    { id: 'se-surname',     err: 'err-se-surname',     msg: 'Surname is required.' },
+    { id: 'se-other-name',  err: 'err-se-other-name',  msg: 'Other Name is required.' },
+    { id: 'se-gender',      err: 'err-se-gender',      msg: 'Gender is required.' },
+    { id: 'se-dob',         err: 'err-se-dob',         msg: 'Birth Date is required.' },
+    { id: 'se-nationality', err: 'err-se-nationality',  msg: 'Nationality is required.' },
+    { id: 'se-status',      err: 'err-se-status',      msg: 'Status is required.' },
+    { id: 'se-class',       err: 'err-se-class',       msg: 'Level of Academics is required.' },
+  ];
+  let valid = true;
+  required.forEach(({ id, err, msg }) => {
+    const el = document.getElementById(id);
+    const errEl = document.getElementById(err);
+    if (!el || !el.value.trim()) {
+      if (el) el.classList.add('error');
+      if (errEl) errEl.textContent = msg;
+      valid = false;
+    } else {
+      if (el) el.classList.remove('error');
+      if (errEl) errEl.textContent = '';
+    }
+  });
+  return valid;
 }
 
-async function submitStudentForm(studentId) {
-  const surname    = _f('se-surname').trim();
-  const otherName  = _f('se-other-name').trim();
-  const gender     = _f('se-gender');
-  const dob        = _f('se-dob');
-  if (!surname)   { showToast('Surname is required.', 'error'); switchStuEditTab('personal'); return; }
-  if (!otherName) { showToast('Other Name is required.', 'error'); switchStuEditTab('personal'); return; }
-  if (!gender)    { showToast('Gender is required.', 'error'); switchStuEditTab('personal'); return; }
-  if (!dob)       { showToast('Birth Date is required.', 'error'); switchStuEditTab('personal'); return; }
+async function submitStudentForm() {
+  if (_stuEditActiveTab !== 'personal') {
+    switchStuEditTab('personal');
+    await new Promise(r => setTimeout(r, 50));
+  }
+  if (!_stuValidatePersonal()) {
+    showToast('Please fill in all required fields.', 'error');
+    return;
+  }
+
+  const ecSelect = document.getElementById('se-extra-curriculum');
+  const ecIds = ecSelect ? Array.from(ecSelect.selectedOptions).map(o => o.value) : [];
 
   const payload = {
-    last_name:      surname,
-    first_name:     otherName,
-    gender,
-    date_of_birth:  dob,
-    joining_date:   _f('se-joining-date'),
-    nationality:    _f('se-nationality'),
-    phone:          _f('se-phone'),
-    phone_code:     _f('se-phone-code'),
-    religion:       _f('se-religion'),
-    physical_address: _f('se-physical-address'),
-    email:          _f('se-email'),
-    notes:          _f('se-notes'),
-    is_active:      _f('se-status') === 'true',
-    sports_house:   _f('se-sports-house'),
-    uses_transport: _f('se-transport') === 'yes',
-    direction:      _f('se-direction'),
+    last_name:         _fv('se-surname').trim(),
+    first_name:        _fv('se-other-name').trim(),
+    gender:            _fv('se-gender'),
+    date_of_birth:     _fv('se-dob'),
+    joining_date:      _fv('se-joining-date'),
+    nationality:       _fv('se-nationality'),
+    religion:          _fv('se-religion'),
+    email:             _fv('se-email'),
+    physical_address:  _fv('se-physical-address'),
+    funding_source_id: _fv('se-funding-source') || null,
+    status:            _fv('se-status'),
+    class_id:          _fv('se-class') || null,
+    stream_id:         _fv('se-stream') || null,
+    sports_house:      _fv('se-sports-house'),
+    transport_route_id: _fv('se-transport') || null,
+    extra_curriculum_ids: ecIds,
+    record_closed:     _fc('se-record-closed'),
+    meal_program:      _fradio('se-meal') === 'yes',
+    photo_consent:     _fc('se-photo-consent'),
+    notes:             _fv('se-notes'),
+    siblings: _fc('se-has-sibling') ? [{
+      full_name:  _fv('se-sibling-name'),
+      student_id: _fv('se-sibling-id'),
+    }] : [],
+    prev_school_name:      _fv('se-prev-school'),
+    prev_school_type:      _fv('se-prev-school-type'),
+    year_left_prev_school: _fv('se-year-left'),
+    kcpe_index: _fv('se-kcpe-index'), kcpe_year: _fv('se-kcpe-year'), kcpe_grade: _fv('se-kcpe-grade'),
+    kcse_index: _fv('se-kcse-index'), kcse_year: _fv('se-kcse-year'), kcse_grade: _fv('se-kcse-grade'),
     medical: {
-      allergies:              _f('se-allergies'),
-      chronic_symptoms:       _f('se-chronic'),
-      health_insurance:       _f('se-insurance'),
-      blood_group:            _f('se-blood-group'),
-      emergency_contact_name: _f('se-emrg-name'),
-      emergency_contact_phone:_f('se-emrg-phone'),
+      allergies:               _fv('se-allergies'),
+      chronic_symptoms:        _fv('se-chronic'),
+      health_insurance:        _fv('se-insurance'),
+      blood_group:             _fv('se-blood-group'),
+      emergency_contact_name:  _fv('se-emrg-name'),
+      emergency_contact_phone: _fv('se-emrg-phone'),
     },
     parents: (() => {
       const p = [];
-      const p1name = _f('se-p1-name').trim();
-      if (p1name) p.push({ full_name:p1name, email:_f('se-p1-email'), phone:_f('se-p1-phone'), relationship:_f('se-p1-rel'), is_primary:true });
-      const p2name = _f('se-p2-name').trim();
-      if (p2name) p.push({ full_name:p2name, email:_f('se-p2-email'), phone:_f('se-p2-phone'), relationship:_f('se-p2-rel'), is_primary:false });
+      const p1 = _fv('se-p1-name').trim();
+      if (p1) p.push({ full_name: p1, email: _fv('se-p1-email'), phone: _fv('se-p1-phone'), relationship: _fv('se-p1-rel'), is_primary: true });
+      const p2 = _fv('se-p2-name').trim();
+      if (p2) p.push({ full_name: p2, email: _fv('se-p2-email'), phone: _fv('se-p2-phone'), relationship: _fv('se-p2-rel'), is_primary: false });
       return p;
     })(),
-    siblings: (() => {
-      const rows = document.querySelectorAll('.stu-sibling-row');
-      return Array.from(rows).map(r => ({
-        full_name:  r.querySelector('.sib-name')?.value || '',
-        student_id: r.querySelector('.sib-id')?.value   || ''
-      })).filter(s => s.full_name);
-    })()
   };
 
-  try {
-    const url    = studentId ? `${API_BASE}/students/${studentId}` : `${API_BASE}/students/`;
-    const method = studentId ? 'PUT' : 'POST';
-    const res    = await fetch(url, {
-      method,
-      headers: { 'Content-Type':'application/json', Authorization:`Bearer ${token}` },
-      body: JSON.stringify(payload)
-    });
-    if (res.ok) {
-      showToast(studentId ? 'Student updated!' : 'Student registered!', 'success');
-      closeStuEditModal();
-      refreshStudentsListing();
-    } else {
-      const err = await res.json();
-      showToast('Error: ' + (err.detail || JSON.stringify(err)), 'error');
-    }
-  } catch(_) { showToast('Network error. Please try again.', 'error'); }
+  const isEdit  = !!_currentEditStudentId;
+  const url     = isEdit ? `${API_BASE}/students/${_currentEditStudentId}` : `${API_BASE}/students/`;
+  const method  = isEdit ? 'PUT' : 'POST';
+  const btn     = document.getElementById('stu-form-submit-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+  const res = await apiFetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (btn) { btn.disabled = false; btn.textContent = isEdit ? 'Update' : 'Save'; }
+
+  if (res && res.ok) {
+    _stuEditDirty = false;
+    showToast(isEdit ? 'Student updated successfully!' : 'Student added successfully!', 'success');
+    _currentEditStudentId = null;
+    _stuEditActiveTab = 'personal';
+    loadView('students-list');
+  } else {
+    let msg = 'An error occurred.';
+    if (res) { try { const e = await res.json(); msg = e.detail || JSON.stringify(e); } catch (_) {} }
+    showToast('Error: ' + msg, 'error');
+  }
 }
 
-// ==================== 3. STUDENT DETAIL VIEW ====================
+function cancelStudentForm() {
+  if (_stuEditDirty && !confirm('You have unsaved changes. Discard them?')) return;
+  _stuEditDirty = false;
+  _currentEditStudentId = null;
+  _stuEditActiveTab = 'personal';
+  loadView('students-list');
+}
 
-async function openStudentDetailView(studentId) {
-  const modal = document.getElementById('stu-edit-modal');
-  if (!modal) return;
-  modal.style.display = 'block';
-  modal.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;"><p style="color:white;font-size:1.1rem;">Loading&#8230;</p></div>`;
+// ==================== 3. STUDENT VIEW (READ-ONLY) ====================
 
-  let data = {};
-  try {
-    const res = await fetch(`${API_BASE}/students/${studentId}/full-profile`, { headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok) data = await res.json();
-  } catch(_) {}
+async function loadStudentViewPage(container) {
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Student Detail</h2>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Student Detail</div>
+          <button class="fin-btn-outline" onclick="loadView('students-list')" style="padding:5px 14px!important;">&#8592; Back</button>
+        </div>
+      </div>
+      <div id="stu-view-body"><p class="fin-loading">Loading&#8230;</p></div>
+    </div>
+  `;
 
-  const DETAIL_TABS = ['Personal Data','Academic Background','Guardian/Family','Disability/Medical','Disciplinary'];
-  let activeDetailTab = 'Personal Data';
+  if (!_currentEditStudentId) { document.getElementById('stu-view-body').innerHTML = '<p class="fin-error">No student selected.</p>'; return; }
+  const res = await apiFetch(`${API_BASE}/students/${_currentEditStudentId}`);
+  if (!res || !res.ok) { document.getElementById('stu-view-body').innerHTML = '<p class="fin-error">Failed to load student.</p>'; return; }
+  const d = await res.json();
+  window._stuViewData = d;
+  window._stuViewTab  = 'Personal Data';
+  _renderStudentViewBody(d, 'Personal Data');
+}
 
-  const tabBar = DETAIL_TABS.map(t =>
-    `<button class="stu-tab-btn${t===activeDetailTab?' stu-tab-btn--active':''}"
-       onclick="switchDetailTab(this,'${t.replace(/'/g,'\\\'')}')">${t}</button>`
+function _renderStudentViewBody(d, activeTab) {
+  const TABS = ['Personal Data','Academic Background','Guardian/Family','Medical Information','Disciplinary'];
+  const statusBadge = d.is_active
+    ? '<span class="stu-status-badge stu-status-badge--active">Active</span>'
+    : '<span class="stu-status-badge stu-status-badge--inactive">Inactive</span>';
+
+  const tabBar = TABS.map(t =>
+    `<button class="stu-tab-btn${t===activeTab?' stu-tab-btn--active':''}"
+       onclick="switchStuViewTab(this,'${t.replace(/'/g,'\\\'')}')">${t}</button>`
   ).join('');
 
-  modal.innerHTML = `
-    <div class="stu-edit-shell">
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 28px 0;">
-        <div style="display:flex;align-items:center;gap:20px;">
-          <div style="width:72px;height:72px;border-radius:50%;background:#2db3b3;overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:2rem;color:white;">
-            ${data.photo_url ? `<img src="${_sEsc(data.photo_url)}" style="width:100%;height:100%;object-fit:cover;">` : '&#128100;'}
-          </div>
-          <div>
-            <h2 class="fin-title" style="margin:0;">${_sEsc((data.first_name||'')+' '+(data.last_name||''))}</h2>
-            <div class="fin-breadcrumb" style="text-align:left;">Dashboard &rsaquo; Student Management &rsaquo; Student Detail</div>
+  document.getElementById('stu-view-body').innerHTML = `
+    <div class="stu-view-layout">
+      <div class="stu-view-card">
+        <div class="stu-view-avatar">
+          ${d.photo_url ? `<img src="${_esc(d.photo_url)}" alt="Photo">` : '&#128100;'}
+        </div>
+        <div class="stu-view-name">${_esc(`${d.first_name||''} ${d.last_name||''}`.trim())}</div>
+        <div class="stu-view-id">${_esc(d.student_id||'')}</div>
+        <div class="stu-view-card-rows">
+          ${_svRow('Department',     d.department)}
+          ${_svRow('Gender',         d.gender)}
+          ${_svRow('Level',          d.class_name||d.level_of_academics)}
+          ${_svRow('Email',          d.email)}
+          ${_svRow('Programme',      d.programme)}
+          ${_svRow('Session',        d.cohort||d.session)}
+          ${_svRow('Phone',          d.phone)}
+          ${_svRow('Meal Program',   d.meal_program ? 'Yes' : 'No')}
+          ${_svRow('Photo Consent',  d.photo_consent ? 'Yes' : 'No')}
+          ${_svRow('Transport',      d.uses_transport ? 'Yes' : 'No')}
+          <div class="stu-view-card-row">
+            <span class="stu-view-card-label">Status</span>
+            <span>${statusBadge}</span>
           </div>
         </div>
-        <button class="fin-action-btn" onclick="closeStuEditModal()" style="font-size:1.2rem;padding:4px 10px;">&#x2715;</button>
+        <div class="stu-view-fee-row">
+          <span style="font-size:0.83rem;color:#888;">Fee Balance</span>
+          <span style="color:#e74c3c;font-weight:700;font-size:1rem;">${_esc(String(d.fee_balance ?? '-'))}</span>
+          <a href="#" onclick="openFeeStatement(${d.id});return false;" class="fin-btn-teal"
+             style="padding:5px 12px!important;font-size:0.78rem;margin-top:4px;">View Fee Statement</a>
+        </div>
       </div>
-      <div class="stu-tab-bar">${tabBar}</div>
-      <div class="stu-edit-body" id="detail-tab-content">${_renderDetailTab('Personal Data', data)}</div>
+
+      <div class="stu-view-panel">
+        <div class="stu-tab-bar">${tabBar}</div>
+        <div class="stu-edit-body" id="stu-view-tab-content">
+          ${_renderStuViewTab(activeTab, d)}
+        </div>
+      </div>
     </div>
   `;
 }
 
-function switchDetailTab(btn, tabName) {
-  document.querySelectorAll('.stu-tab-btn').forEach(b => b.classList.remove('stu-tab-btn--active'));
-  btn.classList.add('stu-tab-btn--active');
-  const c = document.getElementById('detail-tab-content');
-  if (c) c.innerHTML = _renderDetailTab(tabName, _stuEditData);
-  const res = document.querySelector('.stu-edit-shell');
-  if(res) {
-    fetch(`${API_BASE}/students/${_stuEditData?.id || ''}/full-profile`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d && c) { _stuEditData = d; c.innerHTML = _renderDetailTab(tabName, d); } })
-      .catch(() => {});
-  }
+function _svRow(label, value) {
+  return `<div class="stu-view-card-row">
+    <span class="stu-view-card-label">${_esc(label)}</span>
+    <span class="stu-view-card-value">${_esc(value||'-')}</span>
+  </div>`;
 }
 
-function _renderDetailTab(tabName, data) {
-  const d = data || {};
+function switchStuViewTab(btn, tabName) {
+  document.querySelectorAll('.stu-view-panel .stu-tab-btn').forEach(b => b.classList.remove('stu-tab-btn--active'));
+  btn.classList.add('stu-tab-btn--active');
+  const c = document.getElementById('stu-view-tab-content');
+  if (c) c.innerHTML = _renderStuViewTab(tabName, window._stuViewData || {});
+}
+
+function _renderStuViewTab(tabName, d) {
   if (tabName === 'Personal Data') return `
     <div class="stu-detail-grid">
-      ${_dRow('Admission No.',   d.student_id)}
-      ${_dRow('Department',      d.department)}
-      ${_dRow('Birth Date',      d.date_of_birth)}
-      ${_dRow('Assessment Number', d.assessment_number)}
-      ${_dRow('Nationality',     d.nationality)}
-      ${_dRow('Religion',        d.religion)}
-      ${_dRow('County',          d.county)}
-      ${_dRow('Sub County',      d.sub_county)}
-      ${_dRow('Postal Address',  d.postal_address)}
-      ${_dRow('Physical Address',d.physical_address)}
-      ${_dRow('Student Type',    d.student_type)}
-      ${_dRow('Student Source',  d.student_source)}
-      ${_dRow('Session',         d.session)}
-      ${_dRow('Phone',           d.phone)}
-      ${_dRow('Mapped to Meal Program', d.meal_program ? 'Yes' : 'No')}
-      ${_dRow('Transport',       d.uses_transport ? 'Yes' : 'No')}
-      ${_dRow('Academic Status', d.is_active ? 'Active' : 'Inactive')}
-      <div class="stu-detail-row" style="grid-column:span 2;margin-top:4px;">
-        <span class="stu-detail-label">Fee Balance</span>
-        <span class="stu-detail-value" style="color:#e74c3c;font-weight:600;">${d.fee_balance ?? '-'}</span>
-        <a href="#" onclick="openFeeStatement(${d.id});return false;" class="fin-btn-teal" style="margin-left:12px;padding:5px 14px!important;font-size:0.82rem;">View Fee Statement</a>
-      </div>
+      ${_dRow('Student ID',       d.student_id)}
+      ${_dRow('Surname',          d.last_name)}
+      ${_dRow('Other Name',       d.first_name)}
+      ${_dRow('Joining Date',     d.joining_date)}
+      ${_dRow('Gender',           d.gender)}
+      ${_dRow('Birth Date',       d.date_of_birth)}
+      ${_dRow('Age',              calculateAge(d.date_of_birth))}
+      ${_dRow('Nationality',      d.nationality)}
+      ${_dRow('Religion',         d.religion)}
+      ${_dRow('Email',            d.email)}
+      ${_dRow('Physical Address', d.physical_address)}
+      ${_dRow('Record Closed',    d.record_closed ? 'Yes' : 'No')}
     </div>`;
   if (tabName === 'Academic Background') return `
     <div class="stu-detail-grid">
-      ${_dRow('Class',    d.class_name)}
-      ${_dRow('Stream',   d.stream)}
-      ${_dRow('Cohort',   d.cohort)}
-      ${_dRow('Programme',d.programme)}
-      ${_dRow('Level',    d.level)}
-      ${_dRow('Session',  d.session)}
+      ${_dRow('Level of Academics', d.class_name||d.level_of_academics)}
+      ${_dRow('Stream',             d.stream)}
+      ${_dRow('Session',            d.cohort||d.session)}
+      ${_dRow('Sports House',       d.sports_house)}
+      ${_dRow('Status',             d.status||(d.is_active?'Active':'Inactive'))}
+      ${_dRow('Transport',          d.uses_transport ? 'Yes' : 'No')}
     </div>`;
   if (tabName === 'Guardian/Family') return `
     <div>
-      ${(d.parents||[]).map(p=>`
+      ${(d.parents||[]).map(p => `
         <div style="border:1px solid #eee;border-radius:6px;padding:14px;margin-bottom:12px;">
           <div class="stu-detail-grid">
             ${_dRow('Name',         p.full_name)}
@@ -918,120 +1061,127 @@ function _renderDetailTab(tabName, data) {
             ${_dRow('Email',        p.email)}
             ${_dRow('Phone',        p.phone)}
           </div>
-        </div>`).join('') || '<p style="color:#888;">No guardian records.</p>'}
-      <h4 style="color:#2c3e50;margin-top:16px;">Siblings Enrolled</h4>
-      ${(d.siblings||[]).map(s=>`<p>${_sEsc(s.full_name)} — ${_sEsc(s.student_id)}</p>`).join('') || '<p style="color:#888;">No siblings enrolled.</p>'}
+        </div>`).join('') || '<p style="color:#888;padding:16px;">No guardian records.</p>'}
     </div>`;
-  if (tabName === 'Disability/Medical') return `
+  if (tabName === 'Medical Information') return `
     <div class="stu-detail-grid">
-      ${_dRow('Allergies',      d.medical?.allergies)}
-      ${_dRow('Chronic Symptoms', d.medical?.chronic_symptoms)}
-      ${_dRow('Health Insurance', d.medical?.health_insurance)}
-      ${_dRow('Blood Group',    d.medical?.blood_group)}
+      ${_dRow('Allergies',         d.medical?.allergies)}
+      ${_dRow('Chronic Symptoms',  d.medical?.chronic_symptoms)}
+      ${_dRow('Health Insurance',  d.medical?.health_insurance)}
+      ${_dRow('Blood Group',       d.medical?.blood_group)}
+      ${_dRow('Emergency Contact', d.medical?.emergency_contact_name)}
+      ${_dRow('Emergency Phone',   d.medical?.emergency_contact_phone)}
     </div>`;
-  if (tabName === 'Disciplinary') return `<div style="padding:24px;color:#888;text-align:center;"><p>No disciplinary records.</p></div>`;
+  if (tabName === 'Disciplinary') return `
+    <div style="padding:32px;text-align:center;color:#888;">No disciplinary records for this student.</div>`;
   return '';
 }
 function _dRow(label, value) {
   return `<div class="stu-detail-row">
-    <span class="stu-detail-label">${_sEsc(label)}</span>
-    <span class="stu-detail-value">${_sEsc(value||'-')}</span>
+    <span class="stu-detail-label">${_esc(label)}</span>
+    <span class="stu-detail-value">${_esc(value||'-')}</span>
   </div>`;
 }
 
 async function openFeeStatement(studentId) {
-  try {
-    const res = await fetch(`${API_BASE}/finance/statement/${studentId}`, { headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok) {
-      const data = await res.json();
-      const w = window.open('', '_blank', 'width=700,height=500');
-      w.document.write(`<pre style="font-family:sans-serif;padding:20px;">${JSON.stringify(data, null, 2)}</pre>`);
-    } else { showToast('Could not load fee statement.', 'error'); }
-  } catch(_) { showToast('Network error.', 'error'); }
+  const res = await apiFetch(`${API_BASE}/finance/statement/${studentId}`);
+  if (res && res.ok) {
+    const data = await res.json();
+    const w = window.open('', '_blank', 'width=700,height=500');
+    if (w) w.document.write(`<pre style="font-family:sans-serif;padding:20px;">${JSON.stringify(data, null, 2)}</pre>`);
+  } else {
+    showToast('Could not load fee statement.', 'error');
+  }
 }
 
-// ==================== 4. STUDENT SEARCH (GRID VIEW) ====================
+// ==================== 4. STUDENT SEARCH (CARD GRID) ====================
 
-let _stuSearchData = [], _stuSearchFiltered = [], _stuSearchPage = 1, _stuSearchPerPage = 12, _stuSearchQ = '';
+let _ssData = [], _ssFiltered = [], _ssPage = 1, _ssPerPage = 12, _ssQ = '';
 
 async function loadStudentSearchView(container) {
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
         <h2 class="fin-title">Student Search</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Student Search &rsaquo; Listing</div>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Student Search</div>
       </div>
       <div class="fin-controls-row">
         <div class="fin-controls-left">
           Show <select id="ss-per-page" onchange="changeSsPerPage(this.value)">
-            ${[12,24,48].map(n=>`<option value="${n}">${n}</option>`).join('')}
-          </select> entries
-          &nbsp;|&nbsp; Total <span id="ss-total-count">0</span> entries
+            ${[12,25,50].map(n => `<option value="${n}"${n===_ssPerPage?' selected':''}>${n}</option>`).join('')}
+          </select> entries &nbsp;|&nbsp; Total <span id="ss-total">0</span> entries
         </div>
         <div class="fin-controls-right">
-          <input type="text" class="fin-search-input" id="ss-search" placeholder="&#128269; Search&#8230;" oninput="onSsSearch(this.value)">
+          <input type="text" class="fin-search-input" id="ss-search" placeholder="&#128269; Search&#8230;"
+                 oninput="onSsSearch(this.value)">
           <button class="fin-btn-filter">&#9776; Filters</button>
         </div>
       </div>
-      <div id="ss-grid-container"><p class="fin-loading">Loading&#8230;</p></div>
+      <div id="ss-grid"><p class="fin-loading">Loading&#8230;</p></div>
       <div id="ss-pagination"></div>
     </div>
-    <div id="stu-edit-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.45);z-index:500;overflow-y:auto;"></div>
   `;
-  try {
-    const res = await fetch(`${API_BASE}/students/`, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) { document.getElementById('ss-grid-container').innerHTML = '<p class="fin-error">Error loading students.</p>'; return; }
-    _stuSearchData = await res.json();
-    _stuSearchFiltered = [..._stuSearchData];
-    _stuSearchPage = 1;
+
+  const res = await apiFetch(`${API_BASE}/students/`);
+  if (res && res.ok) {
+    _ssData = await res.json();
+    _ssFiltered = [..._ssData];
+    _ssPage = 1;
     _renderSsGrid();
-  } catch(_) { document.getElementById('ss-grid-container').innerHTML = '<p class="fin-error">Failed to load.</p>'; }
+  } else {
+    document.getElementById('ss-grid').innerHTML = '<p class="fin-error">Failed to load students.</p>';
+  }
 }
 
 function _renderSsGrid() {
-  const totalEl = document.getElementById('ss-total-count');
-  if (totalEl) totalEl.textContent = _stuSearchFiltered.length;
-  const start = (_stuSearchPage - 1) * _stuSearchPerPage;
-  const paged = _stuSearchFiltered.slice(start, start + _stuSearchPerPage);
-  const pages = Math.max(1, Math.ceil(_stuSearchFiltered.length / _stuSearchPerPage));
+  const totalEl = document.getElementById('ss-total');
+  if (totalEl) totalEl.textContent = _ssFiltered.length;
+  const start = (_ssPage - 1) * _ssPerPage;
+  const paged = _ssFiltered.slice(start, start + _ssPerPage);
+  const pages = Math.max(1, Math.ceil(_ssFiltered.length / _ssPerPage));
 
-  const cards = paged.map(s => `
-    <div class="stu-card" onclick="openStudentDetailView(${s.id})">
-      <div class="stu-card-avatar">&#128100;</div>
-      <div class="stu-card-name">${_sEsc((s.first_name||'')+' '+(s.last_name||''))}</div>
-      <div class="stu-card-sub" style="color:#888;font-size:0.8rem;margin-bottom:2px;">(${_sEsc(s.gender||'')})</div>
-      <div class="stu-card-info">&#127963; ${_sEsc(s.student_id||'')}</div>
-      <div class="stu-card-info">&#127979; ${_sEsc(s.class_name||'-')} (${_sEsc(s.cohort||'-')})</div>
-      ${s.parent_phone ? `<div class="stu-card-info">&#128222; ${_sEsc(s.parent_phone)}</div>` : ''}
-      ${s.parent_email ? `<div class="stu-card-info">&#9993; ${_sEsc(s.parent_email)}</div>` : ''}
-      <a href="#" class="stu-card-fee" onclick="event.stopPropagation();openFeeStatement(${s.id});return false;">Fee Statement</a>
-    </div>
-  `).join('') || '<p class="fin-empty" style="padding:24px;">No students found.</p>';
+  const cards = paged.length
+    ? paged.map(s => `
+      <div class="stu-card" onclick="stuOpenViewFromSearch(${s.id})">
+        <div class="stu-card-avatar">
+          ${s.photo_url ? `<img src="${_esc(s.photo_url)}" alt="">` : '&#128100;'}
+        </div>
+        <div class="stu-card-name">${_esc(`${s.first_name||''} ${s.last_name||''}`.trim())}</div>
+        <div class="stu-card-sub">(${_esc(s.gender||'')})</div>
+        <div class="stu-card-info">&#127963; ${_esc(s.student_id||'')}</div>
+        <div class="stu-card-info">&#127979; ${_esc(s.class_name||'-')} (${_esc(s.cohort||s.session||'-')})</div>
+        ${s.phone ? `<div class="stu-card-info">&#128222; ${_esc(s.phone)}</div>` : ''}
+        ${s.email ? `<div class="stu-card-info">&#9993; ${_esc(s.email)}</div>` : ''}
+      </div>`).join('')
+    : '<p class="fin-empty" style="padding:24px;">No students found.</p>';
 
-  const gc = document.getElementById('ss-grid-container');
+  const gc = document.getElementById('ss-grid');
   if (gc) gc.innerHTML = `<div class="stu-cards-grid">${cards}</div>`;
-
-  let pgBtns = '';
-  for (let i = 1; i <= pages; i++) {
-    pgBtns += `<button class="${i===_stuSearchPage?'fin-pg-active':''}" onclick="ssGoPage(${i})">${i}</button>`;
-  }
-  const pgEl = document.getElementById('ss-pagination');
-  if (pgEl) pgEl.innerHTML = `<div class="fin-pagination">${pgBtns}</div>`;
+  _mkPagination('ss-pagination', _ssPage, pages, 'ssGoPage');
 }
-function changeSsPerPage(v) { _stuSearchPerPage = parseInt(v); _stuSearchPage = 1; _renderSsGrid(); }
+
+function stuOpenViewFromSearch(id) {
+  _currentEditStudentId = id;
+  loadView('students-view');
+}
+
+function changeSsPerPage(v) { _ssPerPage = parseInt(v); _ssPage = 1; _renderSsGrid(); }
 function onSsSearch(v) {
-  _stuSearchQ = v.trim().toLowerCase();
-  _stuSearchFiltered = _stuSearchQ
-    ? _stuSearchData.filter(s => (`${s.first_name} ${s.last_name}`).toLowerCase().includes(_stuSearchQ) || (s.student_id||'').toLowerCase().includes(_stuSearchQ))
-    : [..._stuSearchData];
-  _stuSearchPage = 1;
+  _ssQ = v.trim().toLowerCase();
+  _ssFiltered = _ssQ
+    ? _ssData.filter(s =>
+        (`${s.first_name} ${s.last_name}`).toLowerCase().includes(_ssQ) ||
+        (s.student_id||'').toLowerCase().includes(_ssQ))
+    : [..._ssData];
+  _ssPage = 1;
   _renderSsGrid();
 }
-function ssGoPage(p) { _stuSearchPage = p; _renderSsGrid(); }
+function ssGoPage(p) { _ssPage = p; _renderSsGrid(); }
 
 // ==================== 5. STUDENT REPORTING ====================
 
-let _srData = [], _srFiltered = [], _srPage = 1, _srPerPage = 10, _srSearch = '';
+let _srData = [], _srPage = 1, _srPerPage = 10, _srSearch = '';
+let _srSelectedStudent = null;
 
 async function loadStudentReportingView(container) {
   container.innerHTML = `
@@ -1043,90 +1193,81 @@ async function loadStudentReportingView(container) {
       <div class="fin-controls-row">
         <div class="fin-controls-left">
           Show <select id="sr-per-page" onchange="changeSrPerPage(this.value)">
-            ${[10,25,50,100].map(n=>`<option value="${n}">${n}</option>`).join('')}
-          </select> entries
-          &nbsp;|&nbsp; Total <span id="sr-total-count">0</span> entries
+            ${[10,25,50,100].map(n => `<option value="${n}">${n}</option>`).join('')}
+          </select> entries &nbsp;|&nbsp; Total <span id="sr-total">0</span> entries
         </div>
         <div class="fin-controls-right">
           <button class="fin-export-btn" title="Export PDF">&#128438;</button>
           <button class="fin-export-btn" title="Export CSV">&#128202;</button>
-          <button class="fin-btn-teal" onclick="showSingleReportView()">+ Add</button>
-          <button class="fin-btn-outline" onclick="showBulkReportView()">Bulk Report</button>
-          <input type="text" class="fin-search-input" id="sr-search" placeholder="&#128269; Search&#8230;" oninput="onSrSearch(this.value)">
-          <button class="fin-btn-filter">&#9776; Filters</button>
+          <button class="fin-btn-teal" onclick="loadView('student-reporting-add')">+ Add</button>
+          <button class="fin-btn-outline" onclick="loadView('student-reporting-bulk')">Bulk Report</button>
+          <input type="text" class="fin-search-input" id="sr-search" placeholder="&#128269; Search&#8230;"
+                 oninput="onSrSearch(this.value)">
         </div>
       </div>
-      <div id="sr-table-container"><p class="fin-loading">Loading&#8230;</p></div>
+      <div id="sr-table-container"></div>
       <div id="sr-pagination"></div>
     </div>
   `;
+
+  renderSkeletonRows('sr-table-container', 6);
+  const res = await apiFetch(`${API_BASE}/student-reporting/`);
+  if (res && res.ok) {
+    _srData = await res.json();
+  } else {
+    _srData = studentReportingData;
+  }
+  _srPage = 1;
   _renderSrTable();
 }
 
-function _srGetFiltered() {
-  if (!_srSearch) return studentReportingData;
+function _srFiltered() {
+  if (!_srSearch) return _srData;
   const q = _srSearch;
-  return studentReportingData.filter(r =>
-    (r.admission_no||'').toLowerCase().includes(q) ||
-    (r.name||'').toLowerCase().includes(q)
+  return _srData.filter(r =>
+    (r.admission_no||r.student_id||'').toLowerCase().includes(q) ||
+    (r.name||r.full_name||'').toLowerCase().includes(q)
   );
 }
 
 function _renderSrTable() {
-  _srFiltered = _srGetFiltered();
-  const totalEl = document.getElementById('sr-total-count');
-  if (totalEl) totalEl.textContent = _srFiltered.length;
-
+  const filtered = _srFiltered();
+  const totalEl  = document.getElementById('sr-total');
+  if (totalEl) totalEl.textContent = filtered.length;
   const start = (_srPage - 1) * _srPerPage;
-  const paged = _srFiltered.slice(start, start + _srPerPage);
-  const pages = Math.max(1, Math.ceil(_srFiltered.length / _srPerPage));
+  const paged = filtered.slice(start, start + _srPerPage);
+  const pages = Math.max(1, Math.ceil(filtered.length / _srPerPage));
 
-  let rows = '';
-  if (paged.length === 0) {
-    rows = `<tr><td colspan="7" class="fin-empty">No reporting records found.</td></tr>`;
-  } else {
-    paged.forEach(r => {
-      rows += `<tr>
-        <td>${_sEsc(r.admission_no||'')}</td>
-        <td>${_sEsc(r.name||'')}</td>
-        <td>${_sEsc(r.session||'')}</td>
-        <td>${_sEsc(r.class_name||'')}</td>
-        <td>${_sEsc(r.programme||'')}</td>
-        <td>${_sEsc(r.reported_at||'')}</td>
-        <td>${_sEsc(r.reported_by||'')}</td>
-      </tr>`;
-    });
-  }
+  let rows = paged.length
+    ? paged.map(r => `<tr>
+        <td>${_esc(r.admission_no||r.student_id||'')}</td>
+        <td>${_esc(r.name||r.full_name||'')}</td>
+        <td>${_esc(r.session||'')}</td>
+        <td>${_esc(r.class_name||'')}</td>
+        <td>${_esc(r.reported_at||'')}</td>
+        <td>${_esc(r.reported_by||'')}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="6" class="fin-empty">No reporting records found.</td></tr>';
 
   const tbl = document.getElementById('sr-table-container');
   if (tbl) tbl.innerHTML = `
-    <div class="fin-table-wrap">
-      <table class="fin-table">
-        <thead><tr>
-          <th>ADMISSION NO.</th><th>NAME</th><th>SESSION</th><th>CLASS</th>
-          <th>PROGRAMME</th><th>REPORTED AT</th><th>REPORTED BY</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>
-  `;
-
-  let pgBtns = '';
-  for (let i = 1; i <= pages; i++) {
-    pgBtns += `<button class="${i===_srPage?'fin-pg-active':''}" onclick="srGoPage(${i})">${i}</button>`;
-  }
-  const pgEl = document.getElementById('sr-pagination');
-  if (pgEl) pgEl.innerHTML = `<div class="fin-pagination">${pgBtns}</div>`;
+    <div class="fin-table-wrap"><table class="fin-table">
+      <thead><tr>
+        <th>ADMISSION NO.</th><th>NAME</th><th>SESSION</th>
+        <th>CLASS</th><th>REPORTED AT</th><th>REPORTED BY</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+  _mkPagination('sr-pagination', _srPage, pages, 'srGoPage');
 }
+
 function changeSrPerPage(v) { _srPerPage = parseInt(v); _srPage = 1; _renderSrTable(); }
-function onSrSearch(v)      { _srSearch = v.trim().toLowerCase(); _srPage = 1; _renderSrTable(); }
+function onSrSearch(v)      { _srSearch  = v.trim().toLowerCase(); _srPage = 1; _renderSrTable(); }
 function srGoPage(p)        { _srPage = p; _renderSrTable(); }
 
-// Single report – full page view
-function showSingleReportView() {
-  const main = document.getElementById('main-content');
-  if (!main) return;
-  main.innerHTML = `
+// Single reporting form
+async function loadSingleReportingView(container) {
+  container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
         <h2 class="fin-title">Add Student Reporting</h2>
@@ -1134,110 +1275,106 @@ function showSingleReportView() {
       </div>
       <div style="background:white;border-radius:6px;padding:28px;max-width:480px;box-shadow:0 1px 4px rgba(0,0,0,0.06);">
         <div class="stu-form-group" style="margin-bottom:18px;">
-          <label style="font-weight:600;">Admission No.*</label>
+          <label style="font-weight:600;">Admission No. <span style="color:#e74c3c">*</span></label>
           <div style="position:relative;">
-            <input id="sr-add-admission" class="fin-search-input" style="width:100%!important;" placeholder="Type Admission No." oninput="srAdmissionSearch(this.value)">
-            <div id="sr-admission-dropdown" class="fin-action-dropdown" style="display:none;max-height:180px;overflow-y:auto;"></div>
+            <input id="sr-add-admission" class="fin-search-input" style="width:100%!important;"
+                   placeholder="Type to search student&#8230;" oninput="srAdmissionSearch(this.value)" autocomplete="off">
+            <div id="sr-admission-dd" class="fin-action-dropdown" style="display:none;max-height:200px;overflow-y:auto;position:absolute;top:100%;left:0;width:100%;z-index:100;"></div>
           </div>
         </div>
-        <div style="display:flex;gap:12px;margin-top:8px;">
+        <div style="display:flex;gap:12px;">
           <button class="fin-btn-teal" onclick="submitSingleReport()">Submit</button>
-          <button class="fin-btn-cancel" onclick="loadStudentReportingView(document.getElementById('main-content'))">Cancel</button>
+          <button class="fin-btn-cancel" onclick="loadView('student-reporting')">Cancel</button>
         </div>
       </div>
     </div>
   `;
+  _srSelectedStudent = null;
 }
 
-let _srSelectedStudent = null;
-function srAdmissionSearch(val) {
-  const dd = document.getElementById('sr-admission-dropdown');
+async function srAdmissionSearch(val) {
+  const dd = document.getElementById('sr-admission-dd');
   if (!dd) return;
   if (!val.trim()) { dd.style.display = 'none'; return; }
-  const q = val.toLowerCase();
-  const matches = allStudentsData.filter(s =>
-    (s.student_id||'').toLowerCase().includes(q) ||
-    (`${s.first_name} ${s.last_name}`).toLowerCase().includes(q)
-  ).slice(0, 8);
-  if (!matches.length) {
+  const res = await apiFetch(`${API_BASE}/students/?search=${encodeURIComponent(val)}`);
+  const list = (res && res.ok) ? await res.json() : [];
+  if (!list.length) {
     dd.innerHTML = '<div style="padding:10px 14px;color:#888;font-size:0.88rem;">No results found</div>';
     dd.style.display = 'block';
     return;
   }
-  dd.innerHTML = matches.map(s =>
-    `<a href="#" onclick="selectSrStudent(${s.id},'${_sEsc(s.student_id)}','${_sEsc(s.first_name+' '+s.last_name)}');return false;">
-       ${_sEsc(s.student_id)} — ${_sEsc(s.first_name+' '+s.last_name)}
+  dd.innerHTML = list.slice(0, 10).map(s =>
+    `<a href="#" onclick="srSelectStudent(${s.id},'${_esc(s.student_id||'')}','${_esc(`${s.first_name||''} ${s.last_name||''}`.trim())}');return false;">
+       ${_esc(s.student_id||'')} — ${_esc(`${s.first_name||''} ${s.last_name||''}`.trim())}
      </a>`
   ).join('');
   dd.style.display = 'block';
 }
-function selectSrStudent(id, admNo, name) {
+
+function srSelectStudent(id, admNo, name) {
   _srSelectedStudent = { id, admNo, name };
   const inp = document.getElementById('sr-add-admission');
   if (inp) inp.value = `${admNo} — ${name}`;
-  const dd = document.getElementById('sr-admission-dropdown');
+  const dd = document.getElementById('sr-admission-dd');
   if (dd) dd.style.display = 'none';
 }
 
-function submitSingleReport() {
+async function submitSingleReport() {
   if (!_srSelectedStudent) { showToast('Please select a student.', 'error'); return; }
-  const now = new Date().toISOString();
-  const entry = {
-    admission_no: _srSelectedStudent.admNo,
-    name:         _srSelectedStudent.name,
-    session:      '-',
-    class_name:   '-',
-    programme:    '-',
-    reported_at:  now.replace('T',' ').slice(0,19),
-    reported_by:  currentUser?.email || 'System'
-  };
-  studentReportingData.unshift(entry);
-  showToast('Report submitted!', 'success');
-  loadStudentReportingView(document.getElementById('main-content'));
+  const res = await apiFetch(`${API_BASE}/student-reporting/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ student_id: _srSelectedStudent.id }),
+  });
+  if (res && res.ok) {
+    showToast('Report submitted!', 'success');
+    loadView('student-reporting');
+  } else {
+    const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    studentReportingData.unshift({
+      admission_no: _srSelectedStudent.admNo, name: _srSelectedStudent.name,
+      session: '-', class_name: '-', reported_at: now, reported_by: currentUser?.email || 'System'
+    });
+    showToast('Report submitted!', 'success');
+    loadView('student-reporting');
+  }
 }
 
-// Bulk report – full page view
-async function showBulkReportView() {
-  const main = document.getElementById('main-content');
-  if (!main) return;
+// Bulk reporting form
+async function loadBulkReportingView(container) {
   let classOptions = '<option value="">Please Select</option>';
-  try {
-    const res = await fetch(`${API_BASE}/classes/`, { headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok) {
-      const classes = await res.json();
-      classOptions += classes.map(c => `<option value="${c.id}">${_sEsc(c.name)}</option>`).join('');
-    }
-  } catch(_) {}
+  const res = await apiFetch(`${API_BASE}/academics/classes?status=active`);
+  if (res && res.ok) {
+    const classes = await res.json();
+    classOptions += classes.map(c => `<option value="${_esc(String(c.id))}">${_esc(c.name)}</option>`).join('');
+  }
 
-  main.innerHTML = `
+  container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
         <h2 class="fin-title">Add Bulk Student Reporting</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Student Reporting &rsaquo; Add Bulk Report</div>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Student Reporting &rsaquo; Bulk</div>
       </div>
       <div style="background:white;border-radius:6px;padding:28px;box-shadow:0 1px 4px rgba(0,0,0,0.06);">
         <div class="stu-form-group" style="max-width:320px;margin-bottom:20px;">
-          <label style="font-weight:600;">Active Classes*</label>
-          <select id="br-class-select" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;"
-                  onchange="loadBulkClassStudents(this.value)">
-            ${classOptions}
-          </select>
+          <label style="font-weight:600;">Active Classes <span style="color:#e74c3c">*</span></label>
+          <select id="br-class" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;"
+                  onchange="loadBulkClassStudents(this.value)">${classOptions}</select>
         </div>
-        <p style="font-weight:600;color:#2c3e50;margin-bottom:10px;">List of Students</p>
         <div class="fin-table-wrap">
-          <table class="fin-table" id="br-student-table">
+          <table class="fin-table">
             <thead><tr>
               <th><input type="checkbox" id="br-select-all" onchange="toggleBrSelectAll(this)"></th>
               <th>ADMISSION NO.</th><th>NAME</th><th>STUDENT TYPE</th>
             </tr></thead>
-            <tbody id="br-student-tbody">
+            <tbody id="br-tbody">
               <tr><td colspan="4" class="fin-empty">Select a class to load students.</td></tr>
             </tbody>
           </table>
         </div>
         <div style="display:flex;gap:12px;margin-top:20px;">
           <button class="fin-btn-teal" onclick="submitBulkReport()">Submit</button>
-          <button class="fin-btn-cancel" onclick="loadStudentReportingView(document.getElementById('main-content'))">Cancel</button>
+          <button class="fin-btn-cancel" onclick="loadView('student-reporting')">Cancel</button>
         </div>
       </div>
     </div>
@@ -1245,47 +1382,163 @@ async function showBulkReportView() {
 }
 
 async function loadBulkClassStudents(classId) {
-  if (!classId) return;
-  const tbody = document.getElementById('br-student-tbody');
-  if (!tbody) return;
+  const tbody = document.getElementById('br-tbody');
+  if (!tbody || !classId) return;
   tbody.innerHTML = '<tr><td colspan="4" class="fin-loading">Loading&#8230;</td></tr>';
-  try {
-    const res = await fetch(`${API_BASE}/students/?class_id=${classId}`, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) { tbody.innerHTML = '<tr><td colspan="4" class="fin-error">Error loading students.</td></tr>'; return; }
-    const students = await res.json();
-    if (!students.length) { tbody.innerHTML = '<tr><td colspan="4" class="fin-empty">No students in this class.</td></tr>'; return; }
-    tbody.innerHTML = students.map(s => `
-      <tr>
-        <td><input type="checkbox" class="br-check" value="${s.id}" data-admno="${_sEsc(s.student_id)}" data-name="${_sEsc(s.first_name+' '+s.last_name)}" checked></td>
-        <td>${_sEsc(s.student_id)}</td>
-        <td>${_sEsc(s.first_name+' '+s.last_name)}</td>
-        <td>${_sEsc(s.student_type||'Regular')}</td>
-      </tr>`).join('');
-  } catch(_) { tbody.innerHTML = '<tr><td colspan="4" class="fin-error">Failed to load.</td></tr>'; }
+  const res = await apiFetch(`${API_BASE}/students/?class_id=${classId}`);
+  if (!res || !res.ok) { tbody.innerHTML = '<tr><td colspan="4" class="fin-error">Error loading students.</td></tr>'; return; }
+  const students = await res.json();
+  if (!students.length) { tbody.innerHTML = '<tr><td colspan="4" class="fin-empty">No students in this class.</td></tr>'; return; }
+  tbody.innerHTML = students.map(s => `
+    <tr>
+      <td><input type="checkbox" class="br-check" value="${s.id}"
+          data-admno="${_esc(s.student_id||'')}" data-name="${_esc(`${s.first_name||''} ${s.last_name||''}`.trim())}" checked></td>
+      <td>${_esc(s.student_id||'')}</td>
+      <td>${_esc(`${s.first_name||''} ${s.last_name||''}`.trim())}</td>
+      <td>${_esc(s.student_type||'Regular')}</td>
+    </tr>`).join('');
 }
 
 function toggleBrSelectAll(master) {
   document.querySelectorAll('.br-check').forEach(cb => cb.checked = master.checked);
 }
 
-function submitBulkReport() {
+async function submitBulkReport() {
   const checked = document.querySelectorAll('.br-check:checked');
   if (!checked.length) { showToast('No students selected.', 'error'); return; }
-  const now = new Date().toISOString().replace('T',' ').slice(0,19);
-  checked.forEach(cb => {
-    studentReportingData.unshift({
-      admission_no: cb.dataset.admno,
-      name:         cb.dataset.name,
-      session:      '-', class_name: '-', programme: '-',
-      reported_at:  now,
-      reported_by:  currentUser?.email || 'System'
-    });
+  const student_ids = Array.from(checked).map(cb => cb.value);
+  const res = await apiFetch(`${API_BASE}/student-reporting/bulk/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ student_ids }),
   });
-  showToast(`${checked.length} student(s) reported!`, 'success');
-  loadStudentReportingView(document.getElementById('main-content'));
+  if (res && res.ok) {
+    showToast(`${checked.length} student(s) reported!`, 'success');
+    loadView('student-reporting');
+  } else {
+    const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    Array.from(checked).forEach(cb => {
+      studentReportingData.unshift({
+        admission_no: cb.dataset.admno, name: cb.dataset.name,
+        session: '-', class_name: '-', reported_at: now, reported_by: currentUser?.email || 'System'
+      });
+    });
+    showToast(`${checked.length} student(s) reported!`, 'success');
+    loadView('student-reporting');
+  }
 }
 
-// ==================== 6. UTILITIES — STREAMS ====================
+// ==================== 6. UTILITIES — STUDENT SOURCES ====================
+
+let _stuSrcData = [], _stuSrcPage = 1, _stuSrcPerPage = 10;
+
+async function loadStudentSourcesView(container) {
+  openStuUtilitiesDropdown();
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Student Sources</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Utilities &rsaquo; Student Sources</div>
+      </div>
+      <div class="fin-controls-row">
+        <div class="fin-controls-left">
+          Show <select id="stusrc-per-page" onchange="changeStuSrcPerPage(this.value)">
+            ${[10,25,50].map(n => `<option value="${n}">${n}</option>`).join('')}
+          </select> entries &nbsp;|&nbsp; Total <span id="stusrc-total">0</span> entries
+        </div>
+        <div class="fin-controls-right">
+          <button class="fin-btn-teal" onclick="showStudentSourceForm(null)">+ Add</button>
+        </div>
+      </div>
+      <div id="stusrc-table"></div>
+      <div id="stusrc-pagination"></div>
+    </div>
+  `;
+  renderSkeletonRows('stusrc-table', 3);
+  const res = await apiFetch(`${API_BASE}/student-management/student-sources`);
+  if (res && res.ok) _stuSrcData = await res.json();
+  _stuSrcPage = 1;
+  _renderStuSrcTable();
+}
+
+function _renderStuSrcTable() {
+  const totalEl = document.getElementById('stusrc-total');
+  if (totalEl) totalEl.textContent = _stuSrcData.length;
+  const start = (_stuSrcPage - 1) * _stuSrcPerPage;
+  const paged = _stuSrcData.slice(start, start + _stuSrcPerPage);
+  const pages = Math.max(1, Math.ceil(_stuSrcData.length / _stuSrcPerPage));
+
+  let rows = paged.length
+    ? paged.map(s => `<tr>
+        <td>${_esc(s.title||s.name||'')}</td>
+        <td><span style="color:${s.is_inactive?'#e74c3c':'#27ae60'};font-weight:600;">${s.is_inactive?'Inactive':'Active'}</span></td>
+        <td class="fin-action-cell">
+          <div class="fin-action-wrap">
+            <button class="fin-action-btn" onclick="toggleStuDd(event,'stusrc-${s.id}')">&#8230;</button>
+            <div id="stu-dd-stusrc-${s.id}" class="fin-action-dropdown" style="display:none;">
+              <a href="#" onclick="showStudentSourceForm('${s.id}');return false;">&#9998; Edit</a>
+            </div>
+          </div>
+        </td>
+      </tr>`).join('')
+    : '<tr><td colspan="3" class="fin-empty">No student sources found.</td></tr>';
+
+  const t = document.getElementById('stusrc-table');
+  if (t) t.innerHTML = `<div class="fin-table-wrap"><table class="fin-table">
+    <thead><tr><th>TITLE</th><th>STATUS</th><th>ACTION</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+  _mkPagination('stusrc-pagination', _stuSrcPage, pages, 'stuSrcGoPage');
+}
+function changeStuSrcPerPage(v) { _stuSrcPerPage = parseInt(v); _stuSrcPage = 1; _renderStuSrcTable(); }
+function stuSrcGoPage(p)        { _stuSrcPage = p; _renderStuSrcTable(); }
+
+function showStudentSourceForm(id) {
+  const item   = id ? _stuSrcData.find(s => String(s.id) === String(id)) : null;
+  const isEdit = !!item;
+  const main   = document.getElementById('main-content');
+  if (!main) return;
+  main.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">${isEdit?'Edit':'Add'} Student Source</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Utilities &rsaquo; Student Sources &rsaquo; ${isEdit?'Edit':'Add'}</div>
+      </div>
+      <div style="background:white;border-radius:6px;padding:28px;max-width:600px;box-shadow:0 1px 4px rgba(0,0,0,0.06);">
+        <div class="stu-form-group" style="margin-bottom:16px;">
+          <label style="font-weight:600;">Title <span style="color:#e74c3c">*</span></label>
+          <input id="stusrc-title" class="fin-search-input" style="width:100%!important;" value="${_esc(item?.title||item?.name||'')}">
+        </div>
+        ${isEdit ? `<div class="stu-form-group" style="margin-bottom:20px;">
+          <label><input type="checkbox" id="stusrc-deactivate"${item?.is_inactive?' checked':''}> Deactivate/Activate</label>
+        </div>` : ''}
+        <div style="display:flex;gap:12px;">
+          <button class="fin-btn-teal" onclick="saveStudentSource('${id||''}')">${isEdit?'Update':'Save'}</button>
+          <button class="fin-btn-cancel" onclick="loadView('utilities-student-sources')">Cancel</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function saveStudentSource(id) {
+  const title = document.getElementById('stusrc-title')?.value.trim();
+  if (!title) { showToast('Title is required.', 'error'); return; }
+  const payload = { title, is_inactive: id ? _fc('stusrc-deactivate') : false };
+  const url    = id ? `${API_BASE}/student-management/student-sources/${id}` : `${API_BASE}/student-management/student-sources`;
+  const method = id ? 'PUT' : 'POST';
+  const res    = await apiFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  if (res && res.ok) {
+    showToast(id ? 'Student source updated!' : 'Student source added!', 'success');
+    loadView('utilities-student-sources');
+  } else {
+    if (id) { const idx = _stuSrcData.findIndex(s => String(s.id) === String(id)); if (idx !== -1) _stuSrcData[idx] = { ..._stuSrcData[idx], ...payload }; }
+    else    { _stuSrcData.push({ id: 'src_' + Date.now(), ...payload }); }
+    showToast(id ? 'Student source updated!' : 'Student source added!', 'success');
+    loadView('utilities-student-sources');
+  }
+}
+
+// ==================== 7. UTILITIES — STREAMS ====================
 
 let _strPage = 1, _strPerPage = 10;
 
@@ -1295,122 +1548,112 @@ async function loadStreamsView(container) {
     <div class="fin-page">
       <div class="fin-header-row">
         <h2 class="fin-title">Stream</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Stream &rsaquo; Listing</div>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Utilities &rsaquo; Stream &rsaquo; Listing</div>
       </div>
       <div class="fin-controls-row">
         <div class="fin-controls-left">
-          Show <select id="str-list-per-page" onchange="changeStrPerPage(this.value)">
-            ${[10,25,50].map(n=>`<option value="${n}">${n}</option>`).join('')}
-          </select> entries &nbsp;|&nbsp; Total <span id="str-list-total">0</span> entries
+          Show <select id="str-per-page" onchange="changeStrPerPage(this.value)">
+            ${[10,25,50].map(n => `<option value="${n}">${n}</option>`).join('')}
+          </select> entries &nbsp;|&nbsp; Total <span id="str-total">0</span> entries
         </div>
         <div class="fin-controls-right">
           <button class="fin-btn-teal" onclick="showStreamForm(null)">+ Add</button>
         </div>
       </div>
-      <div id="str-list-table"><p class="fin-loading">Loading&#8230;</p></div>
-      <div id="str-list-pagination"></div>
+      <div id="str-table"></div>
+      <div id="str-pagination"></div>
     </div>
-    <div id="stream-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.4);z-index:500;display:none;"></div>
   `;
+  renderSkeletonRows('str-table', 3);
+  const res = await apiFetch(`${API_BASE}/student-management/streams`);
+  if (res && res.ok) streamsData = await res.json();
+  _strPage = 1;
   _renderStreamsTable();
 }
 
 function _renderStreamsTable() {
-  const totalEl = document.getElementById('str-list-total');
+  const totalEl = document.getElementById('str-total');
   if (totalEl) totalEl.textContent = streamsData.length;
   const start = (_strPage - 1) * _strPerPage;
   const paged = streamsData.slice(start, start + _strPerPage);
   const pages = Math.max(1, Math.ceil(streamsData.length / _strPerPage));
 
-  let rows = paged.length ? paged.map(s => `
-    <tr>
-      <td style="width:80%">${_sEsc(s.title)}</td>
-      <td><span style="color:${s.is_inactive?'#e74c3c':'#27ae60'}">${s.is_inactive?'Inactive':'Active'}</span></td>
-      <td class="fin-action-cell">
-        <div class="fin-action-wrap">
-          <button class="fin-action-btn" onclick="toggleStuDd(event,'str-${s.id}')">&#8230;</button>
-          <div id="stu-dd-str-${s.id}" class="fin-action-dropdown" style="display:none;">
-            <a href="#" onclick="showStreamForm('${s.id}');return false;">&#9998; Edit</a>
-            <a href="#" onclick="deleteStream('${s.id}');return false;">&#128465; Delete</a>
+  let rows = paged.length
+    ? paged.map(s => `<tr>
+        <td>${_esc(s.title||'')}</td>
+        <td><span style="color:${s.is_inactive?'#e74c3c':'#27ae60'};font-weight:600;">${s.is_inactive?'Inactive':'Active'}</span></td>
+        <td class="fin-action-cell">
+          <div class="fin-action-wrap">
+            <button class="fin-action-btn" onclick="toggleStuDd(event,'str-${s.id}')">&#8230;</button>
+            <div id="stu-dd-str-${s.id}" class="fin-action-dropdown" style="display:none;">
+              <a href="#" onclick="showStreamForm('${s.id}');return false;">&#9998; Edit</a>
+            </div>
           </div>
-        </div>
-      </td>
-    </tr>`).join('') : `<tr><td colspan="3" class="fin-empty">No streams found.</td></tr>`;
+        </td>
+      </tr>`).join('')
+    : '<tr><td colspan="3" class="fin-empty">No streams found.</td></tr>';
 
-  const t = document.getElementById('str-list-table');
-  if (t) t.innerHTML = `
-    <div class="fin-table-wrap"><table class="fin-table">
-      <thead><tr><th>TITLE</th><th>STATUS</th><th>ACTION</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table></div>`;
-
-  let pgBtns = '';
-  for (let i = 1; i <= pages; i++) pgBtns += `<button class="${i===_strPage?'fin-pg-active':''}" onclick="strGoPage(${i})">${i}</button>`;
-  const pgEl = document.getElementById('str-list-pagination');
-  if (pgEl) pgEl.innerHTML = `<div class="fin-pagination">${pgBtns}</div>`;
+  const t = document.getElementById('str-table');
+  if (t) t.innerHTML = `<div class="fin-table-wrap"><table class="fin-table">
+    <thead><tr><th>TITLE</th><th>STATUS</th><th>ACTION</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+  _mkPagination('str-pagination', _strPage, pages, 'strGoPage');
 }
 function changeStrPerPage(v) { _strPerPage = parseInt(v); _strPage = 1; _renderStreamsTable(); }
 function strGoPage(p)        { _strPage = p; _renderStreamsTable(); }
 
 function showStreamForm(id) {
-  const stream = id ? streamsData.find(s => s.id === id) : null;
+  const stream = id ? streamsData.find(s => String(s.id) === String(id)) : null;
   const isEdit = !!stream;
-  const main = document.getElementById('main-content');
+  const main   = document.getElementById('main-content');
   if (!main) return;
   main.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
         <h2 class="fin-title">${isEdit?'Edit':'Add'} Stream</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Stream &rsaquo; ${isEdit?'Edit':'Add'}</div>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Utilities &rsaquo; Streams &rsaquo; ${isEdit?'Edit':'Add'}</div>
       </div>
       <div style="background:white;border-radius:6px;padding:28px;max-width:600px;box-shadow:0 1px 4px rgba(0,0,0,0.06);">
         <div class="stu-form-group" style="margin-bottom:16px;">
-          <label style="font-weight:600;">Title*</label>
-          <input id="stream-title" class="fin-search-input" style="width:100%!important;" value="${_sEsc(stream?.title||'')}">
+          <label style="font-weight:600;">Title <span style="color:#e74c3c">*</span></label>
+          <input id="stream-title" class="fin-search-input" style="width:100%!important;" value="${_esc(stream?.title||'')}">
         </div>
         <div class="stu-form-group" style="margin-bottom:16px;">
           <label style="font-weight:600;">Notes</label>
-          <textarea id="stream-notes" style="width:100%;min-height:80px;padding:8px;border:1px solid #ccc;border-radius:4px;">${_sEsc(stream?.notes||'')}</textarea>
+          <textarea id="stream-notes" style="width:100%;min-height:80px;padding:8px;border:1px solid #ccc;border-radius:4px;">${_esc(stream?.notes||'')}</textarea>
         </div>
         <div class="stu-form-group" style="margin-bottom:20px;">
           <label><input type="checkbox" id="stream-deactivate"${stream?.is_inactive?' checked':''}> Deactivate/Activate</label>
         </div>
         <div style="display:flex;gap:12px;">
           <button class="fin-btn-teal" onclick="saveStream('${id||''}')">${isEdit?'Update':'Save'}</button>
-          <button class="fin-btn-cancel" onclick="loadStreamsView(document.getElementById('main-content'))">Cancel</button>
+          <button class="fin-btn-cancel" onclick="loadView('utilities-streams')">Cancel</button>
         </div>
       </div>
     </div>
   `;
 }
 
-function saveStream(id) {
+async function saveStream(id) {
   const title = document.getElementById('stream-title')?.value.trim();
   if (!title) { showToast('Title is required.', 'error'); return; }
-  const item = {
-    id:          id || ('str_' + Date.now()),
-    title,
-    notes:       document.getElementById('stream-notes')?.value || '',
-    is_inactive: !!document.getElementById('stream-deactivate')?.checked
-  };
-  if (id) {
-    const idx = streamsData.findIndex(s => s.id === id);
-    if (idx !== -1) streamsData[idx] = item;
+  const payload = { title, notes: _fv('stream-notes'), is_inactive: _fc('stream-deactivate') };
+  const url     = id ? `${API_BASE}/student-management/streams/${id}` : `${API_BASE}/student-management/streams`;
+  const method  = id ? 'PUT' : 'POST';
+  const res     = await apiFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  if (res && res.ok) {
+    showToast(id ? 'Stream updated!' : 'Stream added!', 'success');
+    loadView('utilities-streams');
   } else {
-    streamsData.push(item);
+    const item = { id: id || ('str_' + Date.now()), ...payload };
+    if (id) { const idx = streamsData.findIndex(s => String(s.id) === String(id)); if (idx !== -1) streamsData[idx] = item; }
+    else    { streamsData.push(item); }
+    showToast(id ? 'Stream updated!' : 'Stream added!', 'success');
+    loadView('utilities-streams');
   }
-  showToast(id ? 'Stream updated!' : 'Stream added!', 'success');
-  loadStreamsView(document.getElementById('main-content'));
 }
 
-function deleteStream(id) {
-  if (!confirm('Delete this stream?')) return;
-  streamsData = streamsData.filter(s => s.id !== id);
-  _renderStreamsTable();
-  showToast('Stream deleted.', 'info');
-}
-
-// ==================== 7. UTILITIES — FUNDING SOURCES ====================
+// ==================== 8. UTILITIES — FUNDING SOURCES ====================
 
 let _fsPage = 1, _fsPerPage = 10;
 
@@ -1420,287 +1663,263 @@ async function loadFundingSourcesView(container) {
     <div class="fin-page">
       <div class="fin-header-row">
         <h2 class="fin-title">Funding Source</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Funding Source &rsaquo; Listing</div>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Utilities &rsaquo; Funding Source &rsaquo; Listing</div>
       </div>
       <div class="fin-controls-row">
         <div class="fin-controls-left">
-          Show <select id="fs-list-per-page" onchange="changeFsPerPage(this.value)">
-            ${[10,25,50].map(n=>`<option value="${n}">${n}</option>`).join('')}
-          </select> entries &nbsp;|&nbsp; Total <span id="fs-list-total">0</span> entries
+          Show <select id="fs-per-page" onchange="changeFsPerPage(this.value)">
+            ${[10,25,50].map(n => `<option value="${n}">${n}</option>`).join('')}
+          </select> entries &nbsp;|&nbsp; Total <span id="fs-total">0</span> entries
         </div>
         <div class="fin-controls-right">
           <button class="fin-btn-teal" onclick="showFundingSourceForm(null)">+ Add</button>
         </div>
       </div>
-      <div id="fs-list-table"><p class="fin-loading">Loading&#8230;</p></div>
-      <div id="fs-list-pagination"></div>
+      <div id="fs-table"></div>
+      <div id="fs-pagination"></div>
     </div>
   `;
+  renderSkeletonRows('fs-table', 3);
+  const res = await apiFetch(`${API_BASE}/student-management/funding-sources`);
+  if (res && res.ok) fundingSourcesData = await res.json();
+  _fsPage = 1;
   _renderFsTable();
 }
 
 function _renderFsTable() {
-  const totalEl = document.getElementById('fs-list-total');
+  const totalEl = document.getElementById('fs-total');
   if (totalEl) totalEl.textContent = fundingSourcesData.length;
   const start = (_fsPage - 1) * _fsPerPage;
   const paged = fundingSourcesData.slice(start, start + _fsPerPage);
   const pages = Math.max(1, Math.ceil(fundingSourcesData.length / _fsPerPage));
 
-  let rows = paged.length ? paged.map(f => `
-    <tr>
-      <td style="width:80%">${_sEsc(f.title)}</td>
-      <td><span style="color:${f.is_inactive?'#e74c3c':'#27ae60'}">${f.is_inactive?'Inactive':'Active'}</span></td>
-      <td class="fin-action-cell">
-        <div class="fin-action-wrap">
-          <button class="fin-action-btn" onclick="toggleStuDd(event,'fs-${f.id}')">&#8230;</button>
-          <div id="stu-dd-fs-${f.id}" class="fin-action-dropdown" style="display:none;">
-            <a href="#" onclick="showFundingSourceForm('${f.id}');return false;">&#9998; Edit</a>
-            <a href="#" onclick="deleteFundingSource('${f.id}');return false;">&#128465; Delete</a>
+  let rows = paged.length
+    ? paged.map(f => `<tr>
+        <td>${_esc(f.title||'')}</td>
+        <td><span style="color:${f.is_inactive?'#e74c3c':'#27ae60'};font-weight:600;">${f.is_inactive?'Inactive':'Active'}</span></td>
+        <td class="fin-action-cell">
+          <div class="fin-action-wrap">
+            <button class="fin-action-btn" onclick="toggleStuDd(event,'fs-${f.id}')">&#8230;</button>
+            <div id="stu-dd-fs-${f.id}" class="fin-action-dropdown" style="display:none;">
+              <a href="#" onclick="showFundingSourceForm('${f.id}');return false;">&#9998; Edit</a>
+            </div>
           </div>
-        </div>
-      </td>
-    </tr>`).join('') : `<tr><td colspan="3" class="fin-empty">No funding sources found.</td></tr>`;
+        </td>
+      </tr>`).join('')
+    : '<tr><td colspan="3" class="fin-empty">No funding sources found.</td></tr>';
 
-  const t = document.getElementById('fs-list-table');
-  if (t) t.innerHTML = `
-    <div class="fin-table-wrap"><table class="fin-table">
-      <thead><tr><th>TITLE</th><th>STATUS</th><th>ACTION</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table></div>`;
-
-  let pgBtns = '';
-  for (let i = 1; i <= pages; i++) pgBtns += `<button class="${i===_fsPage?'fin-pg-active':''}" onclick="fsGoPage(${i})">${i}</button>`;
-  const pgEl = document.getElementById('fs-list-pagination');
-  if (pgEl) pgEl.innerHTML = `<div class="fin-pagination">${pgBtns}</div>`;
+  const t = document.getElementById('fs-table');
+  if (t) t.innerHTML = `<div class="fin-table-wrap"><table class="fin-table">
+    <thead><tr><th>TITLE</th><th>STATUS</th><th>ACTION</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+  _mkPagination('fs-pagination', _fsPage, pages, 'fsGoPage');
 }
 function changeFsPerPage(v) { _fsPerPage = parseInt(v); _fsPage = 1; _renderFsTable(); }
 function fsGoPage(p)        { _fsPage = p; _renderFsTable(); }
 
 function showFundingSourceForm(id) {
-  const item = id ? fundingSourcesData.find(f => f.id === id) : null;
+  const item   = id ? fundingSourcesData.find(f => String(f.id) === String(id)) : null;
   const isEdit = !!item;
-  const main = document.getElementById('main-content');
+  const main   = document.getElementById('main-content');
   if (!main) return;
   main.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
         <h2 class="fin-title">${isEdit?'Edit':'Add'} Funding Source</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Funding Source &rsaquo; ${isEdit?'Edit':'Add'}</div>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Utilities &rsaquo; Funding Sources &rsaquo; ${isEdit?'Edit':'Add'}</div>
       </div>
       <div style="background:white;border-radius:6px;padding:28px;max-width:600px;box-shadow:0 1px 4px rgba(0,0,0,0.06);">
         <div class="stu-form-group" style="margin-bottom:16px;">
-          <label style="font-weight:600;">Title*</label>
-          <input id="fs-title" class="fin-search-input" style="width:100%!important;" value="${_sEsc(item?.title||'')}">
+          <label style="font-weight:600;">Title <span style="color:#e74c3c">*</span></label>
+          <input id="fs-title" class="fin-search-input" style="width:100%!important;" value="${_esc(item?.title||'')}">
         </div>
-        <div class="stu-form-group" style="margin-bottom:16px;">
-          <label style="font-weight:600;">Notes</label>
-          <textarea id="fs-notes" style="width:100%;min-height:80px;padding:8px;border:1px solid #ccc;border-radius:4px;">${_sEsc(item?.notes||'')}</textarea>
-        </div>
-        <div class="stu-form-group" style="margin-bottom:20px;">
+        ${isEdit ? `<div class="stu-form-group" style="margin-bottom:20px;">
           <label><input type="checkbox" id="fs-deactivate"${item?.is_inactive?' checked':''}> Deactivate/Activate</label>
-        </div>
+        </div>` : ''}
         <div style="display:flex;gap:12px;">
           <button class="fin-btn-teal" onclick="saveFundingSource('${id||''}')">${isEdit?'Update':'Save'}</button>
-          <button class="fin-btn-cancel" onclick="loadFundingSourcesView(document.getElementById('main-content'))">Cancel</button>
+          <button class="fin-btn-cancel" onclick="loadView('utilities-funding-sources')">Cancel</button>
         </div>
       </div>
     </div>
   `;
 }
 
-function saveFundingSource(id) {
+async function saveFundingSource(id) {
   const title = document.getElementById('fs-title')?.value.trim();
   if (!title) { showToast('Title is required.', 'error'); return; }
-  const item = {
-    id:          id || ('fs_' + Date.now()),
-    title,
-    notes:       document.getElementById('fs-notes')?.value || '',
-    is_inactive: !!document.getElementById('fs-deactivate')?.checked
-  };
-  if (id) {
-    const idx = fundingSourcesData.findIndex(f => f.id === id);
-    if (idx !== -1) fundingSourcesData[idx] = item;
+  const payload = { title, is_inactive: id ? _fc('fs-deactivate') : false };
+  const url     = id ? `${API_BASE}/student-management/funding-sources/${id}` : `${API_BASE}/student-management/funding-sources`;
+  const method  = id ? 'PUT' : 'POST';
+  const res     = await apiFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  if (res && res.ok) {
+    showToast(id ? 'Funding source updated!' : 'Funding source added!', 'success');
+    loadView('utilities-funding-sources');
   } else {
-    fundingSourcesData.push(item);
+    const item = { id: id || ('fs_' + Date.now()), ...payload };
+    if (id) { const idx = fundingSourcesData.findIndex(f => String(f.id) === String(id)); if (idx !== -1) fundingSourcesData[idx] = item; }
+    else    { fundingSourcesData.push(item); }
+    showToast(id ? 'Funding source updated!' : 'Funding source added!', 'success');
+    loadView('utilities-funding-sources');
   }
-  showToast(id ? 'Funding source updated!' : 'Funding source added!', 'success');
-  loadFundingSourcesView(document.getElementById('main-content'));
 }
 
-function deleteFundingSource(id) {
-  if (!confirm('Delete this funding source?')) return;
-  fundingSourcesData = fundingSourcesData.filter(f => f.id !== id);
-  _renderFsTable();
-  showToast('Funding source deleted.', 'info');
-}
+// ==================== 9. STUDENT REPORT ====================
 
-// ==================== 8. STUDENT REPORT (already built – keep) ====================
-
-let _stuRptPerPage = 10, _stuRptPage = 1, _stuRptSearch = '', _stuRptData = [];
+let _stuRptData = [], _stuRptPage = 1, _stuRptPerPage = 10, _stuRptSearch = '';
 
 async function loadStudentReportView(container) {
+  openStuReportsDropdown();
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
         <h2 class="fin-title">Student Report</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Student Report &rsaquo; Listing</div>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Reports &rsaquo; Student Report</div>
       </div>
       <div class="fin-controls-row">
         <div class="fin-controls-left">
-          Show <select id="str-per-page" onchange="changeStuRptPerPage(this.value)">
-            ${[10,25,50,100].map(n=>`<option value="${n}">${n}</option>`).join('')}
-          </select> entries &nbsp;|&nbsp; Total <span id="str-total-count">0</span> entries
+          Show <select id="srpt-per-page" onchange="changeStuRptPerPage(this.value)">
+            ${[10,25,50,100].map(n => `<option value="${n}">${n}</option>`).join('')}
+          </select> entries &nbsp;|&nbsp; Total <span id="srpt-total">0</span> entries
         </div>
         <div class="fin-controls-right">
           <button class="fin-export-btn" title="Export PDF">&#128438;</button>
           <button class="fin-export-btn" title="Export CSV" onclick="exportStuReportCSV()">&#128202;</button>
-          <input type="text" class="fin-search-input" id="str-search" placeholder="&#128269; Search&#8230;" oninput="onStuRptSearch(this.value)">
+          <input type="text" class="fin-search-input" id="srpt-search" placeholder="&#128269; Search&#8230;" oninput="onStuRptSearch(this.value)">
           <button class="fin-btn-filter">&#9776; Filters</button>
         </div>
       </div>
-      <div id="str-table-container"><p class="fin-loading">Loading&#8230;</p></div>
-      <div id="str-pagination"></div>
+      <div id="srpt-table"></div>
+      <div id="srpt-pagination"></div>
     </div>
   `;
-  await _loadStuRptTable();
-}
-
-async function _loadStuRptTable() {
-  const c = document.getElementById('str-table-container');
-  if (!c) return;
-  try {
-    const res = await fetch(`${API_BASE}/students/`, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) { c.innerHTML = '<p class="fin-error">Error loading student report.</p>'; return; }
-    _stuRptData = await res.json();
-    _stuRptPage = 1;
-    _renderStuRptTable();
-  } catch(_) { c.innerHTML = '<p class="fin-error">Failed to load student report.</p>'; }
+  renderSkeletonRows('srpt-table', 7);
+  const res = await apiFetch(`${API_BASE}/reports/students`);
+  if (res && res.ok) _stuRptData = await res.json();
+  _stuRptPage = 1;
+  _renderStuRptTable();
 }
 
 function _stuRptFiltered() {
   if (!_stuRptSearch) return _stuRptData;
   const q = _stuRptSearch;
   return _stuRptData.filter(s =>
-    (`${s.first_name} ${s.last_name}`).toLowerCase().includes(q) ||
-    (s.student_id||'').toLowerCase().includes(q)
+    (`${s.first_name||''} ${s.last_name||''}`).toLowerCase().includes(q) ||
+    (s.student_id||s.admission_no||'').toLowerCase().includes(q)
   );
 }
 
 function _renderStuRptTable() {
   const filtered = _stuRptFiltered();
-  const totalEl  = document.getElementById('str-total-count');
+  const totalEl  = document.getElementById('srpt-total');
   if (totalEl) totalEl.textContent = filtered.length;
   const start = (_stuRptPage - 1) * _stuRptPerPage;
   const paged = filtered.slice(start, start + _stuRptPerPage);
   const pages = Math.max(1, Math.ceil(filtered.length / _stuRptPerPage));
-  let rows = paged.length ? paged.map(s => `<tr>
-    <td>${_sEsc(s.student_id||'')}</td>
-    <td>${_sEsc((s.first_name||'')+' '+(s.last_name||''))}</td>
-    <td>${_sEsc(s.joining_date||'-')}</td>
-    <td>${_sEsc(s.gender||'-')}</td>
-    <td>${_sEsc(s.date_of_birth||'-')}</td>
-    <td>${_sEsc(s.admission_date||s.joining_date||'-')}</td>
-    <td><span style="color:${s.is_active?'#27ae60':'#e74c3c'}">${s.is_active?'Active':'Inactive'}</span></td>
-  </tr>`).join('') : `<tr><td colspan="7" class="fin-empty">No records found.</td></tr>`;
-  const tbl = document.getElementById('str-table-container');
+
+  let rows = paged.length
+    ? paged.map(s => `<tr>
+        <td>${_esc(s.student_id||s.admission_no||'')}</td>
+        <td>${_esc(`${s.first_name||''} ${s.last_name||''}`.trim()||s.full_name||'')}</td>
+        <td>${_esc(s.joining_date||'-')}</td>
+        <td>${_esc(s.gender||'-')}</td>
+        <td>${_esc(s.date_of_birth||'-')}</td>
+        <td>${_esc(s.admission_date||s.joining_date||'-')}</td>
+        <td><span style="color:${s.is_active?'#27ae60':'#e74c3c'};font-weight:600;">${s.is_active?'Active':'Inactive'}</span></td>
+      </tr>`).join('')
+    : '<tr><td colspan="7" class="fin-empty">No records found.</td></tr>';
+
+  const tbl = document.getElementById('srpt-table');
   if (tbl) tbl.innerHTML = `<div class="fin-table-wrap"><table class="fin-table">
     <thead><tr><th>ADMISSION NO.</th><th>FULL NAME</th><th>JOINING DATE</th><th>GENDER</th><th>BIRTH DATE</th><th>ADMISSION DATE</th><th>STATUS</th></tr></thead>
     <tbody>${rows}</tbody></table></div>`;
-  let pgBtns = '';
-  for (let i = 1; i <= pages; i++) pgBtns += `<button class="${i===_stuRptPage?'fin-pg-active':''}" onclick="stuRptGoPage(${i})">${i}</button>`;
-  const pgEl = document.getElementById('str-pagination');
-  if (pgEl) pgEl.innerHTML = `<div class="fin-pagination">${pgBtns}</div>`;
+  _mkPagination('srpt-pagination', _stuRptPage, pages, 'stuRptGoPage');
 }
 function changeStuRptPerPage(v) { _stuRptPerPage = parseInt(v); _stuRptPage = 1; _renderStuRptTable(); }
-function onStuRptSearch(v)      { _stuRptSearch = v.trim().toLowerCase(); _stuRptPage = 1; _renderStuRptTable(); }
+function onStuRptSearch(v)      { _stuRptSearch  = v.trim().toLowerCase(); _stuRptPage = 1; _renderStuRptTable(); }
 function stuRptGoPage(p)        { _stuRptPage = p; _renderStuRptTable(); }
 function exportStuReportCSV() {
   exportTableCSV(
     ['Admission No.','Full Name','Joining Date','Gender','Birth Date','Admission Date','Status'],
-    _stuRptFiltered().map(s => [s.student_id||'', `${s.first_name||''} ${s.last_name||''}`, s.joining_date||'', s.gender||'', s.date_of_birth||'', s.admission_date||s.joining_date||'', s.is_active?'Active':'Inactive']),
+    _stuRptFiltered().map(s => [
+      s.student_id||s.admission_no||'', `${s.first_name||''} ${s.last_name||''}`.trim()||s.full_name||'',
+      s.joining_date||'', s.gender||'', s.date_of_birth||'', s.admission_date||s.joining_date||'',
+      s.is_active ? 'Active' : 'Inactive'
+    ]),
     'student-report.csv'
   );
 }
 
-// ==================== 9. STUDENT GUARDIAN REPORT ====================
+// ==================== 10. STUDENT GUARDIAN REPORT ====================
 
-let _stuGuaPerPage = 10, _stuGuaPage = 1, _stuGuaSearch = '', _stuGuaData = [];
+let _stuGuaData = [], _stuGuaPage = 1, _stuGuaPerPage = 10, _stuGuaSearch = '';
 
 async function loadStudentGuardianReportView(container) {
+  openStuReportsDropdown();
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
         <h2 class="fin-title">Student Guardian Report</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Student Guardian Report &rsaquo; Listing</div>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Reports &rsaquo; Student Guardian Report</div>
       </div>
       <div class="fin-controls-row">
         <div class="fin-controls-left">
           Show <select id="sgr-per-page" onchange="changeStuGuaPerPage(this.value)">
-            ${[10,25,50,100].map(n=>`<option value="${n}">${n}</option>`).join('')}
-          </select> entries &nbsp;|&nbsp; Total <span id="sgr-total-count">0</span> entries
+            ${[10,25,50,100].map(n => `<option value="${n}">${n}</option>`).join('')}
+          </select> entries &nbsp;|&nbsp; Total <span id="sgr-total">0</span> entries
         </div>
         <div class="fin-controls-right">
-          <button class="fin-export-btn" title="Browse file to update">&#128193; Browse file to update</button>
           <button class="fin-export-btn" title="Export PDF">&#128438;</button>
           <button class="fin-export-btn" title="Export CSV">&#128202;</button>
           <input type="text" class="fin-search-input" id="sgr-search" placeholder="&#128269; Search&#8230;" oninput="onStuGuaSearch(this.value)">
           <button class="fin-btn-filter">&#9776; Filters</button>
         </div>
       </div>
-      <div id="sgr-table-container"><p class="fin-loading">Loading&#8230;</p></div>
+      <div id="sgr-table"></div>
       <div id="sgr-pagination"></div>
     </div>
   `;
-  await _loadStuGuaTable();
-}
-
-async function _loadStuGuaTable() {
-  const c = document.getElementById('sgr-table-container');
-  if (!c) return;
-  try {
-    const res = await fetch(`${API_BASE}/students/guardians/`, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) { c.innerHTML = '<p class="fin-error">Error loading guardian report.</p>'; return; }
-    _stuGuaData = await res.json();
-    _stuGuaPage = 1;
-    _renderStuGuaTable();
-  } catch(_) { c.innerHTML = '<p class="fin-error">Failed to load guardian report.</p>'; }
+  renderSkeletonRows('sgr-table', 6);
+  const res = await apiFetch(`${API_BASE}/reports/student-guardians`);
+  if (res && res.ok) _stuGuaData = await res.json();
+  _stuGuaPage = 1;
+  _renderStuGuaTable();
 }
 
 function _stuGuaFiltered() {
   if (!_stuGuaSearch) return _stuGuaData;
   const q = _stuGuaSearch;
   return _stuGuaData.filter(g =>
-    (g.admission_number||'').toLowerCase().includes(q) ||
-    (g.contact_name||'').toLowerCase().includes(q) ||
-    (g.email||'').toLowerCase().includes(q)
+    (g.admission_no||g.student_id||'').toLowerCase().includes(q) ||
+    (g.student_name||g.contact_name||'').toLowerCase().includes(q)
   );
 }
 
 function _renderStuGuaTable() {
   const filtered = _stuGuaFiltered();
-  const totalEl  = document.getElementById('sgr-total-count');
+  const totalEl  = document.getElementById('sgr-total');
   if (totalEl) totalEl.textContent = filtered.length;
   const start = (_stuGuaPage - 1) * _stuGuaPerPage;
   const paged = filtered.slice(start, start + _stuGuaPerPage);
   const pages = Math.max(1, Math.ceil(filtered.length / _stuGuaPerPage));
-  let rows = paged.length ? paged.map(g => `<tr>
-    <td>${_sEsc(g.admission_number||'')}</td>
-    <td>${_sEsc(g.contact_name||'')}</td>
-    <td>${_sEsc(g.sibling_admission_number||'')}</td>
-    <td>${_sEsc(g.relationship||'')}</td>
-    <td>${_sEsc(g.primary_phone||'')}</td>
-    <td>${_sEsc(g.secondary_phone||'')}</td>
-    <td>${_sEsc(g.email||'')}</td>
-  </tr>`).join('') : `<tr><td colspan="7" class="fin-empty">No records found.</td></tr>`;
-  const tbl = document.getElementById('sgr-table-container');
+
+  let rows = paged.length
+    ? paged.map(g => `<tr>
+        <td>${_esc(g.admission_no||g.student_id||'')}</td>
+        <td>${_esc(g.student_name||'')}</td>
+        <td>${_esc(g.guardian_name||g.contact_name||'')}</td>
+        <td>${_esc(g.relationship||'')}</td>
+        <td>${_esc(g.phone||g.primary_phone||'')}</td>
+        <td>${_esc(g.email||'')}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="6" class="fin-empty">No records found.</td></tr>';
+
+  const tbl = document.getElementById('sgr-table');
   if (tbl) tbl.innerHTML = `<div class="fin-table-wrap"><table class="fin-table">
-    <thead><tr><th>ADMISSION NUMBER</th><th>CONTACT NAME</th><th>SIBLING ADMISSION NUMBER</th><th>RELATIONSHIP</th><th>PRIMARY PHONE NO.</th><th>SECONDARY PHONE NO.</th><th>EMAIL ADDRESS</th></tr></thead>
+    <thead><tr><th>ADMISSION NO.</th><th>STUDENT NAME</th><th>GUARDIAN NAME</th><th>RELATIONSHIP</th><th>PHONE</th><th>EMAIL</th></tr></thead>
     <tbody>${rows}</tbody></table></div>`;
-  let pgBtns = '';
-  for (let i = 1; i <= pages; i++) pgBtns += `<button class="${i===_stuGuaPage?'fin-pg-active':''}" onclick="stuGuaGoPage(${i})">${i}</button>`;
-  const pgEl = document.getElementById('sgr-pagination');
-  if (pgEl) pgEl.innerHTML = `<div class="fin-pagination">${pgBtns}</div>`;
+  _mkPagination('sgr-pagination', _stuGuaPage, pages, 'stuGuaGoPage');
 }
 function changeStuGuaPerPage(v) { _stuGuaPerPage = parseInt(v); _stuGuaPage = 1; _renderStuGuaTable(); }
-function onStuGuaSearch(v)      { _stuGuaSearch = v.trim().toLowerCase(); _stuGuaPage = 1; _renderStuGuaTable(); }
+function onStuGuaSearch(v)      { _stuGuaSearch  = v.trim().toLowerCase(); _stuGuaPage = 1; _renderStuGuaTable(); }
 function stuGuaGoPage(p)        { _stuGuaPage = p; _renderStuGuaTable(); }
