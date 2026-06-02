@@ -508,21 +508,6 @@ function openStuReportsDropdown() {
   if (child) child.style.display = 'block';
 }
 
-function loadStuReportPlaceholderView(container, title) {
-  container.innerHTML = `
-    <div class="fin-page">
-      <div class="fin-header-row">
-        <h2 class="fin-title">${title}</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; ${title}</div>
-      </div>
-      <div style="background:white;border-radius:6px;padding:48px 24px;text-align:center;
-                  color:#888;border:1px solid #eee;box-shadow:0 1px 4px rgba(0,0,0,0.04);">
-        <p style="font-size:1rem;font-weight:600;margin:0;">Coming Soon</p>
-        <p style="font-size:0.88rem;margin-top:8px;">This module is currently under development.</p>
-      </div>
-    </div>
-  `;
-}
 
 function _stuEsc(str) {
   return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
