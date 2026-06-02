@@ -38,6 +38,9 @@ async function _finBuildLedger(studentId) {
       fetch(`${API_BASE}/finance/student-fees/${studentId}`, { headers: { Authorization: `Bearer ${token}` } }),
       fetch(`${API_BASE}/finance/payments/student/${studentId}`, { headers: { Authorization: `Bearer ${token}` } })
     ]);
+    if (!feesRes.ok || !pymtRes.ok) {
+      showToast('Could not load full ledger data. Some entries may be missing.', 'error');
+    }
     const fees     = feesRes.ok ? await feesRes.json() : [];
     const payments = pymtRes.ok ? await pymtRes.json() : [];
 
@@ -61,7 +64,10 @@ async function _finBuildLedger(studentId) {
     let running = 0;
     rows.forEach(r => { running += r.debit - r.credit; r.balance = running; });
     return rows;
-  } catch(_) { return []; }
+  } catch(_) {
+    showToast('Failed to build ledger. Please try again.', 'error');
+    return [];
+  }
 }
 
 function _finFilterLedger(rows, startDate, endDate, asAt) {

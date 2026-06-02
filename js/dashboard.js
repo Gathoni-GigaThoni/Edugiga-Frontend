@@ -1,6 +1,6 @@
 // ==================== DASHBOARD ====================
 function showDashboard() {
-  const isSuperAdmin = currentUser?.permissions?.includes("*");
+  const isSuperAdmin = currentUser?.clearance_level === 1 || currentUser?.role === 'super_admin';
   document.body.innerHTML = `
     <div class="container">
       <nav class="sidebar">

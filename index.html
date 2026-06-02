@@ -19,8 +19,8 @@
 <body>
   <div class="login-box">
     <h2>School Management System</h2>
-    <input type="email" id="email" placeholder="Email" value="admin@sevenoak.edu" autocomplete="username">
-    <input type="password" id="password" placeholder="Password" value="admin123" autocomplete="current-password">
+    <input type="email" id="email" placeholder="Email" autocomplete="username">
+    <input type="password" id="password" placeholder="Password" autocomplete="current-password">
     <button onclick="login()">Login</button>
     <p id="error" style="color:red;"></p>
   </div>
@@ -28,6 +28,7 @@
   <!-- ── Foundation (must load first) ── -->
   <script src="js/config.js"></script>
   <script src="js/auth.js"></script>
+  <script src="js/ui-helpers.js"></script>
   <script src="js/dashboard.js"></script>
 
   <!-- ── Feature modules (order within this group does not matter) ── -->
@@ -40,7 +41,10 @@
   <script src="js/administration.js"></script>
   <script src="js/user-management.js"></script>
   <script src="js/roles.js"></script>
-  <script src="js/hr.js"></script>
+  <script src="js/hr-list.js"></script>
+  <script src="js/hr-add.js"></script>
+  <script src="js/hr-edit.js"></script>
+  <script src="js/hr-esp-form.js"></script>
   <script src="js/payroll.js"></script>
   <script src="js/sessions.js"></script>
   <script src="js/session-types.js"></script>

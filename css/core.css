@@ -139,3 +139,138 @@ th {
   text-align: left;
 }
 
+/* ==================== SHARED UTILITIES ==================== */
+
+/* ── Unified action dropdown ── */
+.action-dropdown,
+.fin-action-dropdown,
+.hr-action-dropdown,
+.role-action-dropdown,
+.um-action-dropdown {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+  z-index: 200;
+  min-width: 140px;
+  overflow: hidden;
+}
+.action-dropdown a,
+.fin-action-dropdown a,
+.hr-action-dropdown a,
+.role-action-dropdown a,
+.um-action-dropdown a {
+  display: block;
+  padding: 9px 14px;
+  color: #333;
+  text-decoration: none;
+  font-size: 0.88rem;
+  white-space: nowrap;
+}
+.action-dropdown a:hover,
+.fin-action-dropdown a:hover,
+.hr-action-dropdown a:hover,
+.role-action-dropdown a:hover,
+.um-action-dropdown a:hover { background: #f5f5f5; }
+
+/* ── Unified pagination ── */
+.app-pagination,
+.fin-pagination,
+.hr-pagination,
+.um-pagination {
+  display: flex;
+  gap: 4px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.app-pagination button,
+.fin-pagination button,
+.hr-pagination button,
+.um-pagination button {
+  background: white !important;
+  color: #444 !important;
+  border: 1px solid #ccc !important;
+  padding: 5px 11px !important;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  min-width: 34px;
+  text-align: center;
+  width: auto !important;
+  margin: 0 !important;
+}
+.app-pagination button:hover,
+.fin-pagination button:hover,
+.hr-pagination button:hover,
+.um-pagination button:hover { background: #f0f0f0 !important; }
+.app-pagination button.fin-pg-active,
+.app-pagination button.hr-pg-active,
+.fin-pagination button.fin-pg-active,
+.hr-pagination button.hr-pg-active,
+.um-pagination button.um-pg-active {
+  background: #2c3e50 !important;
+  color: white !important;
+  border-color: #2c3e50 !important;
+}
+.app-pagination button:disabled,
+.fin-pagination button:disabled,
+.hr-pagination button:disabled,
+.um-pagination button:disabled { opacity: 0.5; cursor: default; }
+
+/* ── Loading skeleton ── */
+.skeleton-row td {
+  background: linear-gradient(90deg, #eee 25%, #f5f5f5 50%, #eee 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s infinite;
+  color: transparent !important;
+  border-radius: 3px;
+}
+@keyframes skeleton-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ── Toast notifications ── */
+#toast-container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+.app-toast {
+  padding: 12px 20px;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: white;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.18);
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  pointer-events: auto;
+  max-width: 360px;
+}
+.app-toast--visible { opacity: 1; transform: translateY(0); }
+.app-toast--success { background: #27ae60; }
+.app-toast--error   { background: #e74c3c; }
+.app-toast--info    { background: #2980b9; }
+.app-toast--warning { background: #e67e22; }
+
+/* ── Print styles ── */
+@media print {
+  .sidebar, .hr-controls-row, .fin-controls-row, .sa-controls-row,
+  .fin-btn-filter, .fin-export-btn, .hr-add-btn, .hr-filter-btn,
+  .hr-icon-btn, button, .modal, #toast-container { display: none !important; }
+  .container { display: block !important; }
+  main, #main-content { width: 100% !important; padding: 0 !important; }
+  body { background: white !important; }
+  .fin-table, .hr-table, table { box-shadow: none !important; }
+}
+

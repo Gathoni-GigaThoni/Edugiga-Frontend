@@ -147,7 +147,17 @@ async function attLoadClass() {
   tableWrap.innerHTML = '<p class="sa-loading">Loading class sheet&#8230;</p>';
 
   try {
-    const res  = await fetch(`${API_BASE}/attendance/class-sheet?class_date=${date}`, {
+    const params = new URLSearchParams({ class_date: date });
+    const session = document.getElementById('att-session')?.value;
+    const cls     = document.getElementById('att-class')?.value;
+    const stage   = document.getElementById('att-stage')?.value;
+    const stream  = document.getElementById('att-stream')?.value;
+    if (session) params.set('session_id', session);
+    if (cls)     params.set('class_id',   cls);
+    if (stage)   params.set('stage_id',   stage);
+    if (stream)  params.set('stream',     stream);
+
+    const res  = await fetch(`${API_BASE}/attendance/class-sheet?${params}`, {
       headers: { Authorization: `Bearer ${token}` }
     });
     const data = await res.json();

@@ -175,12 +175,10 @@ function showAddStudentForm() {
       <input id="s_parent1_name" placeholder="Primary Parent Full Name (Mother)" required>
       <input id="s_parent1_email" type="email" placeholder="Parent Email" required>
       <input id="s_parent1_phone" placeholder="Parent Phone" required>
-      <input id="s_parent1_id_doc" type="file" accept=".pdf,.jpg,.png">
       <hr>
       <input id="s_parent2_name" placeholder="Second Parent Full Name (optional)">
       <input id="s_parent2_email" type="email" placeholder="Second Parent Email">
       <input id="s_parent2_phone" placeholder="Second Parent Phone">
-      <input id="s_parent2_id_doc" type="file" accept=".pdf,.jpg,.png">
       <h4>Medical Information</h4>
       <textarea id="s_allergies" placeholder="Allergies"></textarea>
       <textarea id="s_chronic" placeholder="Chronic Symptoms"></textarea>
@@ -265,12 +263,12 @@ async function registerStudent() {
     body: JSON.stringify(payload)
   });
   if (res.ok) {
-    alert("Student registered!");
+    showToast("Student registered!", 'success');
     closeModal('student-form-modal');
     refreshStudentTable();
   } else {
     const err = await res.json();
-    alert("Error: " + JSON.stringify(err.detail));
+    showToast("Error: " + (err.detail || JSON.stringify(err)), 'error');
   }
 }
 
@@ -279,7 +277,7 @@ async function openStudentProfile(studentId, mode) {
   const res = await fetch(`${API_BASE}/students/${studentId}/full-profile`, {
     headers: { "Authorization": `Bearer ${token}` }
   });
-  if (!res.ok) { alert("Could not load profile."); return; }
+  if (!res.ok) { showToast("Could not load profile.", 'error'); return; }
   const data = await res.json();
   const canEdit = currentUser?.clearance_level <= 3 && mode === 'edit';
   
@@ -400,7 +398,7 @@ async function openFeeStatement(studentId) {
     const w = window.open('', '_blank', 'width=600,height=400');
     w.document.write(`<pre>${JSON.stringify(data, null, 2)}</pre>`);
   } else {
-    alert("Could not load fee statement.");
+    showToast("Could not load fee statement.", 'error');
   }
 }
 
@@ -469,7 +467,7 @@ async function loadBulkReportStudents() {
   const res = await fetch(`${API_BASE}/students/?class=${encodeURIComponent(cls)}&cohort=${encodeURIComponent(cohort)}`, {
     headers: { "Authorization": `Bearer ${token}` }
   });
-  if (!res.ok) { alert("Error loading students."); return; }
+  if (!res.ok) { showToast("Error loading students.", 'error'); return; }
   const students = await res.json();
   let html = '<table><tr><th>Select</th><th>Student ID</th><th>Name</th></tr>';
   students.forEach(s => {

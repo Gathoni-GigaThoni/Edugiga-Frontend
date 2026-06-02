@@ -137,28 +137,7 @@
 .role-action-btn:hover {
   background: #e0e3e8 !important;
 }
-.role-action-dropdown {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 2px);
-  background: white;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  box-shadow: 0 3px 8px rgba(0,0,0,0.12);
-  z-index: 200;
-  min-width: 130px;
-}
-.role-action-dropdown a {
-  display: block;
-  padding: 9px 14px;
-  color: #333;
-  text-decoration: none;
-  font-size: 0.9rem;
-  white-space: nowrap;
-}
-.role-action-dropdown a:hover {
-  background: #f5f5f5;
-}
+/* .role-action-dropdown — styles now in core.css shared rule */
 
 /* ==================== ROLES — ADD / EDIT FORM ==================== */
 .role-form-wrap {

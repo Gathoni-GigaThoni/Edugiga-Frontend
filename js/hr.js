@@ -969,7 +969,13 @@ function handleHrPhotoPreview(input) {
   const preview = document.getElementById('hr-photo-preview');
   if (preview) {
     const url = URL.createObjectURL(input.files[0]);
-    preview.innerHTML = `<img src="${url}" alt="Preview" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`;
+    const img = document.createElement('img');
+    img.alt = 'Preview';
+    img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%;';
+    img.onload = () => URL.revokeObjectURL(url);
+    img.src = url;
+    preview.innerHTML = '';
+    preview.appendChild(img);
   }
 }
 
@@ -1154,7 +1160,13 @@ function handleHrEditPhotoPreview(input) {
   const preview = document.getElementById('hr-edit-photo-preview');
   if (preview) {
     const url = URL.createObjectURL(input.files[0]);
-    preview.innerHTML = `<img src="${url}" alt="Preview" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`;
+    const img = document.createElement('img');
+    img.alt = 'Preview';
+    img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%;';
+    img.onload = () => URL.revokeObjectURL(url);
+    img.src = url;
+    preview.innerHTML = '';
+    preview.appendChild(img);
   }
 }
 
