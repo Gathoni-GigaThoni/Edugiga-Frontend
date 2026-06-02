@@ -274,3 +274,97 @@ th {
   .fin-table, .hr-table, table { box-shadow: none !important; }
 }
 
+/* ==================== STUDENT MODULE COMPONENTS ==================== */
+
+/* ── Edit / Detail shell ── */
+.stu-edit-shell {
+  background: white;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+.stu-tab-bar {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid #e0e0e0;
+  padding: 0 28px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.stu-tab-btn {
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  padding: 12px 18px;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: #555;
+  cursor: pointer;
+  margin-bottom: -2px;
+  white-space: nowrap;
+  width: auto !important;
+  margin-right: 0 !important;
+}
+.stu-tab-btn:hover { color: #2c3e50; }
+.stu-tab-btn--active { border-bottom-color: #2db3b3; color: #2db3b3; font-weight: 600; }
+.stu-edit-body {
+  flex: 1;
+  padding: 24px 28px;
+  overflow-y: auto;
+}
+.stu-edit-footer {
+  padding: 16px 28px;
+  border-top: 1px solid #eee;
+  display: flex;
+  gap: 12px;
+  background: white;
+}
+
+/* ── Form grid ── */
+.stu-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px 28px;
+}
+.stu-form-group { display: flex; flex-direction: column; gap: 5px; }
+.stu-form-group label { font-size: 0.88rem; font-weight: 500; color: #444; }
+
+/* ── Detail grid ── */
+.stu-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 24px;
+}
+.stu-detail-row { display: flex; flex-direction: column; gap: 2px; }
+.stu-detail-label { font-size: 0.78rem; color: #888; font-weight: 500; text-transform: uppercase; letter-spacing: 0.03em; }
+.stu-detail-value { font-size: 0.92rem; color: #2c3e50; font-weight: 500; }
+
+/* ── Student search cards ── */
+.stu-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+  margin-top: 4px;
+}
+.stu-card {
+  background: white;
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  cursor: pointer;
+  transition: box-shadow 0.15s;
+  border: 1px solid #eee;
+}
+.stu-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.12); }
+.stu-card-avatar {
+  width: 48px; height: 48px; border-radius: 50%;
+  background: #2db3b3; color: white; font-size: 1.4rem;
+  display: flex; align-items: center; justify-content: center;
+  margin-bottom: 10px;
+}
+.stu-card-name  { font-weight: 600; font-size: 0.95rem; color: #2c3e50; margin-bottom: 2px; }
+.stu-card-sub   { color: #888; font-size: 0.8rem; margin-bottom: 6px; }
+.stu-card-info  { font-size: 0.82rem; color: #555; margin-bottom: 3px; }
+.stu-card-fee   { display: inline-block; margin-top: 8px; color: #2db3b3; font-size: 0.82rem; font-weight: 600; text-decoration: none; }
+.stu-card-fee:hover { text-decoration: underline; }
+
