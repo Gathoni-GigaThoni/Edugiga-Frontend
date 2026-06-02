@@ -462,59 +462,69 @@ function hrAddServiceProfileRecord() {
 }
 
 // ---- Add Employee submission ----
-function submitHrAddEmployee() {
+async function submitHrAddEmployee() {
   saveHrAddCurrentTabState();
   const s = hrAddFormState;
-  if (!s.employment_terms)    { alert('Employment Terms is required.'); return; }
-  if (!s.surname.trim())      { alert('Surname is required.'); return; }
-  if (!s.other_names.trim())  { alert('Other Names is required.'); return; }
-  if (!s.email.trim())        { alert('Email is required.'); return; }
-  if (!s.birth_date)          { alert('Birth Date is required.'); return; }
-  if (!s.gender)              { alert('Gender is required.'); return; }
-  if (!s.joining_date)        { alert('Joining Date is required.'); return; }
-  if (!s.probation_period)    { alert('Probation Period is required.'); return; }
-  if (!s.nationality)         { alert('Nationality is required.'); return; }
+  if (!s.employment_terms)    { showToast('Employment Terms is required.', 'error'); return; }
+  if (!s.surname.trim())      { showToast('Surname is required.', 'error'); return; }
+  if (!s.other_names.trim())  { showToast('Other Names is required.', 'error'); return; }
+  if (!s.email.trim())        { showToast('Email is required.', 'error'); return; }
+  if (!s.birth_date)          { showToast('Birth Date is required.', 'error'); return; }
+  if (!s.gender)              { showToast('Gender is required.', 'error'); return; }
+  if (!s.joining_date)        { showToast('Joining Date is required.', 'error'); return; }
+  if (!s.probation_period)    { showToast('Probation Period is required.', 'error'); return; }
+  if (!s.nationality)         { showToast('Nationality is required.', 'error'); return; }
 
-  const emp = {
-    id: Date.now(),
-    employee_code: s.employeeCode,
-    employment_terms: s.employment_terms,
-    surname: s.surname,
-    other_names: s.other_names,
-    first_name: s.other_names,
-    last_name: s.surname,
-    alias: s.alias,
-    email: s.email,
-    phone_code: s.phone_code,
-    phone: s.phone,
-    birth_date: s.birth_date,
-    gender: s.gender,
-    joining_date: s.joining_date,
-    probation_period: s.probation_period,
+  const payload = {
+    employee_code:     s.employeeCode,
+    employment_terms:  s.employment_terms,
+    surname:           s.surname,
+    other_names:       s.other_names,
+    first_name:        s.other_names,
+    last_name:         s.surname,
+    alias:             s.alias,
+    email:             s.email,
+    phone_code:        s.phone_code,
+    phone:             s.phone,
+    birth_date:        s.birth_date,
+    gender:            s.gender,
+    joining_date:      s.joining_date,
+    probation_period:  s.probation_period,
     confirmation_date: s.confirmation_date,
-    address: s.address,
+    address:           s.address,
     emergency_contact: s.emergency_contact,
-    nationality: s.nationality,
-    national_id: s.national_id,
-    rank: s.rank,
-    is_director: s.is_director,
-    photo: s.photo,
-    is_active: true,
-    designation: '',
-    department: '',
-    disability_type: s.disability_type,
-    medical_info: s.medical_info,
-    education: [...s.education],
-    kra_pin: s.kra_pin,
-    nssf_number: s.nssf_number,
-    nhif_number: s.nhif_number,
-    shif_number: s.shif_number,
-    identity_docs: [...s.identity_docs],
-    dependents: [...s.dependents],
-    service_profile: []
+    nationality:       s.nationality,
+    national_id:       s.national_id,
+    rank:              s.rank,
+    is_director:       s.is_director,
+    is_active:         true,
+    disability_type:   s.disability_type,
+    medical_info:      s.medical_info,
+    education:         [...s.education],
+    kra_pin:           s.kra_pin,
+    nssf_number:       s.nssf_number,
+    nhif_number:       s.nhif_number,
+    shif_number:       s.shif_number,
+    identity_docs:     [...s.identity_docs],
+    dependents:        [...s.dependents],
   };
-  employeesData.push(emp);
-  loadHrEmployeeDirectoryView(document.getElementById('main-content'));
+
+  try {
+    const res = await fetch(`${API_BASE}/employees/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload)
+    });
+    if (res.ok) {
+      showToast('Employee added successfully!', 'success');
+      loadHrEmployeeDirectoryView(document.getElementById('main-content'));
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showToast('Error: ' + (err.detail || 'Could not save employee.'), 'error');
+    }
+  } catch (_) {
+    showToast('Network error. Please try again.', 'error');
+  }
 }
 
 function cancelHrAddEmployee() {

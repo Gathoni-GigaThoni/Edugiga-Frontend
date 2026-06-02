@@ -532,10 +532,15 @@ function clearStmtDateFilter(studentId) {
 
 // ==================== CHANGE 4: STUDENT INVOICES — LISTING ====================
 
-function loadStudentInvoicesView(container) {
+async function loadStudentInvoicesView(container) {
   _invPage   = 1;
   _invSearch = '';
   _renderInvoiceListPage(container);
+  try {
+    const res = await fetch(`${API_BASE}/finance/invoices/`, { headers: { Authorization: `Bearer ${token}` } });
+    if (res.ok) { studentInvoicesData.length = 0; (await res.json()).forEach(r => studentInvoicesData.push(r)); }
+  } catch (_) {}
+  _renderInvTable();
 }
 
 function _renderInvoiceListPage(container) {
@@ -787,27 +792,28 @@ function removeLineItem(i) {
   if (row) row.remove();
 }
 
-function submitInvoiceEdit(id) {
-  const idx = studentInvoicesData.findIndex(x => x.id === id);
-  if (idx === -1) return;
-
+async function submitInvoiceEdit(id) {
   const amount = parseFloat(document.getElementById('inv-edit-amount').value) || 0;
   const notes  = document.getElementById('inv-edit-notes').value || '';
-
-  // Collect line items from DOM
-  const liBody   = document.getElementById('inv-li-body');
+  const liBody = document.getElementById('inv-li-body');
   const lineItems = [];
   if (liBody) {
     liBody.querySelectorAll('tr').forEach(tr => {
       const descEl = tr.querySelector('input[id^="li-desc-"]');
       const amtEl  = tr.querySelector('input[id^="li-amount-"]');
-      if (descEl && amtEl) {
-        lineItems.push({ description: descEl.value, amount: parseFloat(amtEl.value) || 0 });
-      }
+      if (descEl && amtEl) lineItems.push({ description: descEl.value, amount: parseFloat(amtEl.value) || 0 });
     });
   }
-
-  studentInvoicesData[idx] = { ...studentInvoicesData[idx], amount, notes, lineItems };
+  const payload = { amount, notes, lineItems };
+  try {
+    const res = await fetch(`${API_BASE}/finance/invoices/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload)
+    });
+    if (res.ok) { showToast('Invoice updated!', 'success'); }
+    else { const e = await res.json().catch(()=>({})); showToast('Error: '+(e.detail||'Could not update.'), 'error'); }
+  } catch (_) { showToast('Network error.', 'error'); }
   loadView('fin-student-invoices');
 }
 
@@ -901,7 +907,7 @@ function toggleBulkSelectAll(cb) {
   document.querySelectorAll('.bulk-class-cb').forEach(c => { c.checked = cb.checked; });
 }
 
-function submitBulkInvoicing() {
+async function submitBulkInvoicing() {
   const sessionEl = document.getElementById('bulk-session');
   const dateEl    = document.getElementById('bulk-inv-date');
   let valid = true;
@@ -927,31 +933,17 @@ function submitBulkInvoicing() {
   const invDate     = dateEl.value;
   const today       = _finToday();
 
-  checked.forEach(cb => {
-    studentInvoicesData.push({
-      id:          'inv-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5),
-      invoiceNo:   _finGenInvNo(),
-      invoiceDate: invDate,
-      branch:      '-',
-      costCenter:  '-',
-      admissionNo: '-',
-      studentName: `Bulk — ${cb.value}`,
-      session:     sessionName,
-      sessionType: '-',
-      studentType: '-',
-      stayStatus:  '-',
-      class:       cb.value,
-      cohort:      '-',
-      programme:   '-',
-      department:  '-',
-      amount:      0,
-      lineItems:   [],
-      notes:       'Bulk invoice generated',
-      createdDate: today,
-      status:      'pending'
+  const classIds = checked.map(cb => cb.value);
+  const payload  = { session_id: sessionEl.value, invoice_date: invDate, class_ids: classIds };
+  try {
+    const res = await fetch(`${API_BASE}/finance/invoices/bulk/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload)
     });
-  });
-
+    if (res.ok) { showToast('Bulk invoices created!', 'success'); }
+    else { const e = await res.json().catch(()=>({})); showToast('Error: '+(e.detail||'Could not create bulk invoices.'), 'error'); }
+  } catch (_) { showToast('Network error.', 'error'); }
   loadView('fin-student-invoices');
 }
 
@@ -1004,9 +996,14 @@ function _finGenRefNo(prefix, arr) {
 
 let _invAdjPerPage = 10, _invAdjPage = 1, _invAdjSearch = '';
 
-function loadInvoiceAdjustmentsView(container) {
+async function loadInvoiceAdjustmentsView(container) {
   _invAdjPage = 1; _invAdjSearch = '';
   _renderInvAdjListPage(container);
+  try {
+    const res = await fetch(`${API_BASE}/finance/invoice-adjustments/`, { headers: { Authorization: `Bearer ${token}` } });
+    if (res.ok) { studentInvoiceAdjustmentsData.length = 0; (await res.json()).forEach(r => studentInvoiceAdjustmentsData.push(r)); }
+  } catch (_) {}
+  _renderInvAdjTable();
 }
 
 function _renderInvAdjListPage(container) {
@@ -1238,7 +1235,7 @@ function addIaFeeItem() {
   body.appendChild(tr);
 }
 
-function submitInvAdjAdd() {
+async function submitInvAdjAdd() {
   const date   = document.getElementById('ia-date').value;
   const type   = document.getElementById('ia-student-type').value;
   const reason = (document.getElementById('ia-reason').value||'').trim();
@@ -1261,24 +1258,17 @@ function submitInvAdjAdd() {
     if (acctEl) lineItems.push({ account: acctEl.value, amount: parseFloat(amtEl?.value)||0 });
   });
 
-  const total = lineItems.reduce((s,li)=>s+li.amount, 0);
-  studentInvoiceAdjustmentsData.push({
-    id:             'ia-' + Date.now(),
-    referenceNo:    _finGenRefNo('ADJ-', studentInvoiceAdjustmentsData),
-    adjustmentDate: date,
-    studentType:    type,
-    students,
-    lineItems,
-    amount:         total,
-    costCenter:     '-',
-    admissionNo:    students[0]?.admissionNo || '-',
-    names:          students.map(s=>s.name).join(', '),
-    stay:           '-',
-    class:          students[0]?.class || '-',
-    cohort:         '-',
-    reason,
-    createdDate:    _finToday()
-  });
+  const total   = lineItems.reduce((s,li)=>s+li.amount, 0);
+  const payload = { adjustment_date: date, student_type: type, reason, students, lineItems, amount: total };
+  try {
+    const res = await fetch(`${API_BASE}/finance/invoice-adjustments/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload)
+    });
+    if (res.ok) { showToast('Adjustment saved!', 'success'); }
+    else { const e = await res.json().catch(()=>({})); showToast('Error: '+(e.detail||'Could not save.'), 'error'); }
+  } catch (_) { showToast('Network error.', 'error'); }
   loadView('fin-invoice-adjustments');
 }
 
@@ -1286,9 +1276,14 @@ function submitInvAdjAdd() {
 
 let _sponAllocPerPage = 10, _sponAllocPage = 1, _sponAllocSearch = '';
 
-function loadSponsorshipAllocationsView(container) {
+async function loadSponsorshipAllocationsView(container) {
   _sponAllocPage = 1; _sponAllocSearch = '';
   _renderSponAllocListPage(container);
+  try {
+    const res = await fetch(`${API_BASE}/finance/sponsorship-allocations/`, { headers: { Authorization: `Bearer ${token}` } });
+    if (res.ok) { sponsorshipAllocationsData.length = 0; (await res.json()).forEach(r => sponsorshipAllocationsData.push(r)); }
+  } catch (_) {}
+  _renderSponAllocTable();
 }
 
 function _renderSponAllocListPage(container) {
@@ -1478,7 +1473,7 @@ function renderSponAllocAddPage(container) {
     </div>`;
 }
 
-function submitSponAllocAdd() {
+async function submitSponAllocAdd() {
   const sponsor = (document.getElementById('sa-sponsor-name').value||'').trim();
   const admNo   = (document.getElementById('sa-adm-no').value||'').trim();
   const amount  = parseFloat(document.getElementById('sa-amount').value)||0;
@@ -1488,21 +1483,23 @@ function submitSponAllocAdd() {
   document.getElementById('sa-amount-err').textContent  = amount>0? '' : 'Amount must be greater than 0.'; if(!amount) valid=false;
   if (!valid) return;
 
-  sponsorshipAllocationsData.push({
-    id:              'sa-'+Date.now(),
-    referenceNumber: _finGenRefNo('SPN-', sponsorshipAllocationsData),
-    sponsorName:     sponsor,
-    admissionNo:     admNo,
-    studentName:     document.getElementById('sa-student-name').value||'',
-    amount,
-    class:           document.getElementById('sa-class').value||'-',
-    branch:          document.getElementById('sa-branch').value||'-',
-    costCenter:      document.getElementById('sa-cost-center').value||'-',
-    cohort:          document.getElementById('sa-cohort').value||'-',
-    programme:       '-',
-    balance:         '-',
-    createdAt:       _finToday()
-  });
+  const payload = {
+    sponsor_name: sponsor, admission_no: admNo, amount,
+    student_name: document.getElementById('sa-student-name').value||'',
+    class:        document.getElementById('sa-class').value||'',
+    branch:       document.getElementById('sa-branch').value||'',
+    cost_center:  document.getElementById('sa-cost-center').value||'',
+    cohort:       document.getElementById('sa-cohort').value||''
+  };
+  try {
+    const res = await fetch(`${API_BASE}/finance/sponsorship-allocations/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload)
+    });
+    if (res.ok) { showToast('Sponsorship allocation saved!', 'success'); }
+    else { const e = await res.json().catch(()=>({})); showToast('Error: '+(e.detail||'Could not save.'), 'error'); }
+  } catch (_) { showToast('Network error.', 'error'); }
   loadView('fin-sponsorship-allocations');
 }
 
@@ -1510,9 +1507,14 @@ function submitSponAllocAdd() {
 
 let _feeSetupPerPage = 10, _feeSetupPage = 1, _feeSetupSearch = '';
 
-function loadFeeSetupPerClassView(container) {
+async function loadFeeSetupPerClassView(container) {
   _feeSetupPage = 1; _feeSetupSearch = '';
   _renderFeeSetupListPage(container);
+  try {
+    const res = await fetch(`${API_BASE}/finance/fee-setup-per-class/`, { headers: { Authorization: `Bearer ${token}` } });
+    if (res.ok) { feeSetupPerClassData.length = 0; (await res.json()).forEach(r => feeSetupPerClassData.push(r)); }
+  } catch (_) {}
+  _renderFeeSetupTable();
 }
 
 function _renderFeeSetupListPage(container) {
@@ -1747,7 +1749,7 @@ function addFsLineItem() {
   body.appendChild(tr);
 }
 
-function submitFeeSetupAdd() {
+async function submitFeeSetupAdd() {
   const code  = (document.getElementById('fs-class-code').value||'').trim();
   const sess  = document.getElementById('fs-session').value;
   const stype = document.getElementById('fs-student-type').value;
@@ -1766,25 +1768,26 @@ function submitFeeSetupAdd() {
   const total = lineItems.reduce((s,li)=>s+li.amount, 0);
   const sessRec = sessionData.find(s=>String(s.id)===String(sess));
 
-  feeSetupPerClassData.push({
-    id:           'fs-'+Date.now(),
-    classCode:    code,
-    session:      sessRec?.sessionName||sess,
-    studentType:  stype,
-    sessionType:  document.getElementById('fs-session-type').value||'-',
-    programme:    document.getElementById('fs-programme').value||'-',
-    department:   document.getElementById('fs-department').value||'-',
-    academicYear: document.getElementById('fs-acad-year').value||'-',
-    studyMode:    document.getElementById('fs-study-mode').value||'-',
-    branch:       document.getElementById('fs-branch').value||'-',
-    lineItems,
-    amount:       total,
-    notes:        document.getElementById('fs-notes').value||'',
-    status:       'Active',
-    personnel:    currentUser ? (currentUser.email||'-') : '-',
-    studentName:  stype,
-    createdDate:  _finToday()
-  });
+  const payload = {
+    class_code: code, session_id: sess, student_type: stype,
+    session_type:  document.getElementById('fs-session-type').value||'',
+    programme:     document.getElementById('fs-programme').value||'',
+    department:    document.getElementById('fs-department').value||'',
+    academic_year: document.getElementById('fs-acad-year').value||'',
+    study_mode:    document.getElementById('fs-study-mode').value||'',
+    branch:        document.getElementById('fs-branch').value||'',
+    line_items: lineItems, amount: total,
+    notes: document.getElementById('fs-notes').value||''
+  };
+  try {
+    const res = await fetch(`${API_BASE}/finance/fee-setup-per-class/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload)
+    });
+    if (res.ok) { showToast('Fee setup saved!', 'success'); }
+    else { const e = await res.json().catch(()=>({})); showToast('Error: '+(e.detail||'Could not save.'), 'error'); }
+  } catch (_) { showToast('Network error.', 'error'); }
   loadView('fin-fee-setup-per-class');
 }
 
@@ -1795,6 +1798,11 @@ let _rcvPayPerPage = 10, _rcvPayPage = 1, _rcvPaySearch = '';
 async function loadReceivePaymentsView(container) {
   _rcvPayPage = 1; _rcvPaySearch = '';
   _renderRcvPayListPage(container);
+  try {
+    const res = await fetch(`${API_BASE}/finance/receive-payments/`, { headers: { Authorization: `Bearer ${token}` } });
+    if (res.ok) { receivePaymentsData.length = 0; (await res.json()).forEach(r => receivePaymentsData.push(r)); }
+  } catch (_) {}
+  _renderRcvPayTable();
 }
 
 function _renderRcvPayListPage(container) {
@@ -2033,7 +2041,7 @@ async function renderRcvPayAddPage(container) {
     </div>`;
 }
 
-function submitRcvPayAdd() {
+async function submitRcvPayAdd() {
   const from   = document.getElementById('rcv-add-from').value;
   const stuEl  = document.getElementById('rcv-add-student');
   const stu    = stuEl.value;
@@ -2062,26 +2070,19 @@ function submitRcvPayAdd() {
 
   const ledgerRec = chartOfAccountsData.find(a=>String(a.id)===String(ledger));
 
-  receivePaymentsData.push({
-    id:           'rcv-'+Date.now(),
-    receiptNo:    _finGenRefNo('RCP-', receivePaymentsData),
-    receiveFrom:  from,
-    studentId:    stu,
-    studentLabel: `${stuName} (${stuAdm} / ${stuClass})`,
-    name:         stuName,
-    class:        stuClass,
-    cohort:       '-',
-    programme:    '-',
-    balance:      '-',
-    branch:       '-',
-    ledger:       ledgerRec?.accountName || ledger,
-    paymentMode:  mode,
-    modeNo,
-    docDate:      date,
-    amount,
-    costCenter:   '-',
-    createdDate:  _finToday()
-  });
+  const payload = {
+    receive_from: from, student_id: stu, ledger_id: ledger,
+    payment_mode: mode, mode_no: modeNo, doc_date: date, amount
+  };
+  try {
+    const res = await fetch(`${API_BASE}/finance/receive-payments/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload)
+    });
+    if (res.ok) { showToast('Payment received!', 'success'); }
+    else { const e = await res.json().catch(()=>({})); showToast('Error: '+(e.detail||'Could not save.'), 'error'); }
+  } catch (_) { showToast('Network error.', 'error'); }
   loadView('fin-receive-payments');
 }
 
@@ -2089,9 +2090,14 @@ function submitRcvPayAdd() {
 
 let _coaPerPage = 10, _coaPage = 1, _coaSearch = '';
 
-function loadChartOfAccountsView(container) {
+async function loadChartOfAccountsView(container) {
   _coaPage = 1; _coaSearch = '';
   _renderCoaListPage(container);
+  try {
+    const res = await fetch(`${API_BASE}/finance/chart-of-accounts/`, { headers: { Authorization: `Bearer ${token}` } });
+    if (res.ok) { chartOfAccountsData.length = 0; (await res.json()).forEach(r => chartOfAccountsData.push(r)); }
+  } catch (_) {}
+  _renderCoaTable();
 }
 
 function _renderCoaListPage(container) {
@@ -2265,7 +2271,7 @@ function renderCoaAddPage(container) {
     </div>`;
 }
 
-function submitCoaAdd() {
+async function submitCoaAdd() {
   const num  = (document.getElementById('coa-f-number').value||'').trim();
   const name = (document.getElementById('coa-f-name').value||'').trim();
   const type = document.getElementById('coa-f-type').value;
@@ -2276,23 +2282,24 @@ function submitCoaAdd() {
   document.getElementById('coa-f-type-err').textContent   = type ? '' : 'This field is required.'; if(!type) valid=false;
   document.getElementById('coa-f-cfg-err').textContent    = cfg  ? '' : 'This field is required.'; if(!cfg)  valid=false;
   if (!valid) return;
-  chartOfAccountsData.push({
-    id:                    'coa-'+Date.now(),
-    number:                num,
-    accountName:           name,
-    accountType:           type,
-    paymentOrdering:       document.getElementById('coa-f-ordering').value||'',
-    cashFlowGroup:         cfg,
-    cashFlowSubgroupName:  document.getElementById('coa-f-cf-subgroup').value||'',
-    childOf:               document.getElementById('coa-f-child-of').value||'',
-    parentAccount:         chartOfAccountsData.find(a=>a.id===document.getElementById('coa-f-child-of').value)?.accountName||'-',
-    group:                 cfg,
-    subGroup:              document.getElementById('coa-f-cf-subgroup').value||'-',
-    isStudentFeesRelated:  document.getElementById('coa-f-fees-related').checked,
-    isBudgetItem:          document.getElementById('coa-f-budget-item').checked,
-    status:                'Active',
-    personnel:             currentUser?.email||'-'
-  });
+  const payload = {
+    number: num, account_name: name, account_type: type,
+    payment_ordering:      document.getElementById('coa-f-ordering').value||'',
+    cash_flow_group:       cfg,
+    cash_flow_subgroup:    document.getElementById('coa-f-cf-subgroup').value||'',
+    child_of:              document.getElementById('coa-f-child-of').value||'',
+    is_student_fees_related: document.getElementById('coa-f-fees-related').checked,
+    is_budget_item:        document.getElementById('coa-f-budget-item').checked
+  };
+  try {
+    const res = await fetch(`${API_BASE}/finance/chart-of-accounts/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload)
+    });
+    if (res.ok) { showToast('Account added!', 'success'); }
+    else { const e = await res.json().catch(()=>({})); showToast('Error: '+(e.detail||'Could not save.'), 'error'); }
+  } catch (_) { showToast('Network error.', 'error'); }
   loadView('fin-chart-of-accounts');
 }
 
@@ -2321,7 +2328,7 @@ function openCoaEdit(id) {
     </div>`;
 }
 
-function submitCoaEdit(id) {
+async function submitCoaEdit(id) {
   const idx  = chartOfAccountsData.findIndex(a=>a.id===id);
   if (idx===-1) return;
   const name = (document.getElementById('coa-f-name').value||'').trim();
@@ -2331,17 +2338,23 @@ function submitCoaEdit(id) {
   document.getElementById('coa-f-type-err').textContent = type ? '' : 'This field is required.';
   document.getElementById('coa-f-cfg-err').textContent  = cfg  ? '' : 'This field is required.';
   if (!name||!type||!cfg) return;
-  chartOfAccountsData[idx] = { ...chartOfAccountsData[idx],
-    accountName: name, accountType: type, cashFlowGroup: cfg,
-    paymentOrdering: document.getElementById('coa-f-ordering').value||'',
-    cashFlowSubgroupName: document.getElementById('coa-f-cf-subgroup').value||'',
-    childOf: document.getElementById('coa-f-child-of').value||'',
-    parentAccount: chartOfAccountsData.find(a=>a.id===document.getElementById('coa-f-child-of').value)?.accountName||'-',
-    group: cfg,
-    subGroup: document.getElementById('coa-f-cf-subgroup').value||'-',
-    isStudentFeesRelated: document.getElementById('coa-f-fees-related').checked,
-    isBudgetItem: document.getElementById('coa-f-budget-item').checked
+  const payload = {
+    account_name: name, account_type: type, cash_flow_group: cfg,
+    payment_ordering:       document.getElementById('coa-f-ordering').value||'',
+    cash_flow_subgroup:     document.getElementById('coa-f-cf-subgroup').value||'',
+    child_of:               document.getElementById('coa-f-child-of').value||'',
+    is_student_fees_related: document.getElementById('coa-f-fees-related').checked,
+    is_budget_item:         document.getElementById('coa-f-budget-item').checked
   };
+  try {
+    const res = await fetch(`${API_BASE}/finance/chart-of-accounts/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload)
+    });
+    if (res.ok) { showToast('Account updated!', 'success'); }
+    else { const e = await res.json().catch(()=>({})); showToast('Error: '+(e.detail||'Could not update.'), 'error'); }
+  } catch (_) { showToast('Network error.', 'error'); }
   loadView('fin-chart-of-accounts');
 }
 
@@ -2349,9 +2362,14 @@ function submitCoaEdit(id) {
 
 let _feeAcctPerPage = 10, _feeAcctPage = 1, _feeAcctSearch = '';
 
-function loadFeeAccountsView(container) {
+async function loadFeeAccountsView(container) {
   _feeAcctPage = 1; _feeAcctSearch = '';
   _renderFeeAcctListPage(container);
+  try {
+    const res = await fetch(`${API_BASE}/finance/fee-accounts/`, { headers: { Authorization: `Bearer ${token}` } });
+    if (res.ok) { feeAccountsData.length = 0; (await res.json()).forEach(r => feeAccountsData.push(r)); }
+  } catch (_) {}
+  _renderFeeAcctTable();
 }
 
 function _renderFeeAcctListPage(container) {
@@ -2557,7 +2575,7 @@ function renderFeeAcctAddPage(container) {
     </div>`;
 }
 
-function submitFeeAcctAdd() {
+async function submitFeeAcctAdd() {
   const num   = (document.getElementById('fa-f-number').value||'').trim();
   const name  = (document.getElementById('fa-f-name').value||'').trim();
   const iname = (document.getElementById('fa-f-item-name').value||'').trim();
@@ -2571,26 +2589,27 @@ function submitFeeAcctAdd() {
   document.getElementById('fa-f-type-err').textContent  = type  ? '' : 'This field is required.'; if(!type)  valid=false;
   if (!valid) return;
   const childOfId = document.getElementById('fa-f-child-of').value;
-  feeAccountsData.push({
-    id:                    'fa-'+Date.now(),
-    number:                num,
-    accountName:           name,
-    itemName:              iname,
-    itemCode:              icode,
-    accountType:           type,
-    paymentOrdering:       document.getElementById('fa-f-ordering').value||'',
-    childOf:               childOfId,
-    parentAccount:         chartOfAccountsData.find(a=>a.id===childOfId)?.accountName||'-',
-    group:                 document.getElementById('fa-f-group').value||'-',
-    subGroup:              document.getElementById('fa-f-subgroup').value||'-',
-    department:            document.getElementById('fa-f-dept').value||'-',
-    isStudentFeesRelated:  document.getElementById('fa-f-fees').checked,
-    isDiscountAccount:     document.getElementById('fa-f-discount').checked,
-    isBudgetItem:          document.getElementById('fa-f-budget').checked,
-    isDeactivated:         document.getElementById('fa-f-deactivate').checked,
-    status:                document.getElementById('fa-f-deactivate').checked ? 'Inactive' : 'Active',
-    personnel:             currentUser?.email||'-'
-  });
+  const payload = {
+    number: num, account_name: name, item_name: iname, item_code: icode, account_type: type,
+    payment_ordering:       document.getElementById('fa-f-ordering').value||'',
+    child_of:               childOfId,
+    group:                  document.getElementById('fa-f-group').value||'',
+    sub_group:              document.getElementById('fa-f-subgroup').value||'',
+    department:             document.getElementById('fa-f-dept').value||'',
+    is_student_fees_related: document.getElementById('fa-f-fees').checked,
+    is_discount_account:    document.getElementById('fa-f-discount').checked,
+    is_budget_item:         document.getElementById('fa-f-budget').checked,
+    is_deactivated:         document.getElementById('fa-f-deactivate').checked
+  };
+  try {
+    const res = await fetch(`${API_BASE}/finance/fee-accounts/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload)
+    });
+    if (res.ok) { showToast('Fee account added!', 'success'); }
+    else { const e = await res.json().catch(()=>({})); showToast('Error: '+(e.detail||'Could not save.'), 'error'); }
+  } catch (_) { showToast('Network error.', 'error'); }
   loadView('fin-fee-accounts');
 }
 
@@ -2619,7 +2638,7 @@ function openFeeAcctEdit(id) {
     </div>`;
 }
 
-function submitFeeAcctEdit(id) {
+async function submitFeeAcctEdit(id) {
   const idx   = feeAccountsData.findIndex(a=>a.id===id);
   if (idx===-1) return;
   const iname = (document.getElementById('fa-f-item-name').value||'').trim();
@@ -2630,19 +2649,26 @@ function submitFeeAcctEdit(id) {
   document.getElementById('fa-f-type-err').textContent  = type  ? '' : 'This field is required.';
   if (!iname||!icode||!type) return;
   const childOfId = document.getElementById('fa-f-child-of').value;
-  feeAccountsData[idx] = { ...feeAccountsData[idx],
-    itemName: iname, itemCode: icode, accountType: type,
-    paymentOrdering: document.getElementById('fa-f-ordering').value||'',
-    childOf: childOfId,
-    parentAccount: chartOfAccountsData.find(a=>a.id===childOfId)?.accountName||'-',
-    group:     document.getElementById('fa-f-group').value||'-',
-    subGroup:  document.getElementById('fa-f-subgroup').value||'-',
-    department: document.getElementById('fa-f-dept').value||'-',
-    isStudentFeesRelated: document.getElementById('fa-f-fees').checked,
-    isDiscountAccount:    document.getElementById('fa-f-discount').checked,
-    isBudgetItem:         document.getElementById('fa-f-budget').checked,
-    isDeactivated:        document.getElementById('fa-f-deactivate').checked,
-    status: document.getElementById('fa-f-deactivate').checked ? 'Inactive' : 'Active'
+  const payload = {
+    item_name: iname, item_code: icode, account_type: type,
+    payment_ordering:       document.getElementById('fa-f-ordering').value||'',
+    child_of:               childOfId,
+    group:                  document.getElementById('fa-f-group').value||'',
+    sub_group:              document.getElementById('fa-f-subgroup').value||'',
+    department:             document.getElementById('fa-f-dept').value||'',
+    is_student_fees_related: document.getElementById('fa-f-fees').checked,
+    is_discount_account:    document.getElementById('fa-f-discount').checked,
+    is_budget_item:         document.getElementById('fa-f-budget').checked,
+    is_deactivated:         document.getElementById('fa-f-deactivate').checked
   };
+  try {
+    const res = await fetch(`${API_BASE}/finance/fee-accounts/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload)
+    });
+    if (res.ok) { showToast('Fee account updated!', 'success'); }
+    else { const e = await res.json().catch(()=>({})); showToast('Error: '+(e.detail||'Could not update.'), 'error'); }
+  } catch (_) { showToast('Network error.', 'error'); }
   loadView('fin-fee-accounts');
 }

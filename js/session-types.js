@@ -10,8 +10,17 @@ document.addEventListener('click', () => {
   document.querySelectorAll('[id^="st-dd-"]').forEach(d => d.style.display = 'none');
 });
 
-function loadSessionTypesView(container) {
+async function loadSessionTypesView(container) {
   _renderStListPage(container);
+  await _fetchSessionTypes();
+}
+
+async function _fetchSessionTypes() {
+  try {
+    const res = await fetch(`${API_BASE}/session-types/`, { headers: { Authorization: `Bearer ${token}` } });
+    if (res.ok) sessionTypesData = await res.json();
+  } catch (_) {}
+  _renderStTable();
 }
 
 // ==================== LISTING ====================
@@ -97,21 +106,26 @@ function toggleStDropdown(event, id) {
   if (dd) dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
 }
 
-function toggleStStatus(id) {
-  const idx = sessionTypesData.findIndex(t => t.id === id);
+async function toggleStStatus(id) {
+  const idx = sessionTypesData.findIndex(t => String(t.id) === String(id));
   if (idx === -1) return;
-  sessionTypesData[idx].is_inactive = !sessionTypesData[idx].is_inactive;
-  // Update just the status cell (optimistic, no API call needed for local data)
+  const newInactive = !sessionTypesData[idx].is_inactive;
+  // Optimistic UI update
+  sessionTypesData[idx].is_inactive = newInactive;
   const row = document.getElementById(`st-row-${id}`);
-  if (!row) return;
-  const t      = sessionTypesData[idx];
-  const btnCls = t.is_inactive ? 'sa-status-btn-deactive' : 'sa-status-btn-active';
-  const label  = t.is_inactive ? 'Deactive' : 'Active';
-  const btn    = row.querySelector('.sa-status-btn');
-  if (btn) {
-    btn.className = `sa-status-btn ${btnCls}`;
-    btn.innerHTML = `${label} &#9660;`;
+  if (row) {
+    const btnCls = newInactive ? 'sa-status-btn-deactive' : 'sa-status-btn-active';
+    const label  = newInactive ? 'Deactive' : 'Active';
+    const btn    = row.querySelector('.sa-status-btn');
+    if (btn) { btn.className = `sa-status-btn ${btnCls}`; btn.innerHTML = `${label} &#9660;`; }
   }
+  try {
+    await fetch(`${API_BASE}/session-types/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ ...sessionTypesData[idx], is_inactive: newInactive })
+    });
+  } catch (_) {}
 }
 
 // ==================== ADD ====================
@@ -151,18 +165,31 @@ function renderStAddPage(container) {
   `;
 }
 
-function submitStAdd() {
+async function submitStAdd() {
   const title = (document.getElementById('st-add-title').value || '').trim();
   document.getElementById('st-add-title-err').textContent = title ? '' : 'This field is required.';
   if (!title) return;
 
-  sessionTypesData.push({
-    id:          _genStId(),
+  const payload = {
     title,
     notes:       document.getElementById('st-add-notes').value || '',
     is_inactive: document.getElementById('st-add-inactive').checked
-  });
-  loadView('sa-session-types');
+  };
+  try {
+    const res = await fetch(`${API_BASE}/session-types/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload)
+    });
+    if (res.ok) {
+      loadView('sa-session-types');
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showToast('Error: ' + (err.detail || 'Could not save session type.'), 'error');
+    }
+  } catch (_) {
+    showToast('Network error. Please try again.', 'error');
+  }
 }
 
 // ==================== EDIT ====================
@@ -209,21 +236,31 @@ function _renderStEditPage(container, type) {
   `;
 }
 
-function submitStEdit(id) {
+async function submitStEdit(id) {
   const title = (document.getElementById('st-edit-title').value || '').trim();
   document.getElementById('st-edit-title-err').textContent = title ? '' : 'This field is required.';
   if (!title) return;
 
-  const idx = sessionTypesData.findIndex(t => t.id === id);
-  if (idx !== -1) {
-    sessionTypesData[idx] = {
-      ...sessionTypesData[idx],
-      title,
-      notes:       document.getElementById('st-edit-notes').value || '',
-      is_inactive: document.getElementById('st-edit-inactive').checked
-    };
+  const payload = {
+    title,
+    notes:       document.getElementById('st-edit-notes').value || '',
+    is_inactive: document.getElementById('st-edit-inactive').checked
+  };
+  try {
+    const res = await fetch(`${API_BASE}/session-types/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload)
+    });
+    if (res.ok) {
+      loadView('sa-session-types');
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showToast('Error: ' + (err.detail || 'Could not update session type.'), 'error');
+    }
+  } catch (_) {
+    showToast('Network error. Please try again.', 'error');
   }
-  loadView('sa-session-types');
 }
 
 function _stEsc(str) {

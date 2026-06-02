@@ -26,6 +26,15 @@ async function loadSessionsView(container) {
   _sessSearch     = '';
   _sessFilterOpen = false;
   _renderSessListPage(container);
+  await _fetchSessions();
+}
+
+async function _fetchSessions() {
+  try {
+    const res = await fetch(`${API_BASE}/sessions/`, { headers: { Authorization: `Bearer ${token}` } });
+    if (res.ok) sessionsData = await res.json();
+  } catch (_) {}
+  _renderSessTable();
 }
 
 async function _fetchSessAYCache() {
@@ -263,8 +272,7 @@ function submitSessAdd() {
   if (!title || !typeId || !ayId) valid = false;
   if (!valid) return;
 
-  sessionsData.push({
-    id:               _genSessId(),
+  const payload = {
     title,
     session_type_id:  typeId,
     academic_year_id: parseInt(ayId),
@@ -272,8 +280,23 @@ function submitSessAdd() {
     end_date:         document.getElementById('sess-add-end').value   || '',
     notes:            document.getElementById('sess-add-notes').value || '',
     is_inactive:      document.getElementById('sess-add-inactive').checked
-  });
-  loadView('sa-sessions');
+  };
+
+  try {
+    const res = await fetch(`${API_BASE}/sessions/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload)
+    });
+    if (res.ok) {
+      loadView('sa-sessions');
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showToast('Error: ' + (err.detail || 'Could not save session.'), 'error');
+    }
+  } catch (_) {
+    showToast('Network error. Please try again.', 'error');
+  }
 }
 
 // ==================== EDIT ====================
@@ -353,7 +376,7 @@ function _renderSessEditPage(container, sess) {
   `;
 }
 
-function submitSessEdit(id) {
+async function submitSessEdit(id) {
   const title  = (document.getElementById('sess-edit-title').value || '').trim();
   const typeId =  document.getElementById('sess-edit-type').value;
   const ayId   =  document.getElementById('sess-edit-ay').value;
@@ -365,20 +388,31 @@ function submitSessEdit(id) {
   if (!title || !typeId || !ayId) valid = false;
   if (!valid) return;
 
-  const idx = sessionsData.findIndex(s => s.id === id);
-  if (idx !== -1) {
-    sessionsData[idx] = {
-      ...sessionsData[idx],
-      title,
-      session_type_id:  typeId,
-      academic_year_id: parseInt(ayId),
-      start_date:       document.getElementById('sess-edit-start').value || '',
-      end_date:         document.getElementById('sess-edit-end').value   || '',
-      notes:            document.getElementById('sess-edit-notes').value || '',
-      is_inactive:      document.getElementById('sess-edit-inactive').checked
-    };
+  const payload = {
+    title,
+    session_type_id:  typeId,
+    academic_year_id: parseInt(ayId),
+    start_date:       document.getElementById('sess-edit-start').value || '',
+    end_date:         document.getElementById('sess-edit-end').value   || '',
+    notes:            document.getElementById('sess-edit-notes').value || '',
+    is_inactive:      document.getElementById('sess-edit-inactive').checked
+  };
+
+  try {
+    const res = await fetch(`${API_BASE}/sessions/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload)
+    });
+    if (res.ok) {
+      loadView('sa-sessions');
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showToast('Error: ' + (err.detail || 'Could not update session.'), 'error');
+    }
+  } catch (_) {
+    showToast('Network error. Please try again.', 'error');
   }
-  loadView('sa-sessions');
 }
 
 // ==================== HELPERS ====================

@@ -190,7 +190,7 @@ function openPayrollDropdowns() {
 }
 
 // ---- Listing ----
-function loadPayrollFiListingView(container) {
+async function loadPayrollFiListingView(container) {
   setActiveSidebarItem('sidebar-payroll-fi');
   openPayrollDropdowns();
   fiCurrentPage = 1;
@@ -224,6 +224,12 @@ function loadPayrollFiListingView(container) {
 
   const sel = document.getElementById('fi-per-page');
   if (sel) sel.value = String(fiPerPage);
+  renderFiTable();
+
+  try {
+    const res = await fetch(`${API_BASE}/payroll/financial-institutions/`, { headers: { Authorization: `Bearer ${token}` } });
+    if (res.ok) { financialInstitutionsData.length = 0; (await res.json()).forEach(r => financialInstitutionsData.push(r)); }
+  } catch (_) {}
   renderFiTable();
 }
 
@@ -303,15 +309,29 @@ function toggleFiDropdown(event, id) {
   if (dd) dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
 }
 
-function toggleFiStatus(id) {
+async function toggleFiStatus(id) {
   const rec = financialInstitutionsData.find(r => r.id === id);
   if (!rec) return;
   rec.isInactive = !rec.isInactive;
   renderFiTable();
+  try {
+    await fetch(`${API_BASE}/payroll/financial-institutions/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(rec)
+    });
+  } catch (_) {}
 }
 
-function deleteFi(id) {
+async function deleteFi(id) {
   if (!confirm('Delete this financial institution?')) return;
+  try {
+    const res = await fetch(`${API_BASE}/payroll/financial-institutions/${id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (!res.ok) { showToast('Could not delete record.', 'error'); return; }
+  } catch (_) { showToast('Network error.', 'error'); return; }
   const idx = financialInstitutionsData.findIndex(r => r.id === id);
   if (idx !== -1) financialInstitutionsData.splice(idx, 1);
   renderFiTable();
@@ -395,16 +415,25 @@ function loadPayrollFiAddView(container) {
   `;
 }
 
-function submitFiAdd() {
+async function submitFiAdd() {
   const vals = readFiFormValues();
-  if (!vals.code)        { alert('Code is required.'); return; }
-  if (!vals.institution) { alert('Institution is required.'); return; }
-  if (!vals.branch)      { alert('Branch is required.'); return; }
-  financialInstitutionsData.push({
-    id: 'fi-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-    ...vals
-  });
-  loadPayrollFiListingView(document.getElementById('main-content'));
+  if (!vals.code)        { showToast('Code is required.', 'error'); return; }
+  if (!vals.institution) { showToast('Institution is required.', 'error'); return; }
+  if (!vals.branch)      { showToast('Branch is required.', 'error'); return; }
+  try {
+    const res = await fetch(`${API_BASE}/payroll/financial-institutions/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(vals)
+    });
+    if (res.ok) {
+      showToast('Financial institution added!', 'success');
+      loadPayrollFiListingView(document.getElementById('main-content'));
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showToast('Error: ' + (err.detail || 'Could not save.'), 'error');
+    }
+  } catch (_) { showToast('Network error. Please try again.', 'error'); }
 }
 
 // ---- Edit ----
@@ -434,12 +463,23 @@ function loadPayrollFiEditView(container, id) {
   `;
 }
 
-function submitFiEdit(id) {
+async function submitFiEdit(id) {
   const vals = readFiFormValues();
-  if (!vals.code)        { alert('Code is required.'); return; }
-  if (!vals.institution) { alert('Institution is required.'); return; }
-  if (!vals.branch)      { alert('Branch is required.'); return; }
-  const idx = financialInstitutionsData.findIndex(r => r.id === id);
-  if (idx !== -1) financialInstitutionsData[idx] = { id, ...vals };
-  loadPayrollFiListingView(document.getElementById('main-content'));
+  if (!vals.code)        { showToast('Code is required.', 'error'); return; }
+  if (!vals.institution) { showToast('Institution is required.', 'error'); return; }
+  if (!vals.branch)      { showToast('Branch is required.', 'error'); return; }
+  try {
+    const res = await fetch(`${API_BASE}/payroll/financial-institutions/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(vals)
+    });
+    if (res.ok) {
+      showToast('Financial institution updated!', 'success');
+      loadPayrollFiListingView(document.getElementById('main-content'));
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showToast('Error: ' + (err.detail || 'Could not update.'), 'error');
+    }
+  } catch (_) { showToast('Network error. Please try again.', 'error'); }
 }

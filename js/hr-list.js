@@ -18,12 +18,16 @@ document.addEventListener('click', () => {
   ).forEach(d => d.style.display = 'none');
 });
 
-function loadHrEmployeeDirectoryView(container) {
-  hrFiltered = [...employeesData];
+async function loadHrEmployeeDirectoryView(container) {
   hrCurrentPage = 1;
   setActiveSidebarItem('sidebar-hr-employee-directory');
   const hrDropdown = document.getElementById('hr-dropdown');
   if (hrDropdown) hrDropdown.style.display = 'block';
+  try {
+    const res = await fetch(`${API_BASE}/employees/`, { headers: { Authorization: `Bearer ${token}` } });
+    if (res.ok) { employeesData.length = 0; (await res.json()).forEach(e => employeesData.push(e)); }
+  } catch (_) {}
+  hrFiltered = [...employeesData];
 
   container.innerHTML = `
     <div class="hr-page">
