@@ -179,7 +179,7 @@ function renderAyAddPage(container) {
           </label>
         </div>
         <div class="sa-form-actions">
-          <button class="sa-btn-submit" onclick="submitAyAdd()">Save</button>
+          <button id="ay-add-save-btn" class="sa-btn-submit" onclick="submitAyAdd()">Save</button>
           <button class="sa-btn-cancel" onclick="loadView('sa-academic-years')">Cancel</button>
         </div>
         <div id="ay-add-status"></div>
@@ -189,44 +189,48 @@ function renderAyAddPage(container) {
 }
 
 async function submitAyAdd() {
-  const name  = (document.getElementById('ay-add-title').value || '').trim();
-  const start =  document.getElementById('ay-add-start').value;
-  const end   =  document.getElementById('ay-add-end').value;
+  const name  = (document.getElementById('ay-add-title')?.value || '').trim();
+  const start =  document.getElementById('ay-add-start')?.value || '';
+  const end   =  document.getElementById('ay-add-end')?.value   || '';
 
   document.getElementById('ay-add-title-err').textContent = name  ? '' : 'This field is required.';
   document.getElementById('ay-add-start-err').textContent = start ? '' : 'This field is required.';
   document.getElementById('ay-add-end-err').textContent   = end   ? '' : 'This field is required.';
   if (!name || !start || !end) return;
 
-  const btn      = document.querySelector('#ay-add-status')?.previousElementSibling?.querySelector('.sa-btn-submit');
+  const btn      = document.getElementById('ay-add-save-btn');
   const statusEl = document.getElementById('ay-add-status');
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  if (statusEl) statusEl.innerHTML = '';
 
-  try {
-    const res = await fetch(`${API_BASE}/academic-years/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ name, start_date: start, end_date: end })
-    });
+  // Use apiFetch so auth + error handling is consistent with all other modules
+  const res = await apiFetch(`${API_BASE}/academic-years/`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ name, start_date: start, end_date: end }),
+  });
 
-    if (res.ok) {
-      const created = await res.json().catch(() => ({}));
-      showToast('Academic year saved!', 'success');
-      if (created.id) {
-        _currentAyId = created.id;
-        await openAyEdit(created.id);
-      } else {
-        loadView('sa-academic-years');
-      }
+  if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+
+  if (!res) {
+    // apiFetch already showed a network-error toast and returned null
+    return;
+  }
+
+  if (res.ok) {
+    const created = await res.json().catch(() => ({}));
+    showToast('Academic year saved!', 'success');
+    // Navigate OUTSIDE any try/catch so errors there don't look like save failures
+    if (created.id) {
+      await openAyEdit(created.id);
     } else {
-      const err = await res.json().catch(() => ({}));
-      const msg = err.detail || (typeof err === 'string' ? err : JSON.stringify(err));
-      if (statusEl) statusEl.innerHTML = `<div class="sa-toast sa-toast-error">${_ayEsc(msg)}</div>`;
-      if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+      loadView('sa-academic-years');
     }
-  } catch (e) {
-    if (statusEl) statusEl.innerHTML = '<div class="sa-toast sa-toast-error">Network error — could not reach the server.</div>';
-    if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+  } else {
+    const err = await res.json().catch(() => ({}));
+    const msg = err.detail || (typeof err === 'string' ? err : JSON.stringify(err)) || `HTTP ${res.status}`;
+    if (statusEl) statusEl.innerHTML = `<div class="sa-toast sa-toast-error">${_ayEsc(msg)}</div>`;
+    showToast(msg, 'error');
   }
 }
 
