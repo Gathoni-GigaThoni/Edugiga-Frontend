@@ -82,6 +82,30 @@ async function parseApiError(res) {
   }
 }
 
+// ── Keep-alive ────────────────────────────────────────────────────────────────
+// Pings the backend every 2 minutes while the user is on a form page so the
+// server stays warm and saves don't fail with connection-refused errors.
+let keepAliveInterval = null;
+let keepAliveActive   = false;
+
+function startKeepAlive() {
+  if (keepAliveActive) return;          // already running — don't stack timers
+  keepAliveActive = true;
+  keepAliveInterval = setInterval(() => {
+    // Fire-and-forget: silent GET to a cheap health endpoint
+    fetch(`${API_BASE}/health`, { headers: { Authorization: `Bearer ${token}` } })
+      .catch(() => {});                  // ignore all errors — purely preventive
+  }, 120000);                            // every 2 minutes
+}
+
+function stopKeepAlive() {
+  if (keepAliveInterval) {
+    clearInterval(keepAliveInterval);
+    keepAliveInterval = null;
+  }
+  keepAliveActive = false;
+}
+
 // ── Toast notifications ───────────────────────────────────────────────────────
 function showToast(message, type = 'info') {
   let container = document.getElementById('toast-container');

@@ -39,6 +39,7 @@ function _decodeAndNormalise(jwt) {
 }
 
 function logout() {
+  stopKeepAlive();
   token = '';
   currentUser = null;
   sessionStorage.removeItem('edugiga_token');

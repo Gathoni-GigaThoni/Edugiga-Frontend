@@ -157,9 +157,38 @@ function showDashboard() {
 }
 
 // ==================== VIEW LOADER ====================
+
+// Views where the user actively fills a form and may spend several minutes.
+// Keep-alive runs while any of these are active so the backend stays warm.
+const FORM_VIEWS = new Set([
+  // Student Management
+  'students-add', 'students-edit', 'students-view',
+  'cohort-session-planner-add', 'cohort-session-planner-edit',
+  'student-reporting-add', 'student-reporting-bulk',
+  // Finance
+  'fin-student-invoices', 'fin-student-bulk-invoicing',
+  'fin-invoice-adjustments', 'fin-sponsorship-allocations',
+  'fin-fee-setup-per-class', 'fin-receive-payments',
+  'fin-chart-of-accounts', 'fin-fee-accounts',
+  // HR / Payroll
+  'hr-employee-directory', 'payroll-esp', 'payroll-fi',
+  // Administration
+  'user-management', 'admin-roles',
+  // Academic setup
+  'sa-academic-years', 'sa-sessions', 'sa-session-types',
+  // Utilities with add/edit forms
+  'utilities-student-sources', 'utilities-streams', 'utilities-funding-sources',
+  'student-classes',
+]);
+
 async function loadView(view) {
   const main = document.getElementById("main-content");
   clearSidebarActiveItems();
+
+  // Stop any running keep-alive before evaluating the new view
+  stopKeepAlive();
+  // Restart it if the new view is form-oriented
+  if (FORM_VIEWS.has(view)) startKeepAlive();
   switch(view) {
     // Student Management – main views
     case 'students-list':
