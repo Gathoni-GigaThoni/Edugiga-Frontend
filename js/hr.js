@@ -94,12 +94,6 @@ function loadHrEmployeeDirectoryView(container) {
             </select>
           </div>
           <div class="hr-filter-group">
-            <label class="hr-filter-label">Branch</label>
-            <select id="hr-f-branch" class="hr-filter-select">
-              <option value="">Please Select</option>
-            </select>
-          </div>
-          <div class="hr-filter-group">
             <label class="hr-filter-label">Employee Status</label>
             <select id="hr-f-status" class="hr-filter-select">
               <option value="">Please Select</option>
@@ -281,7 +275,7 @@ function applyHrFilters() {
 }
 
 function clearHrFilters() {
-  ['hr-f-name', 'hr-f-email', 'hr-f-tutor', 'hr-f-designation', 'hr-f-department', 'hr-f-branch', 'hr-f-status'].forEach(id => {
+  ['hr-f-name', 'hr-f-email', 'hr-f-tutor', 'hr-f-designation', 'hr-f-department', 'hr-f-status'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
@@ -1987,7 +1981,7 @@ function renderHrEspFormPage(container) {
             <label class="hr-form-label">Bank <span class="hr-required">*</span></label>
             <select id="hr-esp-bank-select" class="hr-modal-select"><option value="">Please Select</option>${buildHrEspBankOptions()}</select>
           </div>
-          <div class="hr-modal-field"><label class="hr-form-label">Account and Branch</label><input type="text" id="hr-esp-bank-acct-branch" class="hr-modal-input" placeholder="e.g. Main Branch"></div>
+          <div class="hr-modal-field"><label class="hr-form-label">Account Details</label><input type="text" id="hr-esp-bank-acct-details" class="hr-modal-input" placeholder="e.g. Main Branch"></div>
           <div class="hr-modal-field"><label class="hr-form-label">Percentage</label><input type="number" id="hr-esp-bank-pct" class="hr-modal-input" min="0" max="100" placeholder="e.g. 100"></div>
         </div>
         <div class="hr-modal-actions">
@@ -2009,7 +2003,7 @@ function renderHrEspBankSection() {
     : banks.map((b, i) => `<tr>
         <td>${b.accountNo || ''}</td>
         <td>${b.bank || ''}</td>
-        <td>${b.accountAndBranch || ''}</td>
+        <td>${b.accountDetails || ''}</td>
         <td>${b.percentage || 0}%</td>
         <td class="hr-action-cell">
           <div class="hr-action-wrap">
@@ -2033,7 +2027,7 @@ function renderHrEspBankSection() {
       </div>
       <div class="hr-table-wrap">
         <table class="hr-table"><thead><tr>
-          <th>ACCOUNT NO.</th><th>BANK</th><th>ACCOUNT AND BRANCH</th><th>PERCENTAGE</th><th>ACTION</th>
+          <th>ACCOUNT NO.</th><th>BANK</th><th>ACCOUNT DETAILS</th><th>PERCENTAGE</th><th>ACTION</th>
         </tr></thead><tbody>${rows}</tbody></table>
       </div>
       <div class="hr-esp-bank-total ${totalCls}">Total: ${total}%</div>
@@ -2043,7 +2037,7 @@ function renderHrEspBankSection() {
 
 function buildHrEspBankOptions() {
   return financialInstitutionsData
-    .filter(fi => !fi.isInactive && !(fi.branch || '').toLowerCase().includes('seven oaks'))
+    .filter(fi => !fi.isInactive)
     .map(fi => `<option value="${fi.id}">${fi.institution}</option>`)
     .join('');
 }
@@ -2059,7 +2053,7 @@ function toggleHrEspBankDropdown(event, idx) {
 
 function openHrEspBankModalNew() {
   hrEspFormState.editingBankIdx = -1;
-  ['hr-esp-bank-acct-no','hr-esp-bank-acct-branch'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  ['hr-esp-bank-acct-no','hr-esp-bank-acct-details'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   const pct = document.getElementById('hr-esp-bank-pct'); if (pct) pct.value = '';
   const sel = document.getElementById('hr-esp-bank-select');
   if (sel) { sel.innerHTML = `<option value="">Please Select</option>${buildHrEspBankOptions()}`; sel.value = ''; }
@@ -2072,7 +2066,7 @@ function openHrEspBankModalEdit(idx) {
   if (!b) return;
   const setv = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
   setv('hr-esp-bank-acct-no', b.accountNo);
-  setv('hr-esp-bank-acct-branch', b.accountAndBranch);
+  setv('hr-esp-bank-acct-details', b.accountDetails);
   setv('hr-esp-bank-pct', b.percentage);
   const sel = document.getElementById('hr-esp-bank-select');
   if (sel) { sel.innerHTML = `<option value="">Please Select</option>${buildHrEspBankOptions()}`; sel.value = b.bankId || ''; }
@@ -2091,7 +2085,7 @@ function saveHrEspBankAccount() {
     accountNo:        document.getElementById('hr-esp-bank-acct-no')?.value || '',
     bankId,
     bank:             bankName,
-    accountAndBranch: document.getElementById('hr-esp-bank-acct-branch')?.value || '',
+    accountDetails: document.getElementById('hr-esp-bank-acct-details')?.value || '',
     percentage:       parseFloat(document.getElementById('hr-esp-bank-pct')?.value || 0)
   };
   if (hrEspFormState.editingBankIdx === -1) {

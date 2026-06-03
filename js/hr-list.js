@@ -98,12 +98,6 @@ async function loadHrEmployeeDirectoryView(container) {
             </select>
           </div>
           <div class="hr-filter-group">
-            <label class="hr-filter-label">Branch</label>
-            <select id="hr-f-branch" class="hr-filter-select">
-              <option value="">Please Select</option>
-            </select>
-          </div>
-          <div class="hr-filter-group">
             <label class="hr-filter-label">Employee Status</label>
             <select id="hr-f-status" class="hr-filter-select">
               <option value="">Please Select</option>
@@ -285,7 +279,7 @@ function applyHrFilters() {
 }
 
 function clearHrFilters() {
-  ['hr-f-name', 'hr-f-email', 'hr-f-tutor', 'hr-f-designation', 'hr-f-department', 'hr-f-branch', 'hr-f-status'].forEach(id => {
+  ['hr-f-name', 'hr-f-email', 'hr-f-tutor', 'hr-f-designation', 'hr-f-department', 'hr-f-status'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });

@@ -210,11 +210,14 @@ async function submitAyAdd() {
     });
 
     if (res.ok) {
-      const created = await res.json();
+      const created = await res.json().catch(() => ({}));
       showToast('Academic year saved!', 'success');
-      // Navigate to edit view so user can see class codes and terms
-      _currentAyId = created.id;
-      await openAyEdit(created.id);
+      if (created.id) {
+        _currentAyId = created.id;
+        await openAyEdit(created.id);
+      } else {
+        loadView('sa-academic-years');
+      }
     } else {
       const err = await res.json().catch(() => ({}));
       const msg = err.detail || (typeof err === 'string' ? err : JSON.stringify(err));

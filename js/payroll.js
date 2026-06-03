@@ -241,7 +241,7 @@ function renderFiTable() {
   const pageData = financialInstitutionsData.slice(start, start + fiPerPage);
 
   let html = `<table class="fi-table"><thead><tr>
-    <th>CODE</th><th>INSTITUTION</th><th>BRANCH</th><th>IS DEFAULT?</th><th>STATUS</th><th>ACTION</th>
+    <th>CODE</th><th>INSTITUTION</th><th>IS DEFAULT?</th><th>STATUS</th><th>ACTION</th>
   </tr></thead><tbody>`;
 
   if (pageData.length === 0) {
@@ -251,7 +251,6 @@ function renderFiTable() {
       html += `<tr>
         <td>${rec.code || ''}</td>
         <td>${rec.institution || ''}</td>
-        <td>${rec.branch || ''}</td>
         <td>${rec.isDefault ? 'Yes' : 'No'}</td>
         <td>
           <div class="fi-status-pill ${rec.isInactive ? 'fi-pill-inactive' : 'fi-pill-active'}">
@@ -350,10 +349,6 @@ function renderFiFormFields(rec) {
         <input type="text" id="fi-institution" class="hr-form-input" value="${rec.institution || ''}" placeholder="Institution name">
       </div>
       <div class="hr-form-group">
-        <label class="hr-form-label">Branch <span class="hr-required">*</span></label>
-        <input type="text" id="fi-branch" class="hr-form-input" value="${rec.branch || ''}" placeholder="Branch name">
-      </div>
-      <div class="hr-form-group">
         <label class="hr-form-label">Tel</label>
         <input type="text" id="fi-tel" class="hr-form-input" value="${rec.tel || ''}" placeholder="Phone number">
       </div>
@@ -381,7 +376,6 @@ function readFiFormValues() {
   return {
     code:        (document.getElementById('fi-code')?.value || '').trim(),
     institution: (document.getElementById('fi-institution')?.value || '').trim(),
-    branch:      (document.getElementById('fi-branch')?.value || '').trim(),
     tel:         (document.getElementById('fi-tel')?.value || '').trim(),
     email:       (document.getElementById('fi-email')?.value || '').trim(),
     notes:       document.getElementById('fi-notes')?.value || '',
@@ -419,7 +413,6 @@ async function submitFiAdd() {
   const vals = readFiFormValues();
   if (!vals.code)        { showToast('Code is required.', 'error'); return; }
   if (!vals.institution) { showToast('Institution is required.', 'error'); return; }
-  if (!vals.branch)      { showToast('Branch is required.', 'error'); return; }
   try {
     const res = await fetch(`${API_BASE}/payroll/financial-institutions/`, {
       method: 'POST',
@@ -467,7 +460,6 @@ async function submitFiEdit(id) {
   const vals = readFiFormValues();
   if (!vals.code)        { showToast('Code is required.', 'error'); return; }
   if (!vals.institution) { showToast('Institution is required.', 'error'); return; }
-  if (!vals.branch)      { showToast('Branch is required.', 'error'); return; }
   try {
     const res = await fetch(`${API_BASE}/payroll/financial-institutions/${id}`, {
       method: 'PUT',

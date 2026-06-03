@@ -2144,10 +2144,9 @@ let _cspPerPage      = 10;
 let _cspTotalRecords = 0;
 let _cspTotalPages   = 1;
 let _cspFilterOpen   = false;
-let _cspFilters      = { session_name: '', branch: '', period_from: '', period_to: '' };
+let _cspFilters      = { session_name: '', period_from: '', period_to: '' };
 let _currentCspId    = null;
 let _cspSessions     = [];
-let _cspBranches     = [];
 let _cspDirty        = false;
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
@@ -2218,11 +2217,6 @@ async function loadCohortSessionPlannerView(container) {
                    placeholder="Filter by session" value="${_esc(_cspFilters.session_name)}">
           </div>
           <div class="stu-form-group">
-            <label>Branch</label>
-            <input id="csp-f-branch" class="fin-search-input" style="width:100%!important;"
-                   placeholder="Filter by branch" value="${_esc(_cspFilters.branch)}">
-          </div>
-          <div class="stu-form-group">
             <label>Period From</label>
             <input id="csp-f-from" type="date" class="fin-search-input" style="width:100%!important;"
                    value="${_esc(_cspFilters.period_from)}">
@@ -2254,7 +2248,6 @@ async function _fetchCspListing() {
     per_page: _cspPerPage,
   });
   if (_cspFilters.session_name) params.set('session_name', _cspFilters.session_name);
-  if (_cspFilters.branch)       params.set('branch',       _cspFilters.branch);
   if (_cspFilters.period_from)  params.set('period_from',  _cspFilters.period_from);
   if (_cspFilters.period_to)    params.set('period_to',    _cspFilters.period_to);
 
@@ -2294,7 +2287,6 @@ function _renderCspTable() {
     _cspData.forEach(r => {
       rows += `<tr>
         <td>${_esc(r.session_name || '-')}</td>
-        <td>${_esc(r.branch || '-')}</td>
         <td>${_cspFmtPeriod(r.period_start, r.period_end)}</td>
         <td>${_esc(String(r.total_cohorts ?? '-'))}</td>
         <td>${_esc(r.personnel || '-')}</td>
@@ -2316,7 +2308,7 @@ function _renderCspTable() {
     <div class="fin-table-wrap">
       <table class="fin-table">
         <thead><tr>
-          <th>SESSION NAME</th><th>BRANCH</th><th>PERIOD</th>
+          <th>SESSION NAME</th><th>PERIOD</th>
           <th>TOTAL COHORTS</th><th>PERSONNEL</th><th>CREATED AT</th><th>ACTION</th>
         </tr></thead>
         <tbody>${rows}</tbody>
@@ -2346,7 +2338,6 @@ function toggleCspFilterPanel() {
 
 function applyCspFilters() {
   _cspFilters.session_name = document.getElementById('csp-f-session')?.value.trim() || '';
-  _cspFilters.branch       = document.getElementById('csp-f-branch')?.value.trim()  || '';
   _cspFilters.period_from  = document.getElementById('csp-f-from')?.value || '';
   _cspFilters.period_to    = document.getElementById('csp-f-to')?.value   || '';
   _cspPage = 1;
@@ -2355,8 +2346,8 @@ function applyCspFilters() {
 }
 
 function clearCspFilters() {
-  _cspFilters = { session_name: '', branch: '', period_from: '', period_to: '' };
-  ['csp-f-session','csp-f-branch','csp-f-from','csp-f-to'].forEach(id => {
+  _cspFilters = { session_name: '', period_from: '', period_to: '' };
+  ['csp-f-session','csp-f-from','csp-f-to'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
@@ -2397,16 +2388,12 @@ async function loadCohortSessionPlannerFormView(container) {
     </div>
   `;
 
-  // Load sessions and branches in parallel; also load existing record if editing
-  const fetches = [
-    apiFetch(`${API_BASE}/sessions`),
-    apiFetch(`${API_BASE}/branches`),
-  ];
+  // Load sessions (and existing record if editing) in parallel
+  const fetches = [apiFetch(`${API_BASE}/sessions`)];
   if (isEdit) fetches.push(apiFetch(`${API_BASE}/cohort-session-planner/${_currentCspId}`));
 
-  const [sessRes, branchRes, recordRes] = await Promise.all(fetches);
-  _cspSessions = (sessRes  && sessRes.ok)  ? await sessRes.json()  : [];
-  _cspBranches = (branchRes && branchRes.ok) ? await branchRes.json() : [];
+  const [sessRes, recordRes] = await Promise.all(fetches);
+  _cspSessions = (sessRes && sessRes.ok) ? await sessRes.json() : [];
   const record = (isEdit && recordRes && recordRes.ok) ? await recordRes.json() : null;
 
   if (isEdit && !record) {
@@ -2421,10 +2408,6 @@ async function loadCohortSessionPlannerFormView(container) {
 function _renderCspForm(container, isEdit, record) {
   const sessOpts = _cspSessions.map(s =>
     `<option value="${_esc(String(s.id))}"${String(record?.session_id) === String(s.id) ? ' selected' : ''}>${_esc(s.name || s.title || '')}</option>`
-  ).join('');
-
-  const branchOpts = _cspBranches.map(b =>
-    `<option value="${_esc(String(b.id))}"${String(record?.branch_id) === String(b.id) ? ' selected' : ''}>${_esc(b.name || '')}</option>`
   ).join('');
 
   // Pre-fill auto-populated fields from loaded record
@@ -2470,22 +2453,11 @@ function _renderCspForm(container, isEdit, record) {
                value="${_esc(sessType)}" readonly placeholder="Auto-populated">
       </div>
 
-      <!-- Row 3: Branch (half-width) -->
-      <div class="stu-form-group">
-        <label>Branch <span style="color:#e74c3c">*</span></label>
-        <select id="csp-branch-id" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;"
-                onchange="onCspBranchChange(this.value)">
-          <option value="">— Select Branch —</option>${branchOpts}
-        </select>
-        <span class="stu-field-error" id="csp-branch-err"></span>
-      </div>
-      <div></div>
-
-      <!-- Row 4: Class table (full width) -->
+      <!-- Row 3: Class table (full width) -->
       <div class="stu-form-group" style="grid-column:span 2;">
         <label>Classes</label>
         <div id="csp-class-table-wrap" class="csp-class-table-wrap">
-          <p style="color:#888;font-size:0.88rem;padding:12px 0;">Select a branch to load classes.</p>
+          <p style="color:#888;font-size:0.88rem;padding:12px 0;">Loading classes&#8230;</p>
         </div>
       </div>
 
@@ -2522,10 +2494,8 @@ function _renderCspForm(container, isEdit, record) {
     el.addEventListener('input',  () => { _cspDirty = true; });
   });
 
-  // If editing, pre-load the class table for the existing branch
-  if (isEdit && record?.branch_id) {
-    onCspBranchChange(String(record.branch_id), existingClassIds);
-  }
+  // Load all classes immediately
+  _loadCspClasses(existingClassIds);
 }
 
 function _cspGetCurrentUserName() {
@@ -2558,34 +2528,21 @@ function onCspSessionChange(sessionId) {
   if (errEl) errEl.textContent = '';
 }
 
-async function onCspBranchChange(branchId, preCheckedIds = []) {
-  _cspDirty = true;
+async function _loadCspClasses(preCheckedIds = []) {
   const wrap = document.getElementById('csp-class-table-wrap');
   if (!wrap) return;
 
-  // Clear branch error
-  const branchErr = document.getElementById('csp-branch-err');
-  if (branchErr) branchErr.textContent = '';
-
-  if (!branchId) {
-    wrap.innerHTML = '<p style="color:#888;font-size:0.88rem;padding:12px 0;">Select a branch to load classes.</p>';
-    _updateCspTotalCohorts();
-    return;
-  }
-
   wrap.innerHTML = `
     <div class="fin-table-wrap">
-      <table class="fin-table" id="csp-class-tbl">
-        <tbody id="csp-class-tbody"></tbody>
-      </table>
+      <table class="fin-table"><tbody id="csp-class-tbody"></tbody></table>
     </div>`;
   renderSkeletonRows('csp-class-tbody', 5, 3);
 
-  const res = await apiFetch(`${API_BASE}/academics/classes?branch_id=${branchId}`);
+  const res = await apiFetch(`${API_BASE}/academics/classes`);
   const classes = (res && res.ok) ? await res.json() : [];
 
   if (!classes.length) {
-    wrap.innerHTML = '<p style="color:#888;font-size:0.88rem;padding:12px 0;">No classes found for this branch.</p>';
+    wrap.innerHTML = '<p style="color:#888;font-size:0.88rem;padding:12px 0;">No classes available.</p>';
     _updateCspTotalCohorts();
     return;
   }
@@ -2655,24 +2612,17 @@ function _updateCspTotalCohorts() {
 
 async function submitCspForm() {
   const sessionId = document.getElementById('csp-session-id')?.value || '';
-  const branchId  = document.getElementById('csp-branch-id')?.value  || '';
-  let valid = true;
-
-  const setErr = (errId, val, msg) => {
-    const el = document.getElementById(errId);
-    const inp = document.getElementById(errId.replace('-err',''));
-    if (el)  el.textContent = val ? '' : msg;
-    if (inp) inp.classList.toggle('error', !val);
-    if (!val) valid = false;
-  };
-  setErr('csp-session-err', sessionId, 'Session Name is required.');
-  setErr('csp-branch-err',  branchId,  'Branch is required.');
-  if (!valid) { showToast('Please fill in all required fields.', 'error'); return; }
+  const sessionErr = document.getElementById('csp-session-err');
+  if (!sessionId) {
+    if (sessionErr) sessionErr.textContent = 'Session Name is required.';
+    showToast('Please select a session.', 'error');
+    return;
+  }
+  if (sessionErr) sessionErr.textContent = '';
 
   const classIds = Array.from(document.querySelectorAll('.csp-cls-cb:checked')).map(cb => cb.value);
   const payload  = {
     session_id: parseInt(sessionId),
-    branch_id:  parseInt(branchId),
     class_ids:  classIds.map(Number),
     notes:      document.getElementById('csp-notes')?.value || '',
   };

@@ -431,7 +431,7 @@ function _renderSummarizedResults(container, students) {
     <div class="fin-table-wrap">
       <table class="fin-table">
         <thead><tr>
-          <th>ADMISSION NO.</th><th>NAME</th><th>BRANCH</th><th>CLASS</th>
+          <th>ADMISSION NO.</th><th>NAME</th><th>CLASS</th>
           <th>CURRENCY</th><th>ACADEMIC STATUS</th><th>ARREARS/PREPAID</th>
           <th>FEES EXPECTED</th><th>FEE BALANCE (CURRENT)</th><th>ACTION</th>
         </tr></thead>
@@ -598,7 +598,7 @@ function _renderInvTable() {
     paged.forEach(inv => {
       rows += `<tr>
         <td>${_finEsc(inv.invoiceNo   || '')}</td>
-        <td>${_finEsc(inv.branch      || '-')}</td>
+
         <td>${_finEsc(inv.costCenter  || '-')}</td>
         <td>${_finEsc(inv.admissionNo || '-')}</td>
         <td>${_finEsc(inv.studentName || '-')}</td>
@@ -628,7 +628,7 @@ function _renderInvTable() {
     <div class="fin-table-wrap">
       <table class="fin-table" style="min-width:1100px;">
         <thead><tr>
-          <th>INVOICE NO.</th><th>BRANCH</th><th>COST CENTER</th><th>ADMISSION NO.</th>
+          <th>INVOICE NO.</th><th>COST CENTER</th><th>ADMISSION NO.</th>
           <th>STUDENT NAME</th><th>SESSION</th><th>CLASS</th><th>COHORT</th>
           <th>PROGRAMME</th><th>DEPARTMENT</th><th>AMOUNT</th><th>CREATED</th><th>ACTION</th>
         </tr></thead>
@@ -1333,7 +1333,6 @@ function _renderSponAllocTable() {
     ? `<tr><td colspan="8" class="fin-empty">No records found.</td></tr>`
     : paged.map(a=>`<tr>
         <td>${_finEsc(a.referenceNumber||'')}</td>
-        <td>${_finEsc(a.branch||'-')}</td>
         <td>${_finEsc(a.costCenter||'-')}</td>
         <td>${_finEsc(a.sponsorName||'-')}</td>
         <td>${_finEsc(a.studentName||'-')}</td>
@@ -1353,7 +1352,7 @@ function _renderSponAllocTable() {
   if (el) el.innerHTML = `
     <div class="fin-table-wrap"><table class="fin-table">
       <thead><tr>
-        <th>REFERENCE NUMBER</th><th>BRANCH</th><th>COST CENTER</th>
+        <th>REFERENCE NUMBER</th><th>COST CENTER</th>
         <th>SPONSOR NAME</th><th>STUDENT NAME</th><th>AMOUNT</th><th>CREATED AT</th><th>ACTION</th>
       </tr></thead>
       <tbody>${rows}</tbody>
@@ -1408,7 +1407,6 @@ function _renderSponAllocDetailPage(container, alloc) {
         <div class="fin-info-item"><span class="fin-info-label">Cohort</span><span class="fin-info-value">${_finEsc(alloc.cohort||'-')}</span></div>
         <div class="fin-info-item"><span class="fin-info-label">Programme</span><span class="fin-info-value">${_finEsc(alloc.programme||'-')}</span></div>
         <div class="fin-info-item"><span class="fin-info-label">Balance</span><span class="fin-info-value">${_finEsc(alloc.balance||'-')}</span></div>
-        <div class="fin-info-item"><span class="fin-info-label">Branch</span><span class="fin-info-value">${_finEsc(alloc.branch||'-')}</span></div>
       </div>
       <div class="fin-form-actions" style="margin-top:20px;">
         <button class="fin-btn-cancel" onclick="loadView('fin-sponsorship-allocations')">Back</button>
@@ -1453,10 +1451,6 @@ function renderSponAllocAddPage(container) {
             <input type="text" id="sa-class" class="fin-form-input">
           </div>
           <div class="fin-form-group">
-            <label class="fin-form-label">Branch</label>
-            <input type="text" id="sa-branch" class="fin-form-input">
-          </div>
-          <div class="fin-form-group">
             <label class="fin-form-label">Cost Center</label>
             <input type="text" id="sa-cost-center" class="fin-form-input">
           </div>
@@ -1487,7 +1481,6 @@ async function submitSponAllocAdd() {
     sponsor_name: sponsor, admission_no: admNo, amount,
     student_name: document.getElementById('sa-student-name').value||'',
     class:        document.getElementById('sa-class').value||'',
-    branch:       document.getElementById('sa-branch').value||'',
     cost_center:  document.getElementById('sa-cost-center').value||'',
     cohort:       document.getElementById('sa-cohort').value||''
   };
@@ -1642,7 +1635,6 @@ function _renderFeeSetupDetailPage(container, fee) {
         <div class="fin-info-item"><span class="fin-info-label">Department</span><span class="fin-info-value">${_finEsc(fee.department||'-')}</span></div>
         <div class="fin-info-item"><span class="fin-info-label">Academic Year</span><span class="fin-info-value">${_finEsc(fee.academicYear||'-')}</span></div>
         <div class="fin-info-item"><span class="fin-info-label">Study Mode</span><span class="fin-info-value">${_finEsc(fee.studyMode||'-')}</span></div>
-        <div class="fin-info-item"><span class="fin-info-label">Branch</span><span class="fin-info-value">${_finEsc(fee.branch||'-')}</span></div>
       </div>
       <div class="fin-section-label">Line Items</div>
       <div class="fin-table-wrap"><table class="fin-table">
@@ -1711,10 +1703,6 @@ function renderFeeSetupAddPage(container) {
             <label class="fin-form-label">Study Mode</label>
             <input type="text" id="fs-study-mode" class="fin-form-input">
           </div>
-          <div class="fin-form-group">
-            <label class="fin-form-label">Branch</label>
-            <input type="text" id="fs-branch" class="fin-form-input">
-          </div>
         </div>
         <div class="fin-section-label">Line Items</div>
         <div class="fin-table-wrap" style="margin-bottom:10px;">
@@ -1775,7 +1763,6 @@ async function submitFeeSetupAdd() {
     department:    document.getElementById('fs-department').value||'',
     academic_year: document.getElementById('fs-acad-year').value||'',
     study_mode:    document.getElementById('fs-study-mode').value||'',
-    branch:        document.getElementById('fs-branch').value||'',
     line_items: lineItems, amount: total,
     notes: document.getElementById('fs-notes').value||''
   };
@@ -1936,7 +1923,6 @@ function _renderRcvPayDetailPage(container, pmt) {
         <div class="fin-info-item"><span class="fin-info-label">Cohort</span><span class="fin-info-value">${_finEsc(pmt.cohort||'-')}</span></div>
         <div class="fin-info-item"><span class="fin-info-label">Programme</span><span class="fin-info-value">${_finEsc(pmt.programme||'-')}</span></div>
         <div class="fin-info-item"><span class="fin-info-label">Balance</span><span class="fin-info-value">${_finEsc(pmt.balance||'-')}</span></div>
-        <div class="fin-info-item"><span class="fin-info-label">Branch</span><span class="fin-info-value">${_finEsc(pmt.branch||'-')}</span></div>
       </div>
       <div class="fin-form-actions" style="margin-top:20px;">
         <button class="fin-btn-cancel" onclick="loadView('fin-receive-payments')">Back</button>

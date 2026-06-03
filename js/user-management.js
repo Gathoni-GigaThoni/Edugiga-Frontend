@@ -199,14 +199,6 @@ function renderUmEditPage(container, record) {
             <option value="utility" ${record.role === 'utility' ? 'selected' : ''}>Utility</option>
           </select>
         </div>
-        <div class="um-form-group">
-          <label>Branch Lock-Up <span class="um-required">*</span></label>
-          <select id="um-branch">
-            <option value="all">All</option>
-            <option value="main">Main Campus</option>
-            <option value="branch1">Branch 1</option>
-          </select>
-        </div>
       </div>
 
       <div class="um-checkboxes">
