@@ -198,8 +198,7 @@ async function loadView(view) {
       setActiveSidebarItem('sidebar-stu-cohort'); openStuMgmtDropdowns();
       showPlaceholder(main, 'Cohort Session Planner'); break;
     case 'student-classes':
-      setActiveSidebarItem('sidebar-stu-classes'); openStuMgmtDropdowns();
-      showPlaceholder(main, 'Classes'); break;
+      await loadStudentClassesView(main); break;
     case 'student-close-records':
       setActiveSidebarItem('sidebar-stu-close-records'); openStuMgmtDropdowns();
       showPlaceholder(main, 'Close Records Per Class'); break;

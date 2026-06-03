@@ -192,31 +192,42 @@ async function submitAyAdd() {
   const name  = (document.getElementById('ay-add-title').value || '').trim();
   const start =  document.getElementById('ay-add-start').value;
   const end   =  document.getElementById('ay-add-end').value;
-  let valid   = true;
 
   document.getElementById('ay-add-title-err').textContent = name  ? '' : 'This field is required.';
   document.getElementById('ay-add-start-err').textContent = start ? '' : 'This field is required.';
   document.getElementById('ay-add-end-err').textContent   = end   ? '' : 'This field is required.';
-  if (!name || !start || !end) valid = false;
-  if (!valid) return;
+  if (!name || !start || !end) return;
 
+  const btn      = document.querySelector('#ay-add-status')?.previousElementSibling?.querySelector('.sa-btn-submit');
   const statusEl = document.getElementById('ay-add-status');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
   try {
     const res = await fetch(`${API_BASE}/academic-years/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ name, start_date: start, end_date: end })
     });
+
     if (res.ok) {
-      loadView('sa-academic-years');
+      const created = await res.json();
+      showToast('Academic year saved!', 'success');
+      // Navigate to edit view so user can see class codes and terms
+      _currentAyId = created.id;
+      await openAyEdit(created.id);
     } else {
-      const err = await res.json();
-      if (statusEl) statusEl.innerHTML = `<div class="sa-toast sa-toast-error">${err.detail || 'Error creating academic year.'}</div>`;
+      const err = await res.json().catch(() => ({}));
+      const msg = err.detail || (typeof err === 'string' ? err : JSON.stringify(err));
+      if (statusEl) statusEl.innerHTML = `<div class="sa-toast sa-toast-error">${_ayEsc(msg)}</div>`;
+      if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
     }
-  } catch(e) {
-    if (statusEl) statusEl.innerHTML = '<div class="sa-toast sa-toast-error">Failed to save. Please try again.</div>';
+  } catch (e) {
+    if (statusEl) statusEl.innerHTML = '<div class="sa-toast sa-toast-error">Network error — could not reach the server.</div>';
+    if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
   }
 }
+
+let _currentAyId = null;
 
 // ==================== EDIT ====================
 
@@ -304,6 +315,14 @@ function _renderAyEditPage(container, year) {
           </div>
         </div>
 
+        <!-- Classes -->
+        <div class="sa-terms-section" style="margin-top:24px;">
+          <div class="sa-terms-title">Classes / Class Codes</div>
+          <div id="ay-classes-container">
+            <p class="sa-loading">Loading classes&#8230;</p>
+          </div>
+        </div>
+
         <div class="sa-form-actions" style="margin-top:24px;">
           <button class="sa-btn-submit" onclick="_saveAyLocalEdits(${year.id})">Update</button>
           <button class="sa-btn-cancel" onclick="loadView('sa-academic-years')">Cancel</button>
@@ -312,6 +331,48 @@ function _renderAyEditPage(container, year) {
       </div>
     </div>
   `;
+
+  _loadAyClasses(year.id);
+}
+
+async function _loadAyClasses(yearId) {
+  const container = document.getElementById('ay-classes-container');
+  if (!container) return;
+
+  try {
+    const res = await fetch(`${API_BASE}/academics/classes?academic_year_id=${yearId}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    const classes = (res && res.ok) ? await res.json() : [];
+
+    if (!classes.length) {
+      container.innerHTML = '<p style="color:#888;font-size:0.88rem;padding:8px 0;">No classes configured for this academic year.</p>';
+      return;
+    }
+
+    const rows = classes.map(c => `
+      <tr>
+        <td>${_ayEsc(c.code || c.class_code || '-')}</td>
+        <td>${_ayEsc(c.name || '-')}</td>
+        <td>${_ayEsc(c.level || c.level_name || '-')}</td>
+        <td>${_ayEsc(c.stream || '-')}</td>
+        <td><span style="color:${c.is_active !== false ? '#27ae60' : '#e74c3c'};font-weight:600;">
+          ${c.is_active !== false ? 'Active' : 'Inactive'}
+        </span></td>
+      </tr>`).join('');
+
+    container.innerHTML = `
+      <div class="sa-table-wrap">
+        <table class="sa-table">
+          <thead><tr>
+            <th>CLASS CODE</th><th>NAME</th><th>LEVEL</th><th>STREAM</th><th>STATUS</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  } catch (_) {
+    container.innerHTML = '<p style="color:#c0392b;font-size:0.88rem;">Failed to load classes.</p>';
+  }
 }
 
 async function _saveAyLocalEdits(id) {

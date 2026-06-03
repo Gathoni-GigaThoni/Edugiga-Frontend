@@ -1886,3 +1886,251 @@ function _renderStuGuaTable() {
 function changeStuGuaPerPage(v) { _stuGuaPerPage = parseInt(v); _stuGuaPage = 1; _renderStuGuaTable(); }
 function onStuGuaSearch(v)      { _stuGuaSearch  = v.trim().toLowerCase(); _stuGuaPage = 1; _renderStuGuaTable(); }
 function stuGuaGoPage(p)        { _stuGuaPage = p; _renderStuGuaTable(); }
+
+// ==================== 11. CLASSES ====================
+
+let _clsData = [], _clsPage = 1, _clsPerPage = 10, _clsSearch = '';
+let _clsAcademicYears = [];
+
+async function loadStudentClassesView(container) {
+  setActiveSidebarItem('sidebar-stu-classes');
+  openStuMgmtDropdowns();
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Classes</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Classes &rsaquo; Listing</div>
+      </div>
+      <div class="fin-controls-row">
+        <div class="fin-controls-left">
+          Show <select id="cls-per-page" onchange="changeClsPerPage(this.value)">
+            ${[10,25,50,100].map(n => `<option value="${n}">${n}</option>`).join('')}
+          </select> entries &nbsp;|&nbsp; Total <span id="cls-total">0</span> entries
+        </div>
+        <div class="fin-controls-right">
+          <input type="text" class="fin-search-input" id="cls-search" placeholder="&#128269; Search&#8230;"
+                 oninput="onClsSearch(this.value)">
+          <button class="fin-btn-teal" onclick="showClassForm(null)">+ Add Class</button>
+        </div>
+      </div>
+      <div id="cls-table"></div>
+      <div id="cls-pagination"></div>
+    </div>
+  `;
+  renderSkeletonRows('cls-table', 5);
+
+  const [clsRes, ayRes] = await Promise.all([
+    apiFetch(`${API_BASE}/academics/classes`),
+    apiFetch(`${API_BASE}/academic-years/`)
+  ]);
+  _clsData          = (clsRes && clsRes.ok) ? await clsRes.json() : [];
+  _clsAcademicYears = (ayRes  && ayRes.ok)  ? await ayRes.json()  : [];
+  _clsPage = 1;
+  _renderClsTable();
+}
+
+function _clsFiltered() {
+  if (!_clsSearch) return _clsData;
+  const q = _clsSearch;
+  return _clsData.filter(c =>
+    (c.name || '').toLowerCase().includes(q) ||
+    (c.code || c.class_code || '').toLowerCase().includes(q)
+  );
+}
+
+function _renderClsTable() {
+  const filtered = _clsFiltered();
+  const totalEl  = document.getElementById('cls-total');
+  if (totalEl) totalEl.textContent = filtered.length;
+  const start = (_clsPage - 1) * _clsPerPage;
+  const paged = filtered.slice(start, start + _clsPerPage);
+  const pages = Math.max(1, Math.ceil(filtered.length / _clsPerPage));
+
+  let rows = paged.length
+    ? paged.map(c => {
+        const ay = _clsAcademicYears.find(y => y.id === (c.academic_year_id || c.academic_year));
+        const ayName = ay ? ay.name : (c.academic_year_name || '-');
+        const statusColor = c.is_active !== false ? '#27ae60' : '#e74c3c';
+        const statusText  = c.is_active !== false ? 'Active'  : 'Inactive';
+        return `<tr>
+          <td>${_esc(c.code || c.class_code || '-')}</td>
+          <td>${_esc(c.name || '-')}</td>
+          <td>${_esc(c.level || c.level_name || '-')}</td>
+          <td>${_esc(ayName)}</td>
+          <td>${_esc(c.stream || '-')}</td>
+          <td><span style="color:${statusColor};font-weight:600;">${statusText}</span></td>
+          <td class="fin-action-cell">
+            <div class="fin-action-wrap">
+              <button class="fin-action-btn" onclick="toggleStuDd(event,'cls-${c.id}')">&#8230;</button>
+              <div id="stu-dd-cls-${c.id}" class="fin-action-dropdown" style="display:none;">
+                <a href="#" onclick="showClassForm('${c.id}');return false;">&#9998; Edit</a>
+              </div>
+            </div>
+          </td>
+        </tr>`;
+      }).join('')
+    : '<tr><td colspan="7" class="fin-empty">No classes found. Add one to get started.</td></tr>';
+
+  const t = document.getElementById('cls-table');
+  if (t) t.innerHTML = `
+    <div class="fin-table-wrap"><table class="fin-table">
+      <thead><tr>
+        <th>CLASS CODE</th><th>CLASS NAME</th><th>LEVEL</th>
+        <th>ACADEMIC YEAR</th><th>STREAM</th><th>STATUS</th><th>ACTION</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+  _mkPagination('cls-pagination', _clsPage, pages, 'clsGoPage');
+}
+
+function changeClsPerPage(v) { _clsPerPage = parseInt(v); _clsPage = 1; _renderClsTable(); }
+function onClsSearch(v)      { _clsSearch  = v.trim().toLowerCase(); _clsPage = 1; _renderClsTable(); }
+function clsGoPage(p)        { _clsPage = p; _renderClsTable(); }
+
+async function showClassForm(id) {
+  const item   = id ? _clsData.find(c => String(c.id) === String(id)) : null;
+  const isEdit = !!item;
+
+  // Ensure academic years are loaded
+  if (!_clsAcademicYears.length) {
+    const res = await apiFetch(`${API_BASE}/academic-years/`);
+    _clsAcademicYears = (res && res.ok) ? await res.json() : [];
+  }
+
+  const ayOpts = _clsAcademicYears.map(y =>
+    `<option value="${_esc(String(y.id))}"${String(item?.academic_year_id || item?.academic_year) === String(y.id) ? ' selected' : ''}>${_esc(y.name)}</option>`
+  ).join('');
+
+  const levelOpts = ['Acorn', 'Willow', 'Maple', 'Oak', 'Other'].map(l =>
+    `<option${(item?.level || item?.level_name) === l ? ' selected' : ''}>${l}</option>`
+  ).join('');
+
+  const main = document.getElementById('main-content');
+  if (!main) return;
+  main.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">${isEdit ? 'Edit' : 'Add'} Class</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Classes &rsaquo; ${isEdit ? 'Edit' : 'Add'}</div>
+      </div>
+      <div style="background:white;border-radius:6px;padding:28px;max-width:640px;box-shadow:0 1px 4px rgba(0,0,0,0.06);">
+        <div class="stu-form-grid">
+          <div class="stu-form-group">
+            <label>Class Name <span style="color:#e74c3c">*</span></label>
+            <input id="cls-f-name" class="fin-search-input" style="width:100%!important"
+                   value="${_esc(item?.name || '')}" placeholder="e.g. Acorn 2026">
+            <span class="stu-field-error" id="cls-f-name-err"></span>
+          </div>
+          <div class="stu-form-group">
+            <label>Class Code <span style="color:#e74c3c">*</span></label>
+            <input id="cls-f-code" class="fin-search-input" style="width:100%!important"
+                   value="${_esc(item?.code || item?.class_code || '')}" placeholder="e.g. ACN-2026">
+            <span class="stu-field-error" id="cls-f-code-err"></span>
+          </div>
+          <div class="stu-form-group">
+            <label>Level <span style="color:#e74c3c">*</span></label>
+            <select id="cls-f-level" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;"
+                    onchange="autoFillClassName()">
+              <option value="">Select</option>${levelOpts}
+            </select>
+            <span class="stu-field-error" id="cls-f-level-err"></span>
+          </div>
+          <div class="stu-form-group">
+            <label>Academic Year <span style="color:#e74c3c">*</span></label>
+            <select id="cls-f-ay" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;"
+                    onchange="autoFillClassName()">
+              <option value="">Select Academic Year</option>${ayOpts}
+            </select>
+            <span class="stu-field-error" id="cls-f-ay-err"></span>
+          </div>
+          <div class="stu-form-group">
+            <label>Stream</label>
+            <input id="cls-f-stream" class="fin-search-input" style="width:100%!important"
+                   value="${_esc(item?.stream || '')}" placeholder="e.g. A, B, Red">
+          </div>
+          <div class="stu-form-group">
+            <label>Capacity</label>
+            <input id="cls-f-capacity" type="number" class="fin-search-input" style="width:100%!important"
+                   value="${_esc(String(item?.capacity || ''))}" placeholder="Max students">
+          </div>
+          <div class="stu-form-group" style="grid-column:span 2;">
+            <label>Status</label>
+            <select id="cls-f-status" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
+              <option value="true"${item?.is_active !== false ? ' selected' : ''}>Active</option>
+              <option value="false"${item?.is_active === false ? ' selected' : ''}>Inactive</option>
+            </select>
+          </div>
+        </div>
+        <div style="display:flex;gap:12px;margin-top:20px;">
+          <button class="fin-btn-teal" onclick="saveClass('${id || ''}')">${isEdit ? 'Update' : 'Save'}</button>
+          <button class="fin-btn-cancel" onclick="loadView('student-classes')">Cancel</button>
+        </div>
+        <div id="cls-form-status" style="margin-top:10px;"></div>
+      </div>
+    </div>
+  `;
+}
+
+function autoFillClassName() {
+  const levelEl = document.getElementById('cls-f-level');
+  const ayEl    = document.getElementById('cls-f-ay');
+  const nameEl  = document.getElementById('cls-f-name');
+  const codeEl  = document.getElementById('cls-f-code');
+  if (!levelEl || !ayEl || !nameEl || !codeEl) return;
+
+  const level = levelEl.value;
+  const ay    = _clsAcademicYears.find(y => String(y.id) === ayEl.value);
+  if (!ay || !level) return;
+
+  const yearPart = ay.name.match(/\d{4}/)?.[0] || ay.name;
+  if (!nameEl.value) nameEl.value = `${level} ${yearPart}`;
+  if (!codeEl.value) codeEl.value = `${level.slice(0, 3).toUpperCase()}-${yearPart}`;
+}
+
+async function saveClass(id) {
+  const name   = (document.getElementById('cls-f-name')?.value || '').trim();
+  const code   = (document.getElementById('cls-f-code')?.value || '').trim();
+  const level  = document.getElementById('cls-f-level')?.value || '';
+  const ayId   = document.getElementById('cls-f-ay')?.value || '';
+  const statusEl = document.getElementById('cls-form-status');
+
+  let valid = true;
+  const setErr = (errId, val, msg) => {
+    const el = document.getElementById(errId);
+    if (el) el.textContent = val ? '' : msg;
+    if (!val) valid = false;
+  };
+  setErr('cls-f-name-err',  name,  'Class name is required.');
+  setErr('cls-f-code-err',  code,  'Class code is required.');
+  setErr('cls-f-level-err', level, 'Level is required.');
+  setErr('cls-f-ay-err',    ayId,  'Academic Year is required.');
+  if (!valid) return;
+
+  const payload = {
+    name,
+    code,
+    class_code:       code,
+    level,
+    academic_year_id: ayId,
+    stream:           document.getElementById('cls-f-stream')?.value || '',
+    capacity:         parseInt(document.getElementById('cls-f-capacity')?.value) || null,
+    is_active:        document.getElementById('cls-f-status')?.value !== 'false',
+  };
+
+  const url    = id ? `${API_BASE}/academics/classes/${id}` : `${API_BASE}/academics/classes`;
+  const method = id ? 'PUT' : 'POST';
+  const res    = await apiFetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  if (res && res.ok) {
+    showToast(id ? 'Class updated!' : 'Class added!', 'success');
+    loadView('student-classes');
+  } else {
+    const err = res ? await res.json().catch(() => ({})) : {};
+    const msg = err.detail || (typeof err === 'string' ? err : 'Could not save class.');
+    if (statusEl) statusEl.innerHTML = `<span style="color:#e74c3c;font-size:0.88rem;">${_esc(msg)}</span>`;
+  }
+}
