@@ -184,8 +184,7 @@ async function submitStAdd() {
     if (res.ok) {
       loadView('sa-session-types');
     } else {
-      const err = await res.json().catch(() => ({}));
-      showToast('Error: ' + (err.detail || 'Could not save session type.'), 'error');
+      showToast(await parseApiError(res), 'error');
     }
   } catch (_) {
     showToast('Network error. Please try again.', 'error');
@@ -255,8 +254,7 @@ async function submitStEdit(id) {
     if (res.ok) {
       loadView('sa-session-types');
     } else {
-      const err = await res.json().catch(() => ({}));
-      showToast('Error: ' + (err.detail || 'Could not update session type.'), 'error');
+      showToast(await parseApiError(res), 'error');
     }
   } catch (_) {
     showToast('Network error. Please try again.', 'error');

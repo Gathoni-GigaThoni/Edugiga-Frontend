@@ -46,6 +46,5 @@ async function createStaff() {
     method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` }, body: JSON.stringify(payload)
   });
   if (res.ok) { alert("Staff created!"); loadAdministrationView(document.getElementById("main-content")); }
-  else { const err = await res.json(); alert("Error: " + JSON.stringify(err.detail)); }
 }
 

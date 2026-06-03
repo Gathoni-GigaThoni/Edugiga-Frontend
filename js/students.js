@@ -1991,18 +1991,21 @@ async function showClassForm(id) {
   const item   = id ? _clsData.find(c => String(c.id) === String(id)) : null;
   const isEdit = !!item;
 
-  // Ensure academic years are loaded
-  if (!_clsAcademicYears.length) {
-    const res = await apiFetch(`${API_BASE}/academic-years/`);
-    _clsAcademicYears = (res && res.ok) ? await res.json() : [];
-  }
+  // Always re-fetch both academic years and academic levels for freshest dropdowns
+  const [_ayRes, _lvlRes] = await Promise.all([
+    apiFetch(`${API_BASE}/academic-years/`),
+    apiFetch(`${API_BASE}/academic-levels/`),
+  ]);
+  if (_ayRes  && _ayRes.ok)  _clsAcademicYears = await _ayRes.json();
+  const _levels = (_lvlRes && _lvlRes.ok) ? await _lvlRes.json() : [];
 
   const ayOpts = _clsAcademicYears.map(y =>
     `<option value="${_esc(String(y.id))}"${String(item?.academic_year_id || item?.academic_year) === String(y.id) ? ' selected' : ''}>${_esc(y.name)}</option>`
   ).join('');
 
-  const levelOpts = ['Acorn', 'Willow', 'Maple', 'Oak', 'Other'].map(l =>
-    `<option${(item?.level || item?.level_name) === l ? ' selected' : ''}>${l}</option>`
+  const currentLevel = item?.level || item?.level_name || '';
+  const levelOpts = _levels.map(l =>
+    `<option value="${_esc(String(l.id))}"${currentLevel === l.name || currentLevel === String(l.id) ? ' selected' : ''}>${_esc(l.name)}</option>`
   ).join('');
 
   const main = document.getElementById('main-content');
@@ -2078,20 +2081,23 @@ function autoFillClassName() {
   const codeEl  = document.getElementById('cls-f-code');
   if (!levelEl || !ayEl || !nameEl || !codeEl) return;
 
-  const level = levelEl.value;
-  const ay    = _clsAcademicYears.find(y => String(y.id) === ayEl.value);
-  if (!ay || !level) return;
+  // Get the display text of the selected level (not the id value)
+  const levelText = levelEl.options[levelEl.selectedIndex]?.text || '';
+  const ay        = _clsAcademicYears.find(y => String(y.id) === ayEl.value);
+  if (!ay || !levelText) return;
 
   const yearPart = ay.name.match(/\d{4}/)?.[0] || ay.name;
-  if (!nameEl.value) nameEl.value = `${level} ${yearPart}`;
-  if (!codeEl.value) codeEl.value = `${level.slice(0, 3).toUpperCase()}-${yearPart}`;
+  if (!nameEl.value) nameEl.value = `${levelText} ${yearPart}`;
+  if (!codeEl.value) codeEl.value = `${levelText.slice(0, 3).toUpperCase()}-${yearPart}`;
 }
 
 async function saveClass(id) {
-  const name   = (document.getElementById('cls-f-name')?.value || '').trim();
-  const code   = (document.getElementById('cls-f-code')?.value || '').trim();
-  const level  = document.getElementById('cls-f-level')?.value || '';
-  const ayId   = document.getElementById('cls-f-ay')?.value || '';
+  const name     = (document.getElementById('cls-f-name')?.value || '').trim();
+  const code     = (document.getElementById('cls-f-code')?.value || '').trim();
+  const levelEl  = document.getElementById('cls-f-level');
+  const level    = levelEl?.value || '';
+  const levelName = levelEl?.options[levelEl?.selectedIndex]?.text || level;
+  const ayId     = document.getElementById('cls-f-ay')?.value || '';
   const statusEl = document.getElementById('cls-form-status');
 
   let valid = true;
@@ -2110,7 +2116,8 @@ async function saveClass(id) {
     name,
     code,
     class_code:       code,
-    level,
+    level_id:         level,
+    level:            levelName,
     academic_year_id: ayId,
     stream:           document.getElementById('cls-f-stream')?.value || '',
     capacity:         parseInt(document.getElementById('cls-f-capacity')?.value) || null,
@@ -2129,8 +2136,7 @@ async function saveClass(id) {
     showToast(id ? 'Class updated!' : 'Class added!', 'success');
     loadView('student-classes');
   } else {
-    const err = res ? await res.json().catch(() => ({})) : {};
-    const msg = err.detail || (typeof err === 'string' ? err : 'Could not save class.');
+    const msg = res ? await parseApiError(res) : 'Could not save class.';
     if (statusEl) statusEl.innerHTML = `<span style="color:#e74c3c;font-size:0.88rem;">${_esc(msg)}</span>`;
   }
 }
@@ -2652,8 +2658,7 @@ async function submitCspForm() {
     _currentCspId = null;
     loadView('cohort-session-planner');
   } else {
-    const err = res ? await res.json().catch(() => ({})) : {};
-    const msg = err.detail || (typeof err === 'string' ? err : 'Could not save. Please try again.');
+    const msg = res ? await parseApiError(res) : 'Could not save. Please try again.';
     showToast(msg, 'error');
     const statusEl = document.getElementById('csp-form-status');
     if (statusEl) statusEl.innerHTML = `<span style="color:#e74c3c;font-size:0.88rem;">${_esc(msg)}</span>`;

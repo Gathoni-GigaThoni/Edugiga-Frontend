@@ -227,8 +227,7 @@ async function submitAyAdd() {
       loadView('sa-academic-years');
     }
   } else {
-    const err = await res.json().catch(() => ({}));
-    const msg = err.detail || (typeof err === 'string' ? err : JSON.stringify(err)) || `HTTP ${res.status}`;
+    const msg = await parseApiError(res);
     if (statusEl) statusEl.innerHTML = `<div class="sa-toast sa-toast-error">${_ayEsc(msg)}</div>`;
     showToast(msg, 'error');
   }
@@ -431,7 +430,7 @@ async function saveAyTermDates(yearId, termId) {
       } else {
         const err = await res.json();
         msgEl.style.color  = '#c0392b';
-        msgEl.textContent  = err.detail || 'Error saving.';
+        msgEl.textContent  = await parseApiError(res);
       }
     }
   } catch(e) {

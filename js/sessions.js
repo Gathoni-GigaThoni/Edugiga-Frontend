@@ -262,8 +262,8 @@ function toggleSessDropdown(event, id) {
 
 // ── Add ───────────────────────────────────────────────────────────────────────
 async function renderSessAddPage(container) {
-  if (!_sessAYCache.length) await _fetchSessAYCache();
-  if (typeof sessionTypesData !== 'undefined' && !sessionTypesData.length) await _fetchSessTypes();
+  // Always re-fetch so a freshly created Academic Year appears immediately
+  await Promise.all([_fetchSessAYCache(), _fetchSessTypes()]);
 
   container.innerHTML = `
     <div class="fin-page">
@@ -362,8 +362,7 @@ async function submitSessAdd() {
       showToast('Session saved successfully!', 'success');
       loadView('sa-sessions');
     } else {
-      const err = await res.json().catch(() => ({}));
-      const msg = err.detail || 'Could not save session.';
+      const msg = await parseApiError(res);
       if (statusEl) statusEl.innerHTML = `<span style="color:#e74c3c;font-size:0.88rem;">${_sEsc(msg)}</span>`;
       showToast(msg, 'error');
     }
@@ -380,8 +379,8 @@ async function openSessEdit(id) {
   if (!container) return;
   container.innerHTML = '<p class="fin-loading" style="padding:32px;">Loading&#8230;</p>';
 
-  if (!_sessAYCache.length) await _fetchSessAYCache();
-  if (typeof sessionTypesData !== 'undefined' && !sessionTypesData.length) await _fetchSessTypes();
+  // Always re-fetch for freshest dropdowns
+  await Promise.all([_fetchSessAYCache(), _fetchSessTypes()]);
 
   // Prefer loading from API for freshest data; fall back to local cache
   let sess = sessionsData.find(s => String(s.id) === String(id));
@@ -498,8 +497,7 @@ async function submitSessEdit(id) {
       showToast('Session updated successfully!', 'success');
       loadView('sa-sessions');
     } else {
-      const err = await res.json().catch(() => ({}));
-      const msg = err.detail || 'Could not update session.';
+      const msg = await parseApiError(res);
       if (statusEl) statusEl.innerHTML = `<span style="color:#e74c3c;font-size:0.88rem;">${_sEsc(msg)}</span>`;
       showToast(msg, 'error');
     }

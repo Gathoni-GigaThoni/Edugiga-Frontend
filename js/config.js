@@ -52,6 +52,29 @@ async function apiFetch(url, options = {}) {
   return res;
 }
 
+// ── API error parser ─────────────────────────────────────────────────────────
+// Extracts a readable string from any API error response.
+// Handles FastAPI validation errors (detail = array of objects),
+// plain string detail, and fallback to HTTP status.
+async function parseApiError(res) {
+  try {
+    const body = await res.json();
+    if (!body) return `HTTP ${res.status}`;
+    const { detail } = body;
+    if (!detail) return `HTTP ${res.status}`;
+    if (typeof detail === 'string') return detail;
+    if (Array.isArray(detail)) {
+      return detail.map(e => {
+        const loc = Array.isArray(e.loc) ? e.loc.filter(x => x !== 'body').join(' → ') : '';
+        return loc ? `${loc}: ${e.msg || ''}` : (e.msg || JSON.stringify(e));
+      }).join('; ');
+    }
+    return JSON.stringify(detail);
+  } catch (_) {
+    return `HTTP ${res.status}`;
+  }
+}
+
 // ── Toast notifications ───────────────────────────────────────────────────────
 function showToast(message, type = 'info') {
   let container = document.getElementById('toast-container');

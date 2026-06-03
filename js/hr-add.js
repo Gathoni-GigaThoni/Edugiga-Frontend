@@ -519,8 +519,7 @@ async function submitHrAddEmployee() {
       showToast('Employee added successfully!', 'success');
       loadHrEmployeeDirectoryView(document.getElementById('main-content'));
     } else {
-      const err = await res.json().catch(() => ({}));
-      showToast('Error: ' + (err.detail || 'Could not save employee.'), 'error');
+      showToast(await parseApiError(res), 'error');
     }
   } catch (_) {
     showToast('Network error. Please try again.', 'error');

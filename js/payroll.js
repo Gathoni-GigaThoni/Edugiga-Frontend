@@ -423,8 +423,7 @@ async function submitFiAdd() {
       showToast('Financial institution added!', 'success');
       loadPayrollFiListingView(document.getElementById('main-content'));
     } else {
-      const err = await res.json().catch(() => ({}));
-      showToast('Error: ' + (err.detail || 'Could not save.'), 'error');
+      showToast(await parseApiError(res), 'error');
     }
   } catch (_) { showToast('Network error. Please try again.', 'error'); }
 }
@@ -470,8 +469,7 @@ async function submitFiEdit(id) {
       showToast('Financial institution updated!', 'success');
       loadPayrollFiListingView(document.getElementById('main-content'));
     } else {
-      const err = await res.json().catch(() => ({}));
-      showToast('Error: ' + (err.detail || 'Could not update.'), 'error');
+      showToast(await parseApiError(res), 'error');
     }
   } catch (_) { showToast('Network error. Please try again.', 'error'); }
 }

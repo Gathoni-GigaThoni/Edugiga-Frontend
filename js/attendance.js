@@ -293,7 +293,7 @@ async function attMarkAttendance() {
       }
     } else {
       const err = await res.json();
-      if (msgEl) msgEl.innerHTML = `<div class="sa-toast sa-toast-error">${err.detail || 'Error saving attendance.'}</div>`;
+      if (msgEl) msgEl.innerHTML = `<div class="sa-toast sa-toast-error">${await parseApiError(res) || 'Error saving attendance.'}</div>`;
     }
   } catch(e) {
     if (msgEl) msgEl.innerHTML = '<div class="sa-toast sa-toast-error">Failed to save attendance. Please try again.</div>';
