@@ -2134,3 +2134,585 @@ async function saveClass(id) {
     if (statusEl) statusEl.innerHTML = `<span style="color:#e74c3c;font-size:0.88rem;">${_esc(msg)}</span>`;
   }
 }
+
+// ==================== 12. COHORT SESSION PLANNER ====================
+
+// ── State ────────────────────────────────────────────────────────────────────
+let _cspData         = [];
+let _cspPage         = 1;
+let _cspPerPage      = 10;
+let _cspTotalRecords = 0;
+let _cspTotalPages   = 1;
+let _cspFilterOpen   = false;
+let _cspFilters      = { session_name: '', branch: '', period_from: '', period_to: '' };
+let _currentCspId    = null;
+let _cspSessions     = [];
+let _cspBranches     = [];
+let _cspDirty        = false;
+
+// ── Date helpers ──────────────────────────────────────────────────────────────
+const _CSP_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function _cspFmtDate(dateStr) {
+  if (!dateStr) return '-';
+  const d = new Date(dateStr);
+  if (isNaN(d)) return dateStr;
+  return `${String(d.getUTCDate()).padStart(2,'0')} ${_CSP_MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+}
+
+function _cspFmtDateTime(isoStr) {
+  if (!isoStr) return '-';
+  const d = new Date(isoStr);
+  if (isNaN(d)) return isoStr;
+  const day  = String(d.getDate()).padStart(2,'0');
+  const mon  = _CSP_MONTHS[d.getMonth()];
+  const yr   = d.getFullYear();
+  let   h    = d.getHours();
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  const min  = String(d.getMinutes()).padStart(2,'0');
+  return `${day} ${mon} ${yr} ${h}:${min} ${ampm}`;
+}
+
+function _cspFmtPeriod(start, end) {
+  const s = _cspFmtDate(start);
+  const e = _cspFmtDate(end);
+  if (s === '-' && e === '-') return '-';
+  return `${s} – ${e}`;
+}
+
+// ── Listing ───────────────────────────────────────────────────────────────────
+async function loadCohortSessionPlannerView(container) {
+  setActiveSidebarItem('sidebar-stu-cohort');
+  openStuMgmtDropdowns();
+  _cspPage       = 1;
+  _cspFilterOpen = false;
+
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Cohort Session Planner</h2>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
+          <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Cohort Session Planner &rsaquo; Listing</div>
+          <button class="fin-btn-teal" onclick="cspOpenAdd()">+ Add Cohort Session Planner</button>
+        </div>
+      </div>
+      <div class="fin-controls-row">
+        <div class="fin-controls-left">
+          Show <select id="csp-per-page" onchange="changeCspPerPage(this.value)">
+            ${[10,25,50,100].map(n => `<option value="${n}"${n===_cspPerPage?' selected':''}>${n}</option>`).join('')}
+          </select> entries
+          &nbsp;|&nbsp; Total <span id="csp-total-count">0</span> entries
+        </div>
+        <div class="fin-controls-right">
+          <button class="fin-btn-filter" onclick="toggleCspFilterPanel()">&#9776; Filters</button>
+        </div>
+      </div>
+
+      <!-- Inline filter panel -->
+      <div id="csp-filter-panel" style="display:none;background:white;border:1px solid #e0e0e0;border-radius:6px;padding:16px 20px;margin-bottom:12px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px 16px;align-items:end;">
+          <div class="stu-form-group">
+            <label>Session Name</label>
+            <input id="csp-f-session" class="fin-search-input" style="width:100%!important;"
+                   placeholder="Filter by session" value="${_esc(_cspFilters.session_name)}">
+          </div>
+          <div class="stu-form-group">
+            <label>Branch</label>
+            <input id="csp-f-branch" class="fin-search-input" style="width:100%!important;"
+                   placeholder="Filter by branch" value="${_esc(_cspFilters.branch)}">
+          </div>
+          <div class="stu-form-group">
+            <label>Period From</label>
+            <input id="csp-f-from" type="date" class="fin-search-input" style="width:100%!important;"
+                   value="${_esc(_cspFilters.period_from)}">
+          </div>
+          <div class="stu-form-group">
+            <label>Period To</label>
+            <input id="csp-f-to" type="date" class="fin-search-input" style="width:100%!important;"
+                   value="${_esc(_cspFilters.period_to)}">
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:12px;">
+          <button class="fin-btn-teal"    onclick="applyCspFilters()">Apply</button>
+          <button class="fin-btn-outline" onclick="clearCspFilters()">Clear</button>
+        </div>
+      </div>
+
+      <div id="csp-table-container"></div>
+      <div id="csp-pagination"></div>
+    </div>
+  `;
+
+  renderSkeletonRows('csp-table-container', 7);
+  await _fetchCspListing();
+}
+
+async function _fetchCspListing() {
+  const params = new URLSearchParams({
+    page:     _cspPage,
+    per_page: _cspPerPage,
+  });
+  if (_cspFilters.session_name) params.set('session_name', _cspFilters.session_name);
+  if (_cspFilters.branch)       params.set('branch',       _cspFilters.branch);
+  if (_cspFilters.period_from)  params.set('period_from',  _cspFilters.period_from);
+  if (_cspFilters.period_to)    params.set('period_to',    _cspFilters.period_to);
+
+  const res = await apiFetch(`${API_BASE}/cohort-session-planner?${params}`);
+  if (!res || !res.ok) {
+    showToast('Failed to load Cohort Session Planner records.', 'error');
+    const c = document.getElementById('csp-table-container');
+    if (c) c.innerHTML = '<p class="fin-error">Error loading records.</p>';
+    return;
+  }
+
+  const json = await res.json();
+  // Support both wrapped { data, meta } and plain array responses
+  if (Array.isArray(json)) {
+    _cspData         = json;
+    _cspTotalRecords = json.length;
+    _cspTotalPages   = Math.max(1, Math.ceil(json.length / _cspPerPage));
+  } else {
+    _cspData         = json.data || [];
+    _cspTotalRecords = json.meta?.total     ?? _cspData.length;
+    _cspTotalPages   = json.meta?.total_pages ?? Math.max(1, Math.ceil(_cspTotalRecords / _cspPerPage));
+  }
+
+  const totalEl = document.getElementById('csp-total-count');
+  if (totalEl) totalEl.textContent = _cspTotalRecords;
+
+  _renderCspTable();
+}
+
+function _renderCspTable() {
+  const COLS = 7;
+  let rows = '';
+
+  if (!_cspData.length) {
+    rows = `<tr><td colspan="${COLS}" class="fin-empty">No records found.</td></tr>`;
+  } else {
+    _cspData.forEach(r => {
+      rows += `<tr>
+        <td>${_esc(r.session_name || '-')}</td>
+        <td>${_esc(r.branch || '-')}</td>
+        <td>${_cspFmtPeriod(r.period_start, r.period_end)}</td>
+        <td>${_esc(String(r.total_cohorts ?? '-'))}</td>
+        <td>${_esc(r.personnel || '-')}</td>
+        <td>${_cspFmtDateTime(r.created_at)}</td>
+        <td class="fin-action-cell">
+          <div class="fin-action-wrap">
+            <button class="fin-action-btn" onclick="toggleStuDd(event,'csp-${r.id}')">&#8230;</button>
+            <div id="stu-dd-csp-${r.id}" class="fin-action-dropdown" style="display:none;">
+              <a href="#" onclick="cspOpenEdit(${r.id});return false;">&#9998; Edit</a>
+            </div>
+          </div>
+        </td>
+      </tr>`;
+    });
+  }
+
+  const tbl = document.getElementById('csp-table-container');
+  if (tbl) tbl.innerHTML = `
+    <div class="fin-table-wrap">
+      <table class="fin-table">
+        <thead><tr>
+          <th>SESSION NAME</th><th>BRANCH</th><th>PERIOD</th>
+          <th>TOTAL COHORTS</th><th>PERSONNEL</th><th>CREATED AT</th><th>ACTION</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+
+  _mkPagination('csp-pagination', _cspPage, _cspTotalPages, 'cspGoPage');
+}
+
+async function cspGoPage(p) {
+  _cspPage = p;
+  renderSkeletonRows('csp-table-container', 7);
+  await _fetchCspListing();
+}
+
+function changeCspPerPage(v) {
+  _cspPerPage = parseInt(v);
+  _cspPage    = 1;
+  _fetchCspListing();
+}
+
+function toggleCspFilterPanel() {
+  _cspFilterOpen = !_cspFilterOpen;
+  const p = document.getElementById('csp-filter-panel');
+  if (p) p.style.display = _cspFilterOpen ? 'block' : 'none';
+}
+
+function applyCspFilters() {
+  _cspFilters.session_name = document.getElementById('csp-f-session')?.value.trim() || '';
+  _cspFilters.branch       = document.getElementById('csp-f-branch')?.value.trim()  || '';
+  _cspFilters.period_from  = document.getElementById('csp-f-from')?.value || '';
+  _cspFilters.period_to    = document.getElementById('csp-f-to')?.value   || '';
+  _cspPage = 1;
+  renderSkeletonRows('csp-table-container', 7);
+  _fetchCspListing();
+}
+
+function clearCspFilters() {
+  _cspFilters = { session_name: '', branch: '', period_from: '', period_to: '' };
+  ['csp-f-session','csp-f-branch','csp-f-from','csp-f-to'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  _cspPage = 1;
+  _fetchCspListing();
+}
+
+function cspOpenAdd() {
+  _currentCspId = null;
+  _cspDirty     = false;
+  loadView('cohort-session-planner-add');
+}
+
+function cspOpenEdit(id) {
+  _currentCspId = id;
+  _cspDirty     = false;
+  loadView('cohort-session-planner-edit');
+}
+
+// ── Add / Edit Form ───────────────────────────────────────────────────────────
+async function loadCohortSessionPlannerFormView(container) {
+  const isEdit = !!_currentCspId;
+  const title  = isEdit ? 'Edit Cohort Session Planner' : 'Add Cohort Session Planner';
+
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">${title}</h2>
+        <div class="fin-breadcrumb">
+          Dashboard &rsaquo; Student Management &rsaquo;
+          <a href="#" class="fin-bc-link" onclick="loadView('cohort-session-planner');return false;">Cohort Session Planner</a>
+          &rsaquo; ${isEdit ? 'Edit' : 'Add'}
+        </div>
+      </div>
+      <div style="background:white;border-radius:6px;padding:28px;box-shadow:0 1px 4px rgba(0,0,0,0.06);">
+        <div id="csp-form-loading" style="padding:32px;text-align:center;color:#888;">Loading&#8230;</div>
+      </div>
+    </div>
+  `;
+
+  // Load sessions and branches in parallel; also load existing record if editing
+  const fetches = [
+    apiFetch(`${API_BASE}/sessions`),
+    apiFetch(`${API_BASE}/branches`),
+  ];
+  if (isEdit) fetches.push(apiFetch(`${API_BASE}/cohort-session-planner/${_currentCspId}`));
+
+  const [sessRes, branchRes, recordRes] = await Promise.all(fetches);
+  _cspSessions = (sessRes  && sessRes.ok)  ? await sessRes.json()  : [];
+  _cspBranches = (branchRes && branchRes.ok) ? await branchRes.json() : [];
+  const record = (isEdit && recordRes && recordRes.ok) ? await recordRes.json() : null;
+
+  if (isEdit && !record) {
+    showToast('Could not load record.', 'error');
+    loadView('cohort-session-planner');
+    return;
+  }
+
+  _renderCspForm(container, isEdit, record);
+}
+
+function _renderCspForm(container, isEdit, record) {
+  const sessOpts = _cspSessions.map(s =>
+    `<option value="${_esc(String(s.id))}"${String(record?.session_id) === String(s.id) ? ' selected' : ''}>${_esc(s.name || s.title || '')}</option>`
+  ).join('');
+
+  const branchOpts = _cspBranches.map(b =>
+    `<option value="${_esc(String(b.id))}"${String(record?.branch_id) === String(b.id) ? ' selected' : ''}>${_esc(b.name || '')}</option>`
+  ).join('');
+
+  // Pre-fill auto-populated fields from loaded record
+  const selSession  = record ? _cspSessions.find(s => String(s.id) === String(record.session_id)) : null;
+  const acYear      = record?.academic_year  || selSession?.academic_year  || '';
+  const sessType    = record?.session_type   || selSession?.session_type   || '';
+  const periodStart = record?.period_start   || selSession?.period_start   || '';
+  const periodEnd   = record?.period_end     || selSession?.period_end     || '';
+  const period      = (periodStart || periodEnd) ? _cspFmtPeriod(periodStart, periodEnd) : '';
+  const personnel   = record?.personnel || _cspGetCurrentUserName();
+  const notes       = record?.notes || '';
+  const existingClassIds = record?.class_ids || [];
+
+  const wrapper = container.querySelector('div > div');
+  if (!wrapper) return;
+  wrapper.innerHTML = `
+    <div class="stu-form-grid" id="csp-form-grid">
+
+      <!-- Row 1: Session Name + Academic Year -->
+      <div class="stu-form-group">
+        <label>Session Name <span style="color:#e74c3c">*</span></label>
+        <select id="csp-session-id" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;"
+                onchange="onCspSessionChange(this.value)">
+          <option value="">— Select Session —</option>${sessOpts}
+        </select>
+        <span class="stu-field-error" id="csp-session-err"></span>
+      </div>
+      <div class="stu-form-group">
+        <label>Academic Year</label>
+        <input id="csp-academic-year" class="fin-search-input" style="width:100%!important;"
+               value="${_esc(acYear)}" readonly placeholder="Auto-populated">
+      </div>
+
+      <!-- Row 2: Period + Session Type -->
+      <div class="stu-form-group">
+        <label>Period</label>
+        <input id="csp-period" class="fin-search-input" style="width:100%!important;"
+               value="${_esc(period)}" readonly placeholder="Auto-populated">
+      </div>
+      <div class="stu-form-group">
+        <label>Session Type</label>
+        <input id="csp-session-type" class="fin-search-input" style="width:100%!important;"
+               value="${_esc(sessType)}" readonly placeholder="Auto-populated">
+      </div>
+
+      <!-- Row 3: Branch (half-width) -->
+      <div class="stu-form-group">
+        <label>Branch <span style="color:#e74c3c">*</span></label>
+        <select id="csp-branch-id" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;"
+                onchange="onCspBranchChange(this.value)">
+          <option value="">— Select Branch —</option>${branchOpts}
+        </select>
+        <span class="stu-field-error" id="csp-branch-err"></span>
+      </div>
+      <div></div>
+
+      <!-- Row 4: Class table (full width) -->
+      <div class="stu-form-group" style="grid-column:span 2;">
+        <label>Classes</label>
+        <div id="csp-class-table-wrap" class="csp-class-table-wrap">
+          <p style="color:#888;font-size:0.88rem;padding:12px 0;">Select a branch to load classes.</p>
+        </div>
+      </div>
+
+      <!-- Row 5: Personnel + Total Cohorts -->
+      <div class="stu-form-group">
+        <label>Personnel</label>
+        <input id="csp-personnel" class="fin-search-input" style="width:100%!important;"
+               value="${_esc(personnel)}" readonly>
+      </div>
+      <div class="stu-form-group">
+        <label>Total Cohorts</label>
+        <input id="csp-total-cohorts" type="text" class="fin-search-input" style="width:100%!important;"
+               value="0" readonly>
+      </div>
+
+      <!-- Row 6: Notes (full width) -->
+      <div class="stu-form-group" style="grid-column:span 2;">
+        <label>Notes</label>
+        <textarea id="csp-notes" style="width:100%;min-height:90px;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:0.9rem;resize:vertical;">${_esc(notes)}</textarea>
+      </div>
+
+    </div>
+
+    <div style="display:flex;gap:12px;margin-top:24px;">
+      <button class="fin-btn-teal" onclick="submitCspForm()">${isEdit ? 'Update' : 'Save'}</button>
+      <button class="fin-btn-cancel" onclick="cancelCspForm()">Cancel</button>
+    </div>
+    <div id="csp-form-status" style="margin-top:10px;"></div>
+  `;
+
+  // Mark dirty on any change
+  wrapper.querySelectorAll('input,select,textarea').forEach(el => {
+    el.addEventListener('change', () => { _cspDirty = true; });
+    el.addEventListener('input',  () => { _cspDirty = true; });
+  });
+
+  // If editing, pre-load the class table for the existing branch
+  if (isEdit && record?.branch_id) {
+    onCspBranchChange(String(record.branch_id), existingClassIds);
+  }
+}
+
+function _cspGetCurrentUserName() {
+  if (!currentUser) return '';
+  return currentUser.full_name || currentUser.name ||
+         ((currentUser.first_name || '') + ' ' + (currentUser.last_name || '')).trim() ||
+         currentUser.email || '';
+}
+
+function onCspSessionChange(sessionId) {
+  _cspDirty = true;
+  const sess = _cspSessions.find(s => String(s.id) === String(sessionId));
+  if (!sess) {
+    ['csp-academic-year','csp-period','csp-session-type'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+    return;
+  }
+  const ayEl   = document.getElementById('csp-academic-year');
+  const perEl  = document.getElementById('csp-period');
+  const typeEl = document.getElementById('csp-session-type');
+  if (ayEl)   ayEl.value   = sess.academic_year  || sess.academic_year_name || '';
+  if (perEl)  perEl.value  = (sess.period_start || sess.period_end)
+    ? _cspFmtPeriod(sess.period_start || sess.start_date, sess.period_end || sess.end_date)
+    : '';
+  if (typeEl) typeEl.value = sess.session_type || sess.type || '';
+  // Clear session name error on selection
+  const errEl = document.getElementById('csp-session-err');
+  if (errEl) errEl.textContent = '';
+}
+
+async function onCspBranchChange(branchId, preCheckedIds = []) {
+  _cspDirty = true;
+  const wrap = document.getElementById('csp-class-table-wrap');
+  if (!wrap) return;
+
+  // Clear branch error
+  const branchErr = document.getElementById('csp-branch-err');
+  if (branchErr) branchErr.textContent = '';
+
+  if (!branchId) {
+    wrap.innerHTML = '<p style="color:#888;font-size:0.88rem;padding:12px 0;">Select a branch to load classes.</p>';
+    _updateCspTotalCohorts();
+    return;
+  }
+
+  wrap.innerHTML = `
+    <div class="fin-table-wrap">
+      <table class="fin-table" id="csp-class-tbl">
+        <tbody id="csp-class-tbody"></tbody>
+      </table>
+    </div>`;
+  renderSkeletonRows('csp-class-tbody', 5, 3);
+
+  const res = await apiFetch(`${API_BASE}/academics/classes?branch_id=${branchId}`);
+  const classes = (res && res.ok) ? await res.json() : [];
+
+  if (!classes.length) {
+    wrap.innerHTML = '<p style="color:#888;font-size:0.88rem;padding:12px 0;">No classes found for this branch.</p>';
+    _updateCspTotalCohorts();
+    return;
+  }
+
+  const rows = classes.map(c => {
+    const checked = preCheckedIds.map(String).includes(String(c.id)) ? 'checked' : '';
+    return `<tr class="csp-class-row${checked ? ' csp-row-checked' : ''}">
+      <td style="width:40px;"><input type="checkbox" class="csp-cls-cb" value="${c.id}"
+          data-id="${c.id}" onchange="cspRowCheck(this)" ${checked}></td>
+      <td>${_esc(c.code || c.class_code || '-')}</td>
+      <td>${_esc(c.programme || c.programme_name || '-')}</td>
+      <td>${_esc(c.stage || c.level || c.level_name || '-')}</td>
+      <td>${_esc(String(c.session_no || c.session_number || '-'))}</td>
+      <td>${_esc(c.milestone || '-')}</td>
+    </tr>`;
+  }).join('');
+
+  wrap.innerHTML = `
+    <div class="fin-table-wrap">
+      <table class="fin-table">
+        <thead><tr>
+          <th style="width:40px;">
+            <input type="checkbox" id="csp-select-all" onchange="toggleCspSelectAll(this)"
+                   title="Select all">
+          </th>
+          <th>CLASS CODE</th><th>PROGRAMME</th><th>STAGE</th>
+          <th>SESSION NO</th><th>MILESTONE</th>
+        </tr></thead>
+        <tbody id="csp-class-tbody">${rows}</tbody>
+      </table>
+    </div>`;
+
+  _updateCspTotalCohorts();
+  _syncCspSelectAll();
+}
+
+function cspRowCheck(cb) {
+  const row = cb.closest('tr');
+  if (row) row.classList.toggle('csp-row-checked', cb.checked);
+  _updateCspTotalCohorts();
+  _syncCspSelectAll();
+}
+
+function toggleCspSelectAll(masterCb) {
+  document.querySelectorAll('.csp-cls-cb').forEach(cb => {
+    cb.checked = masterCb.checked;
+    const row = cb.closest('tr');
+    if (row) row.classList.toggle('csp-row-checked', masterCb.checked);
+  });
+  _updateCspTotalCohorts();
+}
+
+function _syncCspSelectAll() {
+  const all   = document.querySelectorAll('.csp-cls-cb');
+  const master = document.getElementById('csp-select-all');
+  if (!master || !all.length) return;
+  const checkedCount = document.querySelectorAll('.csp-cls-cb:checked').length;
+  master.checked       = checkedCount === all.length;
+  master.indeterminate = checkedCount > 0 && checkedCount < all.length;
+}
+
+function _updateCspTotalCohorts() {
+  const count = document.querySelectorAll('.csp-cls-cb:checked').length;
+  const el    = document.getElementById('csp-total-cohorts');
+  if (el) el.value = String(count);
+}
+
+async function submitCspForm() {
+  const sessionId = document.getElementById('csp-session-id')?.value || '';
+  const branchId  = document.getElementById('csp-branch-id')?.value  || '';
+  let valid = true;
+
+  const setErr = (errId, val, msg) => {
+    const el = document.getElementById(errId);
+    const inp = document.getElementById(errId.replace('-err',''));
+    if (el)  el.textContent = val ? '' : msg;
+    if (inp) inp.classList.toggle('error', !val);
+    if (!val) valid = false;
+  };
+  setErr('csp-session-err', sessionId, 'Session Name is required.');
+  setErr('csp-branch-err',  branchId,  'Branch is required.');
+  if (!valid) { showToast('Please fill in all required fields.', 'error'); return; }
+
+  const classIds = Array.from(document.querySelectorAll('.csp-cls-cb:checked')).map(cb => cb.value);
+  const payload  = {
+    session_id: parseInt(sessionId),
+    branch_id:  parseInt(branchId),
+    class_ids:  classIds.map(Number),
+    notes:      document.getElementById('csp-notes')?.value || '',
+  };
+
+  const btn = document.querySelector('[onclick="submitCspForm()"]');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+  const url    = _currentCspId
+    ? `${API_BASE}/cohort-session-planner/${_currentCspId}`
+    : `${API_BASE}/cohort-session-planner`;
+  const method = _currentCspId ? 'PUT' : 'POST';
+
+  const res = await apiFetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (btn) { btn.disabled = false; btn.textContent = _currentCspId ? 'Update' : 'Save'; }
+
+  if (res && res.ok) {
+    _cspDirty = false;
+    const msg = _currentCspId
+      ? 'Cohort Session Planner updated successfully.'
+      : 'Cohort Session Planner created successfully.';
+    showToast(msg, 'success');
+    _currentCspId = null;
+    loadView('cohort-session-planner');
+  } else {
+    const err = res ? await res.json().catch(() => ({})) : {};
+    const msg = err.detail || (typeof err === 'string' ? err : 'Could not save. Please try again.');
+    showToast(msg, 'error');
+    const statusEl = document.getElementById('csp-form-status');
+    if (statusEl) statusEl.innerHTML = `<span style="color:#e74c3c;font-size:0.88rem;">${_esc(msg)}</span>`;
+  }
+}
+
+function cancelCspForm() {
+  if (_cspDirty && !confirm('You have unsaved changes. Are you sure you want to leave?')) return;
+  _cspDirty     = false;
+  _currentCspId = null;
+  loadView('cohort-session-planner');
+}

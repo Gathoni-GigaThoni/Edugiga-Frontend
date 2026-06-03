@@ -327,3 +327,33 @@
   0%   { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
+
+/* ── Cohort Session Planner — class selection table ── */
+.csp-class-table-wrap {
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.csp-class-row td {
+  transition: background 0.1s;
+}
+
+.csp-row-checked td {
+  background: #f0fbfb;
+}
+
+.csp-cls-cb {
+  width: auto !important;
+  max-width: none !important;
+  cursor: pointer;
+  accent-color: #00b5b8;
+}
+
+#csp-select-all {
+  width: auto !important;
+  max-width: none !important;
+  cursor: pointer;
+  accent-color: #00b5b8;
+}

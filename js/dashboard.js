@@ -194,9 +194,16 @@ async function loadView(view) {
     case 'student-applicants':
       setActiveSidebarItem('sidebar-stu-applicants'); openStuMgmtDropdowns();
       showPlaceholder(main, 'Applicants'); break;
+    case 'cohort-session-planner':
     case 'student-cohort-planner':
       setActiveSidebarItem('sidebar-stu-cohort'); openStuMgmtDropdowns();
-      showPlaceholder(main, 'Cohort Session Planner'); break;
+      await loadCohortSessionPlannerView(main); break;
+    case 'cohort-session-planner-add':
+      openStuMgmtDropdowns();
+      await loadCohortSessionPlannerFormView(main); break;
+    case 'cohort-session-planner-edit':
+      openStuMgmtDropdowns();
+      await loadCohortSessionPlannerFormView(main); break;
     case 'student-classes':
       await loadStudentClassesView(main); break;
     case 'student-close-records':
