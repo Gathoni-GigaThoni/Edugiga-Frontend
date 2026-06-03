@@ -117,17 +117,25 @@ function toggleAyDropdown(event, id) {
   if (dd) dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
 }
 
-function toggleAyStatus(id) {
+async function toggleAyStatus(id) {
   const idx = _ayLocalData.findIndex(y => y.id === id);
   if (idx === -1) return;
-  _ayLocalData[idx].is_inactive = !_ayLocalData[idx].is_inactive;
+  const newInactive = !_ayLocalData[idx].is_inactive;
+  _ayLocalData[idx].is_inactive = newInactive;
   const row = document.getElementById(`ay-row-${id}`);
-  if (!row) return;
-  const y      = _ayLocalData[idx];
-  const btnCls = y.is_inactive ? 'sa-status-btn-deactive' : 'sa-status-btn-active';
-  const label  = y.is_inactive ? 'Deactive' : 'Active';
-  const btn    = row.querySelector('.sa-status-btn');
-  if (btn) { btn.className = `sa-status-btn ${btnCls}`; btn.innerHTML = `${label} &#9660;`; }
+  if (row) {
+    const btnCls = newInactive ? 'sa-status-btn-deactive' : 'sa-status-btn-active';
+    const label  = newInactive ? 'Deactive' : 'Active';
+    const btn    = row.querySelector('.sa-status-btn');
+    if (btn) { btn.className = `sa-status-btn ${btnCls}`; btn.innerHTML = `${label} &#9660;`; }
+  }
+  try {
+    await fetch(`${API_BASE}/academic-years/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ is_inactive: newInactive })
+    });
+  } catch (_) {}
 }
 
 // ==================== ADD ====================
@@ -306,16 +314,33 @@ function _renderAyEditPage(container, year) {
   `;
 }
 
-function _saveAyLocalEdits(id) {
+async function _saveAyLocalEdits(id) {
+  const notes      = document.getElementById('ay-edit-notes').value || '';
+  const is_inactive = document.getElementById('ay-edit-inactive').checked;
+  const statusEl   = document.getElementById('ay-edit-status');
+
   const idx = _ayLocalData.findIndex(y => y.id === id);
-  if (idx !== -1) {
-    _ayLocalData[idx].notes       = document.getElementById('ay-edit-notes').value   || '';
-    _ayLocalData[idx].is_inactive = document.getElementById('ay-edit-inactive').checked;
-  }
-  const statusEl = document.getElementById('ay-edit-status');
-  if (statusEl) {
-    statusEl.innerHTML = '<div class="sa-toast sa-toast-success">Changes saved locally.</div>';
-    setTimeout(() => { if (statusEl) statusEl.innerHTML = ''; }, 3000);
+  if (idx !== -1) { _ayLocalData[idx].notes = notes; _ayLocalData[idx].is_inactive = is_inactive; }
+
+  try {
+    const res = await fetch(`${API_BASE}/academic-years/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ notes, is_inactive })
+    });
+    if (statusEl) {
+      if (res.ok) {
+        statusEl.innerHTML = '<div class="sa-toast sa-toast-success">Changes saved!</div>';
+      } else {
+        statusEl.innerHTML = '<div class="sa-toast sa-toast-error">Could not save to server.</div>';
+      }
+      setTimeout(() => { if (statusEl) statusEl.innerHTML = ''; }, 3000);
+    }
+  } catch (_) {
+    if (statusEl) {
+      statusEl.innerHTML = '<div class="sa-toast sa-toast-error">Network error.</div>';
+      setTimeout(() => { if (statusEl) statusEl.innerHTML = ''; }, 3000);
+    }
   }
 }
 
