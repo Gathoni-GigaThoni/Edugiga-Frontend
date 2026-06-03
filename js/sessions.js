@@ -52,34 +52,28 @@ async function loadSessionsView(container) {
 }
 
 async function _fetchSessAYCache() {
-  try {
-    const res = await fetch(`${API_BASE}/academic-years/`, { headers: { Authorization: `Bearer ${token}` } });
-    _sessAYCache = res.ok ? await res.json() : [];
-  } catch (_) { _sessAYCache = []; }
+  const res = await apiFetch(`${API_BASE}/academic-years/`);
+  _sessAYCache = (res && res.ok) ? await res.json() : [];
 }
 
 async function _fetchSessTypes() {
   if (typeof sessionTypesData !== 'undefined' && sessionTypesData.length) return;
-  try {
-    const res = await fetch(`${API_BASE}/session-types/`, { headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok && typeof sessionTypesData !== 'undefined') {
-      const data = await res.json();
-      sessionTypesData.length = 0;
-      data.forEach(t => sessionTypesData.push(t));
-    }
-  } catch (_) {}
+  const res = await apiFetch(`${API_BASE}/session-types/`);
+  if (res && res.ok && typeof sessionTypesData !== 'undefined') {
+    const data = await res.json();
+    sessionTypesData.length = 0;
+    data.forEach(t => sessionTypesData.push(t));
+  }
 }
 
 async function _fetchSessions() {
   const c = document.getElementById('sess-table-container');
   if (!c) return;
-  try {
-    const res = await fetch(`${API_BASE}/sessions/`, { headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok) {
-      const data = await res.json();
-      sessionsData = Array.isArray(data) ? data : (data.data || data.results || []);
-    }
-  } catch (_) {}
+  const res = await apiFetch(`${API_BASE}/sessions/`);
+  if (res && res.ok) {
+    const data = await res.json();
+    sessionsData = Array.isArray(data) ? data : (data.data || data.results || []);
+  }
   _renderSessTable();
 }
 
@@ -351,24 +345,20 @@ async function submitSessAdd() {
     is_inactive: !!document.getElementById('sess-add-inactive')?.checked
   };
 
-  try {
-    const res = await fetch(`${API_BASE}/sessions/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(payload)
-    });
-    if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
-    if (res.ok) {
-      showToast('Session saved successfully!', 'success');
-      loadView('sa-sessions');
-    } else {
-      const msg = await parseApiError(res);
-      if (statusEl) statusEl.innerHTML = `<span style="color:#e74c3c;font-size:0.88rem;">${_sEsc(msg)}</span>`;
-      showToast(msg, 'error');
-    }
-  } catch (_) {
-    if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
-    showToast('Network error. Please try again.', 'error');
+  const res = await apiFetch(`${API_BASE}/sessions/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+  if (!res) return;
+  if (res.ok) {
+    showToast('Session saved successfully!', 'success');
+    loadView('sa-sessions');
+  } else {
+    const msg = await parseApiError(res);
+    if (statusEl) statusEl.innerHTML = `<span style="color:#e74c3c;font-size:0.88rem;">${_sEsc(msg)}</span>`;
+    showToast(msg, 'error');
   }
 }
 
@@ -486,23 +476,19 @@ async function submitSessEdit(id) {
     is_inactive: !!document.getElementById('sess-edit-inactive')?.checked
   };
 
-  try {
-    const res = await fetch(`${API_BASE}/sessions/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(payload)
-    });
-    if (btn) { btn.disabled = false; btn.textContent = 'Update'; }
-    if (res.ok) {
-      showToast('Session updated successfully!', 'success');
-      loadView('sa-sessions');
-    } else {
-      const msg = await parseApiError(res);
-      if (statusEl) statusEl.innerHTML = `<span style="color:#e74c3c;font-size:0.88rem;">${_sEsc(msg)}</span>`;
-      showToast(msg, 'error');
-    }
-  } catch (_) {
-    if (btn) { btn.disabled = false; btn.textContent = 'Update'; }
-    showToast('Network error. Please try again.', 'error');
+  const res = await apiFetch(`${API_BASE}/sessions/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  if (btn) { btn.disabled = false; btn.textContent = 'Update'; }
+  if (!res) return;
+  if (res.ok) {
+    showToast('Session updated successfully!', 'success');
+    loadView('sa-sessions');
+  } else {
+    const msg = await parseApiError(res);
+    if (statusEl) statusEl.innerHTML = `<span style="color:#e74c3c;font-size:0.88rem;">${_sEsc(msg)}</span>`;
+    showToast(msg, 'error');
   }
 }

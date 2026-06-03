@@ -175,19 +175,17 @@ async function submitStAdd() {
     notes:       document.getElementById('st-add-notes').value || '',
     is_inactive: document.getElementById('st-add-inactive').checked
   };
-  try {
-    const res = await fetch(`${API_BASE}/session-types/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(payload)
-    });
-    if (res.ok) {
-      loadView('sa-session-types');
-    } else {
-      showToast(await parseApiError(res), 'error');
-    }
-  } catch (_) {
-    showToast('Network error. Please try again.', 'error');
+  const res = await apiFetch(`${API_BASE}/session-types/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  if (!res) return;
+  if (res.ok) {
+    showToast('Session type saved!', 'success');
+    loadView('sa-session-types');
+  } else {
+    showToast(await parseApiError(res), 'error');
   }
 }
 
@@ -245,19 +243,17 @@ async function submitStEdit(id) {
     notes:       document.getElementById('st-edit-notes').value || '',
     is_inactive: document.getElementById('st-edit-inactive').checked
   };
-  try {
-    const res = await fetch(`${API_BASE}/session-types/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(payload)
-    });
-    if (res.ok) {
-      loadView('sa-session-types');
-    } else {
-      showToast(await parseApiError(res), 'error');
-    }
-  } catch (_) {
-    showToast('Network error. Please try again.', 'error');
+  const res = await apiFetch(`${API_BASE}/session-types/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  if (!res) return;
+  if (res.ok) {
+    showToast('Session type updated!', 'success');
+    loadView('sa-session-types');
+  } else {
+    showToast(await parseApiError(res), 'error');
   }
 }
 

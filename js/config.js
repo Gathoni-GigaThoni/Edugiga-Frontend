@@ -31,8 +31,9 @@ let chartOfAccountsData            = [];
 let feeAccountsData                = [];
 
 // ── Global fetch wrapper ──────────────────────────────────────────────────────
-// Automatically attaches Authorization header; redirects to login on 401.
-async function apiFetch(url, options = {}) {
+// Attaches Authorization header, handles 401, and retries once on network
+// failure (the backend may be waking from sleep on the first request).
+async function apiFetch(url, options = {}, _attempt = 0) {
   options.headers = {
     ...(options.headers || {}),
     Authorization: `Bearer ${token}`
@@ -40,8 +41,14 @@ async function apiFetch(url, options = {}) {
   let res;
   try {
     res = await fetch(url, options);
-  } catch (_) {
-    showToast('Network error. Please check your connection.', 'error');
+  } catch (err) {
+    if (_attempt === 0) {
+      // Server may be waking up — wait 3 s then try once more
+      await new Promise(r => setTimeout(r, 3000));
+      return apiFetch(url, options, 1);
+    }
+    console.error('apiFetch failed:', url, err.message);
+    showToast('Could not reach the server. Please try again in a moment.', 'error');
     return null;
   }
   if (res.status === 401) {
