@@ -1,6 +1,6 @@
 // app.js
 
-const API_BASE = "https://edu-giga-school-management-system-1.onrender.com";
+const API_BASE = "https://edugiga-sois-api.onrender.com";
 
 // ── Token & user – restored from sessionStorage on page load ──────────────────
 let token = sessionStorage.getItem('edugiga_token') || '';
