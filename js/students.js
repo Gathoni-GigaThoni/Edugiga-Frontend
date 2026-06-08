@@ -362,7 +362,11 @@ function _renderStuEditTabContent(tabId) {
   if (!c) return;
   const d = window._stuFormData || {};
   switch (tabId) {
-    case 'personal':  c.innerHTML = _stuTabPersonal(d);    _wireStuPersonalTab(); break;
+    case 'personal':
+      c.innerHTML = _stuTabPersonal(d);
+      _wireStuPersonalTab();
+      if (!_stuFormClasses.length) populateAcademicLevelsDropdown('se-class', d.class_id);
+      break;
     case 'prev-edu':  c.innerHTML = _stuTabPrevEdu(d);     break;
     case 'guardian':  c.innerHTML = _stuTabGuardian(d);    _wireStuGuardianTab(); break;
     case 'medical':   c.innerHTML = _stuTabMedical(d);     break;

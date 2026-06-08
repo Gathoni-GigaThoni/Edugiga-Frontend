@@ -336,6 +336,7 @@ async function submitSessAdd() {
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
 
   const payload = {
+    name:            title,
     title,
     session_type_id:  typeId,
     academic_year_id: parseInt(ayId),
