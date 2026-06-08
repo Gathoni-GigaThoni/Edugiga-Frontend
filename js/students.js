@@ -365,7 +365,7 @@ function _renderStuEditTabContent(tabId) {
     case 'personal':
       c.innerHTML = _stuTabPersonal(d);
       _wireStuPersonalTab();
-      if (!_stuFormClasses.length) populateAcademicLevelsDropdown('se-class', d.class_id);
+      populateAcademicLevelsDropdown('se-class', d.class_id);
       break;
     case 'prev-edu':  c.innerHTML = _stuTabPrevEdu(d);     break;
     case 'guardian':  c.innerHTML = _stuTabGuardian(d);    _wireStuGuardianTab(); break;
