@@ -171,9 +171,11 @@ async function submitStAdd() {
   if (!title) return;
 
   const payload = {
+    name:        title,
     title,
     notes:       document.getElementById('st-add-notes').value || '',
-    is_inactive: document.getElementById('st-add-inactive').checked
+    is_inactive: document.getElementById('st-add-inactive').checked,
+    is_active:   !document.getElementById('st-add-inactive').checked
   };
   const res = await apiFetch(`${API_BASE}/session-types/`, {
     method: 'POST',
@@ -239,9 +241,11 @@ async function submitStEdit(id) {
   if (!title) return;
 
   const payload = {
+    name:        title,
     title,
     notes:       document.getElementById('st-edit-notes').value || '',
-    is_inactive: document.getElementById('st-edit-inactive').checked
+    is_inactive: document.getElementById('st-edit-inactive').checked,
+    is_active:   !document.getElementById('st-edit-inactive').checked
   };
   const res = await apiFetch(`${API_BASE}/session-types/${id}`, {
     method: 'PUT',

@@ -82,6 +82,52 @@ async function parseApiError(res) {
   }
 }
 
+// ── Shared dropdown populators ────────────────────────────────────────────────
+// Fetch sessions from the API and populate a <select> element.
+// Pass selectedId to pre-select an option (for edit forms).
+async function populateSessionDropdown(selectId, selectedId = null) {
+  const select = document.getElementById(selectId);
+  if (!select) return;
+  try {
+    const res = await apiFetch(`${API_BASE}/sessions/`);
+    if (res && res.ok) {
+      const data = await res.json();
+      const sessions = (Array.isArray(data) ? data : (data.data || data.results || []))
+        .filter(s => !s.is_inactive);
+      const placeholder = select.options[0]?.value === '' ? select.options[0].textContent : '-- Select Session --';
+      select.innerHTML = `<option value="">${placeholder}</option>`;
+      sessions.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.id;
+        opt.textContent = s.title || s.name || `Session ${s.id}`;
+        if (selectedId && String(s.id) === String(selectedId)) opt.selected = true;
+        select.appendChild(opt);
+      });
+    }
+  } catch (_) {}
+}
+
+// Fetch academic levels from the API and populate a <select> element.
+async function populateAcademicLevelsDropdown(selectId, selectedId = null) {
+  const select = document.getElementById(selectId);
+  if (!select) return;
+  try {
+    const res = await apiFetch(`${API_BASE}/academic-levels/`);
+    if (res && res.ok) {
+      const levels = await res.json();
+      const placeholder = select.options[0]?.value === '' ? select.options[0].textContent : '-- Select Level --';
+      select.innerHTML = `<option value="">${placeholder}</option>`;
+      levels.forEach(l => {
+        const opt = document.createElement('option');
+        opt.value = l.id;
+        opt.textContent = l.name;
+        if (selectedId && String(l.id) === String(selectedId)) opt.selected = true;
+        select.appendChild(opt);
+      });
+    }
+  } catch (_) {}
+}
+
 // ── Keep-alive ────────────────────────────────────────────────────────────────
 // Pings the backend every 2 minutes while the user is on a form page so the
 // server stays warm and saves don't fail with connection-refused errors.

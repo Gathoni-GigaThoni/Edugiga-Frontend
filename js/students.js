@@ -635,8 +635,6 @@ function handleStuPhotoPreview(input) {
 }
 
 function _stuTabPrevEdu(d) {
-  const typeOpts = ['Primary','Secondary','Tertiary','Other'].map(t =>
-    `<option${d.prev_school_type===t?' selected':''}>${t}</option>`).join('');
   return `
     <div class="stu-form-grid">
       <div class="stu-form-group">
@@ -644,13 +642,7 @@ function _stuTabPrevEdu(d) {
         <input id="se-prev-school" class="fin-search-input" style="width:100%!important" value="${_esc(d.prev_school_name||'')}">
       </div>
       <div class="stu-form-group">
-        <label>Previous School Type</label>
-        <select id="se-prev-school-type" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
-          <option value="">Select</option>${typeOpts}
-        </select>
-      </div>
-      <div class="stu-form-group">
-        <label>Year Left Previous School</label>
+        <label>Level Completed</label>
         <input id="se-year-left" class="fin-search-input" style="width:100%!important" value="${_esc(d.year_left_prev_school||'')}">
       </div>
     </div>
@@ -660,57 +652,71 @@ function _stuTabPrevEdu(d) {
 function _stuTabGuardian(d) {
   const p1 = (d.parents || [])[0] || {};
   const p2 = (d.parents || [])[1] || {};
-  const relOpts = (sel) => ['Mother','Father','Guardian','Other'].map(r =>
-    `<option${sel===r?' selected':''}>${r}</option>`).join('');
+  const g  = d.guardian || {};
   return `
     <div class="stu-form-grid">
+      <!-- First Parent -->
       <div class="stu-form-group" style="grid-column:span 2;font-weight:600;color:#2c3e50;border-bottom:1px solid #eee;padding-bottom:6px;">
-        Primary Guardian
+        First Parent
       </div>
       <div class="stu-form-group">
-        <label>Full Name <span style="color:#e74c3c">*</span></label>
+        <label>First Parent Name <span style="color:#e74c3c">*</span></label>
         <input id="se-p1-name" class="fin-search-input" style="width:100%!important" value="${_esc(p1.full_name||'')}">
       </div>
       <div class="stu-form-group">
-        <label>Relationship</label>
-        <select id="se-p1-rel" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
-          ${relOpts(p1.relationship)}
-        </select>
+        <label>First Parent Phone</label>
+        <input id="se-p1-phone" class="fin-search-input" style="width:100%!important" value="${_esc(p1.phone||'')}">
       </div>
       <div class="stu-form-group">
-        <label>Email</label>
+        <label>First Parent Email</label>
         <input id="se-p1-email" type="email" class="fin-search-input" style="width:100%!important" value="${_esc(p1.email||'')}">
       </div>
       <div class="stu-form-group">
-        <label>Phone</label>
-        <input id="se-p1-phone" class="fin-search-input" style="width:100%!important" value="${_esc(p1.phone||'')}">
+        <label>First Parent Residence</label>
+        <input id="se-p1-residence" class="fin-search-input" style="width:100%!important" value="${_esc(p1.residence||'')}">
       </div>
 
+      <!-- Second Parent -->
       <div class="stu-form-group" style="grid-column:span 2;font-weight:600;color:#2c3e50;border-bottom:1px solid #eee;padding-bottom:6px;margin-top:8px;">
-        Secondary Guardian <small style="font-weight:400;color:#888;">(optional)</small>
+        Second Parent <small style="font-weight:400;color:#888;">(optional)</small>
       </div>
       <div class="stu-form-group">
-        <label>Full Name</label>
+        <label>Second Parent Name</label>
         <input id="se-p2-name" class="fin-search-input" style="width:100%!important" value="${_esc(p2.full_name||'')}">
       </div>
       <div class="stu-form-group">
-        <label>Relationship</label>
-        <select id="se-p2-rel" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
-          ${relOpts(p2.relationship)}
-        </select>
+        <label>Second Parent Phone</label>
+        <input id="se-p2-phone" class="fin-search-input" style="width:100%!important" value="${_esc(p2.phone||'')}">
       </div>
       <div class="stu-form-group">
-        <label>Email</label>
+        <label>Second Parent Email</label>
         <input id="se-p2-email" type="email" class="fin-search-input" style="width:100%!important" value="${_esc(p2.email||'')}">
       </div>
       <div class="stu-form-group">
-        <label>Phone</label>
-        <input id="se-p2-phone" class="fin-search-input" style="width:100%!important" value="${_esc(p2.phone||'')}">
+        <label>Second Parent Residence</label>
+        <input id="se-p2-residence" class="fin-search-input" style="width:100%!important" value="${_esc(p2.residence||'')}">
+      </div>
+
+      <!-- Guardian Information -->
+      <div class="stu-form-group" style="grid-column:span 2;font-weight:600;color:#2c3e50;border-bottom:1px solid #eee;padding-bottom:6px;margin-top:8px;">
+        Guardian Information <small style="font-weight:400;color:#888;">(optional)</small>
+      </div>
+      <div class="stu-form-group">
+        <label>Guardian Full Name</label>
+        <input id="se-guardian-name" class="fin-search-input" style="width:100%!important" value="${_esc(g.full_name||'')}">
+      </div>
+      <div class="stu-form-group">
+        <label>Guardian Phone Contact</label>
+        <input id="se-guardian-phone" class="fin-search-input" style="width:100%!important" value="${_esc(g.phone||'')}">
+      </div>
+      <div class="stu-form-group">
+        <label>Guardian Email Address</label>
+        <input id="se-guardian-email" type="email" class="fin-search-input" style="width:100%!important" value="${_esc(g.email||'')}">
       </div>
     </div>
   `;
 }
-function _wireStuGuardianTab() {} // placeholder for future autocomplete
+function _wireStuGuardianTab() {}
 
 function _stuTabMedical(d) {
   const med = d.medical || {};
@@ -842,7 +848,6 @@ async function submitStudentForm() {
       student_id: _fv('se-sibling-id'),
     }] : [],
     prev_school_name:      _fv('se-prev-school'),
-    prev_school_type:      _fv('se-prev-school-type'),
     year_left_prev_school: _fv('se-year-left'),
     medical: {
       allergies:               _fv('se-allergies'),
@@ -855,10 +860,15 @@ async function submitStudentForm() {
     parents: (() => {
       const p = [];
       const p1 = _fv('se-p1-name').trim();
-      if (p1) p.push({ full_name: p1, email: _fv('se-p1-email'), phone: _fv('se-p1-phone'), relationship: _fv('se-p1-rel'), is_primary: true });
+      if (p1) p.push({ full_name: p1, email: _fv('se-p1-email'), phone: _fv('se-p1-phone'), residence: _fv('se-p1-residence'), is_primary: true });
       const p2 = _fv('se-p2-name').trim();
-      if (p2) p.push({ full_name: p2, email: _fv('se-p2-email'), phone: _fv('se-p2-phone'), relationship: _fv('se-p2-rel'), is_primary: false });
+      if (p2) p.push({ full_name: p2, email: _fv('se-p2-email'), phone: _fv('se-p2-phone'), residence: _fv('se-p2-residence'), is_primary: false });
       return p;
+    })(),
+    guardian: (() => {
+      const name = _fv('se-guardian-name').trim();
+      if (!name) return null;
+      return { full_name: name, phone: _fv('se-guardian-phone'), email: _fv('se-guardian-email'), relationship: 'guardian' };
     })(),
   };
 
@@ -1016,15 +1026,25 @@ function _renderStuViewTab(tabName, d) {
     </div>`;
   if (tabName === 'Guardian/Family') return `
     <div>
-      ${(d.parents||[]).map(p => `
+      ${(d.parents||[]).map((p, i) => `
         <div style="border:1px solid #eee;border-radius:6px;padding:14px;margin-bottom:12px;">
+          <div style="font-weight:600;color:#2c3e50;margin-bottom:8px;">${i === 0 ? 'First Parent' : 'Second Parent'}</div>
           <div class="stu-detail-grid">
-            ${_dRow('Name',         p.full_name)}
-            ${_dRow('Relationship', p.relationship)}
-            ${_dRow('Email',        p.email)}
-            ${_dRow('Phone',        p.phone)}
+            ${_dRow('Name',      p.full_name)}
+            ${_dRow('Phone',     p.phone)}
+            ${_dRow('Email',     p.email)}
+            ${_dRow('Residence', p.residence)}
           </div>
-        </div>`).join('') || '<p style="color:#888;padding:16px;">No guardian records.</p>'}
+        </div>`).join('') || '<p style="color:#888;padding:16px;">No parent records.</p>'}
+      ${d.guardian && d.guardian.full_name ? `
+        <div style="border:1px solid #eee;border-radius:6px;padding:14px;margin-bottom:12px;">
+          <div style="font-weight:600;color:#2c3e50;margin-bottom:8px;">Guardian</div>
+          <div class="stu-detail-grid">
+            ${_dRow('Name',  d.guardian.full_name)}
+            ${_dRow('Phone', d.guardian.phone)}
+            ${_dRow('Email', d.guardian.email)}
+          </div>
+        </div>` : ''}
     </div>`;
   if (tabName === 'Medical Information') return `
     <div class="stu-detail-grid">

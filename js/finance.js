@@ -299,10 +299,6 @@ function _renderFeesDetailPage(container, student, ledger, studentId) {
 // ==================== CHANGE 2: SUMMARIZED FEE STATEMENT ====================
 
 async function loadSummarizedFeeStatementView(container) {
-  const sessOptions = sessionData.map(s =>
-    `<option value="${s.id}">${_finEsc(s.sessionName)}</option>`
-  ).join('');
-
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -316,7 +312,7 @@ async function loadSummarizedFeeStatementView(container) {
           <div class="fin-filter-field">
             <label class="fin-filter-label">Session <span class="fin-required">*</span></label>
             <select id="sfs-stmt-session" class="fin-filter-select">
-              <option value="">-- Select Session --</option>${sessOptions}
+              <option value="">-- Select Session --</option>
             </select>
             <span class="fin-field-error" id="sfs-stmt-session-err"></span>
           </div>
@@ -355,6 +351,7 @@ async function loadSummarizedFeeStatementView(container) {
       <div id="sfs-stmt-results"></div>
     </div>
   `;
+  populateSessionDropdown('sfs-stmt-session');
 }
 
 async function submitSummarizedFilter() {
@@ -819,11 +816,7 @@ async function submitInvoiceEdit(id) {
 
 // ==================== CHANGE 6: STUDENT BULK INVOICING ====================
 
-function loadStudentBulkInvoicingView(container) {
-  const sessOptions = sessionData.map(s =>
-    `<option value="${s.id}">${_finEsc(s.sessionName)}</option>`
-  ).join('');
-
+async function loadStudentBulkInvoicingView(container) {
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -836,7 +829,7 @@ function loadStudentBulkInvoicingView(container) {
           <div class="fin-filter-field">
             <label class="fin-filter-label">Session <span class="fin-required">*</span></label>
             <select id="bulk-session" class="fin-filter-select" onchange="onBulkSessionChange(this.value)">
-              <option value="">Please Select</option>${sessOptions}
+              <option value="">Please Select</option>
             </select>
             <span class="fin-field-error" id="bulk-session-err"></span>
           </div>
@@ -876,6 +869,7 @@ function loadStudentBulkInvoicingView(container) {
       <div id="bulk-status"></div>
     </div>
   `;
+  populateSessionDropdown('bulk-session');
 }
 
 function onBulkSessionChange(sessionId) {
@@ -928,9 +922,7 @@ async function submitBulkInvoicing() {
     return;
   }
 
-  const sessionRec = sessionData.find(s => String(s.id) === String(sessionEl.value));
-  const sessionName = sessionRec ? sessionRec.sessionName : sessionEl.value;
-  const invDate     = dateEl.value;
+  const invDate = dateEl.value;
   const today       = _finToday();
 
   const classIds = checked.map(cb => cb.value);
@@ -1648,8 +1640,7 @@ function _renderFeeSetupDetailPage(container, fee) {
     </div>`;
 }
 
-function renderFeeSetupAddPage(container) {
-  const sessOpts = sessionData.map(s=>`<option value="${s.id}">${_finEsc(s.sessionName||'')}</option>`).join('');
+async function renderFeeSetupAddPage(container) {
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -1670,7 +1661,7 @@ function renderFeeSetupAddPage(container) {
           <div class="fin-form-group">
             <label class="fin-form-label">Session <span class="fin-required">*</span></label>
             <select id="fs-session" class="fin-form-select">
-              <option value="">Please Select</option>${sessOpts}
+              <option value="">Please Select</option>
             </select>
             <span class="fin-field-error" id="fs-sess-err"></span>
           </div>
@@ -1720,6 +1711,7 @@ function renderFeeSetupAddPage(container) {
         </div>
       </div>
     </div>`;
+  populateSessionDropdown('fs-session');
 }
 
 let _fsLiCount = 0;
@@ -1754,7 +1746,6 @@ async function submitFeeSetupAdd() {
     if (acctEl) lineItems.push({ account: acctEl.value, amount: parseFloat(amtEl?.value)||0 });
   });
   const total = lineItems.reduce((s,li)=>s+li.amount, 0);
-  const sessRec = sessionData.find(s=>String(s.id)===String(sess));
 
   const payload = {
     class_code: code, session_id: sess, student_type: stype,

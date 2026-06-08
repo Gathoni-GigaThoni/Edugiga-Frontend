@@ -256,20 +256,6 @@ async function openAyEdit(id) {
 }
 
 function _renderAyEditPage(container, year) {
-  const termsRows = (year.terms || []).map(t => `
-    <tr>
-      <td>${_ayEsc(t.name)}</td>
-      <td>${_fmtDDMmmYYYY(t.automatic_start)}</td>
-      <td>${_fmtDDMmmYYYY(t.automatic_end)}</td>
-      <td><input type="date" id="ay-term-as-${t.id}" class="sa-terms-input" value="${t.actual_start || ''}"></td>
-      <td><input type="date" id="ay-term-ae-${t.id}" class="sa-terms-input" value="${t.actual_end  || ''}"></td>
-      <td>
-        <button class="sa-btn-save-term" onclick="saveAyTermDates(${year.id},${t.id})">Save</button>
-        <div id="ay-term-msg-${t.id}" class="sa-term-save-msg"></div>
-      </td>
-    </tr>
-  `).join('');
-
   container.innerHTML = `
     <div class="sa-page">
       <div class="sa-header-row">
@@ -305,19 +291,11 @@ function _renderAyEditPage(container, year) {
           </label>
         </div>
 
-        <!-- Terms -->
+        <!-- Sessions -->
         <div class="sa-terms-section">
-          <div class="sa-terms-title">Terms</div>
-          <div class="sa-table-wrap">
-            <table class="sa-table">
-              <thead><tr>
-                <th>TERM</th><th>AUTO START</th><th>AUTO END</th>
-                <th>ACTUAL START</th><th>ACTUAL END</th><th>ACTION</th>
-              </tr></thead>
-              <tbody>
-                ${termsRows || `<tr><td colspan="6" class="sa-empty">No terms found</td></tr>`}
-              </tbody>
-            </table>
+          <div class="sa-terms-title">Sessions</div>
+          <div id="ay-sessions-container">
+            <p class="sa-loading">Loading sessions&#8230;</p>
           </div>
         </div>
 
@@ -338,7 +316,49 @@ function _renderAyEditPage(container, year) {
     </div>
   `;
 
+  _loadAySessions(year.id);
   _loadAyClasses(year.id);
+}
+
+async function _loadAySessions(yearId) {
+  const container = document.getElementById('ay-sessions-container');
+  if (!container) return;
+
+  try {
+    const res = await apiFetch(`${API_BASE}/sessions/`);
+    const all = (res && res.ok) ? await res.json() : [];
+    const sessions = (Array.isArray(all) ? all : (all.data || all.results || []))
+      .filter(s => String(s.academic_year_id) === String(yearId));
+
+    if (!sessions.length) {
+      container.innerHTML = '<p style="color:#888;font-size:0.88rem;padding:8px 0;">No sessions configured for this academic year.</p>';
+      return;
+    }
+
+    const rows = sessions.map(s => {
+      const statusBadge = s.is_inactive
+        ? '<span style="color:#e74c3c;font-weight:600;">Inactive</span>'
+        : '<span style="color:#27ae60;font-weight:600;">Active</span>';
+      return `<tr>
+        <td>${_ayEsc(s.title || s.name || '-')}</td>
+        <td>${_fmtDDMmmYYYY(s.start_date)}</td>
+        <td>${_fmtDDMmmYYYY(s.end_date)}</td>
+        <td>${statusBadge}</td>
+      </tr>`;
+    }).join('');
+
+    container.innerHTML = `
+      <div class="sa-table-wrap">
+        <table class="sa-table">
+          <thead><tr>
+            <th>NAME</th><th>START DATE</th><th>END DATE</th><th>STATUS</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  } catch (_) {
+    container.innerHTML = '<p style="color:#c0392b;font-size:0.88rem;">Failed to load sessions.</p>';
+  }
 }
 
 async function _loadAyClasses(yearId) {

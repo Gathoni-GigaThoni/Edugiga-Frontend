@@ -1,9 +1,10 @@
 // ==================== ATTENDANCE REGISTER ====================
 
-let _attClassesData = [];
-let _attLevelsData  = [];
-let _attStudents    = [];
-let _attLoaded      = false;
+let _attClassesData  = [];
+let _attLevelsData   = [];
+let _attSessionsData = [];
+let _attStudents     = [];
+let _attLoaded       = false;
 
 async function loadAttendanceView(container) {
   _attLoaded = false;
@@ -11,15 +12,20 @@ async function loadAttendanceView(container) {
 
   // Fetch dropdown data in parallel before rendering
   try {
-    const [clsRes, lvlRes] = await Promise.all([
+    const [clsRes, lvlRes, sessRes] = await Promise.all([
       fetch(`${API_BASE}/classes/`,         { headers: { Authorization: `Bearer ${token}` } }),
-      fetch(`${API_BASE}/academic-levels/`, { headers: { Authorization: `Bearer ${token}` } })
+      fetch(`${API_BASE}/academic-levels/`, { headers: { Authorization: `Bearer ${token}` } }),
+      fetch(`${API_BASE}/sessions/`,        { headers: { Authorization: `Bearer ${token}` } })
     ]);
-    _attClassesData = clsRes.ok ? await clsRes.json() : [];
-    _attLevelsData  = lvlRes.ok ? await lvlRes.json() : [];
+    _attClassesData  = clsRes.ok  ? await clsRes.json()  : [];
+    _attLevelsData   = lvlRes.ok  ? await lvlRes.json()  : [];
+    const rawSess    = sessRes.ok ? await sessRes.json() : [];
+    _attSessionsData = (Array.isArray(rawSess) ? rawSess : (rawSess.data || rawSess.results || []))
+      .filter(s => !s.is_inactive);
   } catch(_) {
-    _attClassesData = [];
-    _attLevelsData  = [];
+    _attClassesData  = [];
+    _attLevelsData   = [];
+    _attSessionsData = [];
   }
 
   const today = new Date().toISOString().split('T')[0];
@@ -39,10 +45,7 @@ async function loadAttendanceView(container) {
             <label class="sa-filter-label">Session <span class="sa-required">*</span></label>
             <select id="att-session" class="sa-filter-select">
               <option value="">-- Select Session --</option>
-              ${(typeof sessionsData !== 'undefined' ? sessionsData : [])
-                .filter(s => !s.is_inactive)
-                .map(s => `<option value="${s.id}">${s.name}</option>`)
-                .join('')}
+              ${_attSessionsData.map(s => `<option value="${s.id}">${s.title || s.name || ''}</option>`).join('')}
             </select>
             <span class="sa-field-error" id="att-session-err"></span>
           </div>
@@ -314,12 +317,16 @@ async function loadAttendanceRegisterReportView(container) {
 
   // Populate dropdowns in parallel
   try {
-    const [clsRes, lvlRes] = await Promise.all([
+    const [clsRes, lvlRes, sessRes] = await Promise.all([
       fetch(`${API_BASE}/classes/`,         { headers: { Authorization: `Bearer ${token}` } }),
-      fetch(`${API_BASE}/academic-levels/`, { headers: { Authorization: `Bearer ${token}` } })
+      fetch(`${API_BASE}/academic-levels/`, { headers: { Authorization: `Bearer ${token}` } }),
+      fetch(`${API_BASE}/sessions/`,        { headers: { Authorization: `Bearer ${token}` } })
     ]);
-    _attClassesData = clsRes.ok ? await clsRes.json() : [];
-    _attLevelsData  = lvlRes.ok ? await lvlRes.json() : [];
+    _attClassesData  = clsRes.ok  ? await clsRes.json()  : [];
+    _attLevelsData   = lvlRes.ok  ? await lvlRes.json()  : [];
+    const rawSess    = sessRes.ok ? await sessRes.json() : [];
+    _attSessionsData = (Array.isArray(rawSess) ? rawSess : (rawSess.data || rawSess.results || []))
+      .filter(s => !s.is_inactive);
   } catch(_) {}
 
   const today = new Date().toISOString().split('T')[0];
@@ -348,10 +355,7 @@ async function loadAttendanceRegisterReportView(container) {
             <label class="sa-filter-label">Session <span class="sa-required">*</span></label>
             <select id="rpt-session" class="sa-filter-select">
               <option value="">-- Select Session --</option>
-              ${(typeof sessionsData !== 'undefined' ? sessionsData : [])
-                .filter(s => !s.is_inactive)
-                .map(s => `<option value="${s.id}">${_rptEsc(s.title || s.name || '')}</option>`)
-                .join('')}
+              ${_attSessionsData.map(s => `<option value="${s.id}">${_rptEsc(s.title || s.name || '')}</option>`).join('')}
             </select>
             <span class="sa-field-error" id="rpt-session-err"></span>
           </div>
