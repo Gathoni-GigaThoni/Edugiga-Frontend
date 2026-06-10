@@ -342,11 +342,12 @@ async function _loadStuFormDropdowns() {
     apiFetch(`${API_BASE}/transport/routes`),
     apiFetch(`${API_BASE}/finance/extra-curriculum-activities`),
   ]);
-  _stuFormClasses        = (clsRes && clsRes.ok) ? await clsRes.json() : [];
-  _stuFormStreams         = (strRes && strRes.ok) ? await strRes.json() : [];
-  _stuFormFundingSources  = (fsRes  && fsRes.ok)  ? await fsRes.json()  : [];
-  _stuFormTransportRoutes = (trRes  && trRes.ok)  ? await trRes.json()  : [];
-  _stuFormExtraCurriculum = (ecRes  && ecRes.ok)  ? await ecRes.json()  : [];
+  function _toArray(raw) { return Array.isArray(raw) ? raw : (raw?.data || raw?.items || raw?.results || []); }
+  _stuFormClasses        = clsRes && clsRes.ok ? _toArray(await clsRes.json()) : [];
+  _stuFormStreams         = strRes && strRes.ok ? _toArray(await strRes.json()) : [];
+  _stuFormFundingSources  = fsRes  && fsRes.ok  ? _toArray(await fsRes.json())  : [];
+  _stuFormTransportRoutes = trRes  && trRes.ok  ? _toArray(await trRes.json())  : [];
+  _stuFormExtraCurriculum = ecRes  && ecRes.ok  ? _toArray(await ecRes.json())  : [];
 }
 
 function switchStuEditTab(tabId) {
@@ -2107,8 +2108,12 @@ async function showClassForm(id) {
     apiFetch(`${API_BASE}/academic-years/`),
     apiFetch(`${API_BASE}/academic-levels/`),
   ]);
-  if (_ayRes  && _ayRes.ok)  _clsAcademicYears = await _ayRes.json();
-  const _levels = (_lvlRes && _lvlRes.ok) ? await _lvlRes.json() : [];
+  if (_ayRes && _ayRes.ok) {
+    const _ayRaw = await _ayRes.json();
+    _clsAcademicYears = Array.isArray(_ayRaw) ? _ayRaw : (_ayRaw.data || _ayRaw.items || _ayRaw.results || []);
+  }
+  const _lvlRaw = (_lvlRes && _lvlRes.ok) ? await _lvlRes.json() : [];
+  const _levels = Array.isArray(_lvlRaw) ? _lvlRaw : (_lvlRaw.data || _lvlRaw.items || _lvlRaw.results || []);
 
   const ayOpts = _clsAcademicYears.map(y =>
     `<option value="${_esc(String(y.id))}"${String(item?.academic_year_id || item?.academic_year) === String(y.id) ? ' selected' : ''}>${_esc(y.name)}</option>`
@@ -2499,7 +2504,7 @@ async function loadCohortSessionPlannerFormView(container) {
           &rsaquo; ${isEdit ? 'Edit' : 'Add'}
         </div>
       </div>
-      <div style="background:white;border-radius:6px;padding:28px;box-shadow:0 1px 4px rgba(0,0,0,0.06);">
+      <div id="csp-form-body" style="background:white;border-radius:6px;padding:28px;box-shadow:0 1px 4px rgba(0,0,0,0.06);">
         <div id="csp-form-loading" style="padding:32px;text-align:center;color:#888;">Loading&#8230;</div>
       </div>
     </div>
@@ -2510,7 +2515,8 @@ async function loadCohortSessionPlannerFormView(container) {
   if (isEdit) fetches.push(apiFetch(`${API_BASE}/cohort-term-planner/${_currentCspId}`));
 
   const [termRes, recordRes] = await Promise.all(fetches);
-  _cspTerms = (termRes && termRes.ok) ? await termRes.json() : [];
+  const _rawTerms = (termRes && termRes.ok) ? await termRes.json() : [];
+  _cspTerms = Array.isArray(_rawTerms) ? _rawTerms : (_rawTerms.data || _rawTerms.items || _rawTerms.results || []);
   const record = (isEdit && recordRes && recordRes.ok) ? await recordRes.json() : null;
 
   if (isEdit && !record) {
@@ -2538,7 +2544,7 @@ function _renderCspForm(container, isEdit, record) {
   const notes       = record?.notes || '';
   const existingClassIds = record?.class_ids || [];
 
-  const wrapper = container.querySelector('div > div');
+  const wrapper = container.querySelector('#csp-form-body');
   if (!wrapper) return;
   wrapper.innerHTML = `
     <div class="stu-form-grid" id="csp-form-grid">

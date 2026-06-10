@@ -114,7 +114,8 @@ async function populateAcademicLevelsDropdown(selectId, selectedId = null) {
   try {
     const res = await apiFetch(`${API_BASE}/academic-levels/`);
     if (res && res.ok) {
-      const levels = await res.json();
+      const raw = await res.json();
+      const levels = Array.isArray(raw) ? raw : (raw.data || raw.items || raw.results || []);
       const placeholder = select.options[0]?.value === '' ? select.options[0].textContent : '-- Select Level --';
       select.innerHTML = `<option value="">${placeholder}</option>`;
       levels.forEach(l => {
@@ -125,7 +126,7 @@ async function populateAcademicLevelsDropdown(selectId, selectedId = null) {
         select.appendChild(opt);
       });
     }
-  } catch (_) {}
+  } catch (e) { console.error('populateAcademicLevelsDropdown:', e); }
 }
 
 // ── Keep-alive ────────────────────────────────────────────────────────────────
