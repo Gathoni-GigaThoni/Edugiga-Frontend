@@ -9,7 +9,7 @@ const NAV_STRUCTURE = [
     { id: 'students-list',           label: 'Students' },
     { id: 'student-applicants',      label: 'Applicants' },
     { id: 'student-reporting',       label: 'Student Reporting' },
-    { id: 'student-cohort-planner',  label: 'Cohort Session Planner' },
+    { id: 'student-cohort-planner',  label: 'Cohort Term Planner' },
     { id: 'student-classes',         label: 'Classes' },
     { id: 'student-close-records',   label: 'Close Records Per Class' },
     { id: 'student-management-utilities', label: 'Utilities', children: [
@@ -31,8 +31,8 @@ const NAV_STRUCTURE = [
     { id: 'sa-subjects',           label: 'Subjects' },
     { id: 'sa-utilities',          label: 'Utilities' },
     { id: 'sa-setup',              label: 'Set-up' },
-    { id: 'sa-sessions',           label: 'Sessions' },
-    { id: 'sa-session-types',      label: 'Session Types' },
+    { id: 'sa-sessions',           label: 'Terms' },
+    { id: 'sa-session-types',      label: 'Term Types' },
     { id: 'sa-academic-years',     label: 'Academic Years' }
   ]},
   { id: 'transport-management', label: 'Transport Management' },

@@ -37,6 +37,7 @@ function _getSessAYName(ayId) {
 }
 
 // ── Load ──────────────────────────────────────────────────────────────────────
+async function loadTermsView(container) { return loadSessionsView(container); }
 async function loadSessionsView(container) {
   _sessPage       = 1;
   _sessFilterAY   = '';
@@ -69,7 +70,7 @@ async function _fetchSessTypes() {
 async function _fetchSessions() {
   const c = document.getElementById('sess-table-container');
   if (!c) return;
-  const res = await apiFetch(`${API_BASE}/sessions/`);
+  const res = await apiFetch(`${API_BASE}/terms/`);
   if (res && res.ok) {
     const data = await res.json();
     sessionsData = Array.isArray(data) ? data : (data.data || data.results || []);
@@ -90,8 +91,8 @@ function _renderSessListPage(container) {
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
-        <h2 class="fin-title">Sessions</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Academics &rsaquo; Sessions &rsaquo; Listing</div>
+        <h2 class="fin-title">Terms</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Academics &rsaquo; Terms &rsaquo; Listing</div>
       </div>
       <div class="fin-controls-row">
         <div class="fin-controls-left">
@@ -104,7 +105,7 @@ function _renderSessListPage(container) {
           <input type="text" class="fin-search-input" id="sess-search" placeholder="&#128269; Search&#8230;"
                  value="${_sEsc(_sessSearch)}" oninput="onSessSearch(this.value)">
           <button class="fin-btn-filter" onclick="toggleSessFilters()">&#9776; Filters</button>
-          <button class="fin-btn-teal" onclick="renderSessAddPage(document.getElementById('main-content'))">+ Add Session</button>
+          <button class="fin-btn-teal" onclick="renderSessAddPage(document.getElementById('main-content'))">+ Add Term</button>
         </div>
       </div>
 
@@ -119,7 +120,7 @@ function _renderSessListPage(container) {
             </select>
           </div>
           <div class="stu-form-group">
-            <label>Session Type</label>
+            <label>Term Type</label>
             <select id="sess-filter-type" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;"
                     onchange="applySessFilters()">
               <option value="">All</option>${typeOptions}
@@ -195,7 +196,7 @@ function _renderSessTable() {
 
   let rows = '';
   if (!paged.length) {
-    rows = `<tr><td colspan="${COLS}" class="fin-empty">No sessions found.</td></tr>`;
+    rows = `<tr><td colspan="${COLS}" class="fin-empty">No terms found.</td></tr>`;
   } else {
     paged.forEach(s => {
       const typeName   = _getSessTypeName(s.session_type_id);
@@ -227,7 +228,7 @@ function _renderSessTable() {
     <div class="fin-table-wrap">
       <table class="fin-table">
         <thead><tr>
-          <th>TITLE</th><th>SESSION TYPE</th><th>ACADEMIC YEAR</th>
+          <th>TITLE</th><th>TERM TYPE</th><th>ACADEMIC YEAR</th>
           <th>START DATE</th><th>END DATE</th><th>STATUS</th><th>ACTION</th>
         </tr></thead>
         <tbody>${rows}</tbody>
@@ -262,10 +263,10 @@ async function renderSessAddPage(container) {
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
-        <h2 class="fin-title">Add Session</h2>
+        <h2 class="fin-title">Add Term</h2>
         <div class="fin-breadcrumb">
           Dashboard &rsaquo; Student Academics &rsaquo;
-          <a href="#" class="fin-bc-link" onclick="loadView('sa-sessions');return false;">Sessions</a>
+          <a href="#" class="fin-bc-link" onclick="loadView('sa-sessions');return false;">Terms</a>
           &rsaquo; Add
         </div>
       </div>
@@ -277,7 +278,7 @@ async function renderSessAddPage(container) {
             <span class="stu-field-error" id="sess-add-title-err"></span>
           </div>
           <div class="stu-form-group">
-            <label>Session Type <span style="color:#e74c3c">*</span></label>
+            <label>Term Type <span style="color:#e74c3c">*</span></label>
             <select id="sess-add-type" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
               <option value="">— Select Type —</option>
               ${(typeof sessionTypesData !== 'undefined' ? sessionTypesData : [])
@@ -346,7 +347,7 @@ async function submitSessAdd() {
     is_inactive: !!document.getElementById('sess-add-inactive')?.checked
   };
 
-  const res = await apiFetch(`${API_BASE}/sessions/`, {
+  const res = await apiFetch(`${API_BASE}/terms/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -354,7 +355,7 @@ async function submitSessAdd() {
   if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
   if (!res) return;
   if (res.ok) {
-    showToast('Session saved successfully!', 'success');
+    showToast('Term saved successfully!', 'success');
     loadView('sa-sessions');
   } else {
     const msg = await parseApiError(res);
@@ -376,11 +377,11 @@ async function openSessEdit(id) {
   // Prefer loading from API for freshest data; fall back to local cache
   let sess = sessionsData.find(s => String(s.id) === String(id));
   try {
-    const res = await fetch(`${API_BASE}/sessions/${id}`, { headers: { Authorization: `Bearer ${token}` } });
+    const res = await fetch(`${API_BASE}/terms/${id}`, { headers: { Authorization: `Bearer ${token}` } });
     if (res.ok) sess = await res.json();
   } catch (_) {}
 
-  if (!sess) { showToast('Session not found.', 'error'); loadView('sa-sessions'); return; }
+  if (!sess) { showToast('Term not found.', 'error'); loadView('sa-sessions'); return; }
   _renderSessEditPage(container, sess);
 }
 
@@ -396,10 +397,10 @@ function _renderSessEditPage(container, sess) {
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
-        <h2 class="fin-title">Edit Session</h2>
+        <h2 class="fin-title">Edit Term</h2>
         <div class="fin-breadcrumb">
           Dashboard &rsaquo; Student Academics &rsaquo;
-          <a href="#" class="fin-bc-link" onclick="loadView('sa-sessions');return false;">Sessions</a>
+          <a href="#" class="fin-bc-link" onclick="loadView('sa-sessions');return false;">Terms</a>
           &rsaquo; Edit
         </div>
       </div>
@@ -412,7 +413,7 @@ function _renderSessEditPage(container, sess) {
             <span class="stu-field-error" id="sess-edit-title-err"></span>
           </div>
           <div class="stu-form-group">
-            <label>Session Type <span style="color:#e74c3c">*</span></label>
+            <label>Term Type <span style="color:#e74c3c">*</span></label>
             <select id="sess-edit-type" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
               <option value="">— Select Type —</option>${typeOptions}
             </select>
@@ -477,7 +478,7 @@ async function submitSessEdit(id) {
     is_inactive: !!document.getElementById('sess-edit-inactive')?.checked
   };
 
-  const res = await apiFetch(`${API_BASE}/sessions/${id}`, {
+  const res = await apiFetch(`${API_BASE}/terms/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -485,7 +486,7 @@ async function submitSessEdit(id) {
   if (btn) { btn.disabled = false; btn.textContent = 'Update'; }
   if (!res) return;
   if (res.ok) {
-    showToast('Session updated successfully!', 'success');
+    showToast('Term updated successfully!', 'success');
     loadView('sa-sessions');
   } else {
     const msg = await parseApiError(res);

@@ -191,7 +191,7 @@ function _renderStuTable() {
         <td>${_esc(s.student_id || '')}</td>
         <td>${_esc(`${s.first_name || ''} ${s.last_name || ''}`.trim())}</td>
         <td>${_esc(s.gender || '-')}</td>
-        <td>${_esc(s.cohort || s.session || '-')}</td>
+        <td>${_esc(s.cohort || s.term || s.session || '-')}</td>
         <td>${_esc(s.class_name || s.level_of_academics || '-')}</td>
         <td>${_esc(s.stream || '-')}</td>
         <td><span style="color:${statusColor};font-weight:600;">${statusText}</span></td>
@@ -213,7 +213,7 @@ function _renderStuTable() {
     <div class="fin-table-wrap">
       <table class="fin-table">
         <thead><tr>
-          <th>STUDENT ID</th><th>STUDENT NAME</th><th>GENDER</th><th>SESSION</th>
+          <th>STUDENT ID</th><th>STUDENT NAME</th><th>GENDER</th><th>TERM</th>
           <th>LEVEL OF ACADEMICS</th><th>STREAM</th><th>STATUS</th><th>ACTION</th>
         </tr></thead>
         <tbody>${rows}</tbody>
@@ -268,12 +268,12 @@ function clearStuFilters() {
 }
 
 function exportStudentsCSV() {
-  const cols = ['Student ID','Full Name','Gender','Session','Level of Academics','Stream','Status'];
+  const cols = ['Student ID','Full Name','Gender','Term','Level of Academics','Stream','Status'];
   const rows = _stuFiltered().map(s => [
     s.student_id || '',
     `${s.first_name || ''} ${s.last_name || ''}`.trim(),
     s.gender || '',
-    s.cohort || s.session || '',
+    s.cohort || s.term || s.session || '',
     s.class_name || s.level_of_academics || '',
     s.stream || '',
     s.is_active ? 'Active' : 'Inactive'
@@ -365,7 +365,11 @@ function _renderStuEditTabContent(tabId) {
     case 'personal':
       c.innerHTML = _stuTabPersonal(d);
       _wireStuPersonalTab();
-      populateAcademicLevelsDropdown('se-class', d.class_id);
+      populateAcademicLevelsDropdown('se-level', d.level_id).then(() => {
+        const levelSel = document.getElementById('se-level');
+        if (levelSel && levelSel.value) onStuLevelChange(levelSel.value, false);
+      });
+      if (d.joining_date) _populateTermDropdown(d.joining_date);
       break;
     case 'prev-edu':  c.innerHTML = _stuTabPrevEdu(d);     break;
     case 'guardian':  c.innerHTML = _stuTabGuardian(d);    _wireStuGuardianTab(); break;
@@ -396,7 +400,7 @@ function _stuTabPersonal(d) {
     `<option${d.religion===r?' selected':''}>${r}</option>`).join('');
   const statusOpts  = ['Active','Inactive','Graduated','Transferred'].map(s =>
     `<option value="${s}"${(d.status||'Active')===s?' selected':''}>${s}</option>`).join('');
-  const genderOpts  = ['Male','Female','Other'].map(g =>
+  const genderOpts  = ['Male','Female'].map(g =>
     `<option${d.gender===g?' selected':''}>${g}</option>`).join('');
 
   const ecIds = d.extra_curriculum_ids || (d.extra_curriculum_id ? [d.extra_curriculum_id] : []);
@@ -409,15 +413,21 @@ function _stuTabPersonal(d) {
   const sibDisplay    = hasSibling ? 'block' : 'none';
 
   const isEdit = !!_currentEditStudentId;
-  const admVal  = isEdit ? _esc(d.student_id || '') : '';
+  const admVal  = isEdit ? _esc(d.student_id || '') : 'Loading…';
   const admAttr = 'readonly';
+
+  // Pre-populate term dropdown if editing and term data is available
+  const existingTermOpt = (d.term_id)
+    ? `<option value="${_esc(String(d.term_id))}" selected>${_esc(d.term_name||d.cohort||d.term||d.session||'')}</option>`
+    : '';
 
   return `
     <div class="stu-form-grid">
+      <!-- Row 1: Student ID | Surname -->
       <div class="stu-form-group">
         <label>Student ID</label>
         <input id="se-student-id" class="fin-search-input" style="width:100%!important"
-               value="${admVal}" placeholder="Auto-generated" ${admAttr}>
+               value="${admVal}" ${admAttr}>
       </div>
       <div class="stu-form-group">
         <label>Surname <span style="color:#e74c3c">*</span></label>
@@ -425,6 +435,7 @@ function _stuTabPersonal(d) {
         <span class="stu-field-error" id="err-se-surname"></span>
       </div>
 
+      <!-- Row 2: Other Name | Joining Date -->
       <div class="stu-form-group">
         <label>Other Name <span style="color:#e74c3c">*</span></label>
         <input id="se-other-name" class="fin-search-input" style="width:100%!important" value="${_esc(d.first_name||'')}">
@@ -435,6 +446,7 @@ function _stuTabPersonal(d) {
         <input id="se-joining-date" type="date" class="fin-search-input" style="width:100%!important" value="${_esc(d.joining_date||'')}">
       </div>
 
+      <!-- Row 3: Gender | Birth Date -->
       <div class="stu-form-group">
         <label>Gender <span style="color:#e74c3c">*</span></label>
         <select id="se-gender" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
@@ -449,6 +461,7 @@ function _stuTabPersonal(d) {
         <span class="stu-field-error" id="err-se-dob"></span>
       </div>
 
+      <!-- Row 4: Nationality | Religion -->
       <div class="stu-form-group">
         <label>Nationality <span style="color:#e74c3c">*</span></label>
         <select id="se-nationality" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
@@ -463,21 +476,19 @@ function _stuTabPersonal(d) {
         </select>
       </div>
 
-      <div class="stu-form-group">
-        <label>Email Address</label>
-        <input id="se-email" type="email" class="fin-search-input" style="width:100%!important" value="${_esc(d.email||'')}">
-      </div>
+      <!-- Row 5: Physical Address | Funding Source -->
       <div class="stu-form-group">
         <label>Physical Address</label>
         <input id="se-physical-address" class="fin-search-input" style="width:100%!important" value="${_esc(d.physical_address||'')}">
       </div>
-
       <div class="stu-form-group">
         <label>Funding Source</label>
         <select id="se-funding-source" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
           ${fsOpts}
         </select>
       </div>
+
+      <!-- Row 6: Student Status | Term -->
       <div class="stu-form-group">
         <label>Student Status <span style="color:#e74c3c">*</span></label>
         <select id="se-status" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
@@ -485,14 +496,22 @@ function _stuTabPersonal(d) {
         </select>
         <span class="stu-field-error" id="err-se-status"></span>
       </div>
+      <div class="stu-form-group">
+        <label>Term</label>
+        <select id="se-term" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
+          <option value="">— Select Term —</option>
+          ${existingTermOpt}
+        </select>
+      </div>
 
+      <!-- Row 7: Level of Academics | Stream -->
       <div class="stu-form-group">
         <label>Level of Academics <span style="color:#e74c3c">*</span></label>
-        <select id="se-class" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;"
-                onchange="onStuClassChange(this.value)">
-          ${classOpts}
+        <select id="se-level" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;"
+                onchange="onStuLevelChange(this.value)">
+          <option value="">Please Select</option>
         </select>
-        <span class="stu-field-error" id="err-se-class"></span>
+        <span class="stu-field-error" id="err-se-level"></span>
       </div>
       <div class="stu-form-group">
         <label>Stream</label>
@@ -501,10 +520,13 @@ function _stuTabPersonal(d) {
         </select>
       </div>
 
+      <!-- Row 8: Class | Sports House -->
       <div class="stu-form-group">
-        <label>Session</label>
-        <input id="se-session" class="fin-search-input" style="width:100%!important"
-               value="${_esc(d.cohort||d.session||'')}" readonly placeholder="Auto-filled">
+        <label>Class <span style="color:#e74c3c">*</span></label>
+        <select id="se-class" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
+          ${classOpts}
+        </select>
+        <span class="stu-field-error" id="err-se-class"></span>
       </div>
       <div class="stu-form-group">
         <label>Sports House</label>
@@ -514,6 +536,7 @@ function _stuTabPersonal(d) {
         </select>
       </div>
 
+      <!-- Row 9: Extra Curriculum | Transportation -->
       <div class="stu-form-group">
         <label>Extra Curriculum</label>
         <select id="se-extra-curriculum" class="stu-multiselect" multiple>${ecOpts}</select>
@@ -525,6 +548,7 @@ function _stuTabPersonal(d) {
         </select>
       </div>
 
+      <!-- Row 10: Photo & Flags -->
       <div class="stu-form-group" style="grid-column:span 2;">
         <label>Photo</label>
         <div style="display:flex;align-items:center;gap:16px;">
@@ -550,6 +574,7 @@ function _stuTabPersonal(d) {
         <label><input type="checkbox" id="se-photo-consent"${d.photo_consent?' checked':''}> Parent Consents to Use of Student Photo?</label>
       </div>
 
+      <!-- Row 11: Sibling Enrolment -->
       <div class="stu-form-group" style="grid-column:span 2;">
         <label><input type="checkbox" id="se-has-sibling"${hasSibling?' checked':''} onchange="toggleSiblingSection()"> Has Sibling Enrolled?</label>
         <div id="se-sibling-section" style="display:${sibDisplay};margin-top:10px;padding:14px;background:#f9fafb;border-radius:6px;border:1px solid #e0e0e0;">
@@ -560,13 +585,17 @@ function _stuTabPersonal(d) {
             </div>
             <div class="stu-form-group" style="flex:1;min-width:140px;">
               <label>Sibling Student ID</label>
-              <input id="se-sibling-id" class="fin-search-input" style="width:100%!important" value="${siblingId}">
+              <input id="se-sibling-id" class="fin-search-input" style="width:100%!important" value="${siblingId}"
+                     placeholder="SOIS-0000001" oninput="validateSiblingId(this)">
+              <small style="color:#888;font-size:0.78rem;">Format: SOIS-0000001</small>
+              <span class="stu-field-error" id="err-se-sibling-id"></span>
             </div>
           </div>
           <p class="stu-sibling-note">Sibling discount will be applied automatically based on age order.</p>
         </div>
       </div>
 
+      <!-- Row 12: Notes -->
       <div class="stu-form-group" style="grid-column:span 2;">
         <label>Notes</label>
         <textarea id="se-notes" style="width:100%;min-height:80px;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:0.9rem;">${_esc(d.notes||'')}</textarea>
@@ -583,30 +612,78 @@ function _wireStuPersonalTab() {
       if (ageEl) ageEl.textContent = calculateAge(dob.value);
     });
   }
-  // If editing and class already selected, load sports houses
-  const cls = document.getElementById('se-class');
-  if (cls && cls.value) onStuClassChange(cls.value, false);
+  const joiningDate = document.getElementById('se-joining-date');
+  if (joiningDate) {
+    joiningDate.addEventListener('change', async () => {
+      if (joiningDate.value) await _populateTermDropdown(joiningDate.value);
+    });
+  }
+  const levelSel = document.getElementById('se-level');
+  if (levelSel && levelSel.value) onStuLevelChange(levelSel.value, false);
+
+  const isAdd = !_currentEditStudentId;
+  if (isAdd) fetchNextStudentId();
 }
 
-async function onStuClassChange(classId, clearHouse = true) {
+async function fetchNextStudentId() {
+  const idInput = document.getElementById('se-student-id');
+  if (!idInput) return;
+  try {
+    const res = await apiFetch(`${API_BASE}/students/next-id`);
+    if (res && res.ok) {
+      const data = await res.json();
+      idInput.value = data.next_id || data.id || '';
+    } else {
+      idInput.value = '';
+      idInput.placeholder = 'Auto-generated';
+    }
+  } catch (_) {
+    idInput.value = '';
+    idInput.placeholder = 'Auto-generated';
+  }
+}
+
+async function fetchTermsForJoiningDate(joiningDateStr) {
+  if (!joiningDateStr) return [];
+  try {
+    const yearRes = await apiFetch(`${API_BASE}/academic-years?date=${encodeURIComponent(joiningDateStr)}`);
+    if (!yearRes || !yearRes.ok) return [];
+    const years = await yearRes.json();
+    const year = Array.isArray(years) ? years[0] : years;
+    if (!year || !year.id) return [];
+    const termRes = await apiFetch(`${API_BASE}/terms?academic_year_id=${year.id}`);
+    if (!termRes || !termRes.ok) return [];
+    const terms = await termRes.json();
+    return Array.isArray(terms) ? terms.map(t => ({ id: t.id, name: t.name || t.title || '' })) : [];
+  } catch (_) { return []; }
+}
+
+async function _populateTermDropdown(joiningDateStr) {
+  const termSel = document.getElementById('se-term');
+  if (!termSel) return;
+  const currentVal = termSel.value;
+  termSel.innerHTML = '<option value="">Loading&#8230;</option>';
+  const terms = await fetchTermsForJoiningDate(joiningDateStr);
+  if (!terms.length) {
+    termSel.innerHTML = '<option value="">— No terms found —</option>';
+    return;
+  }
+  termSel.innerHTML = `<option value="">— Select Term —</option>` +
+    terms.map(t => `<option value="${_esc(String(t.id))}"${String(t.id)===currentVal?' selected':''}>${_esc(t.name)}</option>`).join('');
+}
+
+async function onStuLevelChange(levelId, clearHouse = true) {
   const houseSelect = document.getElementById('se-sports-house');
-  const sessionInput = document.getElementById('se-session');
   if (!houseSelect) return;
 
-  // Auto-fill session from the selected class data
-  if (sessionInput) {
-    const cls = _stuFormClasses.find(c => String(c.id) === String(classId));
-    if (cls) sessionInput.value = cls.cohort || cls.session || cls.name || '';
-  }
-
   houseSelect.innerHTML = '<option value="">Loading&#8230;</option>';
-  if (!classId) { houseSelect.innerHTML = '<option value="">Please Select</option>'; return; }
+  if (!levelId) { houseSelect.innerHTML = '<option value="">Please Select</option>'; return; }
 
   const d = window._stuFormData || {};
   const currentHouse = clearHouse ? '' : (d.sports_house || '');
 
   try {
-    const res = await apiFetch(`${API_BASE}/academics/classes/${classId}/sports-houses`);
+    const res = await apiFetch(`${API_BASE}/academics/levels/${levelId}/sports-houses`);
     if (res && res.ok) {
       const houses = await res.json();
       houseSelect.innerHTML = `<option value="">Please Select</option>` +
@@ -617,6 +694,17 @@ async function onStuClassChange(classId, clearHouse = true) {
       houseSelect.innerHTML = '<option value="">No houses found</option>';
     }
   } catch (_) { houseSelect.innerHTML = '<option value="">Error loading</option>'; }
+}
+
+function validateSiblingId(input) {
+  const errEl = document.getElementById('err-se-sibling-id');
+  if (!input.value || /^SOIS-\d{7}$/.test(input.value)) {
+    if (errEl) errEl.textContent = '';
+    input.classList.remove('error');
+  } else {
+    if (errEl) errEl.textContent = 'Format must be SOIS-0000001 (7 digits).';
+    input.classList.add('error');
+  }
 }
 
 function toggleSiblingSection() {
@@ -795,7 +883,8 @@ function _stuValidatePersonal() {
     { id: 'se-dob',         err: 'err-se-dob',         msg: 'Birth Date is required.' },
     { id: 'se-nationality', err: 'err-se-nationality',  msg: 'Nationality is required.' },
     { id: 'se-status',      err: 'err-se-status',      msg: 'Status is required.' },
-    { id: 'se-class',       err: 'err-se-class',       msg: 'Level of Academics is required.' },
+    { id: 'se-level',       err: 'err-se-level',       msg: 'Level of Academics is required.' },
+    { id: 'se-class',       err: 'err-se-class',       msg: 'Class is required.' },
   ];
   let valid = true;
   required.forEach(({ id, err, msg }) => {
@@ -834,10 +923,11 @@ async function submitStudentForm() {
     joining_date:      _fv('se-joining-date'),
     nationality:       _fv('se-nationality'),
     religion:          _fv('se-religion'),
-    email:             _fv('se-email'),
     physical_address:  _fv('se-physical-address'),
     funding_source_id: _fv('se-funding-source') || null,
     status:            _fv('se-status'),
+    term_id:           _fv('se-term') || null,
+    level_id:          _fv('se-level') || null,
     class_id:          _fv('se-class') || null,
     stream_id:         _fv('se-stream') || null,
     sports_house:      _fv('se-sports-house'),
@@ -956,12 +1046,10 @@ function _renderStudentViewBody(d, activeTab) {
         <div class="stu-view-name">${_esc(`${d.first_name||''} ${d.last_name||''}`.trim())}</div>
         <div class="stu-view-id">${_esc(d.student_id||'')}</div>
         <div class="stu-view-card-rows">
-          ${_svRow('Department',     d.department)}
           ${_svRow('Gender',         d.gender)}
           ${_svRow('Level',          d.class_name||d.level_of_academics)}
           ${_svRow('Email',          d.email)}
-          ${_svRow('Programme',      d.programme)}
-          ${_svRow('Session',        d.cohort||d.session)}
+          ${_svRow('Term',           d.cohort||d.term||d.session)}
           ${_svRow('Phone',          d.phone)}
           ${_svRow('Meal Program',   d.meal_program ? 'Yes' : 'No')}
           ${_svRow('Photo Consent',  d.photo_consent ? 'Yes' : 'No')}
@@ -1023,7 +1111,7 @@ function _renderStuViewTab(tabName, d) {
     <div class="stu-detail-grid">
       ${_dRow('Level of Academics', d.class_name||d.level_of_academics)}
       ${_dRow('Stream',             d.stream)}
-      ${_dRow('Session',            d.cohort||d.session)}
+      ${_dRow('Term',               d.cohort||d.term||d.session)}
       ${_dRow('Sports House',       d.sports_house)}
       ${_dRow('Status',             d.status||(d.is_active?'Active':'Inactive'))}
       ${_dRow('Transport',          d.uses_transport ? 'Yes' : 'No')}
@@ -1136,7 +1224,7 @@ function _renderSsGrid() {
         <div class="stu-card-name">${_esc(`${s.first_name||''} ${s.last_name||''}`.trim())}</div>
         <div class="stu-card-sub">(${_esc(s.gender||'')})</div>
         <div class="stu-card-info">&#127963; ${_esc(s.student_id||'')}</div>
-        <div class="stu-card-info">&#127979; ${_esc(s.class_name||'-')} (${_esc(s.cohort||s.session||'-')})</div>
+        <div class="stu-card-info">&#127979; ${_esc(s.class_name||'-')} (${_esc(s.cohort||s.term||s.session||'-')})</div>
         ${s.phone ? `<div class="stu-card-info">&#128222; ${_esc(s.phone)}</div>` : ''}
         ${s.email ? `<div class="stu-card-info">&#9993; ${_esc(s.email)}</div>` : ''}
       </div>`).join('')
@@ -1229,7 +1317,7 @@ function _renderSrTable() {
     ? paged.map(r => `<tr>
         <td>${_esc(r.admission_no||r.student_id||'')}</td>
         <td>${_esc(r.name||r.full_name||'')}</td>
-        <td>${_esc(r.session||'')}</td>
+        <td>${_esc(r.term||r.session||'')}</td>
         <td>${_esc(r.class_name||'')}</td>
         <td>${_esc(r.reported_at||'')}</td>
         <td>${_esc(r.reported_by||'')}</td>
@@ -1240,7 +1328,7 @@ function _renderSrTable() {
   if (tbl) tbl.innerHTML = `
     <div class="fin-table-wrap"><table class="fin-table">
       <thead><tr>
-        <th>ADMISSION NO.</th><th>NAME</th><th>SESSION</th>
+        <th>ADMISSION NO.</th><th>NAME</th><th>TERM</th>
         <th>CLASS</th><th>REPORTED AT</th><th>REPORTED BY</th>
       </tr></thead>
       <tbody>${rows}</tbody>
@@ -1352,10 +1440,10 @@ async function loadBulkReportingView(container) {
           <table class="fin-table">
             <thead><tr>
               <th><input type="checkbox" id="br-select-all" onchange="toggleBrSelectAll(this)"></th>
-              <th>ADMISSION NO.</th><th>NAME</th><th>STUDENT TYPE</th>
+              <th>ADMISSION NO.</th><th>NAME</th>
             </tr></thead>
             <tbody id="br-tbody">
-              <tr><td colspan="4" class="fin-empty">Select a class to load students.</td></tr>
+              <tr><td colspan="3" class="fin-empty">Select a class to load students.</td></tr>
             </tbody>
           </table>
         </div>
@@ -1371,18 +1459,17 @@ async function loadBulkReportingView(container) {
 async function loadBulkClassStudents(classId) {
   const tbody = document.getElementById('br-tbody');
   if (!tbody || !classId) return;
-  tbody.innerHTML = '<tr><td colspan="4" class="fin-loading">Loading&#8230;</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="3" class="fin-loading">Loading&#8230;</td></tr>';
   const res = await apiFetch(`${API_BASE}/students/?class_id=${classId}`);
-  if (!res || !res.ok) { tbody.innerHTML = '<tr><td colspan="4" class="fin-error">Error loading students.</td></tr>'; return; }
+  if (!res || !res.ok) { tbody.innerHTML = '<tr><td colspan="3" class="fin-error">Error loading students.</td></tr>'; return; }
   const students = await res.json();
-  if (!students.length) { tbody.innerHTML = '<tr><td colspan="4" class="fin-empty">No students in this class.</td></tr>'; return; }
+  if (!students.length) { tbody.innerHTML = '<tr><td colspan="3" class="fin-empty">No students in this class.</td></tr>'; return; }
   tbody.innerHTML = students.map(s => `
     <tr>
       <td><input type="checkbox" class="br-check" value="${s.id}"
           data-admno="${_esc(s.student_id||'')}" data-name="${_esc(`${s.first_name||''} ${s.last_name||''}`.trim())}" checked></td>
       <td>${_esc(s.student_id||'')}</td>
       <td>${_esc(`${s.first_name||''} ${s.last_name||''}`.trim())}</td>
-      <td>${_esc(s.student_type||'Regular')}</td>
     </tr>`).join('');
 }
 
@@ -2174,9 +2261,9 @@ let _cspPerPage      = 10;
 let _cspTotalRecords = 0;
 let _cspTotalPages   = 1;
 let _cspFilterOpen   = false;
-let _cspFilters      = { session_name: '', period_from: '', period_to: '' };
+let _cspFilters      = { term_name: '', period_from: '', period_to: '' };
 let _currentCspId    = null;
-let _cspSessions     = [];
+let _cspTerms        = [];
 let _cspDirty        = false;
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
@@ -2220,10 +2307,10 @@ async function loadCohortSessionPlannerView(container) {
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
-        <h2 class="fin-title">Cohort Session Planner</h2>
+        <h2 class="fin-title">Cohort Term Planner</h2>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
-          <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Cohort Session Planner &rsaquo; Listing</div>
-          <button class="fin-btn-teal" onclick="cspOpenAdd()">+ Add Cohort Session Planner</button>
+          <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Cohort Term Planner &rsaquo; Listing</div>
+          <button class="fin-btn-teal" onclick="cspOpenAdd()">+ Add Cohort Term Planner</button>
         </div>
       </div>
       <div class="fin-controls-row">
@@ -2242,9 +2329,9 @@ async function loadCohortSessionPlannerView(container) {
       <div id="csp-filter-panel" style="display:none;background:white;border:1px solid #e0e0e0;border-radius:6px;padding:16px 20px;margin-bottom:12px;">
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px 16px;align-items:end;">
           <div class="stu-form-group">
-            <label>Session Name</label>
-            <input id="csp-f-session" class="fin-search-input" style="width:100%!important;"
-                   placeholder="Filter by session" value="${_esc(_cspFilters.session_name)}">
+            <label>Term Name</label>
+            <input id="csp-f-term" class="fin-search-input" style="width:100%!important;"
+                   placeholder="Filter by term" value="${_esc(_cspFilters.term_name)}">
           </div>
           <div class="stu-form-group">
             <label>Period From</label>
@@ -2277,13 +2364,13 @@ async function _fetchCspListing() {
     page:     _cspPage,
     per_page: _cspPerPage,
   });
-  if (_cspFilters.session_name) params.set('session_name', _cspFilters.session_name);
-  if (_cspFilters.period_from)  params.set('period_from',  _cspFilters.period_from);
-  if (_cspFilters.period_to)    params.set('period_to',    _cspFilters.period_to);
+  if (_cspFilters.term_name)   params.set('term_name',   _cspFilters.term_name);
+  if (_cspFilters.period_from) params.set('period_from', _cspFilters.period_from);
+  if (_cspFilters.period_to)   params.set('period_to',   _cspFilters.period_to);
 
-  const res = await apiFetch(`${API_BASE}/cohort-session-planner?${params}`);
+  const res = await apiFetch(`${API_BASE}/cohort-term-planner?${params}`);
   if (!res || !res.ok) {
-    showToast('Failed to load Cohort Session Planner records.', 'error');
+    showToast('Failed to load Cohort Term Planner records.', 'error');
     const c = document.getElementById('csp-table-container');
     if (c) c.innerHTML = '<p class="fin-error">Error loading records.</p>';
     return;
@@ -2316,7 +2403,7 @@ function _renderCspTable() {
   } else {
     _cspData.forEach(r => {
       rows += `<tr>
-        <td>${_esc(r.session_name || '-')}</td>
+        <td>${_esc(r.term_name || '-')}</td>
         <td>${_cspFmtPeriod(r.period_start, r.period_end)}</td>
         <td>${_esc(String(r.total_cohorts ?? '-'))}</td>
         <td>${_esc(r.personnel || '-')}</td>
@@ -2338,7 +2425,7 @@ function _renderCspTable() {
     <div class="fin-table-wrap">
       <table class="fin-table">
         <thead><tr>
-          <th>SESSION NAME</th><th>PERIOD</th>
+          <th>TERM NAME</th><th>PERIOD</th>
           <th>TOTAL COHORTS</th><th>PERSONNEL</th><th>CREATED AT</th><th>ACTION</th>
         </tr></thead>
         <tbody>${rows}</tbody>
@@ -2367,17 +2454,17 @@ function toggleCspFilterPanel() {
 }
 
 function applyCspFilters() {
-  _cspFilters.session_name = document.getElementById('csp-f-session')?.value.trim() || '';
-  _cspFilters.period_from  = document.getElementById('csp-f-from')?.value || '';
-  _cspFilters.period_to    = document.getElementById('csp-f-to')?.value   || '';
+  _cspFilters.term_name   = document.getElementById('csp-f-term')?.value.trim() || '';
+  _cspFilters.period_from = document.getElementById('csp-f-from')?.value || '';
+  _cspFilters.period_to   = document.getElementById('csp-f-to')?.value   || '';
   _cspPage = 1;
   renderSkeletonRows('csp-table-container', 7);
   _fetchCspListing();
 }
 
 function clearCspFilters() {
-  _cspFilters = { session_name: '', period_from: '', period_to: '' };
-  ['csp-f-session','csp-f-from','csp-f-to'].forEach(id => {
+  _cspFilters = { term_name: '', period_from: '', period_to: '' };
+  ['csp-f-term','csp-f-from','csp-f-to'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
@@ -2388,19 +2475,19 @@ function clearCspFilters() {
 function cspOpenAdd() {
   _currentCspId = null;
   _cspDirty     = false;
-  loadView('cohort-session-planner-add');
+  loadView('cohort-term-planner-add');
 }
 
 function cspOpenEdit(id) {
   _currentCspId = id;
   _cspDirty     = false;
-  loadView('cohort-session-planner-edit');
+  loadView('cohort-term-planner-edit');
 }
 
 // ── Add / Edit Form ───────────────────────────────────────────────────────────
 async function loadCohortSessionPlannerFormView(container) {
   const isEdit = !!_currentCspId;
-  const title  = isEdit ? 'Edit Cohort Session Planner' : 'Add Cohort Session Planner';
+  const title  = isEdit ? 'Edit Cohort Term Planner' : 'Add Cohort Term Planner';
 
   container.innerHTML = `
     <div class="fin-page">
@@ -2408,7 +2495,7 @@ async function loadCohortSessionPlannerFormView(container) {
         <h2 class="fin-title">${title}</h2>
         <div class="fin-breadcrumb">
           Dashboard &rsaquo; Student Management &rsaquo;
-          <a href="#" class="fin-bc-link" onclick="loadView('cohort-session-planner');return false;">Cohort Session Planner</a>
+          <a href="#" class="fin-bc-link" onclick="loadView('cohort-term-planner');return false;">Cohort Term Planner</a>
           &rsaquo; ${isEdit ? 'Edit' : 'Add'}
         </div>
       </div>
@@ -2418,17 +2505,17 @@ async function loadCohortSessionPlannerFormView(container) {
     </div>
   `;
 
-  // Load sessions (and existing record if editing) in parallel
-  const fetches = [apiFetch(`${API_BASE}/sessions`)];
-  if (isEdit) fetches.push(apiFetch(`${API_BASE}/cohort-session-planner/${_currentCspId}`));
+  // Load terms (and existing record if editing) in parallel
+  const fetches = [apiFetch(`${API_BASE}/terms`)];
+  if (isEdit) fetches.push(apiFetch(`${API_BASE}/cohort-term-planner/${_currentCspId}`));
 
-  const [sessRes, recordRes] = await Promise.all(fetches);
-  _cspSessions = (sessRes && sessRes.ok) ? await sessRes.json() : [];
+  const [termRes, recordRes] = await Promise.all(fetches);
+  _cspTerms = (termRes && termRes.ok) ? await termRes.json() : [];
   const record = (isEdit && recordRes && recordRes.ok) ? await recordRes.json() : null;
 
   if (isEdit && !record) {
     showToast('Could not load record.', 'error');
-    loadView('cohort-session-planner');
+    loadView('cohort-term-planner');
     return;
   }
 
@@ -2436,16 +2523,16 @@ async function loadCohortSessionPlannerFormView(container) {
 }
 
 function _renderCspForm(container, isEdit, record) {
-  const sessOpts = _cspSessions.map(s =>
-    `<option value="${_esc(String(s.id))}"${String(record?.session_id) === String(s.id) ? ' selected' : ''}>${_esc(s.name || s.title || '')}</option>`
+  const termOpts = _cspTerms.map(s =>
+    `<option value="${_esc(String(s.id))}"${String(record?.term_id) === String(s.id) ? ' selected' : ''}>${_esc(s.name || s.title || '')}</option>`
   ).join('');
 
   // Pre-fill auto-populated fields from loaded record
-  const selSession  = record ? _cspSessions.find(s => String(s.id) === String(record.session_id)) : null;
-  const acYear      = record?.academic_year  || selSession?.academic_year  || '';
-  const sessType    = record?.session_type   || selSession?.session_type   || '';
-  const periodStart = record?.period_start   || selSession?.period_start   || '';
-  const periodEnd   = record?.period_end     || selSession?.period_end     || '';
+  const selTerm     = record ? _cspTerms.find(s => String(s.id) === String(record.term_id)) : null;
+  const acYear      = record?.academic_year  || selTerm?.academic_year  || '';
+  const termType    = record?.term_type      || selTerm?.term_type      || selTerm?.type || '';
+  const periodStart = record?.period_start   || selTerm?.period_start   || '';
+  const periodEnd   = record?.period_end     || selTerm?.period_end     || '';
   const period      = (periodStart || periodEnd) ? _cspFmtPeriod(periodStart, periodEnd) : '';
   const personnel   = record?.personnel || _cspGetCurrentUserName();
   const notes       = record?.notes || '';
@@ -2456,14 +2543,14 @@ function _renderCspForm(container, isEdit, record) {
   wrapper.innerHTML = `
     <div class="stu-form-grid" id="csp-form-grid">
 
-      <!-- Row 1: Session Name + Academic Year -->
+      <!-- Row 1: Term Name + Academic Year -->
       <div class="stu-form-group">
-        <label>Session Name <span style="color:#e74c3c">*</span></label>
-        <select id="csp-session-id" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;"
-                onchange="onCspSessionChange(this.value)">
-          <option value="">— Select Session —</option>${sessOpts}
+        <label>Term Name <span style="color:#e74c3c">*</span></label>
+        <select id="csp-term-id" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;"
+                onchange="onCspTermChange(this.value)">
+          <option value="">— Select Term —</option>${termOpts}
         </select>
-        <span class="stu-field-error" id="csp-session-err"></span>
+        <span class="stu-field-error" id="csp-term-err"></span>
       </div>
       <div class="stu-form-group">
         <label>Academic Year</label>
@@ -2471,16 +2558,16 @@ function _renderCspForm(container, isEdit, record) {
                value="${_esc(acYear)}" readonly placeholder="Auto-populated">
       </div>
 
-      <!-- Row 2: Period + Session Type -->
+      <!-- Row 2: Period + Term Type -->
       <div class="stu-form-group">
         <label>Period</label>
         <input id="csp-period" class="fin-search-input" style="width:100%!important;"
                value="${_esc(period)}" readonly placeholder="Auto-populated">
       </div>
       <div class="stu-form-group">
-        <label>Session Type</label>
-        <input id="csp-session-type" class="fin-search-input" style="width:100%!important;"
-               value="${_esc(sessType)}" readonly placeholder="Auto-populated">
+        <label>Term Type</label>
+        <input id="csp-term-type" class="fin-search-input" style="width:100%!important;"
+               value="${_esc(termType)}" readonly placeholder="Auto-populated">
       </div>
 
       <!-- Row 3: Class table (full width) -->
@@ -2535,11 +2622,11 @@ function _cspGetCurrentUserName() {
          currentUser.email || '';
 }
 
-function onCspSessionChange(sessionId) {
+function onCspTermChange(termId) {
   _cspDirty = true;
-  const sess = _cspSessions.find(s => String(s.id) === String(sessionId));
-  if (!sess) {
-    ['csp-academic-year','csp-period','csp-session-type'].forEach(id => {
+  const term = _cspTerms.find(s => String(s.id) === String(termId));
+  if (!term) {
+    ['csp-academic-year','csp-period','csp-term-type'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.value = '';
     });
@@ -2547,14 +2634,13 @@ function onCspSessionChange(sessionId) {
   }
   const ayEl   = document.getElementById('csp-academic-year');
   const perEl  = document.getElementById('csp-period');
-  const typeEl = document.getElementById('csp-session-type');
-  if (ayEl)   ayEl.value   = sess.academic_year  || sess.academic_year_name || '';
-  if (perEl)  perEl.value  = (sess.period_start || sess.period_end)
-    ? _cspFmtPeriod(sess.period_start || sess.start_date, sess.period_end || sess.end_date)
+  const typeEl = document.getElementById('csp-term-type');
+  if (ayEl)   ayEl.value   = term.academic_year  || term.academic_year_name || '';
+  if (perEl)  perEl.value  = (term.period_start || term.period_end)
+    ? _cspFmtPeriod(term.period_start || term.start_date, term.period_end || term.end_date)
     : '';
-  if (typeEl) typeEl.value = sess.session_type || sess.type || '';
-  // Clear session name error on selection
-  const errEl = document.getElementById('csp-session-err');
+  if (typeEl) typeEl.value = term.term_type || term.type || '';
+  const errEl = document.getElementById('csp-term-err');
   if (errEl) errEl.textContent = '';
 }
 
@@ -2599,7 +2685,7 @@ async function _loadCspClasses(preCheckedIds = []) {
                    title="Select all">
           </th>
           <th>CLASS CODE</th><th>PROGRAMME</th><th>STAGE</th>
-          <th>SESSION NO</th><th>MILESTONE</th>
+          <th>TERM NO</th><th>MILESTONE</th>
         </tr></thead>
         <tbody id="csp-class-tbody">${rows}</tbody>
       </table>
@@ -2641,28 +2727,28 @@ function _updateCspTotalCohorts() {
 }
 
 async function submitCspForm() {
-  const sessionId = document.getElementById('csp-session-id')?.value || '';
-  const sessionErr = document.getElementById('csp-session-err');
-  if (!sessionId) {
-    if (sessionErr) sessionErr.textContent = 'Session Name is required.';
-    showToast('Please select a session.', 'error');
+  const termId  = document.getElementById('csp-term-id')?.value || '';
+  const termErr = document.getElementById('csp-term-err');
+  if (!termId) {
+    if (termErr) termErr.textContent = 'Term Name is required.';
+    showToast('Please select a term.', 'error');
     return;
   }
-  if (sessionErr) sessionErr.textContent = '';
+  if (termErr) termErr.textContent = '';
 
   const classIds = Array.from(document.querySelectorAll('.csp-cls-cb:checked')).map(cb => cb.value);
   const payload  = {
-    session_id: parseInt(sessionId),
-    class_ids:  classIds.map(Number),
-    notes:      document.getElementById('csp-notes')?.value || '',
+    term_id:   parseInt(termId),
+    class_ids: classIds.map(Number),
+    notes:     document.getElementById('csp-notes')?.value || '',
   };
 
   const btn = document.querySelector('[onclick="submitCspForm()"]');
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
 
   const url    = _currentCspId
-    ? `${API_BASE}/cohort-session-planner/${_currentCspId}`
-    : `${API_BASE}/cohort-session-planner`;
+    ? `${API_BASE}/cohort-term-planner/${_currentCspId}`
+    : `${API_BASE}/cohort-term-planner`;
   const method = _currentCspId ? 'PUT' : 'POST';
 
   const res = await apiFetch(url, {
@@ -2676,11 +2762,11 @@ async function submitCspForm() {
   if (res && res.ok) {
     _cspDirty = false;
     const msg = _currentCspId
-      ? 'Cohort Session Planner updated successfully.'
-      : 'Cohort Session Planner created successfully.';
+      ? 'Cohort Term Planner updated successfully.'
+      : 'Cohort Term Planner created successfully.';
     showToast(msg, 'success');
     _currentCspId = null;
-    loadView('cohort-session-planner');
+    loadView('cohort-term-planner');
   } else {
     const msg = res ? await parseApiError(res) : 'Could not save. Please try again.';
     showToast(msg, 'error');
@@ -2693,5 +2779,202 @@ function cancelCspForm() {
   if (_cspDirty && !confirm('You have unsaved changes. Are you sure you want to leave?')) return;
   _cspDirty     = false;
   _currentCspId = null;
-  loadView('cohort-session-planner');
+  loadView('cohort-term-planner');
+}
+
+// ==================== 13. CLOSE RECORDS PER CLASS ====================
+
+let _closeRecordsStudents = [];
+
+async function loadCloseRecordsView(container) {
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Close Records per Class</h2>
+        <div class="fin-breadcrumb">
+          Dashboard &rsaquo; Student Management &rsaquo; Close records per class &rsaquo; Add
+        </div>
+      </div>
+      <div style="background:white;border-radius:6px;padding:28px;box-shadow:0 1px 4px rgba(0,0,0,0.06);">
+        <div class="stu-form-grid" style="margin-bottom:20px;">
+          <div class="stu-form-group">
+            <label>Class <span style="color:#e74c3c">*</span></label>
+            <select id="cr-class" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;"
+                    onchange="loadCloseRecordClassStudents(this.value, document.getElementById('cr-stream')?.value)">
+              <option value="">— Select Class —</option>
+            </select>
+            <span class="stu-field-error" id="err-cr-class"></span>
+          </div>
+          <div class="stu-form-group">
+            <label>Stream <small style="font-weight:400;color:#888;">(optional)</small></label>
+            <select id="cr-stream" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;"
+                    onchange="loadCloseRecordClassStudents(document.getElementById('cr-class')?.value, this.value)">
+              <option value="">— All Streams —</option>
+            </select>
+          </div>
+          <div class="stu-form-group">
+            <label>Reason <span style="color:#e74c3c">*</span></label>
+            <select id="cr-reason" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;"
+                    onchange="onCloseRecordReasonChange(this.value)">
+              <option value="">— Select Reason —</option>
+              <option value="Transfer">Transfer</option>
+              <option value="Complete">Complete</option>
+            </select>
+            <span class="stu-field-error" id="err-cr-reason"></span>
+          </div>
+        </div>
+
+        <div id="cr-banner" style="display:none;margin-bottom:16px;"></div>
+
+        <div id="cr-student-wrap">
+          <p style="color:#888;padding:12px 0;">Select a class to load students.</p>
+        </div>
+
+        <div style="display:flex;gap:12px;margin-top:20px;">
+          <button class="fin-btn-teal" onclick="submitCloseRecords()">Close Records</button>
+          <button class="fin-btn-cancel" onclick="loadView('students-list')">Cancel</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const [clsRes, strRes] = await Promise.all([
+    apiFetch(`${API_BASE}/academics/classes`),
+    apiFetch(`${API_BASE}/student-management/streams`),
+  ]);
+  const classes = (clsRes && clsRes.ok) ? await clsRes.json() : [];
+  const streams = (strRes && strRes.ok) ? await strRes.json() : [];
+
+  const clsSel = document.getElementById('cr-class');
+  const strSel = document.getElementById('cr-stream');
+  if (clsSel) clsSel.innerHTML = `<option value="">— Select Class —</option>` +
+    classes.map(c => `<option value="${c.id}">${_esc(c.name || c.code || String(c.id))}</option>`).join('');
+  if (strSel) strSel.innerHTML = `<option value="">— All Streams —</option>` +
+    streams.filter(s => !s.is_inactive).map(s => `<option value="${s.id}">${_esc(s.title || s.name || String(s.id))}</option>`).join('');
+}
+
+async function loadCloseRecordClassStudents(classId, streamId) {
+  const wrap = document.getElementById('cr-student-wrap');
+  if (!wrap || !classId) return;
+
+  wrap.innerHTML = `<div class="fin-table-wrap"><table class="fin-table"><tbody id="cr-tbody">
+    <tr><td colspan="5" class="fin-loading">Loading&#8230;</td></tr>
+  </tbody></table></div>`;
+  renderSkeletonRows('cr-tbody', 5);
+
+  const params = new URLSearchParams({ status: 'Active' });
+  params.set('class_id', classId);
+  if (streamId) params.set('stream_id', streamId);
+
+  const res = await apiFetch(`${API_BASE}/students?${params}`);
+  _closeRecordsStudents = (res && res.ok) ? await res.json() : [];
+
+  if (!_closeRecordsStudents.length) {
+    wrap.innerHTML = '<p style="color:#888;padding:12px 0;">No active students found for this class.</p>';
+    return;
+  }
+
+  const rows = _closeRecordsStudents.map(s => `
+    <tr>
+      <td><input type="checkbox" class="cr-stu-cb" value="${s.id}" checked></td>
+      <td>${_esc(s.student_id || s.admission_no || '')}</td>
+      <td>${_esc(`${s.first_name||''} ${s.last_name||''}`.trim())}</td>
+      <td>${_esc(s.status || 'Active')}</td>
+      <td>${_esc(s.stream || '')}</td>
+    </tr>`).join('');
+
+  wrap.innerHTML = `
+    <div class="fin-table-wrap">
+      <table class="fin-table">
+        <thead><tr>
+          <th style="width:40px;">
+            <input type="checkbox" id="cr-select-all" checked onchange="toggleCloseRecordSelectAll(this)">
+          </th>
+          <th>ADMISSION NO.</th><th>NAME</th><th>STAY STATUS</th><th>STREAM</th>
+        </tr></thead>
+        <tbody id="cr-tbody">${rows}</tbody>
+      </table>
+    </div>`;
+
+  _syncCrSelectAll();
+  document.querySelectorAll('.cr-stu-cb').forEach(cb => {
+    cb.addEventListener('change', _syncCrSelectAll);
+  });
+}
+
+function _syncCrSelectAll() {
+  const all     = document.querySelectorAll('.cr-stu-cb');
+  const master  = document.getElementById('cr-select-all');
+  if (!master || !all.length) return;
+  const count   = document.querySelectorAll('.cr-stu-cb:checked').length;
+  master.checked       = count === all.length;
+  master.indeterminate = count > 0 && count < all.length;
+}
+
+function toggleCloseRecordSelectAll(masterCb) {
+  document.querySelectorAll('.cr-stu-cb').forEach(cb => { cb.checked = masterCb.checked; });
+  _syncCrSelectAll();
+}
+
+function onCloseRecordReasonChange(reason) {
+  const banner = document.getElementById('cr-banner');
+  if (!banner) return;
+  if (reason === 'Transfer') {
+    banner.style.display = 'block';
+    banner.style.cssText = 'display:block;background:#e0f7fa;border:1px solid #00b5b8;border-radius:6px;padding:12px 16px;color:#006064;font-size:0.9rem;margin-bottom:16px;';
+    banner.textContent = 'Students will be marked as transferred. Their records will be closed and they will no longer appear in active class lists.';
+  } else if (reason === 'Complete') {
+    banner.style.cssText = 'display:block;background:#fff8e1;border:1px solid #f59e0b;border-radius:6px;padding:12px 16px;color:#78350f;font-size:0.9rem;margin-bottom:16px;';
+    banner.textContent = 'Students will be marked as having completed their programme. Records will be closed upon confirmation.';
+  } else {
+    banner.style.display = 'none';
+    banner.textContent = '';
+  }
+}
+
+async function submitCloseRecords() {
+  const classId  = document.getElementById('cr-class')?.value  || '';
+  const streamId = document.getElementById('cr-stream')?.value || '';
+  const reason   = document.getElementById('cr-reason')?.value || '';
+
+  let valid = true;
+  const classErr  = document.getElementById('err-cr-class');
+  const reasonErr = document.getElementById('err-cr-reason');
+  if (!classId)  { if (classErr)  classErr.textContent  = 'Class is required.';  valid = false; }
+  else           { if (classErr)  classErr.textContent  = ''; }
+  if (!reason)   { if (reasonErr) reasonErr.textContent = 'Reason is required.'; valid = false; }
+  else           { if (reasonErr) reasonErr.textContent = ''; }
+  if (!valid) { showToast('Please fill in all required fields.', 'error'); return; }
+
+  const studentIds = Array.from(document.querySelectorAll('.cr-stu-cb:checked')).map(cb => cb.value);
+  if (!studentIds.length) { showToast('No students selected.', 'error'); return; }
+
+  const payload = {
+    class_id:    parseInt(classId),
+    stream_id:   streamId ? parseInt(streamId) : null,
+    reason,
+    student_ids: studentIds.map(Number),
+  };
+
+  const btn = document.querySelector('[onclick="submitCloseRecords()"]');
+  if (btn) { btn.disabled = true; btn.textContent = 'Processing…'; }
+
+  const res = await apiFetch(`${API_BASE}/students/close-records`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (btn) { btn.disabled = false; btn.textContent = 'Close Records'; }
+
+  if (res && res.ok) {
+    const msg = reason === 'Transfer'
+      ? `${studentIds.length} student(s) successfully marked as transferred.`
+      : `${studentIds.length} student(s) successfully marked as completed.`;
+    showToast(msg, 'success');
+    loadView('students-list');
+  } else {
+    const msg = res ? await parseApiError(res) : 'Could not close records. Please try again.';
+    showToast(msg, 'error');
+  }
 }

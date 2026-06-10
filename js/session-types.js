@@ -10,6 +10,7 @@ document.addEventListener('click', () => {
   document.querySelectorAll('[id^="st-dd-"]').forEach(d => d.style.display = 'none');
 });
 
+async function loadTermTypesView(container) { return loadSessionTypesView(container); }
 async function loadSessionTypesView(container) {
   _renderStListPage(container);
   await _fetchSessionTypes();
@@ -29,8 +30,8 @@ function _renderStListPage(container) {
   container.innerHTML = `
     <div class="sa-page">
       <div class="sa-header-row">
-        <h2 class="sa-title">Session Type</h2>
-        <div class="sa-breadcrumb">Dashboard &rsaquo; Administration &rsaquo; Session Type &rsaquo; Listing</div>
+        <h2 class="sa-title">Term Type</h2>
+        <div class="sa-breadcrumb">Dashboard &rsaquo; Student Academics &rsaquo; Term Types &rsaquo; Listing</div>
       </div>
       <div class="sa-controls-row">
         <div class="sa-controls-left">
@@ -134,10 +135,10 @@ function renderStAddPage(container) {
   container.innerHTML = `
     <div class="sa-page">
       <div class="sa-header-row">
-        <h2 class="sa-title">Add Session Type</h2>
+        <h2 class="sa-title">Add Term Type</h2>
         <div class="sa-breadcrumb">
-          Dashboard &rsaquo; Administration &rsaquo;
-          <a href="#" class="sa-bc-link" onclick="loadView('sa-session-types');return false;">Session Type</a>
+          Dashboard &rsaquo; Student Academics &rsaquo;
+          <a href="#" class="sa-bc-link" onclick="loadView('sa-session-types');return false;">Term Types</a>
           &rsaquo; Add
         </div>
       </div>
@@ -184,7 +185,7 @@ async function submitStAdd() {
   });
   if (!res) return;
   if (res.ok) {
-    showToast('Session type saved!', 'success');
+    showToast('Term type saved!', 'success');
     loadView('sa-session-types');
   } else {
     showToast(await parseApiError(res), 'error');
@@ -204,10 +205,10 @@ function _renderStEditPage(container, type) {
   container.innerHTML = `
     <div class="sa-page">
       <div class="sa-header-row">
-        <h2 class="sa-title">Edit Session Type</h2>
+        <h2 class="sa-title">Edit Term Type</h2>
         <div class="sa-breadcrumb">
-          Dashboard &rsaquo; Administration &rsaquo;
-          <a href="#" class="sa-bc-link" onclick="loadView('sa-session-types');return false;">Session Type</a>
+          Dashboard &rsaquo; Student Academics &rsaquo;
+          <a href="#" class="sa-bc-link" onclick="loadView('sa-session-types');return false;">Term Types</a>
           &rsaquo; Edit
         </div>
       </div>
@@ -254,7 +255,7 @@ async function submitStEdit(id) {
   });
   if (!res) return;
   if (res.ok) {
-    showToast('Session type updated!', 'success');
+    showToast('Term type updated!', 'success');
     loadView('sa-session-types');
   } else {
     showToast(await parseApiError(res), 'error');

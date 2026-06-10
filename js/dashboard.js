@@ -15,9 +15,9 @@ function showDashboard() {
               <li id="sidebar-stu-list"          onclick="loadView('students-list')">Students</li>
               <li id="sidebar-stu-applicants"    onclick="loadView('student-applicants')">Applicants</li>
               <li id="sidebar-stu-reporting"     onclick="loadView('student-reporting')">Student Reporting</li>
-              <li id="sidebar-stu-cohort"        onclick="loadView('student-cohort-planner')">Cohort Session Planner</li>
+              <li id="sidebar-stu-cohort"        onclick="loadView('cohort-term-planner')">Cohort Term Planner</li>
               <li id="sidebar-stu-classes"       onclick="loadView('student-classes')">Classes</li>
-              <li id="sidebar-stu-close-records" onclick="loadView('student-close-records')">Close Records Per Class</li>
+              <li id="sidebar-stu-close-records" onclick="loadView('close-records-per-class')">Close Records Per Class</li>
               <li class="dropdown">
                 <span onclick="toggleDropdown('stu-utilities-dropdown')">Utilities ▾</span>
                 <ul id="stu-utilities-dropdown" class="dropdown-menu" style="display:none;">
@@ -55,8 +55,8 @@ function showDashboard() {
                 <span onclick="toggleDropdown('sa-setup-dropdown')">Set-up ▾</span>
                 <ul id="sa-setup-dropdown" class="dropdown-menu" style="display:none;"></ul>
               </li>
-              <li id="sidebar-sa-sessions"     onclick="loadView('sa-sessions')">Sessions</li>
-              <li id="sidebar-sa-session-types" onclick="loadView('sa-session-types')">Session Types</li>
+              <li id="sidebar-sa-sessions"     onclick="loadView('sa-sessions')">Terms</li>
+              <li id="sidebar-sa-session-types" onclick="loadView('sa-session-types')">Term Types</li>
               <li id="sidebar-sa-academic-years" onclick="loadView('sa-academic-years')">Academic Years</li>
             </ul>
           </li>
@@ -163,7 +163,8 @@ function showDashboard() {
 const FORM_VIEWS = new Set([
   // Student Management
   'students-add', 'students-edit', 'students-view',
-  'cohort-session-planner-add', 'cohort-session-planner-edit',
+  'cohort-term-planner-add', 'cohort-term-planner-edit',
+  'close-records-per-class',
   'student-reporting-add', 'student-reporting-bulk',
   // Finance
   'fin-student-invoices', 'fin-student-bulk-invoicing',
@@ -223,21 +224,25 @@ async function loadView(view) {
     case 'student-applicants':
       setActiveSidebarItem('sidebar-stu-applicants'); openStuMgmtDropdowns();
       showPlaceholder(main, 'Applicants'); break;
+    case 'cohort-term-planner':
     case 'cohort-session-planner':
     case 'student-cohort-planner':
       setActiveSidebarItem('sidebar-stu-cohort'); openStuMgmtDropdowns();
       await loadCohortSessionPlannerView(main); break;
+    case 'cohort-term-planner-add':
     case 'cohort-session-planner-add':
       openStuMgmtDropdowns();
       await loadCohortSessionPlannerFormView(main); break;
+    case 'cohort-term-planner-edit':
     case 'cohort-session-planner-edit':
       openStuMgmtDropdowns();
       await loadCohortSessionPlannerFormView(main); break;
     case 'student-classes':
       await loadStudentClassesView(main); break;
+    case 'close-records-per-class':
     case 'student-close-records':
       setActiveSidebarItem('sidebar-stu-close-records'); openStuMgmtDropdowns();
-      showPlaceholder(main, 'Close Records Per Class'); break;
+      await loadCloseRecordsView(main); break;
     // Student Management – Utilities
     case 'utilities-student-sources':
       setActiveSidebarItem('sidebar-stu-sources'); openStuUtilitiesDropdown();
@@ -275,9 +280,9 @@ async function loadView(view) {
     case 'sa-setup':
       loadSaPlaceholderView(main, 'Set-up'); break;
     case 'sa-sessions':
-      setActiveSidebarItem('sidebar-sa-sessions'); await loadSessionsView(main); break;
+      setActiveSidebarItem('sidebar-sa-sessions'); await loadTermsView(main); break;
     case 'sa-session-types':
-      setActiveSidebarItem('sidebar-sa-session-types'); loadSessionTypesView(main); break;
+      setActiveSidebarItem('sidebar-sa-session-types'); loadTermTypesView(main); break;
     case 'sa-academic-years':
       setActiveSidebarItem('sidebar-sa-academic-years'); await loadAcademicYearsView(main); break;
     // Transport

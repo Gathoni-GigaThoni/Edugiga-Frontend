@@ -291,11 +291,11 @@ function _renderAyEditPage(container, year) {
           </label>
         </div>
 
-        <!-- Sessions -->
+        <!-- Terms -->
         <div class="sa-terms-section">
-          <div class="sa-terms-title">Sessions</div>
+          <div class="sa-terms-title">Terms</div>
           <div id="ay-sessions-container">
-            <p class="sa-loading">Loading sessions&#8230;</p>
+            <p class="sa-loading">Loading terms&#8230;</p>
           </div>
         </div>
 
@@ -325,13 +325,13 @@ async function _loadAySessions(yearId) {
   if (!container) return;
 
   try {
-    const res = await apiFetch(`${API_BASE}/sessions/`);
+    const res = await apiFetch(`${API_BASE}/terms/`);
     const all = (res && res.ok) ? await res.json() : [];
     const sessions = (Array.isArray(all) ? all : (all.data || all.results || []))
       .filter(s => String(s.academic_year_id) === String(yearId));
 
     if (!sessions.length) {
-      container.innerHTML = '<p style="color:#888;font-size:0.88rem;padding:8px 0;">No sessions configured for this academic year.</p>';
+      container.innerHTML = '<p style="color:#888;font-size:0.88rem;padding:8px 0;">No terms configured for this academic year.</p>';
       return;
     }
 
@@ -357,7 +357,7 @@ async function _loadAySessions(yearId) {
         </table>
       </div>`;
   } catch (_) {
-    container.innerHTML = '<p style="color:#c0392b;font-size:0.88rem;">Failed to load sessions.</p>';
+    container.innerHTML = '<p style="color:#c0392b;font-size:0.88rem;">Failed to load terms.</p>';
   }
 }
 
