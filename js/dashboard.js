@@ -58,6 +58,7 @@ function showDashboard() {
               <li id="sidebar-sa-sessions"     onclick="loadView('sa-sessions')">Terms</li>
               <li id="sidebar-sa-session-types" onclick="loadView('sa-session-types')">Term Types</li>
               <li id="sidebar-sa-academic-years" onclick="loadView('sa-academic-years')">Academic Years</li>
+              <li id="sidebar-sa-academic-levels" onclick="loadView('sa-academic-levels')">Academic Levels</li>
             </ul>
           </li>
           <li onclick="loadView('transport-management')">Transport Management</li>
@@ -285,6 +286,8 @@ async function loadView(view) {
       setActiveSidebarItem('sidebar-sa-session-types'); loadTermTypesView(main); break;
     case 'sa-academic-years':
       setActiveSidebarItem('sidebar-sa-academic-years'); await loadAcademicYearsView(main); break;
+    case 'sa-academic-levels':
+      setActiveSidebarItem('sidebar-sa-academic-levels'); await loadAcademicLevelsView(main); break;
     // Transport
     case 'transport-management': await loadTransportView(main); break;
     // Finance (NEW sub-modules)

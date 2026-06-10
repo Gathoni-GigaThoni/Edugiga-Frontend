@@ -392,7 +392,7 @@ function _opts(items, valueKey, labelKey, selectedVal) {
 
 function _stuTabPersonal(d) {
   const classOpts   = `<option value="">Please Select</option>${_opts(_stuFormClasses, 'id', 'name', d.class_id)}`;
-  const streamOpts  = `<option value="">Please Select</option>${_opts(_stuFormStreams.filter(s=>!s.is_inactive), 'id', 'title', d.stream_id)}`;
+  const streamOpts  = `<option value="">Please Select</option>${_opts(_stuFormStreams.filter(s => s.status !== 'inactive' && s.status !== 'Inactive'), 'id', 'title', d.stream_id)}`;
   const fsOpts      = `<option value="">Please Select</option>${_opts(_stuFormFundingSources.filter(f=>!f.is_inactive), 'id', 'title', d.funding_source_id)}`;
   const transOpts   = `<option value="">Please Select</option>${_opts(_stuFormTransportRoutes, 'id', 'name', d.transport_route_id)}`;
   const natOpts     = ['Kenya','Uganda','Tanzania','Rwanda','Ethiopia','Other'].map(n =>
@@ -1654,9 +1654,11 @@ function _renderStreamsTable() {
   const pages = Math.max(1, Math.ceil(streamsData.length / _strPerPage));
 
   let rows = paged.length
-    ? paged.map(s => `<tr>
+    ? paged.map(s => {
+        const inactive = s.status === 'inactive' || s.status === 'Inactive';
+        return `<tr>
         <td>${_esc(s.title||'')}</td>
-        <td><span style="color:${s.is_inactive?'#e74c3c':'#27ae60'};font-weight:600;">${s.is_inactive?'Inactive':'Active'}</span></td>
+        <td><span style="color:${inactive?'#e74c3c':'#27ae60'};font-weight:600;">${inactive?'Inactive':'Active'}</span></td>
         <td class="fin-action-cell">
           <div class="fin-action-wrap">
             <button class="fin-action-btn" onclick="toggleStuDd(event,'str-${s.id}')">&#8230;</button>
@@ -1665,7 +1667,8 @@ function _renderStreamsTable() {
             </div>
           </div>
         </td>
-      </tr>`).join('')
+      </tr>`;
+      }).join('')
     : '<tr><td colspan="3" class="fin-empty">No streams found.</td></tr>';
 
   const t = document.getElementById('str-table');
@@ -1698,7 +1701,7 @@ function showStreamForm(id) {
           <textarea id="stream-notes" style="width:100%;min-height:80px;padding:8px;border:1px solid #ccc;border-radius:4px;">${_esc(stream?.notes||'')}</textarea>
         </div>
         <div class="stu-form-group" style="margin-bottom:20px;">
-          <label><input type="checkbox" id="stream-deactivate"${stream?.is_inactive?' checked':''}> Deactivate/Activate</label>
+          <label><input type="checkbox" id="stream-deactivate"${(stream?.status==='inactive'||stream?.status==='Inactive')?' checked':''}> Deactivate/Activate</label>
         </div>
         <div style="display:flex;gap:12px;">
           <button class="fin-btn-teal" onclick="saveStream('${id||''}')">${isEdit?'Update':'Save'}</button>
@@ -1712,19 +1715,16 @@ function showStreamForm(id) {
 async function saveStream(id) {
   const title = document.getElementById('stream-title')?.value.trim();
   if (!title) { showToast('Title is required.', 'error'); return; }
-  const payload = { title, notes: _fv('stream-notes'), is_inactive: _fc('stream-deactivate') };
-  const url     = id ? `${API_BASE}/student-management/streams/${id}` : `${API_BASE}/student-management/streams`;
-  const method  = id ? 'PUT' : 'POST';
+  const status  = _fc('stream-deactivate') ? 'inactive' : 'active';
+  const payload = { title, notes: _fv('stream-notes'), status };
+  const url     = id ? `${API_BASE}/student-management/streams/${id}` : `${API_BASE}/student-management/streams/`;
+  const method  = id ? 'PATCH' : 'POST';
   const res     = await apiFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   if (res && res.ok) {
     showToast(id ? 'Stream updated!' : 'Stream added!', 'success');
     loadView('utilities-streams');
   } else {
-    const item = { id: id || ('str_' + Date.now()), ...payload };
-    if (id) { const idx = streamsData.findIndex(s => String(s.id) === String(id)); if (idx !== -1) streamsData[idx] = item; }
-    else    { streamsData.push(item); }
-    showToast(id ? 'Stream updated!' : 'Stream added!', 'success');
-    loadView('utilities-streams');
+    showToast(res ? await parseApiError(res) : 'Could not save stream.', 'error');
   }
 }
 
@@ -2856,7 +2856,7 @@ async function loadCloseRecordsView(container) {
   if (clsSel) clsSel.innerHTML = `<option value="">— Select Class —</option>` +
     classes.map(c => `<option value="${c.id}">${_esc(c.name || c.code || String(c.id))}</option>`).join('');
   if (strSel) strSel.innerHTML = `<option value="">— All Streams —</option>` +
-    streams.filter(s => !s.is_inactive).map(s => `<option value="${s.id}">${_esc(s.title || s.name || String(s.id))}</option>`).join('');
+    streams.filter(s => s.status !== 'inactive' && s.status !== 'Inactive').map(s => `<option value="${s.id}">${_esc(s.title || s.name || String(s.id))}</option>`).join('');
 }
 
 async function loadCloseRecordClassStudents(classId, streamId) {

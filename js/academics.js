@@ -458,6 +458,165 @@ async function saveAyTermDates(yearId, termId) {
   }
 }
 
+// ==================== ACADEMIC LEVELS ====================
+
+let _alvlData    = [];
+let _alvlPage    = 1;
+let _alvlPerPage = 10;
+
+async function loadAcademicLevelsView(container) {
+  container.innerHTML = `
+    <div class="sa-page">
+      <div class="sa-header-row">
+        <h2 class="sa-title">Academic Levels</h2>
+        <div class="sa-breadcrumb">Dashboard &rsaquo; Administration &rsaquo; Academic Levels &rsaquo; Listing</div>
+      </div>
+      <div class="sa-controls-row">
+        <div class="sa-controls-left">
+          Show <select id="alvl-per-page" onchange="changeAlvlPerPage(this.value)">
+            ${[10,25,50].map(n => `<option value="${n}"${n===_alvlPerPage?' selected':''}>${n}</option>`).join('')}
+          </select> entries
+          &nbsp;|&nbsp; Total <span id="alvl-total">0</span> entries
+        </div>
+        <div class="sa-controls-right">
+          <button class="sa-btn-add" onclick="renderAlvlAddPage(document.getElementById('main-content'))">+ Add</button>
+        </div>
+      </div>
+      <div id="alvl-table-container"><p class="sa-loading">Loading&#8230;</p></div>
+    </div>
+  `;
+
+  const res = await apiFetch(`${API_BASE}/academic-levels/`);
+  if (res && res.ok) {
+    const raw = await res.json();
+    _alvlData = Array.isArray(raw) ? raw : (raw.data || raw.items || raw.results || []);
+  } else {
+    _alvlData = [];
+  }
+  _alvlPage = 1;
+  _renderAlvlTable();
+}
+
+function _renderAlvlTable() {
+  const totalEl = document.getElementById('alvl-total');
+  if (totalEl) totalEl.textContent = _alvlData.length;
+
+  const start = (_alvlPage - 1) * _alvlPerPage;
+  const paged = _alvlData.slice(start, start + _alvlPerPage);
+  const pages = Math.max(1, Math.ceil(_alvlData.length / _alvlPerPage));
+
+  const rows = paged.length
+    ? paged.map(l => `<tr>
+        <td>${_ayEsc(l.name)}</td>
+        <td>${_ayEsc(l.code)}</td>
+        <td>${_ayEsc(l.description || '-')}</td>
+        <td>${_ayEsc(String(l.sort_order ?? 0))}</td>
+        <td><span style="color:${l.status==='Active'?'#27ae60':'#e74c3c'};font-weight:600;">${_ayEsc(l.status || 'Active')}</span></td>
+      </tr>`).join('')
+    : '<tr><td colspan="5" class="sa-empty">No academic levels found. Add one to get started.</td></tr>';
+
+  const c = document.getElementById('alvl-table-container');
+  if (c) c.innerHTML = `
+    <div class="sa-table-wrap">
+      <table class="sa-table">
+        <thead><tr>
+          <th>NAME</th><th>CODE</th><th>DESCRIPTION</th><th>SORT ORDER</th><th>STATUS</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+
+  // simple pagination reuse
+  const pg = document.createElement('div');
+  pg.id = 'alvl-pagination';
+  const existing = document.getElementById('alvl-pagination');
+  if (existing) existing.remove();
+  c?.after(pg);
+  let btns = '';
+  for (let i = 1; i <= pages; i++) btns += `<button class="${i===_alvlPage?'fin-pg-active':''}" onclick="alvlGoPage(${i})">${i}</button>`;
+  pg.innerHTML = `<div class="fin-pagination">${btns}</div>`;
+}
+
+function changeAlvlPerPage(v) { _alvlPerPage = parseInt(v); _alvlPage = 1; _renderAlvlTable(); }
+function alvlGoPage(p)        { _alvlPage = p; _renderAlvlTable(); }
+
+function renderAlvlAddPage(container) {
+  container.innerHTML = `
+    <div class="sa-page">
+      <div class="sa-header-row">
+        <h2 class="sa-title">Add Academic Level</h2>
+        <div class="sa-breadcrumb">
+          Dashboard &rsaquo; Administration &rsaquo;
+          <a href="#" class="sa-bc-link" onclick="loadView('sa-academic-levels');return false;">Academic Levels</a>
+          &rsaquo; Add
+        </div>
+      </div>
+      <div class="sa-form-wrap" style="max-width:640px;">
+        <div class="sa-form-grid-2">
+          <div class="sa-form-group">
+            <label class="sa-form-label">Name <span class="sa-required">*</span></label>
+            <input type="text" id="alvl-name" class="sa-form-input" placeholder="e.g. Grade 1">
+            <span class="sa-field-error" id="alvl-name-err"></span>
+          </div>
+          <div class="sa-form-group">
+            <label class="sa-form-label">Code <span class="sa-required">*</span> <small style="font-weight:400;color:#888;">(max 2 chars)</small></label>
+            <input type="text" id="alvl-code" class="sa-form-input" placeholder="e.g. G1" maxlength="2">
+            <span class="sa-field-error" id="alvl-code-err"></span>
+          </div>
+        </div>
+        <div class="sa-form-group">
+          <label class="sa-form-label">Description</label>
+          <textarea id="alvl-desc" class="sa-form-textarea" rows="2" placeholder="Optional"></textarea>
+        </div>
+        <div class="sa-form-group">
+          <label class="sa-form-label">Sort Order <small style="font-weight:400;color:#888;">(controls display order in dropdowns)</small></label>
+          <input type="number" id="alvl-sort" class="sa-form-input" value="0" min="0" style="max-width:120px;">
+        </div>
+        <div class="sa-form-actions">
+          <button id="alvl-save-btn" class="sa-btn-submit" onclick="saveAcademicLevel()">Save</button>
+          <button class="sa-btn-cancel" onclick="loadView('sa-academic-levels')">Cancel</button>
+        </div>
+        <div id="alvl-status"></div>
+      </div>
+    </div>
+  `;
+}
+
+async function saveAcademicLevel() {
+  const name = (document.getElementById('alvl-name')?.value || '').trim();
+  const code = (document.getElementById('alvl-code')?.value || '').trim();
+
+  document.getElementById('alvl-name-err').textContent = name ? '' : 'Name is required.';
+  document.getElementById('alvl-code-err').textContent = code ? '' : 'Code is required (max 2 characters).';
+  if (!name || !code) return;
+
+  const btn = document.getElementById('alvl-save-btn');
+  const statusEl = document.getElementById('alvl-status');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+  const res = await apiFetch(`${API_BASE}/academic-levels/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name,
+      code,
+      description: document.getElementById('alvl-desc')?.value.trim() || null,
+      sort_order:  parseInt(document.getElementById('alvl-sort')?.value || '0') || 0,
+    }),
+  });
+
+  if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+
+  if (res && res.ok) {
+    showToast('Academic level saved!', 'success');
+    loadView('sa-academic-levels');
+  } else {
+    const msg = res ? await parseApiError(res) : 'Could not save. Please try again.';
+    if (statusEl) statusEl.innerHTML = `<div class="sa-toast sa-toast-error">${_ayEsc(msg)}</div>`;
+    showToast(msg, 'error');
+  }
+}
+
 // ==================== HELPERS ====================
 
 function _fmtDDMmmYYYY(dateStr) {
