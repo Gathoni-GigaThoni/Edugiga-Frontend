@@ -366,7 +366,7 @@ async function _loadAyClasses(yearId) {
   if (!container) return;
 
   try {
-    const res = await fetch(`${API_BASE}/academics/classes?academic_year_id=${yearId}`, {
+    const res = await fetch(`${API_BASE}/classes/?academic_year_id=${yearId}`, {
       headers: { Authorization: `Bearer ${token}` }
     });
     const classes = (res && res.ok) ? await res.json() : [];

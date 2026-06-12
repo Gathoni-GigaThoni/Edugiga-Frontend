@@ -336,7 +336,7 @@ async function loadStudentFormView(container) {
 
 async function _loadStuFormDropdowns() {
   const [clsRes, strRes, fsRes, trRes, ecRes] = await Promise.all([
-    apiFetch(`${API_BASE}/academics/classes`),
+    apiFetch(`${API_BASE}/classes/`),
     apiFetch(`${API_BASE}/student-management/streams`),
     apiFetch(`${API_BASE}/student-management/funding-sources`),
     apiFetch(`${API_BASE}/transport/routes`),
@@ -2032,7 +2032,7 @@ async function loadStudentClassesView(container) {
   renderSkeletonRows('cls-table', 5);
 
   const [clsRes, ayRes] = await Promise.all([
-    apiFetch(`${API_BASE}/academics/classes`),
+    apiFetch(`${API_BASE}/classes/`),
     apiFetch(`${API_BASE}/academic-years/`)
   ]);
   _clsData          = (clsRes && clsRes.ok) ? await clsRes.json() : [];
@@ -2240,7 +2240,7 @@ async function saveClass(id) {
     is_active:        document.getElementById('cls-f-status')?.value !== 'false',
   };
 
-  const url    = id ? `${API_BASE}/academics/classes/${id}` : `${API_BASE}/academics/classes/`;
+  const url    = id ? `${API_BASE}/classes/${id}` : `${API_BASE}/classes/`;
   const method = id ? 'PUT' : 'POST';
   const res    = await apiFetch(url, {
     method,
@@ -2660,7 +2660,7 @@ async function _loadCspClasses(preCheckedIds = []) {
     </div>`;
   renderSkeletonRows('csp-class-tbody', 5, 3);
 
-  const res = await apiFetch(`${API_BASE}/academics/classes`);
+  const res = await apiFetch(`${API_BASE}/classes/`);
   const classes = (res && res.ok) ? await res.json() : [];
 
   if (!classes.length) {
@@ -2845,7 +2845,7 @@ async function loadCloseRecordsView(container) {
   `;
 
   const [clsRes, strRes] = await Promise.all([
-    apiFetch(`${API_BASE}/academics/classes`),
+    apiFetch(`${API_BASE}/classes/`),
     apiFetch(`${API_BASE}/student-management/streams`),
   ]);
   const classes = (clsRes && clsRes.ok) ? await clsRes.json() : [];
