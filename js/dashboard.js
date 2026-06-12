@@ -10,10 +10,7 @@ function showDashboard() {
           <li class="dropdown">
             <span onclick="toggleDropdown('student-management-dropdown')">Student Management ▾</span>
             <ul id="student-management-dropdown" class="dropdown-menu" style="display:none;">
-              <li id="sidebar-stu-search"        onclick="loadView('student-search')">Student Search</li>
-              <li id="sidebar-stu-id-cards"      onclick="loadView('student-id-cards')">ID Cards</li>
               <li id="sidebar-stu-list"          onclick="loadView('students-list')">Students</li>
-              <li id="sidebar-stu-applicants"    onclick="loadView('student-applicants')">Applicants</li>
               <li id="sidebar-stu-reporting"     onclick="loadView('student-reporting')">Student Reporting</li>
               <li id="sidebar-stu-cohort"        onclick="loadView('cohort-term-planner')">Cohort Term Planner</li>
               <li id="sidebar-stu-classes"       onclick="loadView('student-classes')">Classes</li>
@@ -152,9 +149,65 @@ function showDashboard() {
       <main id="main-content">
         <h2>Welcome to EduGiga - Seven Oaks International School</h2>
         <p>Select a module from the sidebar.</p>
+        <div style="margin-top:28px;background:#fff;border:1px solid #e3e8ee;border-radius:8px;padding:24px 28px;max-width:520px;box-shadow:0 1px 4px rgba(0,0,0,0.06);">
+          <div style="font-weight:600;font-size:1rem;margin-bottom:14px;color:#2c3e50;">Quick Student Search</div>
+          <div style="display:flex;gap:10px;align-items:center;">
+            <input id="dash-stu-search-input" type="text" placeholder="Search by name or admission no…"
+              style="flex:1;padding:8px 12px;border:1px solid #ccc;border-radius:5px;font-size:0.9rem;"
+              onkeydown="if(event.key==='Enter')doDashStudentSearch()">
+            <button onclick="doDashStudentSearch()"
+              style="padding:8px 18px;background:#1abc9c;color:#fff;border:none;border-radius:5px;font-size:0.9rem;cursor:pointer;white-space:nowrap;">Search</button>
+          </div>
+          <div id="dash-stu-search-results" style="margin-top:14px;"></div>
+        </div>
       </main>
     </div>
   `;
+}
+
+// ==================== DASHBOARD STUDENT SEARCH WIDGET ====================
+
+async function doDashStudentSearch() {
+  const q = (document.getElementById('dash-stu-search-input')?.value || '').trim().toLowerCase();
+  const resultsEl = document.getElementById('dash-stu-search-results');
+  if (!resultsEl) return;
+  if (!q) { resultsEl.innerHTML = '<p style="color:#888;font-size:0.88rem;">Enter a name or admission number to search.</p>'; return; }
+
+  resultsEl.innerHTML = '<p style="color:#888;font-size:0.88rem;">Searching&#8230;</p>';
+  try {
+    const res = await apiFetch(`${API_BASE}/students/`);
+    if (!res || !res.ok) { resultsEl.innerHTML = '<p style="color:#c0392b;font-size:0.88rem;">Could not load students.</p>'; return; }
+    const raw = await res.json();
+    const students = Array.isArray(raw) ? raw : (raw.data || raw.results || []);
+    const matched = students.filter(s =>
+      (`${s.first_name||''} ${s.last_name||''}`).toLowerCase().includes(q) ||
+      (s.student_id || '').toLowerCase().includes(q)
+    );
+    if (!matched.length) { resultsEl.innerHTML = '<p style="color:#888;font-size:0.88rem;">No students found.</p>'; return; }
+    resultsEl.innerHTML = `
+      <table style="width:100%;border-collapse:collapse;font-size:0.88rem;">
+        <thead><tr style="background:#f4f6f8;">
+          <th style="padding:6px 10px;text-align:left;border-bottom:1px solid #e3e8ee;">Adm. No.</th>
+          <th style="padding:6px 10px;text-align:left;border-bottom:1px solid #e3e8ee;">Name</th>
+          <th style="padding:6px 10px;text-align:left;border-bottom:1px solid #e3e8ee;">Class</th>
+          <th style="padding:6px 10px;text-align:left;border-bottom:1px solid #e3e8ee;"></th>
+        </tr></thead>
+        <tbody>
+          ${matched.slice(0, 10).map(s => `<tr>
+            <td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;">${s.student_id || '-'}</td>
+            <td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;">${(s.first_name||'')} ${(s.last_name||'')}</td>
+            <td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;">${s.class_name || '-'}</td>
+            <td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;">
+              <a href="#" style="color:#1abc9c;font-weight:500;" onclick="loadView('students-view');window._viewStudentId=${s.id};return false;">View</a>
+            </td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+      ${matched.length > 10 ? `<p style="color:#888;font-size:0.82rem;margin-top:6px;">${matched.length - 10} more result(s) — refine your search.</p>` : ''}
+    `;
+  } catch (_) {
+    resultsEl.innerHTML = '<p style="color:#c0392b;font-size:0.88rem;">Search failed. Please try again.</p>';
+  }
 }
 
 // ==================== VIEW LOADER ====================
