@@ -2240,7 +2240,7 @@ async function saveClass(id) {
     is_active:        document.getElementById('cls-f-status')?.value !== 'false',
   };
 
-  const url    = id ? `${API_BASE}/academics/classes/${id}` : `${API_BASE}/academics/classes`;
+  const url    = id ? `${API_BASE}/academics/classes/${id}` : `${API_BASE}/academics/classes/`;
   const method = id ? 'PUT' : 'POST';
   const res    = await apiFetch(url, {
     method,
