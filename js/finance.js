@@ -602,7 +602,6 @@ function _renderInvTable() {
         <td>${_finEsc(inv.session     || '-')}</td>
         <td>${_finEsc(inv.class       || '-')}</td>
         <td>${_finEsc(inv.cohort      || '-')}</td>
-        <td>${_finEsc(inv.programme   || '-')}</td>
         <td>${_finEsc(inv.department  || '-')}</td>
         <td>${inv.amount ? _finFmt(inv.amount) : '-'}</td>
         <td>${_finEsc(inv.createdDate || '-')}</td>
@@ -627,7 +626,7 @@ function _renderInvTable() {
         <thead><tr>
           <th>INVOICE NO.</th><th>COST CENTER</th><th>ADMISSION NO.</th>
           <th>STUDENT NAME</th><th>SESSION</th><th>CLASS</th><th>COHORT</th>
-          <th>PROGRAMME</th><th>DEPARTMENT</th><th>AMOUNT</th><th>CREATED</th><th>ACTION</th>
+          <th>DEPARTMENT</th><th>AMOUNT</th><th>CREATED</th><th>ACTION</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
@@ -1397,7 +1396,6 @@ function _renderSponAllocDetailPage(container, alloc) {
         <div class="fin-info-item"><span class="fin-info-label">Name</span><span class="fin-info-value">${_finEsc(alloc.studentName||'-')}</span></div>
         <div class="fin-info-item"><span class="fin-info-label">Class</span><span class="fin-info-value">${_finEsc(alloc.class||'-')}</span></div>
         <div class="fin-info-item"><span class="fin-info-label">Cohort</span><span class="fin-info-value">${_finEsc(alloc.cohort||'-')}</span></div>
-        <div class="fin-info-item"><span class="fin-info-label">Programme</span><span class="fin-info-value">${_finEsc(alloc.programme||'-')}</span></div>
         <div class="fin-info-item"><span class="fin-info-label">Balance</span><span class="fin-info-value">${_finEsc(alloc.balance||'-')}</span></div>
       </div>
       <div class="fin-form-actions" style="margin-top:20px;">
@@ -1623,7 +1621,6 @@ function _renderFeeSetupDetailPage(container, fee) {
         <div class="fin-info-item"><span class="fin-info-label">Session</span><span class="fin-info-value">${_finEsc(fee.session||'-')}</span></div>
         <div class="fin-info-item"><span class="fin-info-label">Student Type</span><span class="fin-info-value">${_finEsc(fee.studentType||'-')}</span></div>
         <div class="fin-info-item"><span class="fin-info-label">Session Type</span><span class="fin-info-value">${_finEsc(fee.sessionType||'-')}</span></div>
-        <div class="fin-info-item"><span class="fin-info-label">Programme</span><span class="fin-info-value">${_finEsc(fee.programme||'-')}</span></div>
         <div class="fin-info-item"><span class="fin-info-label">Department</span><span class="fin-info-value">${_finEsc(fee.department||'-')}</span></div>
         <div class="fin-info-item"><span class="fin-info-label">Academic Year</span><span class="fin-info-value">${_finEsc(fee.academicYear||'-')}</span></div>
         <div class="fin-info-item"><span class="fin-info-label">Study Mode</span><span class="fin-info-value">${_finEsc(fee.studyMode||'-')}</span></div>
@@ -1677,10 +1674,6 @@ async function renderFeeSetupAddPage(container) {
           <div class="fin-form-group">
             <label class="fin-form-label">Session Type</label>
             <input type="text" id="fs-session-type" class="fin-form-input">
-          </div>
-          <div class="fin-form-group">
-            <label class="fin-form-label">Programme</label>
-            <input type="text" id="fs-programme" class="fin-form-input">
           </div>
           <div class="fin-form-group">
             <label class="fin-form-label">Department</label>
@@ -1750,7 +1743,6 @@ async function submitFeeSetupAdd() {
   const payload = {
     class_code: code, session_id: sess, student_type: stype,
     session_type:  document.getElementById('fs-session-type').value||'',
-    programme:     document.getElementById('fs-programme').value||'',
     department:    document.getElementById('fs-department').value||'',
     academic_year: document.getElementById('fs-acad-year').value||'',
     study_mode:    document.getElementById('fs-study-mode').value||'',
@@ -1912,7 +1904,6 @@ function _renderRcvPayDetailPage(container, pmt) {
         <div class="fin-info-item"><span class="fin-info-label">Name</span><span class="fin-info-value">${_finEsc(pmt.name||'-')}</span></div>
         <div class="fin-info-item"><span class="fin-info-label">Class</span><span class="fin-info-value">${_finEsc(pmt.class||'-')}</span></div>
         <div class="fin-info-item"><span class="fin-info-label">Cohort</span><span class="fin-info-value">${_finEsc(pmt.cohort||'-')}</span></div>
-        <div class="fin-info-item"><span class="fin-info-label">Programme</span><span class="fin-info-value">${_finEsc(pmt.programme||'-')}</span></div>
         <div class="fin-info-item"><span class="fin-info-label">Balance</span><span class="fin-info-value">${_finEsc(pmt.balance||'-')}</span></div>
       </div>
       <div class="fin-form-actions" style="margin-top:20px;">

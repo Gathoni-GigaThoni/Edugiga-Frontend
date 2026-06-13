@@ -2268,6 +2268,7 @@ async function saveClass(id) {
 // ── State ────────────────────────────────────────────────────────────────────
 let _cspAllClasses   = [];
 let _cspLevels       = [];
+let _cspBranchId     = null;
 let _cspData         = [];
 let _cspPage         = 1;
 let _cspPerPage      = 10;
@@ -2518,13 +2519,16 @@ async function loadCohortSessionPlannerFormView(container) {
     </div>
   `;
 
-  // Load terms (and existing record if editing) in parallel
-  const fetches = [apiFetch(`${API_BASE}/terms`)];
+  // Load terms, branch, and existing record (if editing) in parallel
+  const fetches = [apiFetch(`${API_BASE}/terms`), apiFetch(`${API_BASE}/branches`)];
   if (isEdit) fetches.push(apiFetch(`${API_BASE}/cohort-term-planner/${_currentCspId}`));
 
-  const [termRes, recordRes] = await Promise.all(fetches);
+  const [termRes, branchRes, recordRes] = await Promise.all(fetches);
   const _rawTerms = (termRes && termRes.ok) ? await termRes.json() : [];
   _cspTerms = Array.isArray(_rawTerms) ? _rawTerms : (_rawTerms.data || _rawTerms.items || _rawTerms.results || []);
+  const _rawBranches = (branchRes && branchRes.ok) ? await branchRes.json() : [];
+  const _branches = Array.isArray(_rawBranches) ? _rawBranches : (_rawBranches.data || _rawBranches.items || _rawBranches.results || []);
+  _cspBranchId = _branches.length ? _branches[0].id : null;
   const record = (isEdit && recordRes && recordRes.ok) ? await recordRes.json() : null;
 
   if (isEdit && !record) {
@@ -2784,6 +2788,7 @@ async function submitCspForm() {
   }));
   const payload  = {
     term_id:   parseInt(termId),
+    branch_id: _cspBranchId,
     class_ids: classes.map(c => c.class_id),
     classes,
     notes:     document.getElementById('csp-notes')?.value || '',
@@ -2971,7 +2976,7 @@ function onCloseRecordReasonChange(reason) {
     banner.textContent = 'Students will be marked as transferred. Their records will be closed and they will no longer appear in active class lists.';
   } else if (reason === 'Complete') {
     banner.style.cssText = 'display:block;background:#fff8e1;border:1px solid #f59e0b;border-radius:6px;padding:12px 16px;color:#78350f;font-size:0.9rem;margin-bottom:16px;';
-    banner.textContent = 'Students will be marked as having completed their programme. Records will be closed upon confirmation.';
+    banner.textContent = 'Students will be marked as having completed their studies. Records will be closed upon confirmation.';
   } else {
     banner.style.display = 'none';
     banner.textContent = '';
