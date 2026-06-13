@@ -2241,7 +2241,7 @@ async function saveClass(id) {
   };
 
   const url    = id ? `${API_BASE}/classes/${id}/` : `${API_BASE}/classes/`;
-  const method = id ? 'PUT' : 'POST';
+  const method = id ? 'PATCH' : 'POST';
   const res    = await apiFetch(url, {
     method,
     headers: { 'Content-Type': 'application/json' },
