@@ -2003,6 +2003,7 @@ function stuGuaGoPage(p)        { _stuGuaPage = p; _renderStuGuaTable(); }
 
 let _clsData = [], _clsPage = 1, _clsPerPage = 10, _clsSearch = '';
 let _clsAcademicYears = [];
+let _clsLevels = [];
 
 async function loadStudentClassesView(container) {
   setActiveSidebarItem('sidebar-stu-classes');
@@ -2031,12 +2032,15 @@ async function loadStudentClassesView(container) {
   `;
   renderSkeletonRows('cls-table', 5);
 
-  const [clsRes, ayRes] = await Promise.all([
+  const [clsRes, ayRes, lvlRes] = await Promise.all([
     apiFetch(`${API_BASE}/classes/`),
-    apiFetch(`${API_BASE}/academic-years/`)
+    apiFetch(`${API_BASE}/academic-years/`),
+    apiFetch(`${API_BASE}/academic-levels/`)
   ]);
-  _clsData          = (clsRes && clsRes.ok) ? await clsRes.json() : [];
-  _clsAcademicYears = (ayRes  && ayRes.ok)  ? await ayRes.json()  : [];
+  const _toArr = raw => Array.isArray(raw) ? raw : (raw?.data || raw?.items || raw?.results || []);
+  _clsData          = clsRes && clsRes.ok ? _toArr(await clsRes.json()) : [];
+  _clsAcademicYears = ayRes  && ayRes.ok  ? _toArr(await ayRes.json())  : [];
+  _clsLevels        = lvlRes && lvlRes.ok ? _toArr(await lvlRes.json()) : [];
   _clsPage = 1;
   _renderClsTable();
 }
@@ -2060,14 +2064,16 @@ function _renderClsTable() {
 
   let rows = paged.length
     ? paged.map(c => {
-        const ay = _clsAcademicYears.find(y => y.id === (c.academic_year_id || c.academic_year));
-        const ayName = ay ? ay.name : (c.academic_year_name || '-');
+        const ay  = _clsAcademicYears.find(y => String(y.id) === String(c.academic_year_id || c.academic_year));
+        const lvl = _clsLevels.find(l => String(l.id) === String(c.academic_level_id || c.academic_level));
+        const ayName  = ay  ? ay.name  : (c.academic_year_name  || '-');
+        const lvlName = lvl ? lvl.name : (c.level || c.level_name || '-');
         const statusColor = c.is_active !== false ? '#27ae60' : '#e74c3c';
         const statusText  = c.is_active !== false ? 'Active'  : 'Inactive';
         return `<tr>
           <td>${_esc(c.code || c.class_code || '-')}</td>
           <td>${_esc(c.name || '-')}</td>
-          <td>${_esc(c.level || c.level_name || '-')}</td>
+          <td>${_esc(lvlName)}</td>
           <td>${_esc(ayName)}</td>
           <td>${_esc(c.stream || '-')}</td>
           <td><span style="color:${statusColor};font-weight:600;">${statusText}</span></td>
@@ -2119,9 +2125,9 @@ async function showClassForm(id) {
     `<option value="${_esc(String(y.id))}"${String(item?.academic_year_id || item?.academic_year) === String(y.id) ? ' selected' : ''}>${_esc(y.name)}</option>`
   ).join('');
 
-  const currentLevel = item?.level || item?.level_name || '';
+  const currentLevelId = String(item?.academic_level_id || item?.academic_level || '');
   const levelOpts = _levels.map(l =>
-    `<option value="${_esc(String(l.id))}"${currentLevel === l.name || currentLevel === String(l.id) ? ' selected' : ''}>${_esc(l.name)}</option>`
+    `<option value="${_esc(String(l.id))}"${String(l.id) === currentLevelId ? ' selected' : ''}>${_esc(l.name)}</option>`
   ).join('');
 
   const main = document.getElementById('main-content');
@@ -2260,6 +2266,8 @@ async function saveClass(id) {
 // ==================== 12. COHORT SESSION PLANNER ====================
 
 // ── State ────────────────────────────────────────────────────────────────────
+let _cspAllClasses   = [];
+let _cspLevels       = [];
 let _cspData         = [];
 let _cspPage         = 1;
 let _cspPerPage      = 10;
@@ -2617,8 +2625,10 @@ function _renderCspForm(container, isEdit, record) {
     el.addEventListener('input',  () => { _cspDirty = true; });
   });
 
-  // Load all classes immediately
-  _loadCspClasses(existingClassIds);
+  // Load classes, pre-filtered by the selected term's academic year if known
+  const _initTerm = record ? _cspTerms.find(s => String(s.id) === String(record.term_id)) : null;
+  const _initAyId = _initTerm ? (_initTerm.academic_year_id || _initTerm.academic_year) : null;
+  _loadCspClasses(existingClassIds, _initAyId);
 }
 
 function _cspGetCurrentUserName() {
@@ -2636,6 +2646,7 @@ function onCspTermChange(termId) {
       const el = document.getElementById(id);
       if (el) el.value = '';
     });
+    _renderCspClassTable([], null);
     return;
   }
   const ayEl   = document.getElementById('csp-academic-year');
@@ -2648,37 +2659,64 @@ function onCspTermChange(termId) {
   if (typeEl) typeEl.value = term.term_type || term.type || '';
   const errEl = document.getElementById('csp-term-err');
   if (errEl) errEl.textContent = '';
+
+  const ayId = term.academic_year_id || term.academic_year;
+  _renderCspClassTable([], ayId);
 }
 
-async function _loadCspClasses(preCheckedIds = []) {
+async function _loadCspClasses(preCheckedIds = [], academicYearId = null) {
   const wrap = document.getElementById('csp-class-table-wrap');
   if (!wrap) return;
 
-  wrap.innerHTML = `
-    <div class="fin-table-wrap">
-      <table class="fin-table"><tbody id="csp-class-tbody"></tbody></table>
-    </div>`;
+  wrap.innerHTML = `<div class="fin-table-wrap"><table class="fin-table"><tbody id="csp-class-tbody"></tbody></table></div>`;
   renderSkeletonRows('csp-class-tbody', 5, 3);
 
-  const res = await apiFetch(`${API_BASE}/classes/`);
-  const classes = (res && res.ok) ? await res.json() : [];
+  const _toArr = raw => Array.isArray(raw) ? raw : (raw?.data || raw?.items || raw?.results || []);
+  const [clsRes, lvlRes] = await Promise.all([
+    apiFetch(`${API_BASE}/classes/`),
+    apiFetch(`${API_BASE}/academic-levels/`)
+  ]);
+  _cspAllClasses = clsRes && clsRes.ok ? _toArr(await clsRes.json()) : [];
+  _cspLevels     = lvlRes && lvlRes.ok ? _toArr(await lvlRes.json()) : [];
 
-  if (!classes.length) {
-    wrap.innerHTML = '<p style="color:#888;font-size:0.88rem;padding:12px 0;">No classes available.</p>';
+  _renderCspClassTable(preCheckedIds, academicYearId);
+}
+
+const _CSP_MILESTONES = ['End of Term', 'End of Level', 'Completed'];
+
+function _renderCspClassTable(preCheckedIds = [], academicYearId = null) {
+  const wrap = document.getElementById('csp-class-table-wrap');
+  if (!wrap) return;
+
+  const filtered = academicYearId
+    ? _cspAllClasses.filter(c => String(c.academic_year_id || c.academic_year) === String(academicYearId))
+    : _cspAllClasses;
+
+  if (!filtered.length) {
+    wrap.innerHTML = `<p style="color:#888;font-size:0.88rem;padding:12px 0;">${
+      academicYearId ? 'No classes found for the selected academic year.' : 'No classes available.'
+    }</p>`;
     _updateCspTotalCohorts();
     return;
   }
 
-  const rows = classes.map(c => {
-    const checked = preCheckedIds.map(String).includes(String(c.id)) ? 'checked' : '';
+  const milestoneOpts = _CSP_MILESTONES.map(o => `<option value="${o}">${o}</option>`).join('');
+
+  const rows = filtered.map(c => {
+    const checked  = preCheckedIds.map(String).includes(String(c.id)) ? 'checked' : '';
+    const lvl      = _cspLevels.find(l => String(l.id) === String(c.academic_level_id || c.academic_level));
+    const lvlName  = lvl ? lvl.name : (c.level || c.level_name || '-');
     return `<tr class="csp-class-row${checked ? ' csp-row-checked' : ''}">
       <td style="width:40px;"><input type="checkbox" class="csp-cls-cb" value="${c.id}"
           data-id="${c.id}" onchange="cspRowCheck(this)" ${checked}></td>
-      <td>${_esc(c.code || c.class_code || '-')}</td>
-      <td>${_esc(c.programme || c.programme_name || '-')}</td>
-      <td>${_esc(c.stage || c.level || c.level_name || '-')}</td>
-      <td>${_esc(String(c.session_no || c.session_number || '-'))}</td>
-      <td>${_esc(c.milestone || '-')}</td>
+      <td>${_esc(c.name || '-')}</td>
+      <td>${_esc(lvlName)}</td>
+      <td>
+        <select id="csp-milestone-${c.id}" class="fin-search-input"
+                style="padding:5px 8px!important;width:100%!important;min-width:140px;">
+          <option value="">— Select —</option>${milestoneOpts}
+        </select>
+      </td>
     </tr>`;
   }).join('');
 
@@ -2687,11 +2725,9 @@ async function _loadCspClasses(preCheckedIds = []) {
       <table class="fin-table">
         <thead><tr>
           <th style="width:40px;">
-            <input type="checkbox" id="csp-select-all" onchange="toggleCspSelectAll(this)"
-                   title="Select all">
+            <input type="checkbox" id="csp-select-all" onchange="toggleCspSelectAll(this)" title="Select all">
           </th>
-          <th>CLASS CODE</th><th>PROGRAMME</th><th>STAGE</th>
-          <th>TERM NO</th><th>MILESTONE</th>
+          <th>CLASS NAME</th><th>LEVEL</th><th>MILESTONE</th>
         </tr></thead>
         <tbody id="csp-class-tbody">${rows}</tbody>
       </table>
@@ -2742,10 +2778,14 @@ async function submitCspForm() {
   }
   if (termErr) termErr.textContent = '';
 
-  const classIds = Array.from(document.querySelectorAll('.csp-cls-cb:checked')).map(cb => cb.value);
+  const classes = Array.from(document.querySelectorAll('.csp-cls-cb:checked')).map(cb => ({
+    class_id:  Number(cb.value),
+    milestone: document.getElementById(`csp-milestone-${cb.value}`)?.value || '',
+  }));
   const payload  = {
     term_id:   parseInt(termId),
-    class_ids: classIds.map(Number),
+    class_ids: classes.map(c => c.class_id),
+    classes,
     notes:     document.getElementById('csp-notes')?.value || '',
   };
 
