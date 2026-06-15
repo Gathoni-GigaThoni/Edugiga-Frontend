@@ -11,7 +11,8 @@ async function loadAdministrationView(container) {
 }
 
 async function loadStaffList() {
-  const res = await fetch(`${API_BASE}/team/`, { headers: { "Authorization": `Bearer ${token}` } });
+  const res = await apiFetch(`${API_BASE}/team/`);
+  if (!res || !res.ok) { showToast('Could not load staff list.', 'error'); return; }
   const staff = await res.json();
   let html = `<table><tr><th>Name</th><th>Email</th><th>Role</th><th>Clearance</th></tr>`;
   staff.forEach(m => { html += `<tr><td>${m.first_name} ${m.last_name}</td><td>${m.email}</td><td>${m.role}</td><td>${m.clearance_level}</td></tr>`; });
@@ -42,9 +43,15 @@ async function createStaff() {
     role: document.getElementById("staff_role").value, clearance_level: parseInt(document.getElementById("staff_clearance").value),
     location: document.getElementById("staff_location").value, is_active: true
   };
-  const res = await fetch(`${API_BASE}/team/`, {
-    method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` }, body: JSON.stringify(payload)
+  const res = await apiFetch(`${API_BASE}/team/`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
   });
-  if (res.ok) { alert("Staff created!"); loadAdministrationView(document.getElementById("main-content")); }
+  if (!res) return;
+  if (res.ok) {
+    showToast("Staff created successfully!", "success");
+    loadAdministrationView(document.getElementById("main-content"));
+  } else {
+    showToast(await parseApiError(res), "error");
+  }
 }
 

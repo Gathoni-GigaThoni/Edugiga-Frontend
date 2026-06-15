@@ -973,11 +973,29 @@ async function submitStudentForm() {
   const btn     = document.getElementById('stu-form-submit-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
 
-  const res = await apiFetch(url, {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+  // File inputs: se-photo (student photo), se-doc-photo / se-doc-report / se-doc-other (documents tab).
+  // When any file is selected, switch to multipart/form-data so the server receives both JSON and files.
+  // Do NOT set Content-Type manually for FormData — browser sets multipart/form-data with boundary.
+  const fileInputIds = ['se-photo', 'se-doc-photo', 'se-doc-report', 'se-doc-other'];
+  const hasFiles = fileInputIds.some(id => {
+    const el = document.getElementById(id);
+    return el && el.files && el.files.length > 0;
   });
+
+  let fetchOptions;
+  if (hasFiles) {
+    const formData = new FormData();
+    formData.append('data', JSON.stringify(payload));
+    fileInputIds.forEach(id => {
+      const el = document.getElementById(id);
+      if (el && el.files && el.files.length > 0) formData.append(id, el.files[0]);
+    });
+    fetchOptions = { method, body: formData };
+  } else {
+    fetchOptions = { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) };
+  }
+
+  const res = await apiFetch(url, fetchOptions);
 
   if (btn) { btn.disabled = false; btn.textContent = isEdit ? 'Update' : 'Save'; }
 

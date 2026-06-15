@@ -330,7 +330,7 @@ function renderHrEditTabBasic() {
   `;
 }
 
-function updateHrEditBasic() {
+async function updateHrEditBasic() {
   const gv  = id => document.getElementById(id)?.value || '';
   const gvt = id => (document.getElementById(id)?.value || '').trim();
   const employment_terms = gv('hr-edit-employment-terms');
@@ -343,20 +343,18 @@ function updateHrEditBasic() {
   const probation_period = gv('hr-edit-probation');
   const nationality      = gv('hr-edit-nationality');
 
-  if (!employment_terms) { alert('Employment Terms is required.'); return; }
-  if (!surname)          { alert('Surname is required.'); return; }
-  if (!other_names)      { alert('Other Names is required.'); return; }
-  if (!email)            { alert('Email is required.'); return; }
-  if (!birth_date)       { alert('Birth Date is required.'); return; }
-  if (!gender)           { alert('Gender is required.'); return; }
-  if (!joining_date)     { alert('Joining Date is required.'); return; }
-  if (!probation_period) { alert('Probation Period is required.'); return; }
-  if (!nationality)      { alert('Nationality is required.'); return; }
+  if (!employment_terms) { showToast('Employment Terms is required.', 'error'); return; }
+  if (!surname)          { showToast('Surname is required.', 'error'); return; }
+  if (!other_names)      { showToast('Other Names is required.', 'error'); return; }
+  if (!email)            { showToast('Email is required.', 'error'); return; }
+  if (!birth_date)       { showToast('Birth Date is required.', 'error'); return; }
+  if (!gender)           { showToast('Gender is required.', 'error'); return; }
+  if (!joining_date)     { showToast('Joining Date is required.', 'error'); return; }
+  if (!probation_period) { showToast('Probation Period is required.', 'error'); return; }
+  if (!nationality)      { showToast('Nationality is required.', 'error'); return; }
 
   hrEditRecord.employment_terms = employment_terms;
-  hrEditRecord.surname          = surname;
   hrEditRecord.last_name        = surname;
-  hrEditRecord.other_names      = other_names;
   hrEditRecord.first_name       = other_names;
   hrEditRecord.alias            = gvt('hr-edit-alias');
   hrEditRecord.email            = email;
@@ -374,7 +372,41 @@ function updateHrEditBasic() {
 
   const nameEl = document.getElementById('hr-edit-info-name');
   if (nameEl) nameEl.textContent = (other_names + ' ' + surname).trim();
-  showHrEditSuccess('hr-edit-status-basic', 'Basic information updated successfully.');
+
+  const empId = hrEditRecord.id || hrEditRecord.employee_code;
+  const payload = {
+    employment_terms:  hrEditRecord.employment_terms,
+    last_name:         hrEditRecord.last_name,
+    first_name:        hrEditRecord.first_name,
+    alias:             hrEditRecord.alias,
+    email:             hrEditRecord.email,
+    phone_code:        hrEditRecord.phone_code,
+    phone:             hrEditRecord.phone,
+    birth_date:        hrEditRecord.birth_date,
+    gender:            hrEditRecord.gender,
+    joining_date:      hrEditRecord.joining_date,
+    probation_period:  hrEditRecord.probation_period,
+    address:           hrEditRecord.address,
+    nationality:       hrEditRecord.nationality,
+    national_id:       hrEditRecord.national_id,
+    rank:              hrEditRecord.rank,
+    is_director:       hrEditRecord.is_director,
+    emergency_contact: hrEditRecord.emergency_contact || null,
+  };
+
+  const res = await apiFetch(`${API_BASE}/employees/${empId}/`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (res && res.ok) {
+    const updated = await res.json().catch(() => null);
+    if (updated) Object.assign(hrEditRecord, updated);
+    showToast('Basic information updated successfully.', 'success');
+    showHrEditSuccess('hr-edit-status-basic', 'Basic information updated successfully.');
+  } else {
+    showToast(res ? await parseApiError(res) : 'Network error.', 'error');
+  }
 }
 
 // ---- Emergency contact (Edit context) ----
@@ -441,12 +473,29 @@ function renderHrEditTabMedical() {
   `;
 }
 
-function updateHrEditMedical() {
+async function updateHrEditMedical() {
   const disability_type = document.getElementById('hr-edit-disability-type')?.value || '';
-  if (!disability_type) { alert('Disability Type is required.'); return; }
+  if (!disability_type) { showToast('Disability Type is required.', 'error'); return; }
   hrEditRecord.disability_type = disability_type;
   hrEditRecord.medical_info    = document.getElementById('hr-edit-medical-info')?.value || '';
-  showHrEditSuccess('hr-edit-status-medical', 'Medical information updated successfully.');
+
+  const empId = hrEditRecord.id || hrEditRecord.employee_code;
+  const res = await apiFetch(`${API_BASE}/employees/${empId}/`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      disability_type: hrEditRecord.disability_type,
+      medical_info:    hrEditRecord.medical_info,
+    }),
+  });
+  if (res && res.ok) {
+    const updated = await res.json().catch(() => null);
+    if (updated) Object.assign(hrEditRecord, updated);
+    showToast('Medical information updated successfully.', 'success');
+    showHrEditSuccess('hr-edit-status-medical', 'Medical information updated successfully.');
+  } else {
+    showToast(res ? await parseApiError(res) : 'Network error.', 'error');
+  }
 }
 
 // ==================== EDIT TAB C — Education ====================
@@ -589,12 +638,33 @@ function renderHrEditTabIdentity() {
   `;
 }
 
-function updateHrEditIdentity() {
+async function updateHrEditIdentity() {
   hrEditRecord.kra_pin     = (document.getElementById('hr-edit-kra-pin')?.value || '').trim();
   hrEditRecord.nssf_number = (document.getElementById('hr-edit-nssf')?.value || '').trim();
   hrEditRecord.nhif_number = (document.getElementById('hr-edit-nhif')?.value || '').trim();
   hrEditRecord.shif_number = (document.getElementById('hr-edit-shif')?.value || '').trim();
-  showHrEditSuccess('hr-edit-status-identity', 'Identity information updated successfully.');
+  hrEditRecord.identity_docs = hrEditRecord.identity_docs || [];
+
+  const empId = hrEditRecord.id || hrEditRecord.employee_code;
+  const res = await apiFetch(`${API_BASE}/employees/${empId}/`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      kra_pin:       hrEditRecord.kra_pin,
+      nssf_number:   hrEditRecord.nssf_number,
+      nhif_number:   hrEditRecord.nhif_number,
+      shif_number:   hrEditRecord.shif_number,
+      identity_docs: hrEditRecord.identity_docs,
+    }),
+  });
+  if (res && res.ok) {
+    const updated = await res.json().catch(() => null);
+    if (updated) Object.assign(hrEditRecord, updated);
+    showToast('Identity information updated successfully.', 'success');
+    showHrEditSuccess('hr-edit-status-identity', 'Identity information updated successfully.');
+  } else {
+    showToast(res ? await parseApiError(res) : 'Network error.', 'error');
+  }
 }
 
 function toggleHrEditIdocDropdown(event, idx) {

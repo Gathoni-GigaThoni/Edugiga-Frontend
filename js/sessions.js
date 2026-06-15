@@ -337,9 +337,8 @@ async function submitSessAdd() {
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
 
   const payload = {
-    name:            title,
     title,
-    session_type_id:  typeId,
+    term_type_id:     typeId,
     academic_year_id: parseInt(ayId),
     start_date:  document.getElementById('sess-add-start')?.value || '',
     end_date:    document.getElementById('sess-add-end')?.value   || '',
@@ -377,6 +376,7 @@ async function openSessEdit(id) {
   // Prefer loading from API for freshest data; fall back to local cache
   let sess = sessionsData.find(s => String(s.id) === String(id));
   try {
+    // TODO: convert to apiFetch (raw fetch bypasses auth retry logic — out of scope for this patch)
     const res = await fetch(`${API_BASE}/terms/${id}`, { headers: { Authorization: `Bearer ${token}` } });
     if (res.ok) sess = await res.json();
   } catch (_) {}
@@ -470,7 +470,7 @@ async function submitSessEdit(id) {
 
   const payload = {
     title,
-    session_type_id:  typeId,
+    term_type_id:     typeId,
     academic_year_id: parseInt(ayId),
     start_date:  document.getElementById('sess-edit-start')?.value || '',
     end_date:    document.getElementById('sess-edit-end')?.value   || '',

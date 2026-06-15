@@ -10,7 +10,8 @@ async function loadTransportView(container) {
 }
 
 async function loadRoutes() {
-  const res = await fetch(`${API_BASE}/routes/`, { headers: { "Authorization": `Bearer ${token}` } });
+  const res = await apiFetch(`${API_BASE}/routes/`);
+  if (!res || !res.ok) { showToast('Could not load routes.', 'error'); return; }
   const routes = await res.json();
   let html = `<table><tr><th>Name</th><th>Two-Way</th><th>Morning</th><th>Evening</th><th>Daily</th></tr>`;
   routes.forEach(r => {
@@ -42,10 +43,15 @@ async function addRoute() {
     one_way_evening_price: parseFloat(document.getElementById("route_evening").value),
     daily_rate: parseFloat(document.getElementById("route_daily").value)
   };
-  const res = await fetch(`${API_BASE}/routes/`, {
-    method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` }, body: JSON.stringify(payload)
+  const res = await apiFetch(`${API_BASE}/routes/`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
   });
-  if (res.ok) { alert("Route added!"); loadTransportView(document.getElementById("main-content")); }
-  else { alert("Error adding route"); }
+  if (!res) return;
+  if (res.ok) {
+    showToast("Route added successfully!", "success");
+    loadTransportView(document.getElementById("main-content"));
+  } else {
+    showToast(await parseApiError(res), "error");
+  }
 }
 

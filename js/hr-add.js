@@ -475,13 +475,13 @@ async function submitHrAddEmployee() {
   if (!s.probation_period)    { showToast('Probation Period is required.', 'error'); return; }
   if (!s.nationality)         { showToast('Nationality is required.', 'error'); return; }
 
-  const payload = {
+  // File inputs with actual uploads that must be sent via FormData:
+  //   hr-add-photo (employee photo), hr-edu-attachment (education docs), hr-idoc-file (identity docs)
+  const jsonPayload = {
     employee_code:     s.employeeCode,
     employment_terms:  s.employment_terms,
-    surname:           s.surname,
-    other_names:       s.other_names,
-    first_name:        s.other_names,
     last_name:         s.surname,
+    first_name:        s.other_names,
     alias:             s.alias,
     email:             s.email,
     phone_code:        s.phone_code,
@@ -509,11 +509,28 @@ async function submitHrAddEmployee() {
     dependents:        [...s.dependents],
   };
 
+  const photoInput = document.getElementById('hr-add-photo');
+  const hasPhoto   = photoInput && photoInput.files && photoInput.files.length > 0;
+
+  let fetchBody, fetchHeaders;
+  if (hasPhoto) {
+    const formData = new FormData();
+    formData.append('data', JSON.stringify(jsonPayload));
+    formData.append('photo', photoInput.files[0]);
+    // Do NOT set Content-Type — browser sets multipart/form-data with boundary automatically
+    fetchBody    = formData;
+    fetchHeaders = {};
+  } else {
+    fetchBody    = JSON.stringify(jsonPayload);
+    fetchHeaders = { 'Content-Type': 'application/json' };
+  }
+
+  // TODO: This raw fetch should be converted to apiFetch in a future cleanup pass
   try {
     const res = await fetch(`${API_BASE}/employees/`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(payload)
+      headers: { ...fetchHeaders, Authorization: `Bearer ${token}` },
+      body: fetchBody
     });
     if (res.ok) {
       showToast('Employee added successfully!', 'success');

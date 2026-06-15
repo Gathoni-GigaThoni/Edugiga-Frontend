@@ -251,10 +251,10 @@ function renderFiTable() {
       html += `<tr>
         <td>${rec.code || ''}</td>
         <td>${rec.institution || ''}</td>
-        <td>${rec.isDefault ? 'Yes' : 'No'}</td>
+        <td>${(rec.is_default || rec.isDefault) ? 'Yes' : 'No'}</td>
         <td>
-          <div class="fi-status-pill ${rec.isInactive ? 'fi-pill-inactive' : 'fi-pill-active'}">
-            <span>${rec.isInactive ? 'Inactive' : 'Active'}</span>
+          <div class="fi-status-pill ${(rec.is_inactive || rec.isInactive) ? 'fi-pill-inactive' : 'fi-pill-active'}">
+            <span>${(rec.is_inactive || rec.isInactive) ? 'Inactive' : 'Active'}</span>
             <button class="fi-pill-toggle" onclick="toggleFiStatus('${rec.id}')" title="Toggle status">&#9660;</button>
           </div>
         </td>
@@ -311,7 +311,8 @@ function toggleFiDropdown(event, id) {
 async function toggleFiStatus(id) {
   const rec = financialInstitutionsData.find(r => r.id === id);
   if (!rec) return;
-  rec.isInactive = !rec.isInactive;
+  rec.is_inactive = !(rec.is_inactive || rec.isInactive);
+  rec.isInactive  = rec.is_inactive;   // keep legacy field in sync for any display that still reads it
   renderFiTable();
   try {
     await fetch(`${API_BASE}/payroll/financial-institutions/${id}`, {
@@ -363,10 +364,10 @@ function renderFiFormFields(rec) {
     </div>
     <div class="hr-form-checkboxes">
       <label class="hr-form-checkbox-label">
-        <input type="checkbox" id="fi-inactive" class="hr-form-cb" ${rec.isInactive ? 'checked' : ''}> Inactive?
+        <input type="checkbox" id="fi-inactive" class="hr-form-cb" ${(rec.is_inactive || rec.isInactive) ? 'checked' : ''}> Inactive?
       </label>
       <label class="hr-form-checkbox-label">
-        <input type="checkbox" id="fi-default" class="hr-form-cb" ${rec.isDefault ? 'checked' : ''}> Mark As Default?
+        <input type="checkbox" id="fi-default" class="hr-form-cb" ${(rec.is_default || rec.isDefault) ? 'checked' : ''}> Mark As Default?
       </label>
     </div>
   `;
@@ -379,8 +380,8 @@ function readFiFormValues() {
     tel:         (document.getElementById('fi-tel')?.value || '').trim(),
     email:       (document.getElementById('fi-email')?.value || '').trim(),
     notes:       document.getElementById('fi-notes')?.value || '',
-    isInactive:  document.getElementById('fi-inactive')?.checked || false,
-    isDefault:   document.getElementById('fi-default')?.checked || false
+    is_inactive: document.getElementById('fi-inactive')?.checked || false,
+    is_default:  document.getElementById('fi-default')?.checked || false
   };
 }
 

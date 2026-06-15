@@ -108,8 +108,19 @@ document.addEventListener('click', () => {
 });
 
 // ---- Listing ----
-function loadRolesListingView(container) {
+async function loadRolesListingView(container) {
   renderRoleListPage(container);
+  const tableContainer = document.getElementById('role-table-container');
+  if (tableContainer) tableContainer.innerHTML = '<p style="padding:16px;color:#777;">Loading&#8230;</p>';
+
+  const res = await apiFetch(`${API_BASE}/roles/`);
+  if (res && res.ok) {
+    const raw = await res.json();
+    rolesData = Array.isArray(raw) ? raw : (raw.data || raw.results || raw.items || []);
+  } else {
+    showToast('Could not load roles.', 'error');
+  }
+  renderRoleTable();
 }
 
 function renderRoleListPage(container) {
@@ -212,14 +223,29 @@ function renderRoleAddPage(container) {
   `;
 }
 
-function submitAddRole() {
+async function submitAddRole() {
   const title = (document.getElementById("role-add-title").value || '').trim();
   if (!title) {
     document.getElementById("role-add-status").innerHTML = '<span class="role-status-error">Title is required.</span>';
     return;
   }
-  rolesData.push({ id: generateRoleId(), title, permissions: {} });
-  loadView('admin-roles');
+
+  const res = await apiFetch(`${API_BASE}/roles/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, is_active: true }),
+  });
+  if (!res) return;
+  if (res.ok) {
+    const saved = await res.json().catch(() => null);
+    rolesData.push(saved || { id: generateRoleId(), title, permissions: {} });
+    showToast('Role created!', 'success');
+    loadView('admin-roles');
+  } else {
+    const msg = await parseApiError(res);
+    document.getElementById("role-add-status").innerHTML = `<span class="role-status-error">${msg}</span>`;
+    showToast(msg, 'error');
+  }
 }
 
 // ---- Edit Role ----
@@ -256,15 +282,31 @@ function renderRoleEditPage(container, role) {
   `;
 }
 
-function submitEditRole(roleId) {
+async function submitEditRole(roleId) {
   const title = (document.getElementById("role-edit-title").value || '').trim();
   if (!title) {
     document.getElementById("role-edit-status").innerHTML = '<span class="role-status-error">Title is required.</span>';
     return;
   }
-  const idx = rolesData.findIndex(r => r.id === roleId);
-  if (idx !== -1) rolesData[idx].title = title;
-  loadView('admin-roles');
+
+  const role = rolesData.find(r => r.id === roleId);
+  const res = await apiFetch(`${API_BASE}/roles/${roleId}/`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, is_active: role?.is_active !== false }),
+  });
+  if (!res) return;
+  if (res.ok) {
+    const saved = await res.json().catch(() => null);
+    const idx = rolesData.findIndex(r => r.id === roleId);
+    if (idx !== -1) rolesData[idx] = { ...rolesData[idx], ...(saved || {}), title };
+    showToast('Role updated!', 'success');
+    loadView('admin-roles');
+  } else {
+    const msg = await parseApiError(res);
+    document.getElementById("role-edit-status").innerHTML = `<span class="role-status-error">${msg}</span>`;
+    showToast(msg, 'error');
+  }
 }
 
 // ---- Permissions ----
@@ -298,9 +340,39 @@ function renderRolePermissionsPage(container, role) {
           ${buildPermRows(NAV_STRUCTURE, 0, role.id)}
         </tbody>
       </table>
+      <div style="margin-top:16px;display:flex;gap:12px;">
+        <button class="role-btn-submit" onclick="saveRolePermissions('${role.id}')">Save Permissions</button>
+        <button class="role-btn-cancel" onclick="loadView('admin-roles')">Cancel</button>
+      </div>
+      <div id="role-perm-status" class="role-form-status" style="margin-top:8px;"></div>
     </div>
   `;
   syncMasterCheckbox(role.id);
+}
+
+async function saveRolePermissions(roleId) {
+  const role = rolesData.find(r => r.id === roleId);
+  if (!role) return;
+
+  // Collect every checked permission as "moduleId:action" strings
+  const permissionIds = [];
+  document.querySelectorAll(`.role-perm-cb[data-role="${roleId}"]`).forEach(cb => {
+    if (cb.checked) permissionIds.push(`${cb.dataset.mod}:${cb.dataset.action}`);
+  });
+
+  const res = await apiFetch(`${API_BASE}/roles/${roleId}/permissions/`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ permission_ids: permissionIds }),
+  });
+  if (!res) return;
+  if (res.ok) {
+    showToast('Permissions saved!', 'success');
+    const statusEl = document.getElementById('role-perm-status');
+    if (statusEl) statusEl.innerHTML = '<span style="color:#27ae60;">Permissions saved successfully.</span>';
+  } else {
+    showToast(await parseApiError(res), 'error');
+  }
 }
 
 function buildPermRows(nodes, depth, roleId) {

@@ -468,6 +468,16 @@ function _rptValidate() {
     if (!el || !el.value) { if (err) err.textContent = 'This field is required.'; ok = false; }
     else                  { if (err) err.textContent = ''; }
   });
+
+  // Additional cross-field check: end date must not be before start date
+  const startEl = document.getElementById('rpt-start-date');
+  const endEl   = document.getElementById('rpt-end-date');
+  const endErr  = document.getElementById('rpt-end-err');
+  if (ok && startEl?.value && endEl?.value && endEl.value < startEl.value) {
+    if (endErr) endErr.textContent = 'End date must be on or after start date.';
+    ok = false;
+  }
+
   return ok;
 }
 
@@ -475,6 +485,7 @@ async function _rptSubmit() {
   if (!_rptValidate()) return;
 
   const startDate    = document.getElementById('rpt-start-date').value;
+  const endDate      = document.getElementById('rpt-end-date').value;
   const stageEl      = document.getElementById('rpt-stage');
   const stageName    = stageEl.options[stageEl.selectedIndex]?.text || '';
   const statusFilter = document.getElementById('rpt-status').value;
@@ -483,7 +494,9 @@ async function _rptSubmit() {
   document.getElementById('rpt-table-area').innerHTML = '<p class="sa-loading">Loading&#8230;</p>';
 
   try {
-    const res  = await fetch(`${API_BASE}/attendance/class-sheet?class_date=${startDate}`, {
+    // TODO: convert to apiFetch (raw fetch bypasses auth retry logic — out of scope for this patch)
+    const params = new URLSearchParams({ start_date: startDate, end_date: endDate });
+    const res  = await fetch(`${API_BASE}/attendance/class-sheet?${params}`, {
       headers: { Authorization: `Bearer ${token}` }
     });
     const data = await res.json();

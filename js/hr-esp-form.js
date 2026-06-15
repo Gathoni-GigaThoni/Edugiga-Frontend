@@ -224,7 +224,7 @@ function renderHrEspBankSection() {
 
 function buildHrEspBankOptions() {
   return financialInstitutionsData
-    .filter(fi => !fi.isInactive)
+    .filter(fi => !(fi.is_inactive || fi.isInactive))
     .map(fi => `<option value="${fi.id}">${fi.institution}</option>`)
     .join('');
 }
@@ -323,7 +323,7 @@ function cancelHrEspForm() {
   }
 }
 
-function submitHrEspForm() {
+async function submitHrEspForm() {
   const empCode = (document.getElementById('hr-esp-emp-code')?.value || '').trim();
   const reasonEvent       = document.getElementById('hr-esp-reason-event')?.value || '';
   const payGrade          = document.getElementById('hr-esp-pay-grade')?.value || '';
@@ -331,64 +331,99 @@ function submitHrEspForm() {
   const disbursementMode  = document.getElementById('hr-esp-disbursement-mode')?.value || '';
   const effectiveDate     = document.getElementById('hr-esp-effective-date')?.value || '';
 
-  if (!empCode)          { alert('Employee Code is required.'); return; }
-  if (!reasonEvent)      { alert('Reason/Event is required.'); return; }
-  if (!payGrade)         { alert('Pay Grade is required.'); return; }
-  if (!rank)             { alert('Rank is required.'); return; }
-  if (!disbursementMode) { alert('Salary Disbursement Mode is required.'); return; }
-  if (!effectiveDate)    { alert('Effective Date is required.'); return; }
+  if (!empCode)          { showToast('Employee Code is required.', 'error'); return; }
+  if (!reasonEvent)      { showToast('Reason/Event is required.', 'error'); return; }
+  if (!payGrade)         { showToast('Pay Grade is required.', 'error'); return; }
+  if (!rank)             { showToast('Rank is required.', 'error'); return; }
+  if (!disbursementMode) { showToast('Salary Disbursement Mode is required.', 'error'); return; }
+  if (!effectiveDate)    { showToast('Effective Date is required.', 'error'); return; }
 
   const emp     = employeesData.find(e => e.employee_code === empCode);
   const empName = emp
-    ? ((emp.surname || emp.first_name || '') + ' ' + (emp.other_names || emp.last_name || '')).trim()
+    ? ((emp.first_name || emp.surname || '') + ' ' + (emp.last_name || emp.other_names || '')).trim()
     : hrEspFormState.lockedEmpName;
 
-  const record = {
-    id:                     hrEspFormState.context === 'edit' ? (hrEspFormState.existingRecord?.id || Date.now()) : Date.now(),
-    employee_code:          empCode,
-    employee_name:          empName,
-    department:             document.getElementById('hr-esp-department')?.value || '',
-    reason_event:           reasonEvent,
-    processing_method:      document.getElementById('hr-esp-processing-method')?.value || '',
-    pay_grade:              payGrade,
-    rank:                   rank,
-    amount:                 document.getElementById('hr-esp-basic-salary')?.value || '',
-    effective_date:         effectiveDate,
-    end_date:               document.getElementById('hr-esp-end-date')?.value || '',
-    employee_status:        document.getElementById('hr-esp-emp-status')?.value || '',
-    salary_disbursement_mode: disbursementMode,
+  // Map internal camelCase bank account fields to snake_case for the API
+  const bankAccountsForApi = hrEspFormState.bankAccounts.map(b => ({
+    account_no:      b.accountNo || '',
+    bank_id:         b.bankId || null,
+    account_details: b.accountDetails || '',
+    percentage:      parseFloat(b.percentage) || 0,
+  }));
+
+  const payload = {
+    employee_code:             empCode,
+    reason_event:              reasonEvent,
+    processing_method:         document.getElementById('hr-esp-processing-method')?.value || '',
+    pay_grade:                 payGrade,
+    rank,
+    amount:                    document.getElementById('hr-esp-basic-salary')?.value || null,
+    effective_date:            effectiveDate,
+    end_date:                  document.getElementById('hr-esp-end-date')?.value || null,
+    employee_status:           document.getElementById('hr-esp-emp-status')?.value || '',
+    salary_disbursement_mode:  disbursementMode,
     sheltered_from_paying: {
       paye:         document.getElementById('hr-esp-sh-paye')?.checked    || false,
       nhif:         document.getElementById('hr-esp-sh-nhif')?.checked    || false,
       shif:         document.getElementById('hr-esp-sh-shif')?.checked    || false,
       nssf:         document.getElementById('hr-esp-sh-nssf')?.checked    || false,
       housing_levy: document.getElementById('hr-esp-sh-housing')?.checked || false,
-      pension:      document.getElementById('hr-esp-sh-pension')?.checked  || false
+      pension:      document.getElementById('hr-esp-sh-pension')?.checked  || false,
     },
-    bank_accounts: [...hrEspFormState.bankAccounts],
-    notes: document.getElementById('hr-esp-notes')?.value || ''
+    bank_accounts: bankAccountsForApi,
+    notes: document.getElementById('hr-esp-notes')?.value || '',
   };
 
-  if (hrEspFormState.context === 'edit') {
-    const gi = employeeServiceProfilesData.findIndex(r => r.id === record.id);
-    if (gi !== -1) employeeServiceProfilesData[gi] = record;
-    if (hrEspFormState.sourceView === 'hr-edit' && hrEditRecord) {
-      if (!hrEditRecord.service_profile) hrEditRecord.service_profile = [];
-      if (hrEspFormState.editSourceIdx >= 0) hrEditRecord.service_profile[hrEspFormState.editSourceIdx] = record;
+  const isEdit  = hrEspFormState.context === 'edit';
+  const espId   = hrEspFormState.existingRecord?.id;
+  const url     = isEdit && espId
+    ? `${API_BASE}/employee-service-profiles/${espId}/`
+    : `${API_BASE}/employee-service-profiles/`;
+  const method  = isEdit && espId ? 'PUT' : 'POST';
+
+  const res = await apiFetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res) return;
+
+  if (res.ok) {
+    const saved = await res.json().catch(() => null);
+    // Build local record for in-memory caches (mirrors API fields + display-only extras)
+    const record = {
+      ...(saved || payload),
+      id:            saved?.id || (isEdit ? espId : Date.now()),
+      employee_name: empName,
+      department:    document.getElementById('hr-esp-department')?.value || '',
+      bank_accounts: [...hrEspFormState.bankAccounts],  // keep camelCase for local display
+    };
+
+    if (isEdit) {
+      const gi = employeeServiceProfilesData.findIndex(r => r.id === record.id);
+      if (gi !== -1) employeeServiceProfilesData[gi] = record;
+      if (hrEspFormState.sourceView === 'hr-edit' && hrEditRecord) {
+        if (!hrEditRecord.service_profile) hrEditRecord.service_profile = [];
+        if (hrEspFormState.editSourceIdx >= 0) hrEditRecord.service_profile[hrEspFormState.editSourceIdx] = record;
+      }
+    } else {
+      employeeServiceProfilesData.push(record);
+      if (hrEspFormState.sourceView === 'hr-add') {
+        if (!hrAddFormState.service_profile) hrAddFormState.service_profile = [];
+        hrAddFormState.service_profile.push(record);
+      } else if (hrEspFormState.sourceView === 'hr-edit' && hrEditRecord) {
+        if (!hrEditRecord.service_profile) hrEditRecord.service_profile = [];
+        hrEditRecord.service_profile.push(record);
+      } else if (hrEspFormState.sourceView === 'payroll' && emp) {
+        if (!emp.service_profile) emp.service_profile = [];
+        emp.service_profile.push(record);
+      }
     }
+    showToast(isEdit ? 'Service profile updated!' : 'Service profile saved!', 'success');
+    cancelHrEspForm();
   } else {
-    employeeServiceProfilesData.push(record);
-    if (hrEspFormState.sourceView === 'hr-add') {
-      if (!hrAddFormState.service_profile) hrAddFormState.service_profile = [];
-      hrAddFormState.service_profile.push(record);
-    } else if (hrEspFormState.sourceView === 'hr-edit' && hrEditRecord) {
-      if (!hrEditRecord.service_profile) hrEditRecord.service_profile = [];
-      hrEditRecord.service_profile.push(record);
-    } else if (hrEspFormState.sourceView === 'payroll' && emp) {
-      if (!emp.service_profile) emp.service_profile = [];
-      emp.service_profile.push(record);
-    }
+    showToast(await parseApiError(res), 'error');
   }
-  cancelHrEspForm();
 }
 

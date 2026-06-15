@@ -34,10 +34,11 @@ let feeAccountsData                = [];
 // Attaches Authorization header, handles 401, and retries once on network
 // failure (the backend may be waking from sleep on the first request).
 async function apiFetch(url, options = {}, _attempt = 0) {
-  options.headers = {
-    ...(options.headers || {}),
-    Authorization: `Bearer ${token}`
-  };
+  const mergedHeaders = { ...(options.headers || {}), Authorization: `Bearer ${token}` };
+  // When body is FormData the browser must set Content-Type (multipart/form-data + boundary).
+  // Removing it here prevents callers from accidentally locking it to application/json.
+  if (options.body instanceof FormData) delete mergedHeaders['Content-Type'];
+  options.headers = mergedHeaders;
   let res;
   try {
     res = await fetch(url, options);

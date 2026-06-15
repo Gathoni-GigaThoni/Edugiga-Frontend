@@ -18,6 +18,7 @@ async function loadSessionTypesView(container) {
 
 async function _fetchSessionTypes() {
   try {
+    // TODO: convert to apiFetch (raw fetch bypasses auth retry logic — out of scope for this patch)
     const res = await fetch(`${API_BASE}/session-types/`, { headers: { Authorization: `Bearer ${token}` } });
     if (res.ok) sessionTypesData = await res.json();
   } catch (_) {}
@@ -172,11 +173,9 @@ async function submitStAdd() {
   if (!title) return;
 
   const payload = {
-    name:        title,
     title,
-    notes:       document.getElementById('st-add-notes').value || '',
-    is_inactive: document.getElementById('st-add-inactive').checked,
-    is_active:   !document.getElementById('st-add-inactive').checked
+    notes:     document.getElementById('st-add-notes').value || '',
+    is_active: !document.getElementById('st-add-inactive').checked
   };
   const res = await apiFetch(`${API_BASE}/session-types/`, {
     method: 'POST',
@@ -242,11 +241,9 @@ async function submitStEdit(id) {
   if (!title) return;
 
   const payload = {
-    name:        title,
     title,
-    notes:       document.getElementById('st-edit-notes').value || '',
-    is_inactive: document.getElementById('st-edit-inactive').checked,
-    is_active:   !document.getElementById('st-edit-inactive').checked
+    notes:     document.getElementById('st-edit-notes').value || '',
+    is_active: !document.getElementById('st-edit-inactive').checked
   };
   const res = await apiFetch(`${API_BASE}/session-types/${id}`, {
     method: 'PUT',

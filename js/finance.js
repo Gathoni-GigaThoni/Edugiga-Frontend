@@ -1241,7 +1241,7 @@ async function submitInvAdjAdd() {
     const admEl  = tr.querySelector('[id^="ia-s-adm-"]');
     const nameEl = tr.querySelector('[id^="ia-s-name-"]');
     const clsEl  = tr.querySelector('[id^="ia-s-class-"]');
-    if (admEl) students.push({ admissionNo: admEl.value, name: nameEl?.value||'', class: clsEl?.value||'' });
+    if (admEl) students.push({ admission_no: admEl.value, name: nameEl?.value||'', class_name: clsEl?.value||'' });
   });
   document.querySelectorAll('#ia-fee-body tr').forEach(tr=>{
     const acctEl = tr.querySelector('[id^="ia-f-acct-"]');
@@ -1250,7 +1250,7 @@ async function submitInvAdjAdd() {
   });
 
   const total   = lineItems.reduce((s,li)=>s+li.amount, 0);
-  const payload = { adjustment_date: date, student_type: type, reason, students, lineItems, amount: total };
+  const payload = { adjustment_date: date, student_type: type, reason, students, line_items: lineItems, amount: total };
   try {
     const res = await fetch(`${API_BASE}/finance/invoice-adjustments/`, {
       method: 'POST',
