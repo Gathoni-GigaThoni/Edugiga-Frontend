@@ -315,6 +315,45 @@
   font-style: italic;
 }
 
+/* ── Transport selection cascade ── */
+.stu-transport-summary {
+  font-size: 0.83rem;
+  color: #2c3e50;
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: #f9fafb;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+}
+
+.stu-transport-summary a {
+  margin-left: 8px;
+  color: #2db3b3;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.stu-transport-summary a:hover {
+  text-decoration: underline;
+}
+
+.stu-transport-summary--warn {
+  color: #b9770e;
+  background: #fef9e7;
+  border-color: #f7dc6f;
+}
+
+.stu-transport-modal-subtitle {
+  margin: -10px 0 14px;
+  font-size: 0.85rem;
+  color: #888;
+}
+
+.stu-transport-modal-msg {
+  color: #555;
+  font-size: 0.9rem;
+}
+
 /* ── Skeleton loading ── */
 .stu-skeleton-row td {
   background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);

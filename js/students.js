@@ -23,6 +23,10 @@ let _stuFormFundingSources = [];
 let _stuFormTransportRoutes = [];
 let _stuFormExtraCurriculum = [];
 
+// In-progress transport cascade selection (Route -> Journey Type -> Time of Day modals).
+// Discarded on Cancel; only committed to window._stuFormData on Finish.
+let _stuTransportCascade = { routeId: null, journeyType: null, timeOfDay: null };
+
 // ── Shared helpers ────────────────────────────────────────────────────────────
 function _esc(v) {
   return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -45,6 +49,8 @@ function _fradio(name) {
   const el = document.querySelector(`input[name="${name}"]:checked`);
   return el ? el.value : '';
 }
+
+function _toArray(raw) { return Array.isArray(raw) ? raw : (raw?.data || raw?.items || raw?.results || []); }
 
 function _mkPagination(containerId, page, pages, goFn) {
   const el = document.getElementById(containerId);
@@ -319,6 +325,7 @@ async function loadStudentFormView(container) {
         </div>
       </div>
     </div>
+    <div id="stu-transport-modal-root"></div>
   `;
 
   await _loadStuFormDropdowns();
@@ -335,14 +342,15 @@ async function loadStudentFormView(container) {
 }
 
 async function _loadStuFormDropdowns() {
+  // Routes live at /routes/ (confirmed via transport.js, the module that owns this resource) —
+  // /transport/routes was a stale path that never matched the backend.
   const [clsRes, strRes, fsRes, trRes, ecRes] = await Promise.all([
     apiFetch(`${API_BASE}/classes/`),
     apiFetch(`${API_BASE}/student-management/streams`),
     apiFetch(`${API_BASE}/student-management/funding-sources`),
-    apiFetch(`${API_BASE}/transport/routes`),
+    apiFetch(`${API_BASE}/routes/`),
     apiFetch(`${API_BASE}/finance/extra-curriculum-activities`),
   ]);
-  function _toArray(raw) { return Array.isArray(raw) ? raw : (raw?.data || raw?.items || raw?.results || []); }
   _stuFormClasses        = clsRes && clsRes.ok ? _toArray(await clsRes.json()) : [];
   _stuFormStreams         = strRes && strRes.ok ? _toArray(await strRes.json()) : [];
   _stuFormFundingSources  = fsRes  && fsRes.ok  ? _toArray(await fsRes.json())  : [];
@@ -394,7 +402,6 @@ function _stuTabPersonal(d) {
   const classOpts   = `<option value="">Please Select</option>${_opts(_stuFormClasses, 'id', 'name', d.class_id)}`;
   const streamOpts  = `<option value="">Please Select</option>${_opts(_stuFormStreams.filter(s => s.status !== 'inactive' && s.status !== 'Inactive'), 'id', 'title', d.stream_id)}`;
   const fsOpts      = `<option value="">Please Select</option>${_opts(_stuFormFundingSources.filter(f=>!f.is_inactive), 'id', 'title', d.funding_source_id)}`;
-  const transOpts   = `<option value="">Please Select</option>${_opts(_stuFormTransportRoutes, 'id', 'name', d.transport_route_id)}`;
   const natOpts     = ['Kenya','Uganda','Tanzania','Rwanda','Ethiopia','Other'].map(n =>
     `<option${d.nationality===n?' selected':''}>${n}</option>`).join('');
   const relOpts     = ['Christian','Muslim','Hindu','Other'].map(r =>
@@ -543,10 +550,9 @@ function _stuTabPersonal(d) {
         <select id="se-extra-curriculum" class="stu-multiselect" multiple>${ecOpts}</select>
       </div>
       <div class="stu-form-group">
-        <label>Transportation</label>
-        <select id="se-transport" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
-          ${transOpts}
-        </select>
+        <label><input type="checkbox" id="se-uses-transport"${d.uses_school_transport?' checked':''} onchange="onStuUsesTransportChange()"> Uses School Transport?</label>
+        <div id="se-transport-summary-wrap"></div>
+        <span class="stu-field-error" id="err-se-transport"></span>
       </div>
 
       <!-- Row 10: Photo & Flags -->
@@ -624,6 +630,8 @@ function _wireStuPersonalTab() {
 
   const isAdd = !_currentEditStudentId;
   if (isAdd) fetchNextStudentId();
+
+  _renderStuTransportSummary();
 }
 
 async function fetchNextStudentId() {
@@ -725,6 +733,270 @@ function handleStuPhotoPreview(input) {
   img.src = url;
   preview.innerHTML = '';
   preview.appendChild(img);
+}
+
+// ── Transport selection cascade (Route -> Journey Type -> Time of Day) ────────
+// Modals reuse the shared .hr-modal-overlay/.hr-modal component (css/hr.css,
+// loaded globally) rather than introducing a new modal pattern.
+
+function _findTransportRoute(routeId) {
+  return _stuFormTransportRoutes.find(r => String(r.id) === String(routeId)) || null;
+}
+
+function _resolveTransportPrice(route, journeyType, timeOfDay) {
+  if (!route) return null;
+  if (journeyType === 'two_way') return route.two_way_price ?? null;
+  if (journeyType === 'one_way' && timeOfDay === 'morning') return route.one_way_morning_price ?? null;
+  if (journeyType === 'one_way' && timeOfDay === 'evening') return route.one_way_evening_price ?? null;
+  return null;
+}
+
+function onStuUsesTransportChange() {
+  const chk = document.getElementById('se-uses-transport');
+  if (chk && chk.checked) {
+    openTransportRouteModal(true);
+  } else {
+    _clearTransportSelection();
+  }
+}
+
+function _clearTransportSelection() {
+  const d = window._stuFormData || {};
+  d.uses_school_transport = false;
+  d.transport_selection   = null;
+  const chk = document.getElementById('se-uses-transport');
+  if (chk) chk.checked = false;
+  const errEl = document.getElementById('err-se-transport');
+  if (errEl) errEl.textContent = '';
+  _renderStuTransportSummary();
+}
+
+function closeTransportCascadeModal() {
+  const root = document.getElementById('stu-transport-modal-root');
+  if (root) root.innerHTML = '';
+  document.removeEventListener('keydown', _stuTransportCascadeEscHandler);
+}
+
+function _stuTransportCascadeEscHandler(e) {
+  if (e.key === 'Escape') cancelTransportCascade();
+}
+
+function cancelTransportCascade() {
+  closeTransportCascadeModal();
+  _clearTransportSelection();
+}
+
+function _mountTransportCascadeModal(html) {
+  const root = document.getElementById('stu-transport-modal-root');
+  if (root) root.innerHTML = html;
+  document.removeEventListener('keydown', _stuTransportCascadeEscHandler);
+  document.addEventListener('keydown', _stuTransportCascadeEscHandler);
+}
+
+function openTransportRouteModal(initDraft) {
+  if (initDraft) {
+    const d = window._stuFormData || {};
+    const existing = d.transport_selection || (d.transport_route_id ? { route_id: d.transport_route_id, journey_type: null, time_of_day: null } : null);
+    _stuTransportCascade = {
+      routeId:     existing ? existing.route_id : null,
+      journeyType: existing ? existing.journey_type : null,
+      timeOfDay:   existing ? existing.time_of_day : null,
+    };
+  }
+  const routes = _stuFormTransportRoutes || [];
+  const noRoutes = routes.length === 0;
+  const bodyHtml = noRoutes
+    ? `<p class="stu-transport-modal-msg">No transport routes have been configured yet. Please contact an administrator.</p>`
+    : `<div class="hr-modal-field">
+        <label class="hr-form-label">Route <span class="hr-required">*</span></label>
+        <select id="stu-trm-route" class="hr-modal-select" onchange="onStuTrmRouteChange()">
+          <option value="">Please Select</option>
+          ${routes.map(r => `<option value="${_esc(String(r.id))}"${String(r.id)===String(_stuTransportCascade.routeId)?' selected':''}>${_esc(r.name||r.title||'')}</option>`).join('')}
+        </select>
+      </div>`;
+
+  _mountTransportCascadeModal(`
+    <div id="stu-trm-overlay" class="hr-modal-overlay" onclick="if(event.target===this)cancelTransportCascade()">
+      <div class="hr-modal" role="dialog" aria-modal="true" aria-labelledby="stu-trm-title">
+        <h3 class="hr-modal-title" id="stu-trm-title">Select Transport Route</h3>
+        <div class="hr-modal-body">${bodyHtml}</div>
+        <div class="hr-modal-actions">
+          <button class="hr-modal-btn-close" onclick="cancelTransportCascade()">Cancel</button>
+          ${noRoutes ? '' : `<button class="hr-modal-btn-submit" id="stu-trm-next-btn" ${_stuTransportCascade.routeId ? '' : 'disabled'} onclick="goToJourneyTypeModal()">Next</button>`}
+        </div>
+      </div>
+    </div>
+  `);
+}
+
+function onStuTrmRouteChange() {
+  const sel = document.getElementById('stu-trm-route');
+  _stuTransportCascade.routeId = sel?.value || null;
+  const btn = document.getElementById('stu-trm-next-btn');
+  if (btn) btn.disabled = !_stuTransportCascade.routeId;
+}
+
+function goToJourneyTypeModal() {
+  const route     = _findTransportRoute(_stuTransportCascade.routeId);
+  const routeName = route ? (route.name || route.title || '') : '';
+  _mountTransportCascadeModal(`
+    <div id="stu-trm-overlay" class="hr-modal-overlay" onclick="if(event.target===this)cancelTransportCascade()">
+      <div class="hr-modal" role="dialog" aria-modal="true" aria-labelledby="stu-trm-title">
+        <h3 class="hr-modal-title" id="stu-trm-title">Two-way or One-way?</h3>
+        <p class="stu-transport-modal-subtitle">Route: ${_esc(routeName)}</p>
+        <div class="hr-modal-body">
+          <div role="radiogroup" aria-label="Journey type" style="display:flex;gap:16px;">
+            <label><input type="radio" name="stu-trm-journey" value="two_way" onchange="onStuTrmJourneyChange()"${_stuTransportCascade.journeyType==='two_way'?' checked':''}> Two-way</label>
+            <label><input type="radio" name="stu-trm-journey" value="one_way" onchange="onStuTrmJourneyChange()"${_stuTransportCascade.journeyType==='one_way'?' checked':''}> One-way</label>
+          </div>
+        </div>
+        <div class="hr-modal-actions">
+          <button class="hr-modal-btn-close" onclick="cancelTransportCascade()">Cancel</button>
+          <button class="hr-modal-btn-close" onclick="openTransportRouteModal(false)">Back</button>
+          <button class="hr-modal-btn-submit" id="stu-trm-journey-next-btn" ${_stuTransportCascade.journeyType ? '' : 'disabled'} onclick="onStuTrmJourneyNext()">Next</button>
+        </div>
+      </div>
+    </div>
+  `);
+}
+
+function onStuTrmJourneyChange() {
+  const val = document.querySelector('input[name="stu-trm-journey"]:checked')?.value || null;
+  _stuTransportCascade.journeyType = val;
+  if (val === 'two_way') _stuTransportCascade.timeOfDay = null;
+  const btn = document.getElementById('stu-trm-journey-next-btn');
+  if (btn) btn.disabled = !val;
+}
+
+function onStuTrmJourneyNext() {
+  if (_stuTransportCascade.journeyType === 'two_way') {
+    finishTransportCascade();
+  } else {
+    goToTimeOfDayModal();
+  }
+}
+
+function goToTimeOfDayModal() {
+  const route     = _findTransportRoute(_stuTransportCascade.routeId);
+  const routeName = route ? (route.name || route.title || '') : '';
+  _mountTransportCascadeModal(`
+    <div id="stu-trm-overlay" class="hr-modal-overlay" onclick="if(event.target===this)cancelTransportCascade()">
+      <div class="hr-modal" role="dialog" aria-modal="true" aria-labelledby="stu-trm-title">
+        <h3 class="hr-modal-title" id="stu-trm-title">Morning or Evening?</h3>
+        <p class="stu-transport-modal-subtitle">Route: ${_esc(routeName)} — One-way</p>
+        <div class="hr-modal-body">
+          <div role="radiogroup" aria-label="Time of day" style="display:flex;gap:16px;">
+            <label><input type="radio" name="stu-trm-tod" value="morning" onchange="onStuTrmTodChange()"${_stuTransportCascade.timeOfDay==='morning'?' checked':''}> AM (Morning)</label>
+            <label><input type="radio" name="stu-trm-tod" value="evening" onchange="onStuTrmTodChange()"${_stuTransportCascade.timeOfDay==='evening'?' checked':''}> PM (Evening)</label>
+          </div>
+        </div>
+        <div class="hr-modal-actions">
+          <button class="hr-modal-btn-close" onclick="cancelTransportCascade()">Cancel</button>
+          <button class="hr-modal-btn-close" onclick="goToJourneyTypeModal()">Back</button>
+          <button class="hr-modal-btn-submit" id="stu-trm-finish-btn" ${_stuTransportCascade.timeOfDay ? '' : 'disabled'} onclick="finishTransportCascade()">Finish</button>
+        </div>
+      </div>
+    </div>
+  `);
+}
+
+function onStuTrmTodChange() {
+  const val = document.querySelector('input[name="stu-trm-tod"]:checked')?.value || null;
+  _stuTransportCascade.timeOfDay = val;
+  const btn = document.getElementById('stu-trm-finish-btn');
+  if (btn) btn.disabled = !val;
+}
+
+function finishTransportCascade() {
+  const route = _findTransportRoute(_stuTransportCascade.routeId);
+  const price = _resolveTransportPrice(route, _stuTransportCascade.journeyType, _stuTransportCascade.timeOfDay);
+  if (price === null || price === undefined || Number.isNaN(price)) {
+    showToast('Pricing not available for this option. Please select a different option or contact the transport office.', 'error');
+    cancelTransportCascade();
+    return;
+  }
+  const d = window._stuFormData || {};
+  d.uses_school_transport = true;
+  d.transport_selection = {
+    route_id:     _stuTransportCascade.routeId,
+    journey_type: _stuTransportCascade.journeyType,
+    time_of_day:  _stuTransportCascade.timeOfDay,
+  };
+  const chk = document.getElementById('se-uses-transport');
+  if (chk) chk.checked = true;
+  const errEl = document.getElementById('err-se-transport');
+  if (errEl) errEl.textContent = '';
+  closeTransportCascadeModal();
+  _renderStuTransportSummary();
+  _stuEditDirty = true;
+}
+
+function _renderStuTransportSummary() {
+  const wrap = document.getElementById('se-transport-summary-wrap');
+  if (!wrap) return;
+  const d = window._stuFormData || {};
+
+  if (!d.uses_school_transport) { wrap.innerHTML = ''; return; }
+
+  const sel = d.transport_selection;
+
+  // Legacy record: flat transport_route_id but no structured selection yet.
+  if (!sel && d.transport_route_id) {
+    const route     = _findTransportRoute(d.transport_route_id);
+    const routeName = route ? (route.name || route.title || '') : `Route #${d.transport_route_id}`;
+    wrap.innerHTML = `<div class="stu-transport-summary stu-transport-summary--warn">
+      Selected: ${_esc(routeName)} — journey type not specified (please update)
+      <a href="#" onclick="openTransportRouteModal(true);return false;">Change</a>
+    </div>`;
+    return;
+  }
+
+  if (!sel) { wrap.innerHTML = ''; return; }
+
+  const route     = _findTransportRoute(sel.route_id);
+  const routeName = route ? (route.name || route.title || '') : `Route #${sel.route_id}`;
+  let desc;
+  if (sel.journey_type === 'two_way') desc = 'Two-way';
+  else if (sel.journey_type === 'one_way') desc = `One-way (${sel.time_of_day === 'morning' ? 'Morning' : sel.time_of_day === 'evening' ? 'Evening' : '—'})`;
+  else desc = 'journey type not specified';
+
+  const price = _resolveTransportPrice(route, sel.journey_type, sel.time_of_day);
+  const priceText = (price !== null && price !== undefined && !Number.isNaN(price))
+    ? ` — KES ${Number(price).toLocaleString()}/term`
+    : ' — pricing not available for this option';
+
+  wrap.innerHTML = `<div class="stu-transport-summary">
+    Selected: ${_esc(routeName)} — ${desc}${priceText}
+    <a href="#" onclick="openTransportRouteModal(true);return false;">Change</a>
+  </div>`;
+}
+
+function _stuValidateTransport() {
+  const d = window._stuFormData || {};
+  const errEl = document.getElementById('err-se-transport');
+  if (!d.uses_school_transport) { if (errEl) errEl.textContent = ''; return true; }
+  const sel = d.transport_selection;
+  const ok = !!(sel && sel.route_id && sel.journey_type && (sel.journey_type !== 'one_way' || sel.time_of_day));
+  if (errEl) errEl.textContent = ok ? '' : 'Please complete the transport selection (route, journey type, and time of day if one-way).';
+  return ok;
+}
+
+function _transportSummaryLabel(d) {
+  if (!d) return 'No';
+  if (d.transport_selection) {
+    const sel       = d.transport_selection;
+    const route     = _findTransportRoute(sel.route_id);
+    const routeName = route ? (route.name || route.title || '') : (sel.route_name || `Route #${sel.route_id}`);
+    if (sel.journey_type === 'two_way') return `${routeName} (Two-way)`;
+    if (sel.journey_type === 'one_way') return `${routeName} (One-way, ${sel.time_of_day === 'morning' ? 'Morning' : sel.time_of_day === 'evening' ? 'Evening' : '—'})`;
+    return `${routeName} (journey type not specified)`;
+  }
+  if (d.transport_route_id && d.uses_school_transport !== false) {
+    const route     = _findTransportRoute(d.transport_route_id);
+    const routeName = route ? (route.name || route.title || '') : `Route #${d.transport_route_id}`;
+    return `${routeName} (journey type not specified)`;
+  }
+  return (d.uses_school_transport || d.uses_transport) ? 'Yes' : 'No';
 }
 
 function _stuTabPrevEdu(d) {
@@ -908,7 +1180,9 @@ async function submitStudentForm() {
     switchStuEditTab('personal');
     await new Promise(r => setTimeout(r, 50));
   }
-  if (!_stuValidatePersonal()) {
+  const personalValid  = _stuValidatePersonal();
+  const transportValid = _stuValidateTransport();
+  if (!personalValid || !transportValid) {
     showToast('Please fill in all required fields.', 'error');
     return;
   }
@@ -932,7 +1206,8 @@ async function submitStudentForm() {
     class_id:          _fv('se-class') || null,
     stream_id:         _fv('se-stream') || null,
     sports_house:      _fv('se-sports-house'),
-    transport_route_id: _fv('se-transport') || null,
+    uses_school_transport: !!(window._stuFormData || {}).uses_school_transport,
+    transport_selection:   (window._stuFormData || {}).transport_selection || null,
     extra_curriculum_ids: ecIds,
     record_closed:     _fc('se-record-closed'),
     meal_program:      _fradio('se-meal') === 'yes',
@@ -1037,9 +1312,13 @@ async function loadStudentViewPage(container) {
   `;
 
   if (!_currentEditStudentId) { document.getElementById('stu-view-body').innerHTML = '<p class="fin-error">No student selected.</p>'; return; }
-  const res = await apiFetch(`${API_BASE}/students/${_currentEditStudentId}`);
+  const [res, trRes] = await Promise.all([
+    apiFetch(`${API_BASE}/students/${_currentEditStudentId}`),
+    apiFetch(`${API_BASE}/routes/`),
+  ]);
   if (!res || !res.ok) { document.getElementById('stu-view-body').innerHTML = '<p class="fin-error">Failed to load student.</p>'; return; }
   const d = await res.json();
+  _stuFormTransportRoutes = trRes && trRes.ok ? _toArray(await trRes.json()) : (_stuFormTransportRoutes || []);
   window._stuViewData = d;
   window._stuViewTab  = 'Personal Data';
   _renderStudentViewBody(d, 'Personal Data');
@@ -1072,7 +1351,7 @@ function _renderStudentViewBody(d, activeTab) {
           ${_svRow('Phone',          d.phone)}
           ${_svRow('Meal Program',   d.meal_program ? 'Yes' : 'No')}
           ${_svRow('Photo Consent',  d.photo_consent ? 'Yes' : 'No')}
-          ${_svRow('Transport',      d.uses_transport ? 'Yes' : 'No')}
+          ${_svRow('Transport',      _transportSummaryLabel(d))}
           <div class="stu-view-card-row">
             <span class="stu-view-card-label">Status</span>
             <span>${statusBadge}</span>
@@ -1133,7 +1412,7 @@ function _renderStuViewTab(tabName, d) {
       ${_dRow('Term',               d.cohort||d.term||d.session)}
       ${_dRow('Sports House',       d.sports_house)}
       ${_dRow('Status',             d.status||(d.is_active?'Active':'Inactive'))}
-      ${_dRow('Transport',          d.uses_transport ? 'Yes' : 'No')}
+      ${_dRow('Transport',          _transportSummaryLabel(d))}
     </div>`;
   if (tabName === 'Guardian/Family') return `
     <div>
