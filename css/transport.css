@@ -1,0 +1,142 @@
+/* ==================== TRANSPORT MODULE ==================== */
+
+/* ── Form layout ── */
+.trn-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 16px;
+}
+
+.trn-form-label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #333;
+}
+
+.trn-form-input {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.trn-form-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 72px;
+  resize: vertical;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 0.88rem;
+  font-family: inherit;
+  color: #333;
+  transition: border-color 0.15s;
+}
+.trn-form-textarea:focus {
+  outline: none;
+  border-color: #00b5b8;
+}
+
+.trn-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px 24px;
+}
+
+@media (max-width: 600px) {
+  .trn-form-grid { grid-template-columns: 1fr; }
+}
+
+/* ── Stops / Destinations builder ── */
+.trn-stops-hint {
+  font-size: 0.8rem;
+  color: #888;
+  margin: 0 0 8px;
+  font-style: italic;
+}
+
+.trn-stops-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.trn-stop-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #f9fafb;
+  border: 1px solid #e0e0e0;
+  border-radius: 5px;
+  padding: 6px 8px;
+  cursor: default;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.trn-stop-row[draggable="true"] {
+  cursor: grab;
+}
+
+.trn-stop-row:hover {
+  border-color: #00b5b8;
+  background: #f0fbfb;
+}
+
+.trn-stop-row.trn-stop-dragging {
+  opacity: 0.45;
+  border-color: #00b5b8;
+  border-style: dashed;
+  cursor: grabbing;
+}
+
+.trn-stop-handle {
+  font-size: 1rem;
+  color: #bbb;
+  user-select: none;
+  flex-shrink: 0;
+  cursor: grab;
+  padding: 0 2px;
+}
+.trn-stop-handle:hover { color: #00b5b8; }
+
+.trn-stop-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px !important;
+  font-size: 0.88rem !important;
+}
+
+.trn-stop-remove {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #aaa;
+  font-size: 1rem;
+  padding: 2px 4px;
+  border-radius: 3px;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: color 0.12s, background 0.12s;
+}
+.trn-stop-remove:hover {
+  color: #e74c3c;
+  background: #fdecea;
+}
+
+.trn-add-stop-btn {
+  background: none;
+  border: 1px dashed #00b5b8;
+  color: #00b5b8;
+  border-radius: 4px;
+  padding: 6px 14px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  font-weight: 500;
+  transition: background 0.12s, color 0.12s;
+  align-self: flex-start;
+}
+.trn-add-stop-btn:hover {
+  background: #e0f7f7;
+}

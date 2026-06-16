@@ -17,7 +17,6 @@ let _stuEditActiveTab     = 'personal';
 let _stuEditDirty         = false;
 
 // Cached dropdown data for the edit form
-let _stuFormClasses       = [];
 let _stuFormTransportRoutes = [];
 let _stuFormExtraCurriculum = [];
 
@@ -340,14 +339,12 @@ async function loadStudentFormView(container) {
 async function _loadStuFormDropdowns() {
   // Routes live at /routes/ (confirmed via transport.js, the module that owns this resource) —
   // /transport/routes was a stale path that never matched the backend.
-  const [clsRes, trRes, ecRes] = await Promise.all([
-    apiFetch(`${API_BASE}/classes/`),
+  const [trRes, ecRes] = await Promise.all([
     apiFetch(`${API_BASE}/routes/`),
     apiFetch(`${API_BASE}/finance/extra-curriculum-activities`),
   ]);
-  _stuFormClasses        = clsRes && clsRes.ok ? _toArray(await clsRes.json()) : [];
-  _stuFormTransportRoutes = trRes  && trRes.ok  ? _toArray(await trRes.json())  : [];
-  _stuFormExtraCurriculum = ecRes  && ecRes.ok  ? _toArray(await ecRes.json())  : [];
+  _stuFormTransportRoutes = trRes && trRes.ok ? _toArray(await trRes.json()) : [];
+  _stuFormExtraCurriculum = ecRes && ecRes.ok ? _toArray(await ecRes.json()) : [];
 }
 
 function switchStuEditTab(tabId) {
@@ -371,8 +368,8 @@ function _renderStuEditTabContent(tabId) {
       populateAcademicLevelsDropdown('se-level', d.level_id).then(() => {
         const levelSel = document.getElementById('se-level');
         if (levelSel && levelSel.value) onStuLevelChange(levelSel.value, false);
+        if (d.joining_date) _deriveStuTermAndClass();
       });
-      if (d.joining_date) _populateTermDropdown(d.joining_date);
       break;
     case 'prev-edu':  c.innerHTML = _stuTabPrevEdu(d);     break;
     case 'guardian':  c.innerHTML = _stuTabGuardian(d);    _wireStuGuardianTab(); break;
@@ -393,7 +390,6 @@ function _opts(items, valueKey, labelKey, selectedVal) {
 }
 
 function _stuTabPersonal(d) {
-  const classOpts   = `<option value="">Please Select</option>${_opts(_stuFormClasses, 'id', 'name', d.class_id)}`;
   const natOpts     = ['Kenya','Uganda','Tanzania','Rwanda','Ethiopia','Other'].map(n =>
     `<option${d.nationality===n?' selected':''}>${n}</option>`).join('');
   const relOpts     = ['Christian','Muslim','Hindu','Other'].map(r =>
@@ -413,11 +409,6 @@ function _stuTabPersonal(d) {
   const isEdit = !!_currentEditStudentId;
   const admVal  = isEdit ? _esc(d.student_id || '') : 'Loading…';
   const admAttr = 'readonly';
-
-  // Pre-populate term dropdown if editing and term data is available
-  const existingTermOpt = (d.term_id)
-    ? `<option value="${_esc(String(d.term_id))}" selected>${_esc(d.term_name||d.cohort||d.term||d.session||'')}</option>`
-    : '';
 
   return `
     <div class="stu-form-grid">
@@ -442,6 +433,7 @@ function _stuTabPersonal(d) {
       <div class="stu-form-group">
         <label>Joining Date</label>
         <input id="se-joining-date" type="date" class="fin-search-input" style="width:100%!important" value="${_esc(d.joining_date||'')}">
+        <span class="stu-field-error" id="err-se-joining-date"></span>
       </div>
 
       <!-- Row 3: Gender | Birth Date -->
@@ -474,34 +466,21 @@ function _stuTabPersonal(d) {
         </select>
       </div>
 
-      <!-- Row 5: Physical Address | Term -->
-      <div class="stu-form-group">
+      <!-- Row 5: Physical Address (full width — Term is now auto-derived) -->
+      <div class="stu-form-group" style="grid-column:span 2;">
         <label>Physical Address</label>
         <input id="se-physical-address" class="fin-search-input" style="width:100%!important" value="${_esc(d.physical_address||'')}">
       </div>
-      <div class="stu-form-group">
-        <label>Term</label>
-        <select id="se-term" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
-          <option value="">— Select Term —</option>
-          ${existingTermOpt}
-        </select>
-      </div>
 
-      <!-- Row 6: Level of Academics | Class -->
-      <div class="stu-form-group">
+      <!-- Row 6: Level of Academics (full width — Class is now auto-derived) -->
+      <div class="stu-form-group" style="grid-column:span 2;">
         <label>Level of Academics <span style="color:#e74c3c">*</span></label>
         <select id="se-level" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;"
                 onchange="onStuLevelChange(this.value)">
           <option value="">Please Select</option>
         </select>
         <span class="stu-field-error" id="err-se-level"></span>
-      </div>
-      <div class="stu-form-group">
-        <label>Class <span style="color:#e74c3c">*</span></label>
-        <select id="se-class" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
-          ${classOpts}
-        </select>
-        <span class="stu-field-error" id="err-se-class"></span>
+        <div id="se-class-term-confirm" style="margin-top:6px;font-size:0.85rem;"></div>
       </div>
 
       <!-- Row 7: Sports House | Extra Curriculum -->
@@ -586,7 +565,18 @@ function _wireStuPersonalTab() {
   const joiningDate = document.getElementById('se-joining-date');
   if (joiningDate) {
     joiningDate.addEventListener('change', async () => {
-      if (joiningDate.value) await _populateTermDropdown(joiningDate.value);
+      if (joiningDate.value) {
+        await _deriveStuTermAndClass();
+      } else {
+        const fd = window._stuFormData || {};
+        fd.term_id = null; fd.class_id = null;
+        fd._derived_term_name = null; fd._derived_class_name = null;
+        fd._derivation_error = null;
+        const confirmEl = document.getElementById('se-class-term-confirm');
+        if (confirmEl) confirmEl.innerHTML = '';
+        const joiningErrEl = document.getElementById('err-se-joining-date');
+        if (joiningErrEl) joiningErrEl.textContent = '';
+      }
     });
   }
   const levelSel = document.getElementById('se-level');
@@ -616,33 +606,102 @@ async function fetchNextStudentId() {
   }
 }
 
-async function fetchTermsForJoiningDate(joiningDateStr) {
-  if (!joiningDateStr) return [];
+// Resolves the academic year and specific term that contains joiningDateStr.
+// Returns { term, year } or null if no match found.
+async function _resolveTermAndYearForDate(joiningDateStr) {
+  if (!joiningDateStr) return null;
   try {
     const yearRes = await apiFetch(`${API_BASE}/academic-years?date=${encodeURIComponent(joiningDateStr)}`);
-    if (!yearRes || !yearRes.ok) return [];
+    if (!yearRes || !yearRes.ok) return null;
     const years = await yearRes.json();
     const year = Array.isArray(years) ? years[0] : years;
-    if (!year || !year.id) return [];
+    if (!year || !year.id) return null;
+
     const termRes = await apiFetch(`${API_BASE}/terms?academic_year_id=${year.id}`);
-    if (!termRes || !termRes.ok) return [];
-    const terms = await termRes.json();
-    return Array.isArray(terms) ? terms.map(t => ({ id: t.id, name: t.name || t.title || '' })) : [];
-  } catch (_) { return []; }
+    if (!termRes || !termRes.ok) return null;
+    const raw = await termRes.json();
+    const termList = Array.isArray(raw) ? raw : (raw.data || raw.results || []);
+
+    const d = new Date(joiningDateStr);
+    const term = termList.find(t => t.start_date && t.end_date &&
+      new Date(t.start_date) <= d && d <= new Date(t.end_date));
+    return term ? { term, year } : null;
+  } catch (_) { return null; }
 }
 
-async function _populateTermDropdown(joiningDateStr) {
-  const termSel = document.getElementById('se-term');
-  if (!termSel) return;
-  const currentVal = termSel.value;
-  termSel.innerHTML = '<option value="">Loading&#8230;</option>';
-  const terms = await fetchTermsForJoiningDate(joiningDateStr);
-  if (!terms.length) {
-    termSel.innerHTML = '<option value="">— No terms found —</option>';
+// Auto-derives term_id and class_id from the current Joining Date + Level of Academics
+// selection, stores them in window._stuFormData, and updates the confirmation line.
+async function _deriveStuTermAndClass() {
+  const d = window._stuFormData || (window._stuFormData = {});
+  const joiningDate = _fv('se-joining-date');
+  const levelId     = _fv('se-level');
+  const confirmEl   = document.getElementById('se-class-term-confirm');
+  const joiningErrEl = document.getElementById('err-se-joining-date');
+  const levelErrEl  = document.getElementById('err-se-level');
+
+  d.term_id = null; d.class_id = null;
+  d._derived_term_name = null; d._derived_class_name = null; d._derivation_error = null;
+
+  if (confirmEl) confirmEl.innerHTML = '';
+  if (joiningErrEl) joiningErrEl.textContent = '';
+
+  if (!joiningDate) return;
+
+  if (confirmEl) confirmEl.innerHTML = '<span style="color:#888;font-size:0.82rem;">Resolving term&#8230;</span>';
+
+  const resolved = await _resolveTermAndYearForDate(joiningDate);
+  if (!resolved) {
+    if (joiningErrEl) joiningErrEl.textContent = 'This joining date does not fall within any configured academic term. Please choose a different date or contact an administrator to set up the relevant term.';
+    if (confirmEl) confirmEl.innerHTML = '';
+    d._derivation_error = 'no_term';
     return;
   }
-  termSel.innerHTML = `<option value="">— Select Term —</option>` +
-    terms.map(t => `<option value="${_esc(String(t.id))}"${String(t.id)===currentVal?' selected':''}>${_esc(t.name)}</option>`).join('');
+
+  const { term, year } = resolved;
+  d.term_id = term.id;
+  d._derived_term_name = term.name || term.title || '';
+  d._derived_year_name = year.name || '';
+
+  if (!levelId) {
+    if (confirmEl) confirmEl.innerHTML = '<span style="color:#888;font-size:0.82rem;">Select Level of Academics to auto-assign class.</span>';
+    return;
+  }
+
+  if (confirmEl) confirmEl.innerHTML = '<span style="color:#888;font-size:0.82rem;">Finding class&#8230;</span>';
+
+  try {
+    const res = await apiFetch(`${API_BASE}/classes/?academic_level_id=${levelId}&academic_year_id=${year.id}`);
+    if (!res || !res.ok) throw new Error('api');
+    const raw = await res.json();
+    const classes = Array.isArray(raw) ? raw : (raw.data || raw.results || raw.items || []);
+
+    if (classes.length === 0) {
+      const levelEl = document.getElementById('se-level');
+      const levelName = levelEl?.options[levelEl.selectedIndex]?.text || `Level ${levelId}`;
+      if (levelErrEl) levelErrEl.textContent = `No class has been set up yet for ${levelName} in the ${year.name} academic year. Please contact an administrator to create this class before enrolling this student.`;
+      if (confirmEl) confirmEl.innerHTML = '';
+      d._derivation_error = 'no_class';
+      return;
+    }
+    if (classes.length > 1) {
+      if (levelErrEl) levelErrEl.textContent = 'Multiple classes were found for this level and academic year. Please contact an administrator to resolve this before continuing.';
+      if (confirmEl) confirmEl.innerHTML = '';
+      d._derivation_error = 'multi_class';
+      return;
+    }
+
+    const cls = classes[0];
+    d.class_id = cls.id;
+    d._derived_class_name = cls.name || '';
+    d._derivation_error = null;
+    if (levelErrEl) levelErrEl.textContent = '';
+    if (confirmEl) confirmEl.innerHTML =
+      `<span style="color:#27ae60;font-size:0.85rem;">&#10003; Will be enrolled in: <strong>${_esc(d._derived_class_name)}</strong> for <strong>${_esc(d._derived_term_name)}</strong></span>`;
+
+  } catch (_) {
+    if (confirmEl) confirmEl.innerHTML = '<span style="color:#c0392b;font-size:0.82rem;">Could not resolve class. Please try again.</span>';
+    d._derivation_error = 'error';
+  }
 }
 
 async function onStuLevelChange(levelId, clearHouse = true) {
@@ -667,6 +726,9 @@ async function onStuLevelChange(levelId, clearHouse = true) {
       houseSelect.innerHTML = '<option value="">No houses found</option>';
     }
   } catch (_) { houseSelect.innerHTML = '<option value="">Error loading</option>'; }
+
+  // Re-derive class whenever the level changes (non-blocking)
+  _deriveStuTermAndClass();
 }
 
 function validateSiblingId(input) {
@@ -1128,8 +1190,7 @@ function _stuValidatePersonal() {
     { id: 'se-gender',      err: 'err-se-gender',      msg: 'Gender is required.' },
     { id: 'se-dob',         err: 'err-se-dob',         msg: 'Birth Date is required.' },
     { id: 'se-nationality', err: 'err-se-nationality',  msg: 'Nationality is required.' },
-    { id: 'se-level',       err: 'err-se-level',       msg: 'Level of Academics is required.' },
-    { id: 'se-class',       err: 'err-se-class',       msg: 'Class is required.' },
+    { id: 'se-level', err: 'err-se-level', msg: 'Level of Academics is required.' },
   ];
   let valid = true;
   required.forEach(({ id, err, msg }) => {
@@ -1144,6 +1205,9 @@ function _stuValidatePersonal() {
       if (errEl) errEl.textContent = '';
     }
   });
+  // Block if term/class auto-derivation is in an error state
+  const fd = window._stuFormData || {};
+  if (fd._derivation_error) valid = false;
   return valid;
 }
 
@@ -1163,9 +1227,8 @@ function _harvestStuPersonalTab() {
   d.nationality        = _fv('se-nationality');
   d.religion           = _fv('se-religion');
   d.physical_address   = _fv('se-physical-address');
-  d.term_id            = _fv('se-term') || null;
   d.level_id           = _fv('se-level') || null;
-  d.class_id           = _fv('se-class') || null;
+  // term_id and class_id are maintained by _deriveStuTermAndClass; do not overwrite from DOM
   d.sports_house       = _fv('se-sports-house');
   const ecSelect = document.getElementById('se-extra-curriculum');
   d.extra_curriculum_ids = ecSelect ? Array.from(ecSelect.selectedOptions).map(o => o.value) : (d.extra_curriculum_ids || []);
@@ -2226,9 +2289,12 @@ async function saveFundingSource(id) {
 // ==================== 9. STUDENT REPORT ====================
 
 let _stuRptData = [], _stuRptPage = 1, _stuRptPerPage = 10, _stuRptSearch = '';
+let _stuRptFilters = {};
+let _stuRptFilterCache = { types: [], classes: [], streams: [], routes: [], ec: [] };
 
 async function loadStudentReportView(container) {
   openStuReportsDropdown();
+  _stuRptFilters = {};
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -2245,16 +2311,181 @@ async function loadStudentReportView(container) {
           <button class="fin-export-btn" title="Export PDF">&#128438;</button>
           <button class="fin-export-btn" title="Export CSV" onclick="exportStuReportCSV()">&#128202;</button>
           <input type="text" class="fin-search-input" id="srpt-search" placeholder="&#128269; Search&#8230;" oninput="onStuRptSearch(this.value)">
-          <button class="fin-btn-filter">&#9776; Filters</button>
+          <button class="fin-btn-filter" onclick="showStuRptFilterPanel()">&#9776; Filters</button>
         </div>
       </div>
       <div id="srpt-table"></div>
       <div id="srpt-pagination"></div>
     </div>
+
+    <div id="srpt-filter-overlay" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.35);z-index:400;" onclick="closeStuRptFilterPanel(event)">
+      <div class="hr-filter-panel" onclick="event.stopPropagation()">
+        <div class="hr-filter-panel-header">
+          <span class="hr-filter-panel-title">Filters</span>
+          <button class="hr-filter-close-btn" onclick="closeStuRptFilterPanel()">&#x2715;</button>
+        </div>
+        <div class="hr-filter-panel-body">
+          <div class="hr-filter-group">
+            <label class="hr-filter-label">Student Type</label>
+            <select id="srpt-f-type" class="hr-filter-select"><option value="">Please Select</option></select>
+          </div>
+          <div class="hr-filter-group">
+            <label class="hr-filter-label">Class</label>
+            <select id="srpt-f-class" class="hr-filter-select"><option value="">Please Select</option></select>
+          </div>
+          <div class="hr-filter-group">
+            <label class="hr-filter-label">Student Status</label>
+            <select id="srpt-f-status" class="hr-filter-select">
+              <option value="">Please Select</option>
+              <option value="Active">Active</option>
+              <option value="Inactive">Inactive</option>
+              <option value="Graduated">Graduated</option>
+              <option value="Transferred">Transferred</option>
+            </select>
+          </div>
+          <div class="hr-filter-group">
+            <label class="hr-filter-label">Sports House</label>
+            <select id="srpt-f-sports-house" class="hr-filter-select"><option value="">Please Select</option></select>
+          </div>
+          <div class="hr-filter-group">
+            <label class="hr-filter-label">Extra Curriculum</label>
+            <select id="srpt-f-ec" class="hr-filter-select"><option value="">Please Select</option></select>
+          </div>
+          <div class="hr-filter-group">
+            <label class="hr-filter-label">Stream</label>
+            <select id="srpt-f-stream" class="hr-filter-select"><option value="">Please Select</option></select>
+          </div>
+          <div class="hr-filter-group">
+            <label class="hr-filter-label">Transport Route</label>
+            <select id="srpt-f-route" class="hr-filter-select"><option value="">Please Select</option></select>
+          </div>
+          <div class="hr-filter-group">
+            <label class="hr-filter-label">Approved Use of Student Photo</label>
+            <select id="srpt-f-photo-consent" class="hr-filter-select">
+              <option value="">Please Select</option>
+              <option value="true">Yes</option>
+              <option value="false">No</option>
+            </select>
+          </div>
+          <div class="hr-filter-group">
+            <label class="hr-filter-label">Nationality</label>
+            <select id="srpt-f-nationality" class="hr-filter-select">
+              <option value="">Please Select</option>
+              ${['Kenya','Uganda','Tanzania','Rwanda','Ethiopia','Other'].map(n => `<option value="${n}">${n}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <div class="hr-filter-panel-footer" style="display:flex;align-items:center;gap:8px;padding:14px 20px;border-top:1px solid #eee;">
+          <a href="#" onclick="clearStuRptFilters();return false;" style="color:#555;font-size:0.88rem;text-decoration:none;margin-right:auto;">Clear All Filters</a>
+          <button class="fin-btn-teal" style="background:#e67e22!important;" onclick="sendStuRptSms()">Send SMS</button>
+          <button class="fin-btn-teal" onclick="applyStuRptFilters()">Submit</button>
+        </div>
+      </div>
+    </div>
   `;
   renderSkeletonRows('srpt-table', 7);
-  const res = await apiFetch(`${API_BASE}/reports/students`);
-  if (res && res.ok) _stuRptData = await res.json();
+  await _fetchStuReport();
+}
+
+async function _loadStuRptFilterDropdowns() {
+  // Sports House: no flat /sports-houses endpoint confirmed on the backend —
+  // flagged as backend gap; leaving dropdown empty with console warning.
+  // TODO: backend needs GET /sports-houses (flat list, all levels) for this filter to work.
+  const [typesRes, classesRes, streamsRes, routesRes, ecRes] = await Promise.all([
+    apiFetch(`${API_BASE}/student-management/student-sources`),
+    apiFetch(`${API_BASE}/classes/`),
+    apiFetch(`${API_BASE}/student-management/streams`),
+    apiFetch(`${API_BASE}/routes/`),
+    apiFetch(`${API_BASE}/finance/extra-curriculum-activities`),
+  ]);
+  _stuRptFilterCache.types   = typesRes   && typesRes.ok   ? _toArray(await typesRes.json())   : [];
+  _stuRptFilterCache.classes = classesRes && classesRes.ok ? _toArray(await classesRes.json()) : [];
+  _stuRptFilterCache.streams = streamsRes && streamsRes.ok ? _toArray(await streamsRes.json()) : [];
+  _stuRptFilterCache.routes  = routesRes  && routesRes.ok  ? _toArray(await routesRes.json())  : [];
+  _stuRptFilterCache.ec      = ecRes      && ecRes.ok      ? _toArray(await ecRes.json())      : [];
+
+  const _opt = (id, items, vk, lk) => {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    sel.innerHTML = `<option value="">Please Select</option>` +
+      items.map(it => `<option value="${_esc(String(it[vk]))}">${_esc(it[lk])}</option>`).join('');
+  };
+  _opt('srpt-f-type',   _stuRptFilterCache.types,   'id', 'name');
+  _opt('srpt-f-class',  _stuRptFilterCache.classes,  'id', 'name');
+  _opt('srpt-f-stream', _stuRptFilterCache.streams,  'id', 'title');
+  _opt('srpt-f-route',  _stuRptFilterCache.routes,   'id', 'name');
+  _opt('srpt-f-ec',     _stuRptFilterCache.ec,       'id', 'title');
+
+  if (!_stuRptFilterCache.types.length && !_stuRptFilterCache.streams.length) {
+    console.warn('[EduGiga] Student Report: some filter dropdowns may be empty due to missing API endpoints.');
+  }
+  console.warn('[EduGiga] Student Report: Sports House filter requires a flat GET /sports-houses endpoint (not yet available).');
+}
+
+function showStuRptFilterPanel() {
+  const o = document.getElementById('srpt-filter-overlay');
+  if (o) o.style.display = 'block';
+  _loadStuRptFilterDropdowns();
+  // Restore current filter selections
+  const f = _stuRptFilters;
+  const set = (id, v) => { const el = document.getElementById(id); if (el && v !== undefined) el.value = v; };
+  set('srpt-f-type',          f.student_type_id || '');
+  set('srpt-f-class',         f.class_id        || '');
+  set('srpt-f-status',        f.status          || '');
+  set('srpt-f-ec',            f.extra_curriculum_id || '');
+  set('srpt-f-stream',        f.stream_id       || '');
+  set('srpt-f-route',         f.transport_route_id  || '');
+  set('srpt-f-photo-consent', f.parent_consents_photo !== undefined ? String(f.parent_consents_photo) : '');
+  set('srpt-f-nationality',   f.nationality     || '');
+}
+
+function closeStuRptFilterPanel(e) {
+  if (e && e.target !== document.getElementById('srpt-filter-overlay')) return;
+  const o = document.getElementById('srpt-filter-overlay');
+  if (o) o.style.display = 'none';
+}
+
+async function applyStuRptFilters() {
+  _stuRptFilters = {};
+  const read = id => document.getElementById(id)?.value || '';
+  const v = (k, id) => { const val = read(id); if (val) _stuRptFilters[k] = val; };
+  v('student_type_id',      'srpt-f-type');
+  v('class_id',             'srpt-f-class');
+  v('status',               'srpt-f-status');
+  v('extra_curriculum_id',  'srpt-f-ec');
+  v('stream_id',            'srpt-f-stream');
+  v('transport_route_id',   'srpt-f-route');
+  v('parent_consents_photo','srpt-f-photo-consent');
+  v('nationality',          'srpt-f-nationality');
+  const o = document.getElementById('srpt-filter-overlay');
+  if (o) o.style.display = 'none';
+  await _fetchStuReport();
+}
+
+async function clearStuRptFilters() {
+  _stuRptFilters = {};
+  ['srpt-f-type','srpt-f-class','srpt-f-status','srpt-f-sports-house','srpt-f-ec',
+   'srpt-f-stream','srpt-f-route','srpt-f-photo-consent','srpt-f-nationality']
+    .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  await _fetchStuReport();
+}
+
+function sendStuRptSms() {
+  // TODO: wire to the SMS composition flow once an SMS module is available in the codebase.
+  showToast('SMS feature is not yet implemented.', 'info');
+}
+
+async function _fetchStuReport() {
+  renderSkeletonRows('srpt-table', 7);
+  const params = new URLSearchParams();
+  Object.entries(_stuRptFilters).forEach(([k, v]) => { if (v !== '' && v !== undefined) params.set(k, v); });
+  const qs = params.toString();
+  const url = `${API_BASE}/reports/students${qs ? '?' + qs : ''}`;
+  const res = await apiFetch(url);
+  if (res && res.ok) {
+    const raw = await res.json();
+    _stuRptData = Array.isArray(raw) ? raw : (raw.data || raw.results || []);
+  }
   _stuRptPage = 1;
   _renderStuRptTable();
 }

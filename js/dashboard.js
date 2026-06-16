@@ -58,7 +58,30 @@ function showDashboard() {
               <li id="sidebar-sa-academic-levels" onclick="loadView('sa-academic-levels')">Academic Levels</li>
             </ul>
           </li>
-          <li onclick="loadView('transport-management')">Transport Management</li>
+          <li class="dropdown">
+            <span onclick="toggleDropdown('transport-dropdown')">Transport Management ▾</span>
+            <ul id="transport-dropdown" class="dropdown-menu" style="display:none;">
+              <li id="sidebar-trn-servicings"  onclick="loadView('transport-vehicle-servicings')">Vehicle Servicings</li>
+              <li id="sidebar-trn-fueling"     onclick="loadView('transport-fueling-record')">Fueling Record</li>
+              <li id="sidebar-trn-schedules"   onclick="loadView('transport-bus-schedules')">Bus Schedules</li>
+              <li id="sidebar-trn-routes"      onclick="loadView('transport-routes')">Routes</li>
+              <li class="dropdown">
+                <span onclick="toggleDropdown('transport-reports-dropdown')">Reports ▾</span>
+                <ul id="transport-reports-dropdown" class="dropdown-menu" style="display:none;">
+                  <li id="sidebar-trn-bus-boarding"     class="sa-sub-sub" onclick="loadView('transport-reports-bus-boarding')">Bus Boarding Report</li>
+                  <li id="sidebar-trn-student-per-route" class="sa-sub-sub" onclick="loadView('transport-reports-student-per-route')">Student Report per Route</li>
+                </ul>
+              </li>
+              <li class="dropdown">
+                <span onclick="toggleDropdown('transport-utilities-dropdown')">Utilities ▾</span>
+                <ul id="transport-utilities-dropdown" class="dropdown-menu" style="display:none;">
+                  <li id="sidebar-trn-service-items"   class="sa-sub-sub" onclick="loadView('transport-service-items')">Service Items</li>
+                  <li id="sidebar-trn-maintenance"     class="sa-sub-sub" onclick="loadView('transport-maintenance-tasks')">Maintenance Tasks</li>
+                  <li id="sidebar-trn-vehicles"        class="sa-sub-sub" onclick="loadView('transport-vehicles')">Vehicles</li>
+                </ul>
+              </li>
+            </ul>
+          </li>
           <li class="dropdown">
             <span onclick="toggleDropdown('finance-dropdown')">Finance ▾</span>
             <ul id="finance-dropdown" class="dropdown-menu" style="display:none;">
@@ -234,6 +257,8 @@ const FORM_VIEWS = new Set([
   // Utilities with add/edit forms
   'utilities-student-sources', 'utilities-streams', 'utilities-funding-sources',
   'student-classes',
+  // Transport
+  'transport-routes-add', 'transport-routes-edit',
 ]);
 
 async function loadView(view) {
@@ -341,8 +366,41 @@ async function loadView(view) {
       setActiveSidebarItem('sidebar-sa-academic-years'); await loadAcademicYearsView(main); break;
     case 'sa-academic-levels':
       setActiveSidebarItem('sidebar-sa-academic-levels'); await loadAcademicLevelsView(main); break;
-    // Transport
-    case 'transport-management': await loadTransportView(main); break;
+    // Transport Management
+    case 'transport-management':
+    case 'transport-vehicle-servicings':
+      setActiveSidebarItem('sidebar-trn-servicings'); openTransportDropdown();
+      loadTrnPlaceholderView(main, 'Vehicle Servicings'); break;
+    case 'transport-fueling-record':
+      setActiveSidebarItem('sidebar-trn-fueling'); openTransportDropdown();
+      loadTrnPlaceholderView(main, 'Fueling Record'); break;
+    case 'transport-bus-schedules':
+      setActiveSidebarItem('sidebar-trn-schedules'); openTransportDropdown();
+      loadTrnPlaceholderView(main, 'Bus Schedules'); break;
+    case 'transport-routes':
+      setActiveSidebarItem('sidebar-trn-routes'); openTransportDropdown();
+      await loadTransportRoutesView(main); break;
+    case 'transport-routes-add':
+      openTransportDropdown();
+      await loadTransportRouteFormView(main, null); break;
+    case 'transport-routes-edit':
+      openTransportDropdown();
+      await loadTransportRouteFormView(main, window._currentEditRouteId); break;
+    case 'transport-reports-bus-boarding':
+      setActiveSidebarItem('sidebar-trn-bus-boarding'); openTransportReportsDropdown();
+      await loadTrnBusBoardingReportView(main); break;
+    case 'transport-reports-student-per-route':
+      setActiveSidebarItem('sidebar-trn-student-per-route'); openTransportReportsDropdown();
+      await loadTrnStudentPerRouteReportView(main); break;
+    case 'transport-service-items':
+      setActiveSidebarItem('sidebar-trn-service-items'); openTransportUtilitiesDropdown();
+      loadTrnPlaceholderView(main, 'Service Items'); break;
+    case 'transport-maintenance-tasks':
+      setActiveSidebarItem('sidebar-trn-maintenance'); openTransportUtilitiesDropdown();
+      loadTrnPlaceholderView(main, 'Maintenance Tasks'); break;
+    case 'transport-vehicles':
+      setActiveSidebarItem('sidebar-trn-vehicles'); openTransportUtilitiesDropdown();
+      loadTrnPlaceholderView(main, 'Vehicles'); break;
     // Finance (NEW sub-modules)
     case 'student-fees-status': await loadStudentFeesStatusView(main); break;
     case 'summarized-fee-statement': await loadSummarizedFeeStatementView(main); break;
@@ -484,6 +542,21 @@ function setActiveSidebarItem(itemId) {
   clearSidebarActiveItems();
   const el = document.getElementById(itemId);
   if (el) el.classList.add('sidebar-active');
+}
+
+function openTransportDropdown() {
+  const d = document.getElementById('transport-dropdown');
+  if (d) d.style.display = 'block';
+}
+function openTransportReportsDropdown() {
+  openTransportDropdown();
+  const d = document.getElementById('transport-reports-dropdown');
+  if (d) d.style.display = 'block';
+}
+function openTransportUtilitiesDropdown() {
+  openTransportDropdown();
+  const d = document.getElementById('transport-utilities-dropdown');
+  if (d) d.style.display = 'block';
 }
 
 // ---- Utilities ----
