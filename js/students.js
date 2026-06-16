@@ -18,8 +18,6 @@ let _stuEditDirty         = false;
 
 // Cached dropdown data for the edit form
 let _stuFormClasses       = [];
-let _stuFormStreams        = [];
-let _stuFormFundingSources = [];
 let _stuFormTransportRoutes = [];
 let _stuFormExtraCurriculum = [];
 
@@ -300,6 +298,8 @@ const _STU_TABS = [
 async function loadStudentFormView(container) {
   const isEdit = !!_currentEditStudentId;
   const title  = isEdit ? 'Edit Student' : 'Add Student';
+  _stuEditActiveTab    = 'personal';
+  window._stuFormFiles = {};
 
   container.innerHTML = `
     <div class="fin-page" style="padding:0;">
@@ -317,12 +317,7 @@ async function loadStudentFormView(container) {
         <div class="stu-edit-body" id="stu-edit-tab-content">
           <p class="fin-loading">Loading&#8230;</p>
         </div>
-        <div class="stu-edit-footer">
-          <button class="fin-btn-teal" id="stu-form-submit-btn" onclick="submitStudentForm()">
-            ${isEdit ? 'Update' : 'Save'}
-          </button>
-          <button class="fin-btn-cancel" onclick="cancelStudentForm()">Cancel</button>
-        </div>
+        <div class="stu-edit-footer"></div>
       </div>
     </div>
     <div id="stu-transport-modal-root"></div>
@@ -339,31 +334,30 @@ async function loadStudentFormView(container) {
   window._stuFormData = data;
   _stuEditDirty = false;
   _renderStuEditTabContent(_stuEditActiveTab);
+  _updateStuFormFooter();
 }
 
 async function _loadStuFormDropdowns() {
   // Routes live at /routes/ (confirmed via transport.js, the module that owns this resource) —
   // /transport/routes was a stale path that never matched the backend.
-  const [clsRes, strRes, fsRes, trRes, ecRes] = await Promise.all([
+  const [clsRes, trRes, ecRes] = await Promise.all([
     apiFetch(`${API_BASE}/classes/`),
-    apiFetch(`${API_BASE}/student-management/streams`),
-    apiFetch(`${API_BASE}/student-management/funding-sources`),
     apiFetch(`${API_BASE}/routes/`),
     apiFetch(`${API_BASE}/finance/extra-curriculum-activities`),
   ]);
   _stuFormClasses        = clsRes && clsRes.ok ? _toArray(await clsRes.json()) : [];
-  _stuFormStreams         = strRes && strRes.ok ? _toArray(await strRes.json()) : [];
-  _stuFormFundingSources  = fsRes  && fsRes.ok  ? _toArray(await fsRes.json())  : [];
   _stuFormTransportRoutes = trRes  && trRes.ok  ? _toArray(await trRes.json())  : [];
   _stuFormExtraCurriculum = ecRes  && ecRes.ok  ? _toArray(await ecRes.json())  : [];
 }
 
 function switchStuEditTab(tabId) {
+  _harvestStuActiveTab();
   _stuEditActiveTab = tabId;
   document.querySelectorAll('.stu-tab-btn').forEach(b => {
     b.classList.toggle('stu-tab-btn--active', b.id === `stu-tab-btn-${tabId}`);
   });
   _renderStuEditTabContent(tabId);
+  _updateStuFormFooter();
 }
 
 function _renderStuEditTabContent(tabId) {
@@ -400,14 +394,10 @@ function _opts(items, valueKey, labelKey, selectedVal) {
 
 function _stuTabPersonal(d) {
   const classOpts   = `<option value="">Please Select</option>${_opts(_stuFormClasses, 'id', 'name', d.class_id)}`;
-  const streamOpts  = `<option value="">Please Select</option>${_opts(_stuFormStreams.filter(s => s.status !== 'inactive' && s.status !== 'Inactive'), 'id', 'title', d.stream_id)}`;
-  const fsOpts      = `<option value="">Please Select</option>${_opts(_stuFormFundingSources.filter(f=>!f.is_inactive), 'id', 'title', d.funding_source_id)}`;
   const natOpts     = ['Kenya','Uganda','Tanzania','Rwanda','Ethiopia','Other'].map(n =>
     `<option${d.nationality===n?' selected':''}>${n}</option>`).join('');
   const relOpts     = ['Christian','Muslim','Hindu','Other'].map(r =>
     `<option${d.religion===r?' selected':''}>${r}</option>`).join('');
-  const statusOpts  = ['Active','Inactive','Graduated','Transferred'].map(s =>
-    `<option value="${s}"${(d.status||'Active')===s?' selected':''}>${s}</option>`).join('');
   const genderOpts  = ['Male','Female'].map(g =>
     `<option${d.gender===g?' selected':''}>${g}</option>`).join('');
 
@@ -484,25 +474,10 @@ function _stuTabPersonal(d) {
         </select>
       </div>
 
-      <!-- Row 5: Physical Address | Funding Source -->
+      <!-- Row 5: Physical Address | Term -->
       <div class="stu-form-group">
         <label>Physical Address</label>
         <input id="se-physical-address" class="fin-search-input" style="width:100%!important" value="${_esc(d.physical_address||'')}">
-      </div>
-      <div class="stu-form-group">
-        <label>Funding Source</label>
-        <select id="se-funding-source" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
-          ${fsOpts}
-        </select>
-      </div>
-
-      <!-- Row 6: Student Status | Term -->
-      <div class="stu-form-group">
-        <label>Student Status <span style="color:#e74c3c">*</span></label>
-        <select id="se-status" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
-          ${statusOpts}
-        </select>
-        <span class="stu-field-error" id="err-se-status"></span>
       </div>
       <div class="stu-form-group">
         <label>Term</label>
@@ -512,7 +487,7 @@ function _stuTabPersonal(d) {
         </select>
       </div>
 
-      <!-- Row 7: Level of Academics | Stream -->
+      <!-- Row 6: Level of Academics | Class -->
       <div class="stu-form-group">
         <label>Level of Academics <span style="color:#e74c3c">*</span></label>
         <select id="se-level" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;"
@@ -522,20 +497,14 @@ function _stuTabPersonal(d) {
         <span class="stu-field-error" id="err-se-level"></span>
       </div>
       <div class="stu-form-group">
-        <label>Stream</label>
-        <select id="se-stream" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
-          ${streamOpts}
-        </select>
-      </div>
-
-      <!-- Row 8: Class | Sports House -->
-      <div class="stu-form-group">
         <label>Class <span style="color:#e74c3c">*</span></label>
         <select id="se-class" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
           ${classOpts}
         </select>
         <span class="stu-field-error" id="err-se-class"></span>
       </div>
+
+      <!-- Row 7: Sports House | Extra Curriculum -->
       <div class="stu-form-group">
         <label>Sports House</label>
         <select id="se-sports-house" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
@@ -543,20 +512,18 @@ function _stuTabPersonal(d) {
           ${(d.sports_house ? `<option selected>${_esc(d.sports_house)}</option>` : '')}
         </select>
       </div>
-
-      <!-- Row 9: Extra Curriculum | Transportation -->
       <div class="stu-form-group">
         <label>Extra Curriculum</label>
         <select id="se-extra-curriculum" class="stu-multiselect" multiple>${ecOpts}</select>
       </div>
+
+      <!-- Row 8: Uses School Transport? | Photo -->
       <div class="stu-form-group">
-        <label><input type="checkbox" id="se-uses-transport"${d.uses_school_transport?' checked':''} onchange="onStuUsesTransportChange()"> Uses School Transport?</label>
+        <label class="stu-checkbox-row"><input type="checkbox" id="se-uses-transport"${d.uses_school_transport?' checked':''} onchange="onStuUsesTransportChange()"> Uses School Transport?</label>
         <div id="se-transport-summary-wrap"></div>
         <span class="stu-field-error" id="err-se-transport"></span>
       </div>
-
-      <!-- Row 10: Photo & Flags -->
-      <div class="stu-form-group" style="grid-column:span 2;">
+      <div class="stu-form-group">
         <label>Photo</label>
         <div style="display:flex;align-items:center;gap:16px;">
           <div id="se-photo-preview" style="width:80px;height:80px;border-radius:50%;background:#e0e0e0;overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:2rem;color:#aaa;">
@@ -566,24 +533,21 @@ function _stuTabPersonal(d) {
         </div>
       </div>
 
-      <div class="stu-form-group">
-        <label><input type="checkbox" id="se-record-closed"${d.record_closed?' checked':''}> Record Closed</label>
-      </div>
+      <!-- Row 9: Meal Program | Photo Consent -->
       <div class="stu-form-group">
         <label>Mapped to Meal Program?</label>
         <div style="display:flex;gap:16px;margin-top:6px;">
-          <label><input type="radio" name="se-meal" value="yes"${d.meal_program?' checked':''}> Yes</label>
-          <label><input type="radio" name="se-meal" value="no"${!d.meal_program?' checked':''}> No</label>
+          <label class="stu-checkbox-row"><input type="radio" name="se-meal" value="yes"${d.meal_program?' checked':''}> Yes</label>
+          <label class="stu-checkbox-row"><input type="radio" name="se-meal" value="no"${!d.meal_program?' checked':''}> No</label>
         </div>
       </div>
-
-      <div class="stu-form-group" style="grid-column:span 2;">
-        <label><input type="checkbox" id="se-photo-consent"${d.photo_consent?' checked':''}> Parent Consents to Use of Student Photo?</label>
+      <div class="stu-form-group">
+        <label class="stu-checkbox-row"><input type="checkbox" id="se-photo-consent"${d.photo_consent?' checked':''}> Parent Consents to Use of Student Photo?</label>
       </div>
 
-      <!-- Row 11: Sibling Enrolment -->
+      <!-- Row 10: Sibling Enrolment -->
       <div class="stu-form-group" style="grid-column:span 2;">
-        <label><input type="checkbox" id="se-has-sibling"${hasSibling?' checked':''} onchange="toggleSiblingSection()"> Has Sibling Enrolled?</label>
+        <label class="stu-checkbox-row"><input type="checkbox" id="se-has-sibling"${hasSibling?' checked':''} onchange="toggleSiblingSection()"> Has Sibling Enrolled?</label>
         <div id="se-sibling-section" style="display:${sibDisplay};margin-top:10px;padding:14px;background:#f9fafb;border-radius:6px;border:1px solid #e0e0e0;">
           <div style="display:flex;gap:10px;flex-wrap:wrap;">
             <div class="stu-form-group" style="flex:1;min-width:180px;">
@@ -602,7 +566,7 @@ function _stuTabPersonal(d) {
         </div>
       </div>
 
-      <!-- Row 12: Notes -->
+      <!-- Row 11: Notes -->
       <div class="stu-form-group" style="grid-column:span 2;">
         <label>Notes</label>
         <textarea id="se-notes" style="width:100%;min-height:80px;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:0.9rem;">${_esc(d.notes||'')}</textarea>
@@ -722,8 +686,17 @@ function toggleSiblingSection() {
   if (sec) sec.style.display = chk?.checked ? 'block' : 'none';
 }
 
+// File inputs live on different tabs that get torn down on tab switch, so the selected
+// File objects are cached here (rather than re-queried from the DOM at save time).
+window._stuFormFiles = window._stuFormFiles || {};
+function _cacheStuFile(id, input) {
+  if (input.files && input.files[0]) window._stuFormFiles[id] = input.files[0];
+  else delete window._stuFormFiles[id];
+}
+
 function handleStuPhotoPreview(input) {
   if (!input.files[0]) return;
+  _cacheStuFile('se-photo', input);
   const preview = document.getElementById('se-photo-preview');
   if (!preview) return;
   const url = URL.createObjectURL(input.files[0]);
@@ -1134,15 +1107,15 @@ function _stuTabDocuments(d) {
       <p style="font-weight:600;color:#2c3e50;margin:16px 0 8px;">Upload New Documents</p>
       <div class="stu-form-group" style="margin-bottom:12px;">
         <label>Passport Photo</label>
-        <input type="file" id="se-doc-photo" accept="image/*">
+        <input type="file" id="se-doc-photo" accept="image/*" onchange="_cacheStuFile('se-doc-photo', this)">
       </div>
       <div class="stu-form-group" style="margin-bottom:12px;">
         <label>Previous School Report (PDF)</label>
-        <input type="file" id="se-doc-report" accept=".pdf">
+        <input type="file" id="se-doc-report" accept=".pdf" onchange="_cacheStuFile('se-doc-report', this)">
       </div>
       <div class="stu-form-group">
         <label>Other Document</label>
-        <input type="file" id="se-doc-other">
+        <input type="file" id="se-doc-other" onchange="_cacheStuFile('se-doc-other', this)">
       </div>
     </div>
   `;
@@ -1155,7 +1128,6 @@ function _stuValidatePersonal() {
     { id: 'se-gender',      err: 'err-se-gender',      msg: 'Gender is required.' },
     { id: 'se-dob',         err: 'err-se-dob',         msg: 'Birth Date is required.' },
     { id: 'se-nationality', err: 'err-se-nationality',  msg: 'Nationality is required.' },
-    { id: 'se-status',      err: 'err-se-status',      msg: 'Status is required.' },
     { id: 'se-level',       err: 'err-se-level',       msg: 'Level of Academics is required.' },
     { id: 'se-class',       err: 'err-se-class',       msg: 'Class is required.' },
   ];
@@ -1175,7 +1147,205 @@ function _stuValidatePersonal() {
   return valid;
 }
 
+// ── Per-tab harvesting ──────────────────────────────────────────────────────
+// Tab content is rebuilt from window._stuFormData on every switch, so live DOM
+// edits on the tab being left must be copied back into that object first —
+// otherwise they're silently lost on navigation/save.
+
+function _harvestStuPersonalTab() {
+  const d = window._stuFormData || (window._stuFormData = {});
+  if (!document.getElementById('se-surname')) return; // tab not currently mounted
+  d.last_name        = _fv('se-surname').trim();
+  d.first_name       = _fv('se-other-name').trim();
+  d.gender            = _fv('se-gender');
+  d.date_of_birth     = _fv('se-dob');
+  d.joining_date       = _fv('se-joining-date');
+  d.nationality        = _fv('se-nationality');
+  d.religion           = _fv('se-religion');
+  d.physical_address   = _fv('se-physical-address');
+  d.term_id            = _fv('se-term') || null;
+  d.level_id           = _fv('se-level') || null;
+  d.class_id           = _fv('se-class') || null;
+  d.sports_house       = _fv('se-sports-house');
+  const ecSelect = document.getElementById('se-extra-curriculum');
+  d.extra_curriculum_ids = ecSelect ? Array.from(ecSelect.selectedOptions).map(o => o.value) : (d.extra_curriculum_ids || []);
+  d.meal_program       = _fradio('se-meal') === 'yes';
+  d.photo_consent      = _fc('se-photo-consent');
+  d.notes              = _fv('se-notes');
+  d.siblings = _fc('se-has-sibling') ? [{
+    full_name:  _fv('se-sibling-name'),
+    student_id: _fv('se-sibling-id'),
+  }] : [];
+  const photoEl = document.getElementById('se-photo');
+  if (photoEl) _cacheStuFile('se-photo', photoEl);
+  // uses_school_transport / transport_selection are kept up to date directly
+  // by the transport cascade (onStuUsesTransportChange/finishTransportCascade).
+}
+
+function _harvestStuPrevEduTab() {
+  if (!document.getElementById('se-prev-school')) return;
+  const d = window._stuFormData || (window._stuFormData = {});
+  d.prev_school_name      = _fv('se-prev-school');
+  d.year_left_prev_school = _fv('se-year-left');
+}
+
+function _harvestStuGuardianTab() {
+  if (!document.getElementById('se-p1-name')) return;
+  const d = window._stuFormData || (window._stuFormData = {});
+  const parents = [];
+  const p1 = _fv('se-p1-name').trim();
+  if (p1) parents.push({ full_name: p1, email: _fv('se-p1-email'), phone: _fv('se-p1-phone'), residence: _fv('se-p1-residence'), is_primary: true });
+  const p2 = _fv('se-p2-name').trim();
+  if (p2) parents.push({ full_name: p2, email: _fv('se-p2-email'), phone: _fv('se-p2-phone'), residence: _fv('se-p2-residence'), is_primary: false });
+  d.parents = parents;
+
+  const gName = _fv('se-guardian-name').trim();
+  d.guardian = gName ? { full_name: gName, phone: _fv('se-guardian-phone'), email: _fv('se-guardian-email'), relationship: 'guardian' } : null;
+}
+
+function _harvestStuMedicalTab() {
+  if (!document.getElementById('se-allergies')) return;
+  const d = window._stuFormData || (window._stuFormData = {});
+  d.medical = {
+    allergies:               _fv('se-allergies'),
+    chronic_symptoms:        _fv('se-chronic'),
+    health_insurance:        _fv('se-insurance'),
+    blood_group:             _fv('se-blood-group'),
+    emergency_contact_name:  _fv('se-emrg-name'),
+    emergency_contact_phone: _fv('se-emrg-phone'),
+  };
+}
+
+function _harvestStuDocumentsTab() {
+  ['se-doc-photo', 'se-doc-report', 'se-doc-other'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) _cacheStuFile(id, el);
+  });
+}
+
+function _harvestStuActiveTab() {
+  switch (_stuEditActiveTab) {
+    case 'personal':  _harvestStuPersonalTab();  break;
+    case 'prev-edu':  _harvestStuPrevEduTab();   break;
+    case 'guardian':  _harvestStuGuardianTab();  break;
+    case 'medical':   _harvestStuMedicalTab();   break;
+    case 'documents': _harvestStuDocumentsTab(); break;
+  }
+}
+
+// ── Persistence ──────────────────────────────────────────────────────────────
+// Builds the payload entirely from window._stuFormData (the harvested model) so
+// it works no matter which tab is currently mounted. POSTs on first save, then
+// switches to PUT once _currentEditStudentId is captured from the response.
+
+async function _persistStudentRecord(showSuccessToast) {
+  const d = window._stuFormData || {};
+  const payload = {
+    last_name:         (d.last_name || '').trim(),
+    first_name:        (d.first_name || '').trim(),
+    gender:            d.gender || '',
+    date_of_birth:     d.date_of_birth || '',
+    joining_date:      d.joining_date || '',
+    nationality:       d.nationality || '',
+    religion:          d.religion || '',
+    physical_address:  d.physical_address || '',
+    term_id:           d.term_id || null,
+    level_id:          d.level_id || null,
+    class_id:          d.class_id || null,
+    sports_house:      d.sports_house || '',
+    uses_school_transport: !!d.uses_school_transport,
+    transport_selection:   d.transport_selection || null,
+    extra_curriculum_ids: d.extra_curriculum_ids || [],
+    meal_program:      !!d.meal_program,
+    photo_consent:     !!d.photo_consent,
+    notes:             d.notes || '',
+    siblings:          d.siblings || [],
+    prev_school_name:      d.prev_school_name || '',
+    year_left_prev_school: d.year_left_prev_school || '',
+    medical: d.medical || {
+      allergies: '', chronic_symptoms: '', health_insurance: '',
+      blood_group: '', emergency_contact_name: '', emergency_contact_phone: '',
+    },
+    parents:  d.parents  || [],
+    guardian: d.guardian || null,
+  };
+
+  const isEdit = !!_currentEditStudentId;
+  const url    = isEdit ? `${API_BASE}/students/${_currentEditStudentId}` : `${API_BASE}/students/`;
+  const method = isEdit ? 'PUT' : 'POST';
+
+  // File inputs: se-photo (student photo), se-doc-photo / se-doc-report / se-doc-other (documents tab).
+  // Cached in window._stuFormFiles since their tabs may no longer be mounted at save time.
+  const fileEntries = Object.entries(window._stuFormFiles || {}).filter(([, f]) => f);
+  const hasFiles = fileEntries.length > 0;
+
+  let fetchOptions;
+  if (hasFiles) {
+    const formData = new FormData();
+    formData.append('data', JSON.stringify(payload));
+    fileEntries.forEach(([id, file]) => formData.append(id, file));
+    fetchOptions = { method, body: formData };
+  } else {
+    fetchOptions = { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) };
+  }
+
+  const res = await apiFetch(url, fetchOptions);
+
+  if (res && res.ok) {
+    _stuEditDirty = false;
+    let saved = null;
+    try { saved = await res.json(); } catch (_) {}
+    if (!isEdit && saved && saved.id) _currentEditStudentId = saved.id;
+    if (saved) window._stuFormData = { ...(window._stuFormData || {}), ...saved };
+    window._stuFormFiles = {};
+    if (showSuccessToast) showToast(isEdit ? 'Student updated successfully!' : 'Student added successfully!', 'success');
+    return true;
+  }
+
+  let msg = 'An error occurred.';
+  if (res) { try { const e = await res.json(); msg = e.detail || JSON.stringify(e); } catch (_) {} }
+  showToast('Error: ' + msg, 'error');
+  return false;
+}
+
+async function saveAndContinueStuTab() {
+  if (_stuEditActiveTab === 'personal') {
+    const personalValid  = _stuValidatePersonal();
+    const transportValid = _stuValidateTransport();
+    if (!personalValid || !transportValid) {
+      showToast('Please fill in all required fields.', 'error');
+      return;
+    }
+  }
+  _harvestStuActiveTab();
+
+  const btn = document.getElementById('stu-form-submit-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  const ok = await _persistStudentRecord(true);
+  if (btn) { btn.disabled = false; }
+
+  if (!ok) { _updateStuFormFooter(); return; }
+
+  const idx  = _STU_TABS.findIndex(t => t.id === _stuEditActiveTab);
+  const next = _STU_TABS[idx + 1];
+  if (next) switchStuEditTab(next.id);
+  else _updateStuFormFooter();
+}
+
+function _updateStuFormFooter() {
+  const footer = document.querySelector('.stu-edit-footer');
+  if (!footer) return;
+  const isLastTab = _stuEditActiveTab === _STU_TABS[_STU_TABS.length - 1].id;
+  const isEdit    = !!_currentEditStudentId;
+  footer.innerHTML = isLastTab
+    ? `<button class="fin-btn-teal" id="stu-form-submit-btn" onclick="submitStudentForm()">${isEdit ? 'Update' : 'Save'}</button>
+       <button class="fin-btn-cancel" onclick="cancelStudentForm()">Cancel</button>`
+    : `<button class="fin-btn-teal" id="stu-form-submit-btn" onclick="saveAndContinueStuTab()">Save &amp; Continue</button>
+       <button class="fin-btn-cancel" onclick="cancelStudentForm()">Cancel</button>`;
+}
+
 async function submitStudentForm() {
+  _harvestStuActiveTab();
   if (_stuEditActiveTab !== 'personal') {
     switchStuEditTab('personal');
     await new Promise(r => setTimeout(r, 50));
@@ -1186,104 +1356,21 @@ async function submitStudentForm() {
     showToast('Please fill in all required fields.', 'error');
     return;
   }
+  _harvestStuActiveTab();
 
-  const ecSelect = document.getElementById('se-extra-curriculum');
-  const ecIds = ecSelect ? Array.from(ecSelect.selectedOptions).map(o => o.value) : [];
-
-  const payload = {
-    last_name:         _fv('se-surname').trim(),
-    first_name:        _fv('se-other-name').trim(),
-    gender:            _fv('se-gender'),
-    date_of_birth:     _fv('se-dob'),
-    joining_date:      _fv('se-joining-date'),
-    nationality:       _fv('se-nationality'),
-    religion:          _fv('se-religion'),
-    physical_address:  _fv('se-physical-address'),
-    funding_source_id: _fv('se-funding-source') || null,
-    status:            _fv('se-status'),
-    term_id:           _fv('se-term') || null,
-    level_id:          _fv('se-level') || null,
-    class_id:          _fv('se-class') || null,
-    stream_id:         _fv('se-stream') || null,
-    sports_house:      _fv('se-sports-house'),
-    uses_school_transport: !!(window._stuFormData || {}).uses_school_transport,
-    transport_selection:   (window._stuFormData || {}).transport_selection || null,
-    extra_curriculum_ids: ecIds,
-    record_closed:     _fc('se-record-closed'),
-    meal_program:      _fradio('se-meal') === 'yes',
-    photo_consent:     _fc('se-photo-consent'),
-    notes:             _fv('se-notes'),
-    siblings: _fc('se-has-sibling') ? [{
-      full_name:  _fv('se-sibling-name'),
-      student_id: _fv('se-sibling-id'),
-    }] : [],
-    prev_school_name:      _fv('se-prev-school'),
-    year_left_prev_school: _fv('se-year-left'),
-    medical: {
-      allergies:               _fv('se-allergies'),
-      chronic_symptoms:        _fv('se-chronic'),
-      health_insurance:        _fv('se-insurance'),
-      blood_group:             _fv('se-blood-group'),
-      emergency_contact_name:  _fv('se-emrg-name'),
-      emergency_contact_phone: _fv('se-emrg-phone'),
-    },
-    parents: (() => {
-      const p = [];
-      const p1 = _fv('se-p1-name').trim();
-      if (p1) p.push({ full_name: p1, email: _fv('se-p1-email'), phone: _fv('se-p1-phone'), residence: _fv('se-p1-residence'), is_primary: true });
-      const p2 = _fv('se-p2-name').trim();
-      if (p2) p.push({ full_name: p2, email: _fv('se-p2-email'), phone: _fv('se-p2-phone'), residence: _fv('se-p2-residence'), is_primary: false });
-      return p;
-    })(),
-    guardian: (() => {
-      const name = _fv('se-guardian-name').trim();
-      if (!name) return null;
-      return { full_name: name, phone: _fv('se-guardian-phone'), email: _fv('se-guardian-email'), relationship: 'guardian' };
-    })(),
-  };
-
-  const isEdit  = !!_currentEditStudentId;
-  const url     = isEdit ? `${API_BASE}/students/${_currentEditStudentId}` : `${API_BASE}/students/`;
-  const method  = isEdit ? 'PUT' : 'POST';
-  const btn     = document.getElementById('stu-form-submit-btn');
+  const isEdit = !!_currentEditStudentId;
+  const btn    = document.getElementById('stu-form-submit-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
 
-  // File inputs: se-photo (student photo), se-doc-photo / se-doc-report / se-doc-other (documents tab).
-  // When any file is selected, switch to multipart/form-data so the server receives both JSON and files.
-  // Do NOT set Content-Type manually for FormData — browser sets multipart/form-data with boundary.
-  const fileInputIds = ['se-photo', 'se-doc-photo', 'se-doc-report', 'se-doc-other'];
-  const hasFiles = fileInputIds.some(id => {
-    const el = document.getElementById(id);
-    return el && el.files && el.files.length > 0;
-  });
-
-  let fetchOptions;
-  if (hasFiles) {
-    const formData = new FormData();
-    formData.append('data', JSON.stringify(payload));
-    fileInputIds.forEach(id => {
-      const el = document.getElementById(id);
-      if (el && el.files && el.files.length > 0) formData.append(id, el.files[0]);
-    });
-    fetchOptions = { method, body: formData };
-  } else {
-    fetchOptions = { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) };
-  }
-
-  const res = await apiFetch(url, fetchOptions);
+  const ok = await _persistStudentRecord(false);
 
   if (btn) { btn.disabled = false; btn.textContent = isEdit ? 'Update' : 'Save'; }
 
-  if (res && res.ok) {
-    _stuEditDirty = false;
+  if (ok) {
     showToast(isEdit ? 'Student updated successfully!' : 'Student added successfully!', 'success');
     _currentEditStudentId = null;
     _stuEditActiveTab = 'personal';
     loadView('students-list');
-  } else {
-    let msg = 'An error occurred.';
-    if (res) { try { const e = await res.json(); msg = e.detail || JSON.stringify(e); } catch (_) {} }
-    showToast('Error: ' + msg, 'error');
   }
 }
 
@@ -2565,7 +2652,6 @@ async function saveClass(id) {
 // ── State ────────────────────────────────────────────────────────────────────
 let _cspAllClasses   = [];
 let _cspLevels       = [];
-let _cspBranchId     = null;
 let _cspData         = [];
 let _cspPage         = 1;
 let _cspPerPage      = 10;
@@ -2816,16 +2902,13 @@ async function loadCohortSessionPlannerFormView(container) {
     </div>
   `;
 
-  // Load terms, branch, and existing record (if editing) in parallel
-  const fetches = [apiFetch(`${API_BASE}/terms`), apiFetch(`${API_BASE}/branches`)];
+  // Load terms and existing record (if editing) in parallel
+  const fetches = [apiFetch(`${API_BASE}/terms`)];
   if (isEdit) fetches.push(apiFetch(`${API_BASE}/cohort-term-planner/${_currentCspId}`));
 
-  const [termRes, branchRes, recordRes] = await Promise.all(fetches);
+  const [termRes, recordRes] = await Promise.all(fetches);
   const _rawTerms = (termRes && termRes.ok) ? await termRes.json() : [];
   _cspTerms = Array.isArray(_rawTerms) ? _rawTerms : (_rawTerms.data || _rawTerms.items || _rawTerms.results || []);
-  const _rawBranches = (branchRes && branchRes.ok) ? await branchRes.json() : [];
-  const _branches = Array.isArray(_rawBranches) ? _rawBranches : (_rawBranches.data || _rawBranches.items || _rawBranches.results || []);
-  _cspBranchId = _branches.length ? _branches[0].id : null;
   const record = (isEdit && recordRes && recordRes.ok) ? await recordRes.json() : null;
 
   if (isEdit && !record) {
@@ -3085,7 +3168,6 @@ async function submitCspForm() {
   }));
   const payload  = {
     term_id:   parseInt(termId),
-    branch_id: _cspBranchId,
     class_ids: classes.map(c => c.class_id),
     classes,
     notes:     document.getElementById('csp-notes')?.value || '',
