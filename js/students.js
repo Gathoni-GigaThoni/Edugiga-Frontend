@@ -466,24 +466,17 @@ function _stuTabPersonal(d) {
         </select>
       </div>
 
-      <!-- Row 5: Physical Address (full width — Term is now auto-derived) -->
-      <div class="stu-form-group" style="grid-column:span 2;">
-        <label>Physical Address</label>
-        <input id="se-physical-address" class="fin-search-input" style="width:100%!important" value="${_esc(d.physical_address||'')}">
-      </div>
-
-      <!-- Row 6: Level of Academics (full width — Class is now auto-derived) -->
-      <div class="stu-form-group" style="grid-column:span 2;">
+      <!-- Row 5: Level of Academics | Sports House (side-by-side so Sports House visually
+           signals it loads from the selected level — auto-populates on level change) -->
+      <div class="stu-form-group">
         <label>Level of Academics <span style="color:#e74c3c">*</span></label>
         <select id="se-level" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;"
                 onchange="onStuLevelChange(this.value)">
           <option value="">Please Select</option>
         </select>
         <span class="stu-field-error" id="err-se-level"></span>
-        <div id="se-class-term-confirm" style="margin-top:6px;font-size:0.85rem;"></div>
+        <div id="se-class-term-confirm" style="margin-top:4px;font-size:0.82rem;"></div>
       </div>
-
-      <!-- Row 7: Sports House | Extra Curriculum -->
       <div class="stu-form-group">
         <label>Sports House</label>
         <select id="se-sports-house" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
@@ -491,7 +484,15 @@ function _stuTabPersonal(d) {
           ${(d.sports_house ? `<option selected>${_esc(d.sports_house)}</option>` : '')}
         </select>
       </div>
-      <div class="stu-form-group">
+
+      <!-- Row 6: Physical Address (full width) -->
+      <div class="stu-form-group" style="grid-column:span 2;">
+        <label>Physical Address</label>
+        <input id="se-physical-address" class="fin-search-input" style="width:100%!important" value="${_esc(d.physical_address||'')}">
+      </div>
+
+      <!-- Row 7: Extra Curriculum (full width — multiselect benefits from the wider space) -->
+      <div class="stu-form-group" style="grid-column:span 2;">
         <label>Extra Curriculum</label>
         <select id="se-extra-curriculum" class="stu-multiselect" multiple>${ecOpts}</select>
       </div>
@@ -504,36 +505,38 @@ function _stuTabPersonal(d) {
       </div>
       <div class="stu-form-group">
         <label>Photo</label>
-        <div style="display:flex;align-items:center;gap:16px;">
-          <div id="se-photo-preview" style="width:80px;height:80px;border-radius:50%;background:#e0e0e0;overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:2rem;color:#aaa;">
+        <div style="display:flex;align-items:center;gap:14px;">
+          <div id="se-photo-preview" style="width:72px;height:72px;border-radius:50%;background:#e8ecef;overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:1.8rem;color:#aaa;flex-shrink:0;">
             ${d.photo_url ? `<img src="${_esc(d.photo_url)}" style="width:100%;height:100%;object-fit:cover;">` : '&#128100;'}
           </div>
-          <input type="file" id="se-photo" accept="image/*" onchange="handleStuPhotoPreview(this)">
+          <input type="file" id="se-photo" accept="image/*" style="font-size:0.85rem;" onchange="handleStuPhotoPreview(this)">
         </div>
       </div>
 
       <!-- Row 9: Meal Program | Photo Consent -->
       <div class="stu-form-group">
-        <label>Mapped to Meal Program?</label>
-        <div style="display:flex;gap:16px;margin-top:6px;">
+        <label style="font-size:0.85rem;font-weight:500;color:#333;">Mapped to Meal Program?</label>
+        <div style="display:flex;gap:20px;margin-top:6px;">
           <label class="stu-checkbox-row"><input type="radio" name="se-meal" value="yes"${d.meal_program?' checked':''}> Yes</label>
           <label class="stu-checkbox-row"><input type="radio" name="se-meal" value="no"${!d.meal_program?' checked':''}> No</label>
         </div>
       </div>
-      <div class="stu-form-group">
-        <label class="stu-checkbox-row"><input type="checkbox" id="se-photo-consent"${d.photo_consent?' checked':''}> Parent Consents to Use of Student Photo?</label>
+      <div class="stu-form-group" style="justify-content:center;">
+        <label class="stu-checkbox-row" style="margin-top:auto;">
+          <input type="checkbox" id="se-photo-consent"${d.photo_consent?' checked':''}> Parent Consents to Use of Student Photo?
+        </label>
       </div>
 
       <!-- Row 10: Sibling Enrolment -->
       <div class="stu-form-group" style="grid-column:span 2;">
         <label class="stu-checkbox-row"><input type="checkbox" id="se-has-sibling"${hasSibling?' checked':''} onchange="toggleSiblingSection()"> Has Sibling Enrolled?</label>
         <div id="se-sibling-section" style="display:${sibDisplay};margin-top:10px;padding:14px;background:#f9fafb;border-radius:6px;border:1px solid #e0e0e0;">
-          <div style="display:flex;gap:10px;flex-wrap:wrap;">
-            <div class="stu-form-group" style="flex:1;min-width:180px;">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px 24px;">
+            <div class="stu-form-group">
               <label>Sibling Student Name</label>
               <input id="se-sibling-name" class="fin-search-input" style="width:100%!important" value="${siblingName}">
             </div>
-            <div class="stu-form-group" style="flex:1;min-width:140px;">
+            <div class="stu-form-group">
               <label>Sibling Student ID</label>
               <input id="se-sibling-id" class="fin-search-input" style="width:100%!important" value="${siblingId}"
                      placeholder="SOIS-0000001" oninput="validateSiblingId(this)">
@@ -548,7 +551,7 @@ function _stuTabPersonal(d) {
       <!-- Row 11: Notes -->
       <div class="stu-form-group" style="grid-column:span 2;">
         <label>Notes</label>
-        <textarea id="se-notes" style="width:100%;min-height:80px;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:0.9rem;">${_esc(d.notes||'')}</textarea>
+        <textarea id="se-notes" style="width:100%;min-height:80px;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:0.88rem;">${_esc(d.notes||'')}</textarea>
       </div>
     </div>
   `;
@@ -722,6 +725,10 @@ async function onStuLevelChange(levelId, clearHouse = true) {
         houses.map(h =>
           `<option value="${_esc(h.name||h.title||String(h.id))}"${(h.name||h.title)===currentHouse?' selected':''}>${_esc(h.name||h.title)}</option>`
         ).join('');
+      // Auto-select when exactly one house is associated with this level (unambiguous assignment)
+      if (houses.length === 1 && !currentHouse) {
+        houseSelect.value = houses[0].name || houses[0].title || String(houses[0].id);
+      }
     } else {
       houseSelect.innerHTML = '<option value="">No houses found</option>';
     }
