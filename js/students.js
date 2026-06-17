@@ -642,6 +642,7 @@ async function _deriveStuTermAndClass() {
   const joiningErrEl = document.getElementById('err-se-joining-date');
   const levelErrEl  = document.getElementById('err-se-level');
 
+  const priorClassId = d.class_id;
   d.term_id = null; d.class_id = null;
   d._derived_term_name = null; d._derived_class_name = null; d._derivation_error = null;
 
@@ -687,9 +688,18 @@ async function _deriveStuTermAndClass() {
       return;
     }
     if (classes.length > 1) {
-      if (levelErrEl) levelErrEl.textContent = 'Multiple classes were found for this level and academic year. Please contact an administrator to resolve this before continuing.';
-      if (confirmEl) confirmEl.innerHTML = '';
-      d._derivation_error = 'multi_class';
+      // Several streams/classes exist for this level+year (e.g. "Grade 1 A" / "Grade 1 B") —
+      // auto-pick is ambiguous, so let the user choose instead of dead-ending here.
+      const stillValid = classes.find(c => String(c.id) === String(priorClassId));
+      d.class_id = stillValid ? stillValid.id : null;
+      d._derivation_error = d.class_id ? null : 'multi_class';
+      if (levelErrEl) levelErrEl.textContent = '';
+      if (confirmEl) confirmEl.innerHTML =
+        `<label style="display:block;color:#888;font-size:0.82rem;margin-bottom:2px;">Multiple classes found for this level/year — please select one:</label>
+         <select id="se-class-manual" class="fin-search-input" style="width:100%!important;padding:5px 8px!important;" onchange="onStuManualClassChange(this.value)">
+           <option value="">Please Select</option>
+           ${classes.map(c => `<option value="${c.id}"${String(priorClassId)===String(c.id)?' selected':''}>${_esc(c.name||'')}</option>`).join('')}
+         </select>`;
       return;
     }
 
@@ -705,6 +715,15 @@ async function _deriveStuTermAndClass() {
     if (confirmEl) confirmEl.innerHTML = '<span style="color:#c0392b;font-size:0.82rem;">Could not resolve class. Please try again.</span>';
     d._derivation_error = 'error';
   }
+}
+
+function onStuManualClassChange(classId) {
+  const d = window._stuFormData || (window._stuFormData = {});
+  const sel = document.getElementById('se-class-manual');
+  const opt = sel ? sel.options[sel.selectedIndex] : null;
+  d.class_id = classId ? Number(classId) : null;
+  d._derived_class_name = opt && classId ? opt.textContent : null;
+  d._derivation_error = classId ? null : 'multi_class';
 }
 
 async function onStuLevelChange(levelId, clearHouse = true) {
@@ -1218,6 +1237,17 @@ function _stuValidatePersonal() {
   return valid;
 }
 
+// Term/class auto-derivation failures aren't "missing field" errors — give a
+// specific toast instead of the generic one so they're not mistaken for it.
+function _stuPersonalValidationMessage() {
+  const err = (window._stuFormData || {})._derivation_error;
+  if (err === 'no_term')   return 'This joining date does not fall within any configured academic term.';
+  if (err === 'no_class')  return 'No class has been set up yet for the selected level in this academic year.';
+  if (err === 'multi_class') return 'Multiple classes were found for this level/year — please select one.';
+  if (err === 'error')     return 'Could not resolve term/class. Please try again.';
+  return 'Please fill in all required fields.';
+}
+
 // ── Per-tab harvesting ──────────────────────────────────────────────────────
 // Tab content is rebuilt from window._stuFormData on every switch, so live DOM
 // edits on the tab being left must be copied back into that object first —
@@ -1373,9 +1403,25 @@ async function _persistStudentRecord(showSuccessToast) {
   }
 
   let msg = 'An error occurred.';
-  if (res) { try { const e = await res.json(); msg = e.detail || JSON.stringify(e); } catch (_) {} }
+  if (res) { try { const e = await res.json(); msg = _formatApiError(e); } catch (_) {} }
   showToast('Error: ' + msg, 'error');
   return false;
+}
+
+// FastAPI validation errors put a list of {loc, msg, type} objects in `detail`,
+// not a string — concatenating that into a toast yields "[object Object]".
+function _formatApiError(e) {
+  const detail = e && e.detail;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return detail.map(d => {
+      if (typeof d === 'string') return d;
+      const field = Array.isArray(d.loc) ? d.loc[d.loc.length - 1] : '';
+      return field ? `${field}: ${d.msg}` : d.msg;
+    }).filter(Boolean).join('; ') || JSON.stringify(detail);
+  }
+  if (detail && typeof detail === 'object') return JSON.stringify(detail);
+  return JSON.stringify(e);
 }
 
 async function saveAndContinueStuTab() {
@@ -1383,7 +1429,7 @@ async function saveAndContinueStuTab() {
     const personalValid  = _stuValidatePersonal();
     const transportValid = _stuValidateTransport();
     if (!personalValid || !transportValid) {
-      showToast('Please fill in all required fields.', 'error');
+      showToast(_stuPersonalValidationMessage(), 'error');
       return;
     }
   }
@@ -1423,7 +1469,7 @@ async function submitStudentForm() {
   const personalValid  = _stuValidatePersonal();
   const transportValid = _stuValidateTransport();
   if (!personalValid || !transportValid) {
-    showToast('Please fill in all required fields.', 'error');
+    showToast(_stuPersonalValidationMessage(), 'error');
     return;
   }
   _harvestStuActiveTab();
