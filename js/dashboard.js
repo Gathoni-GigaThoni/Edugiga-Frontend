@@ -21,6 +21,8 @@ function showDashboard() {
                   <li id="sidebar-stu-sources" class="sa-sub-sub" onclick="loadView('utilities-student-sources')">Student Sources</li>
                   <li id="sidebar-stu-streams" class="sa-sub-sub" onclick="loadView('utilities-streams')">Streams</li>
                   <li id="sidebar-stu-funding" class="sa-sub-sub" onclick="loadView('utilities-funding-sources')">Funding Sources</li>
+                  <li id="sidebar-stu-stream-assign" class="sa-sub-sub" onclick="loadView('stream-assignment')">Stream Assignment</li>
+                  <li id="sidebar-stu-ec-assign" class="sa-sub-sub" onclick="loadView('extra-curricular-assignment')">Extra Curricular Activity Assignment</li>
                 </ul>
               </li>
               <li class="dropdown">
@@ -334,6 +336,12 @@ async function loadView(view) {
     case 'stu-funding-sources':
       setActiveSidebarItem('sidebar-stu-funding'); openStuUtilitiesDropdown();
       await loadFundingSourcesView(main); break;
+    case 'stream-assignment':
+      setActiveSidebarItem('sidebar-stu-stream-assign'); openStuUtilitiesDropdown();
+      await loadStreamAssignmentView(main); break;
+    case 'extra-curricular-assignment':
+      setActiveSidebarItem('sidebar-stu-ec-assign'); openStuUtilitiesDropdown();
+      await loadExtraCurricularAssignmentView(main); break;
     // Student Management – Reports
     case 'reports-student':
     case 'student-report':

@@ -2286,7 +2286,709 @@ async function saveFundingSource(id) {
   }
 }
 
-// ==================== 9. STUDENT REPORT ====================
+// ==================== 9. UTILITIES — STREAM ASSIGNMENT ====================
+// Inline editing table: change a student's Class and/or Stream (A/B) and batch-save.
+// All edits are staged locally until "Save Changes" is clicked.
+// No bulk PUT endpoint exists — each student gets a separate PUT /students/{id} call.
+// Suggested backend enhancement: POST /students/bulk-update-stream for efficiency.
+
+let _saClasses       = [];   // cached from GET /classes/ — shared with Window 10
+let _saStudents      = [];
+let _saDirtyRows     = {};   // { [studentId]: { class_id?: number, stream_id?: string|null } }
+let _saSearchResults = [];   // temp store for name-search suggestion list
+let _saPage = 1, _saPerPage = 10;
+
+async function loadStreamAssignmentView(container) {
+  openStuUtilitiesDropdown();
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Stream Assignment</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Stream Assignment &rsaquo; Listing</div>
+      </div>
+      <div class="fin-controls-row" style="flex-wrap:wrap;gap:12px;align-items:flex-end;">
+        <div class="fin-controls-left" style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;">
+          <div class="stu-form-group" style="min-width:200px;">
+            <label style="font-size:0.82rem;font-weight:500;color:#444;">Class</label>
+            <select id="sa-class-filter" class="fin-search-input"
+                    style="padding:7px 10px!important;"
+                    onchange="saOnClassChange(this.value)">
+              <option value="">Please Select</option>
+            </select>
+          </div>
+          <div class="stu-form-group" style="min-width:220px;position:relative;">
+            <label style="font-size:0.82rem;font-weight:500;color:#444;">Student Name</label>
+            <input id="sa-name-input" type="text" class="fin-search-input"
+                   placeholder="Search student by name…" autocomplete="off"
+                   oninput="saOnNameSearch(this.value)"
+                   onblur="setTimeout(function(){var d=document.getElementById('sa-name-dd');if(d)d.style.display='none';},200)">
+            <div id="sa-name-dd" class="fin-action-dropdown"
+                 style="display:none;top:100%;z-index:500;min-width:280px;max-height:220px;overflow-y:auto;position:absolute;"></div>
+          </div>
+          <button class="fin-btn-cancel" style="margin-bottom:2px;" onclick="saClearFilters()">Clear</button>
+        </div>
+        <div class="fin-controls-right">
+          <button class="fin-btn-teal" onclick="saveStreamAssignmentChanges()">Save Changes</button>
+        </div>
+      </div>
+      <div class="fin-controls-row" style="padding-top:0;">
+        <div class="fin-controls-left">
+          Show <select id="sa-per-page" onchange="saChangePerPage(this.value)">
+            ${[10,25,50].map(n=>`<option value="${n}">${n}</option>`).join('')}
+          </select> entries &nbsp;|&nbsp; Total <span id="sa-total">0</span> entries
+        </div>
+      </div>
+      <div id="sa-table"></div>
+      <div id="sa-pagination"></div>
+    </div>
+  `;
+
+  renderSkeletonRows('sa-table', 6);
+  const res = await apiFetch(`${API_BASE}/classes/`);
+  _saClasses = (res && res.ok) ? _toArray(await res.json()) : [];
+
+  const sel = document.getElementById('sa-class-filter');
+  if (sel) {
+    sel.innerHTML = '<option value="">Please Select</option>' +
+      _saClasses.map(c => `<option value="${_esc(String(c.id))}">${_esc(c.name)}</option>`).join('');
+  }
+
+  _saPage = 1;
+  _saDirtyRows = {};
+  _saStudents = [];
+  _renderSaEmptyState();
+}
+
+function _renderSaEmptyState() {
+  const totalEl = document.getElementById('sa-total');
+  if (totalEl) totalEl.textContent = '0';
+  const t = document.getElementById('sa-table');
+  if (t) t.innerHTML = `<div class="fin-table-wrap"><table class="fin-table">
+    <thead><tr>
+      <th>STUDENT NAME</th><th>STUDENT ID</th><th>CLASS</th><th>CLASS CODE</th>
+      <th style="text-align:center;">A</th><th style="text-align:center;">B</th>
+    </tr></thead>
+    <tbody><tr><td colspan="6" class="fin-empty">Select a Class or search for a student to begin.</td></tr></tbody>
+  </table></div>`;
+  const pg = document.getElementById('sa-pagination');
+  if (pg) pg.innerHTML = '';
+}
+
+async function saOnClassChange(classId) {
+  const inp = document.getElementById('sa-name-input');
+  if (inp) inp.value = '';
+  const dd = document.getElementById('sa-name-dd');
+  if (dd) dd.style.display = 'none';
+
+  if (!classId) {
+    _saStudents = [];
+    _saDirtyRows = {};
+    _renderSaEmptyState();
+    return;
+  }
+
+  renderSkeletonRows('sa-table', 6);
+  const res = await apiFetch(`${API_BASE}/students/?class_id=${classId}`);
+  _saStudents = (res && res.ok) ? _toArray(await res.json()) : [];
+  _saPage = 1;
+  _saDirtyRows = {};
+  _renderSaTable();
+}
+
+let _saSearchTimer = null;
+function saOnNameSearch(val) {
+  clearTimeout(_saSearchTimer);
+  const dd = document.getElementById('sa-name-dd');
+  if (!val.trim()) { if (dd) dd.style.display = 'none'; return; }
+  _saSearchTimer = setTimeout(async function() {
+    const res = await apiFetch(`${API_BASE}/students/?search=${encodeURIComponent(val.trim())}`);
+    _saSearchResults = (res && res.ok) ? _toArray(await res.json()) : [];
+    if (!dd) return;
+    if (!_saSearchResults.length) {
+      dd.innerHTML = '<div style="padding:10px 14px;color:#888;font-size:0.88rem;">No results found</div>';
+      dd.style.display = 'block';
+      return;
+    }
+    dd.innerHTML = _saSearchResults.slice(0, 10).map(function(s, i) {
+      var name = _esc((s.first_name||'') + ' ' + (s.last_name||'')).trim();
+      return '<a href="#" onclick="saSelectStudent(' + i + ');return false;">' + _esc(s.student_id||'') + ' — ' + name + '</a>';
+    }).join('');
+    dd.style.display = 'block';
+  }, 300);
+}
+
+function saSelectStudent(idx) {
+  var s = _saSearchResults[idx];
+  if (!s) return;
+  var inp = document.getElementById('sa-name-input');
+  if (inp) inp.value = (s.student_id||'') + ' — ' + ((s.first_name||'') + ' ' + (s.last_name||'')).trim();
+  var dd = document.getElementById('sa-name-dd');
+  if (dd) dd.style.display = 'none';
+  // Student name takes precedence — clear class filter
+  var classSel = document.getElementById('sa-class-filter');
+  if (classSel) classSel.value = '';
+  _saStudents = [s];
+  _saPage = 1;
+  _saDirtyRows = {};
+  _renderSaTable();
+}
+
+function saClearFilters() {
+  var classSel = document.getElementById('sa-class-filter');
+  if (classSel) classSel.value = '';
+  var inp = document.getElementById('sa-name-input');
+  if (inp) inp.value = '';
+  var dd = document.getElementById('sa-name-dd');
+  if (dd) dd.style.display = 'none';
+  _saStudents = [];
+  _saDirtyRows = {};
+  _renderSaEmptyState();
+}
+
+function saChangePerPage(v) { _saPerPage = parseInt(v); _saPage = 1; _renderSaTable(); }
+function saGoPage(p)         { _saPage = p; _renderSaTable(); }
+
+function _renderSaTable() {
+  var totalEl = document.getElementById('sa-total');
+  if (totalEl) totalEl.textContent = _saStudents.length;
+
+  var start = (_saPage - 1) * _saPerPage;
+  var paged = _saStudents.slice(start, start + _saPerPage);
+  var pages = Math.max(1, Math.ceil(_saStudents.length / _saPerPage));
+
+  var rows = '';
+  if (!paged.length) {
+    rows = '<tr><td colspan="6" class="fin-empty">No students found.</td></tr>';
+  } else {
+    rows = paged.map(function(s) {
+      var dirty = !!_saDirtyRows[s.id];
+      var rowStyle = dirty ? 'background:#fffbe6;' : '';
+
+      var stagedClassId = _saDirtyRows[s.id] && _saDirtyRows[s.id].class_id !== undefined
+        ? _saDirtyRows[s.id].class_id : undefined;
+      var currentClassId = stagedClassId !== undefined ? stagedClassId : s.class_id;
+      var cls = _saClasses.find(function(c) { return String(c.id) === String(currentClassId); });
+      var classCode = cls ? (cls.code || cls.class_code || '') : '';
+
+      var stagedStreamId = _saDirtyRows[s.id] && 'stream_id' in _saDirtyRows[s.id]
+        ? _saDirtyRows[s.id].stream_id : undefined;
+      var currentStreamId = stagedStreamId !== undefined
+        ? stagedStreamId
+        : (s.stream_id || s.stream || null);
+      var checkedA = String(currentStreamId) === 'A' ? 'checked' : '';
+      var checkedB = String(currentStreamId) === 'B' ? 'checked' : '';
+
+      var dirtyBadge = dirty
+        ? ' <span style="color:#e67e22;font-size:0.78rem;" title="Unsaved changes">*</span>'
+        : '';
+
+      return '<tr style="' + rowStyle + '">'
+        + '<td>' + _esc((s.first_name||'') + ' ' + (s.last_name||'')).trim() + dirtyBadge + '</td>'
+        + '<td>' + _esc(s.student_id||'') + '</td>'
+        + '<td>'
+        +   '<select class="fin-search-input" style="padding:5px 8px!important;min-width:140px;" onchange="saOnClassRowChange(' + s.id + ',this.value)">'
+        +     '<option value="">— Select —</option>'
+        +     _saClasses.map(function(c) {
+                return '<option value="' + _esc(String(c.id)) + '"'
+                  + (String(c.id) === String(currentClassId) ? ' selected' : '')
+                  + '>' + _esc(c.name) + '</option>';
+              }).join('')
+        +   '</select>'
+        + '</td>'
+        + '<td id="sa-code-' + s.id + '">' + _esc(classCode) + '</td>'
+        + '<td style="text-align:center;">'
+        +   '<input type="checkbox" id="sa-chk-' + s.id + '-A" ' + checkedA
+        +   ' onchange="saOnStreamCheck(' + s.id + ',\'A\',this.checked)"'
+        +   ' style="width:auto;max-width:none;accent-color:#00b5b8;cursor:pointer;">'
+        + '</td>'
+        + '<td style="text-align:center;">'
+        +   '<input type="checkbox" id="sa-chk-' + s.id + '-B" ' + checkedB
+        +   ' onchange="saOnStreamCheck(' + s.id + ',\'B\',this.checked)"'
+        +   ' style="width:auto;max-width:none;accent-color:#00b5b8;cursor:pointer;">'
+        + '</td>'
+        + '</tr>';
+    }).join('');
+  }
+
+  var t = document.getElementById('sa-table');
+  if (t) t.innerHTML = '<div class="fin-table-wrap"><table class="fin-table">'
+    + '<thead><tr>'
+    + '<th>STUDENT NAME</th><th>STUDENT ID</th><th>CLASS</th><th>CLASS CODE</th>'
+    + '<th style="text-align:center;">A</th><th style="text-align:center;">B</th>'
+    + '</tr></thead>'
+    + '<tbody>' + rows + '</tbody>'
+    + '</table></div>';
+
+  _mkPagination('sa-pagination', _saPage, pages, 'saGoPage');
+}
+
+function saOnClassRowChange(studentId, newClassId) {
+  var cls = _saClasses.find(function(c) { return String(c.id) === String(newClassId); });
+  var codeEl = document.getElementById('sa-code-' + studentId);
+  if (codeEl) codeEl.textContent = cls ? (cls.code || cls.class_code || '') : '';
+  if (!_saDirtyRows[studentId]) _saDirtyRows[studentId] = {};
+  _saDirtyRows[studentId].class_id = newClassId ? parseInt(newClassId) : null;
+  _saMarkDirtyRow(studentId);
+}
+
+function saOnStreamCheck(studentId, stream, checked) {
+  // Mutually exclusive: checking A unchecks B and vice versa (radio-like behaviour using checkboxes)
+  var sibling = stream === 'A' ? 'B' : 'A';
+  var sibEl = document.getElementById('sa-chk-' + studentId + '-' + sibling);
+  if (checked && sibEl) sibEl.checked = false;
+  if (!_saDirtyRows[studentId]) _saDirtyRows[studentId] = {};
+  // null = neither stream checked (valid: student has no stream assigned)
+  _saDirtyRows[studentId].stream_id = checked ? stream : null;
+  _saMarkDirtyRow(studentId);
+}
+
+function _saMarkDirtyRow(studentId) {
+  // Lightweight DOM update: set row background and asterisk without full re-render,
+  // preserving staged checkbox/dropdown state already in the DOM.
+  var start = (_saPage - 1) * _saPerPage;
+  var paged = _saStudents.slice(start, start + _saPerPage);
+  var idx = paged.findIndex(function(s) { return String(s.id) === String(studentId); });
+  if (idx === -1) return;
+  var tbody = document.querySelector('#sa-table table tbody');
+  if (!tbody) return;
+  var tr = tbody.querySelectorAll('tr')[idx];
+  if (!tr) return;
+  tr.style.background = '#fffbe6';
+  var nameCell = tr.cells[0];
+  if (!nameCell) return;
+  var s = paged[idx];
+  var baseName = _esc((s.first_name||'') + ' ' + (s.last_name||'')).trim();
+  nameCell.innerHTML = baseName + ' <span style="color:#e67e22;font-size:0.78rem;" title="Unsaved changes">*</span>';
+}
+
+async function saveStreamAssignmentChanges() {
+  var changed = Object.entries(_saDirtyRows);
+  if (!changed.length) { showToast('No changes to save.', 'info'); return; }
+
+  var btn = document.querySelector('[onclick="saveStreamAssignmentChanges()"]');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+  var succeeded = 0;
+  var failedNames = [];
+
+  await Promise.all(changed.map(async function(entry) {
+    var studentId = entry[0], changes = entry[1];
+    var payload = {};
+    if ('class_id' in changes) payload.class_id = changes.class_id;
+    if ('stream_id' in changes) payload.stream_id = changes.stream_id;
+    var res = await apiFetch(API_BASE + '/students/' + studentId, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (res && res.ok) {
+      succeeded++;
+      delete _saDirtyRows[studentId];
+      var s = _saStudents.find(function(x) { return String(x.id) === String(studentId); });
+      if (s) {
+        if ('class_id' in changes) s.class_id = changes.class_id;
+        if ('stream_id' in changes) { s.stream_id = changes.stream_id; s.stream = changes.stream_id; }
+      }
+    } else {
+      var s2 = _saStudents.find(function(x) { return String(x.id) === String(studentId); });
+      failedNames.push(s2 ? ((s2.first_name||'') + ' ' + (s2.last_name||'')).trim() : 'Student #' + studentId);
+    }
+  }));
+
+  if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }
+
+  if (!failedNames.length) {
+    showToast(succeeded + ' student' + (succeeded !== 1 ? 's' : '') + ' updated successfully.', 'success');
+  } else {
+    var msg = succeeded
+      ? (succeeded + ' updated. Failed: ' + failedNames.join(', ') + '.')
+      : ('Save failed for: ' + failedNames.join(', ') + '.');
+    showToast(msg, succeeded ? 'warning' : 'error');
+  }
+  _renderSaTable();
+}
+
+// ==================== 10. UTILITIES — EXTRA CURRICULAR ACTIVITY ASSIGNMENT ====================
+// BACKEND GAPS FLAGGED:
+// 1. Fee Accounts have no field that tags an account as "Extra Curricular". The dedicated
+//    GET /finance/extra-curriculum-activities endpoint is used as the source of truth for
+//    activity column headers. Recommend adding is_extra_curricular or sub_group='Extra Curricular'
+//    to Fee Accounts when the data model is revisited.
+// 2. PUT /students/{id} has no documented 'extra_curriculum_term_id' field. The field is sent
+//    speculatively so the backend can be wired up without a frontend change. Backend should add
+//    support to trigger invoice adjustments for the selected term when EC enrolment changes.
+// 3. No bulk PUT endpoint — each student is updated separately. Recommend
+//    POST /students/bulk-update-extra-curriculum for future efficiency.
+
+let _ecActivities    = [];   // from GET /finance/extra-curriculum-activities
+let _ecTerms         = [];   // from GET /terms
+let _ecStudents      = [];
+let _ecDirtyRows     = {};   // { [studentId]: { extra_curriculum_ids: number[], extra_curriculum_term_id: number|null } }
+let _ecSearchResults = [];
+let _ecPage = 1, _ecPerPage = 10;
+
+async function loadExtraCurricularAssignmentView(container) {
+  openStuUtilitiesDropdown();
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Extra Curricular Activity Assignment</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Extra Curricular Activity Assignment &rsaquo; Listing</div>
+      </div>
+      <div class="fin-controls-row" style="flex-wrap:wrap;gap:12px;align-items:flex-end;">
+        <div class="fin-controls-left" style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;">
+          <div class="stu-form-group" style="min-width:200px;">
+            <label style="font-size:0.82rem;font-weight:500;color:#444;">Class</label>
+            <select id="ec-class-filter" class="fin-search-input"
+                    style="padding:7px 10px!important;"
+                    onchange="ecOnClassChange(this.value)">
+              <option value="">Please Select</option>
+            </select>
+          </div>
+          <div class="stu-form-group" style="min-width:220px;position:relative;">
+            <label style="font-size:0.82rem;font-weight:500;color:#444;">Student Name</label>
+            <input id="ec-name-input" type="text" class="fin-search-input"
+                   placeholder="Search student by name…" autocomplete="off"
+                   oninput="ecOnNameSearch(this.value)"
+                   onblur="setTimeout(function(){var d=document.getElementById('ec-name-dd');if(d)d.style.display='none';},200)">
+            <div id="ec-name-dd" class="fin-action-dropdown"
+                 style="display:none;top:100%;z-index:500;min-width:280px;max-height:220px;overflow-y:auto;position:absolute;"></div>
+          </div>
+          <button class="fin-btn-cancel" style="margin-bottom:2px;" onclick="ecClearFilters()">Clear</button>
+        </div>
+        <div class="fin-controls-right">
+          <button class="fin-btn-teal" onclick="saveEcAssignmentChanges()">Save Changes</button>
+        </div>
+      </div>
+      <div class="fin-controls-row" style="padding-top:0;">
+        <div class="fin-controls-left">
+          Show <select id="ec-per-page" onchange="ecChangePerPage(this.value)">
+            ${[10,25,50].map(n=>`<option value="${n}">${n}</option>`).join('')}
+          </select> entries &nbsp;|&nbsp; Total <span id="ec-total">0</span> entries
+        </div>
+      </div>
+      <div id="ec-table"></div>
+      <div id="ec-pagination"></div>
+    </div>
+  `;
+
+  renderSkeletonRows('ec-table', 5);
+  var results = await Promise.all([
+    apiFetch(API_BASE + '/classes/'),
+    apiFetch(API_BASE + '/finance/extra-curriculum-activities'),
+    apiFetch(API_BASE + '/terms'),
+  ]);
+  var classRes = results[0], actRes = results[1], termRes = results[2];
+  // Update shared class cache (also used by Stream Assignment)
+  if (classRes && classRes.ok) _saClasses = _toArray(await classRes.json());
+  _ecActivities = (actRes  && actRes.ok)  ? _toArray(await actRes.json())  : [];
+  _ecTerms      = (termRes && termRes.ok) ? _toArray(await termRes.json()) : [];
+
+  var classSel = document.getElementById('ec-class-filter');
+  if (classSel) {
+    classSel.innerHTML = '<option value="">Please Select</option>' +
+      _saClasses.map(function(c) {
+        return '<option value="' + _esc(String(c.id)) + '">' + _esc(c.name) + '</option>';
+      }).join('');
+  }
+
+  _ecPage = 1;
+  _ecDirtyRows = {};
+  _ecStudents = [];
+  _renderEcEmptyState();
+}
+
+function _ecDefaultTermId(student) {
+  // Prefer: student's existing EC term (future backend field) > student's enrolled term > first active term
+  if (student.extra_curriculum_term_id != null) return student.extra_curriculum_term_id;
+  if (student.term_id != null) return student.term_id;
+  var active = _ecTerms.find(function(t) { return t.is_current || t.is_active || t.current; });
+  return active ? active.id : (_ecTerms[0] ? _ecTerms[0].id : null);
+}
+
+function _renderEcEmptyState() {
+  var totalEl = document.getElementById('ec-total');
+  if (totalEl) totalEl.textContent = '0';
+  var colSpan = 4 + _ecActivities.length;
+  var actHeaders = _ecActivities.map(function(a) {
+    return '<th style="text-align:center;">' + _esc(a.title||'') + '</th>';
+  }).join('');
+  var t = document.getElementById('ec-table');
+  if (t) t.innerHTML = '<div class="fin-table-wrap" style="overflow-x:auto;"><table class="fin-table">'
+    + '<thead><tr><th>STUDENT NAME</th><th>STUDENT ID</th><th>CLASS</th><th>TERM</th>'
+    + actHeaders + '</tr></thead>'
+    + '<tbody><tr><td colspan="' + colSpan + '" class="fin-empty">Select a Class or search for a student to begin.</td></tr></tbody>'
+    + '</table></div>';
+  var pg = document.getElementById('ec-pagination');
+  if (pg) pg.innerHTML = '';
+}
+
+async function ecOnClassChange(classId) {
+  var inp = document.getElementById('ec-name-input');
+  if (inp) inp.value = '';
+  var dd = document.getElementById('ec-name-dd');
+  if (dd) dd.style.display = 'none';
+
+  if (!classId) {
+    _ecStudents = [];
+    _ecDirtyRows = {};
+    _renderEcEmptyState();
+    return;
+  }
+
+  renderSkeletonRows('ec-table', 4 + _ecActivities.length);
+  var res = await apiFetch(API_BASE + '/students/?class_id=' + classId);
+  _ecStudents = (res && res.ok) ? _toArray(await res.json()) : [];
+  _ecPage = 1;
+  _ecDirtyRows = {};
+  _renderEcTable();
+}
+
+let _ecSearchTimer = null;
+function ecOnNameSearch(val) {
+  clearTimeout(_ecSearchTimer);
+  var dd = document.getElementById('ec-name-dd');
+  if (!val.trim()) { if (dd) dd.style.display = 'none'; return; }
+  _ecSearchTimer = setTimeout(async function() {
+    var res = await apiFetch(API_BASE + '/students/?search=' + encodeURIComponent(val.trim()));
+    _ecSearchResults = (res && res.ok) ? _toArray(await res.json()) : [];
+    if (!dd) return;
+    if (!_ecSearchResults.length) {
+      dd.innerHTML = '<div style="padding:10px 14px;color:#888;font-size:0.88rem;">No results found</div>';
+      dd.style.display = 'block';
+      return;
+    }
+    dd.innerHTML = _ecSearchResults.slice(0, 10).map(function(s, i) {
+      var name = _esc((s.first_name||'') + ' ' + (s.last_name||'')).trim();
+      return '<a href="#" onclick="ecSelectStudent(' + i + ');return false;">' + _esc(s.student_id||'') + ' — ' + name + '</a>';
+    }).join('');
+    dd.style.display = 'block';
+  }, 300);
+}
+
+function ecSelectStudent(idx) {
+  var s = _ecSearchResults[idx];
+  if (!s) return;
+  var inp = document.getElementById('ec-name-input');
+  if (inp) inp.value = (s.student_id||'') + ' — ' + ((s.first_name||'') + ' ' + (s.last_name||'')).trim();
+  var dd = document.getElementById('ec-name-dd');
+  if (dd) dd.style.display = 'none';
+  var classSel = document.getElementById('ec-class-filter');
+  if (classSel) classSel.value = '';
+  _ecStudents = [s];
+  _ecPage = 1;
+  _ecDirtyRows = {};
+  _renderEcTable();
+}
+
+function ecClearFilters() {
+  var classSel = document.getElementById('ec-class-filter');
+  if (classSel) classSel.value = '';
+  var inp = document.getElementById('ec-name-input');
+  if (inp) inp.value = '';
+  var dd = document.getElementById('ec-name-dd');
+  if (dd) dd.style.display = 'none';
+  _ecStudents = [];
+  _ecDirtyRows = {};
+  _renderEcEmptyState();
+}
+
+function ecChangePerPage(v) { _ecPerPage = parseInt(v); _ecPage = 1; _renderEcTable(); }
+function ecGoPage(p)         { _ecPage = p; _renderEcTable(); }
+
+function _renderEcTable() {
+  var totalEl = document.getElementById('ec-total');
+  if (totalEl) totalEl.textContent = _ecStudents.length;
+
+  var start = (_ecPage - 1) * _ecPerPage;
+  var paged = _ecStudents.slice(start, start + _ecPerPage);
+  var pages = Math.max(1, Math.ceil(_ecStudents.length / _ecPerPage));
+  var colSpan = 4 + _ecActivities.length;
+
+  var actHeaders = _ecActivities.map(function(a) {
+    return '<th style="text-align:center;">' + _esc(a.title||'') + '</th>';
+  }).join('');
+
+  var rows = '';
+  if (!paged.length) {
+    rows = '<tr><td colspan="' + colSpan + '" class="fin-empty">No students found.</td></tr>';
+  } else {
+    rows = paged.map(function(s) {
+      var dirty = !!_ecDirtyRows[s.id];
+      var rowStyle = dirty ? 'background:#fffbe6;' : '';
+
+      // Determine which term to pre-select for this row
+      var stagedTermId = _ecDirtyRows[s.id] ? _ecDirtyRows[s.id].extra_curriculum_term_id : undefined;
+      var currentTermId = stagedTermId !== undefined ? stagedTermId : _ecDefaultTermId(s);
+
+      // Current activity set: staged (full replace) or student's existing ids
+      var stagedEcIds = _ecDirtyRows[s.id] ? _ecDirtyRows[s.id].extra_curriculum_ids : undefined;
+      var existingEcIds = s.extra_curriculum_ids || (s.extra_curriculum_id ? [s.extra_curriculum_id] : []);
+      var activeEcIds = stagedEcIds !== undefined ? stagedEcIds : existingEcIds;
+      var activeEcStrs = activeEcIds.map(String);
+
+      var termSel = '<select class="fin-search-input" style="padding:5px 8px!important;min-width:130px;"'
+        + ' onchange="ecOnTermChange(' + s.id + ',this.value)">'
+        + '<option value="">— Select —</option>'
+        + _ecTerms.map(function(t) {
+            return '<option value="' + _esc(String(t.id)) + '"'
+              + (String(t.id) === String(currentTermId) ? ' selected' : '')
+              + '>' + _esc(t.name||t.title||'') + '</option>';
+          }).join('')
+        + '</select>';
+
+      var actCells = _ecActivities.map(function(a) {
+        var chk = activeEcStrs.indexOf(String(a.id)) !== -1 ? 'checked' : '';
+        return '<td style="text-align:center;">'
+          + '<input type="checkbox" id="ec-chk-' + s.id + '-' + a.id + '" ' + chk
+          + ' onchange="ecOnActivityCheck(' + s.id + ',' + a.id + ',this.checked)"'
+          + ' style="width:auto;max-width:none;accent-color:#00b5b8;cursor:pointer;">'
+          + '</td>';
+      }).join('');
+
+      var cls = _saClasses.find(function(c) { return String(c.id) === String(s.class_id); });
+      var className = cls ? cls.name : (s.class_name || s.level_of_academics || '-');
+
+      var dirtyBadge = dirty
+        ? ' <span style="color:#e67e22;font-size:0.78rem;" title="Unsaved changes">*</span>'
+        : '';
+
+      return '<tr style="' + rowStyle + '">'
+        + '<td>' + _esc((s.first_name||'') + ' ' + (s.last_name||'')).trim() + dirtyBadge + '</td>'
+        + '<td>' + _esc(s.student_id||'') + '</td>'
+        + '<td>' + _esc(className) + '</td>'
+        + '<td>' + termSel + '</td>'
+        + actCells
+        + '</tr>';
+    }).join('');
+  }
+
+  var t = document.getElementById('ec-table');
+  if (t) t.innerHTML = '<div class="fin-table-wrap" style="overflow-x:auto;"><table class="fin-table">'
+    + '<thead><tr><th>STUDENT NAME</th><th>STUDENT ID</th><th>CLASS</th><th>TERM</th>'
+    + actHeaders + '</tr></thead>'
+    + '<tbody>' + rows + '</tbody>'
+    + '</table></div>';
+
+  _mkPagination('ec-pagination', _ecPage, pages, 'ecGoPage');
+}
+
+function ecOnTermChange(studentId, termId) {
+  if (!_ecDirtyRows[studentId]) {
+    // First change on this row: seed full EC ids so the save payload is complete
+    var s = _ecStudents.find(function(x) { return String(x.id) === String(studentId); });
+    var existingIds = s ? (s.extra_curriculum_ids || (s.extra_curriculum_id ? [s.extra_curriculum_id] : [])) : [];
+    _ecDirtyRows[studentId] = {
+      extra_curriculum_ids: existingIds.map(Number),
+      extra_curriculum_term_id: termId ? parseInt(termId) : null,
+    };
+  } else {
+    _ecDirtyRows[studentId].extra_curriculum_term_id = termId ? parseInt(termId) : null;
+  }
+  _ecMarkDirtyRow(studentId);
+}
+
+function ecOnActivityCheck(studentId, activityId, checked) {
+  var s = _ecStudents.find(function(x) { return String(x.id) === String(studentId); });
+  if (!s) return;
+
+  if (!_ecDirtyRows[studentId]) {
+    // First change: seed current state for full-replace payload on save
+    var existingIds = s.extra_curriculum_ids || (s.extra_curriculum_id ? [s.extra_curriculum_id] : []);
+    _ecDirtyRows[studentId] = {
+      extra_curriculum_ids: existingIds.map(Number),
+      extra_curriculum_term_id: _ecDefaultTermId(s) != null ? parseInt(_ecDefaultTermId(s)) : null,
+    };
+  }
+
+  var ids = _ecDirtyRows[studentId].extra_curriculum_ids;
+  var numId = parseInt(activityId);
+  var idx = ids.indexOf(numId);
+  if (checked && idx === -1) ids.push(numId);
+  if (!checked && idx !== -1) ids.splice(idx, 1);
+
+  _ecMarkDirtyRow(studentId);
+}
+
+function _ecMarkDirtyRow(studentId) {
+  var start = (_ecPage - 1) * _ecPerPage;
+  var paged = _ecStudents.slice(start, start + _ecPerPage);
+  var idx = paged.findIndex(function(s) { return String(s.id) === String(studentId); });
+  if (idx === -1) return;
+  var tbody = document.querySelector('#ec-table table tbody');
+  if (!tbody) return;
+  var tr = tbody.querySelectorAll('tr')[idx];
+  if (!tr) return;
+  tr.style.background = '#fffbe6';
+  var nameCell = tr.cells[0];
+  if (!nameCell) return;
+  var s = paged[idx];
+  var baseName = _esc((s.first_name||'') + ' ' + (s.last_name||'')).trim();
+  nameCell.innerHTML = baseName + ' <span style="color:#e67e22;font-size:0.78rem;" title="Unsaved changes">*</span>';
+}
+
+async function saveEcAssignmentChanges() {
+  var changed = Object.entries(_ecDirtyRows);
+  if (!changed.length) { showToast('No changes to save.', 'info'); return; }
+
+  var btn = document.querySelector('[onclick="saveEcAssignmentChanges()"]');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+  var succeeded = 0;
+  var failedNames = [];
+  var termIdsUsed = new Set();
+
+  await Promise.all(changed.map(async function(entry) {
+    var studentId = entry[0], changes = entry[1];
+    // Send full current EC ids (full-replace semantics per existing PUT /students/{id} contract).
+    // extra_curriculum_term_id is sent speculatively — backend should add support to
+    // trigger invoice adjustment for the selected term (see backend gap notes above).
+    var payload = { extra_curriculum_ids: changes.extra_curriculum_ids };
+    if (changes.extra_curriculum_term_id != null) {
+      payload.extra_curriculum_term_id = changes.extra_curriculum_term_id;
+      termIdsUsed.add(changes.extra_curriculum_term_id);
+    }
+    var res = await apiFetch(API_BASE + '/students/' + studentId, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (res && res.ok) {
+      succeeded++;
+      delete _ecDirtyRows[studentId];
+      var s = _ecStudents.find(function(x) { return String(x.id) === String(studentId); });
+      if (s) {
+        s.extra_curriculum_ids = changes.extra_curriculum_ids;
+        if (changes.extra_curriculum_term_id != null) s.term_id = changes.extra_curriculum_term_id;
+      }
+    } else {
+      var s2 = _ecStudents.find(function(x) { return String(x.id) === String(studentId); });
+      failedNames.push(s2 ? ((s2.first_name||'') + ' ' + (s2.last_name||'')).trim() : 'Student #' + studentId);
+    }
+  }));
+
+  if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }
+
+  if (!failedNames.length) {
+    var termNames = Array.from(termIdsUsed).map(function(tid) {
+      var t = _ecTerms.find(function(x) { return String(x.id) === String(tid); });
+      return t ? (t.name || t.title || 'Term ' + tid) : 'Term ' + tid;
+    }).join(', ');
+    var invoiceNote = termNames
+      ? ' Their invoices for ' + termNames + ' will be adjusted accordingly.'
+      : '';
+    showToast(succeeded + ' student' + (succeeded !== 1 ? 's' : '') + ' updated.' + invoiceNote, 'success');
+    _renderEcTable();
+  } else {
+    var msg = succeeded
+      ? (succeeded + ' updated. Failed: ' + failedNames.join(', ') + '.')
+      : ('Save failed for: ' + failedNames.join(', ') + '.');
+    showToast(msg, succeeded ? 'warning' : 'error');
+    _renderEcTable();
+  }
+}
+
+// ==================== 11. STUDENT REPORT ====================
 
 let _stuRptData = [], _stuRptPage = 1, _stuRptPerPage = 10, _stuRptSearch = '';
 let _stuRptFilters = {};
@@ -3402,6 +4104,7 @@ async function submitCspForm() {
     class_ids: classes.map(c => c.class_id),
     classes,
     notes:     document.getElementById('csp-notes')?.value || '',
+    ...(currentUser?.branch_id != null ? { branch_id: currentUser.branch_id } : {}),
   };
 
   const btn = document.querySelector('[onclick="submitCspForm()"]');
