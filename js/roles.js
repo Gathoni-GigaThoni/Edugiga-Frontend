@@ -16,6 +16,7 @@ const NAV_STRUCTURE = [
       { id: 'utilities-student-sources',   label: 'Student Sources' },
       { id: 'utilities-streams',           label: 'Streams' },
       { id: 'utilities-funding-sources',   label: 'Funding Sources' },
+      { id: 'utilities-sports-houses',     label: 'Sports Houses' },
     ]},
     { id: 'student-management-reports', label: 'Reports', children: [
       { id: 'reports-student',  label: 'Student Report' },

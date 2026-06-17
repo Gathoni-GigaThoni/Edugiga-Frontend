@@ -21,6 +21,7 @@ function showDashboard() {
                   <li id="sidebar-stu-sources" class="sa-sub-sub" onclick="loadView('utilities-student-sources')">Student Sources</li>
                   <li id="sidebar-stu-streams" class="sa-sub-sub" onclick="loadView('utilities-streams')">Streams</li>
                   <li id="sidebar-stu-funding" class="sa-sub-sub" onclick="loadView('utilities-funding-sources')">Funding Sources</li>
+                  <li id="sidebar-stu-sports-houses" class="sa-sub-sub" onclick="loadView('utilities-sports-houses')">Sports Houses</li>
                   <li id="sidebar-stu-stream-assign" class="sa-sub-sub" onclick="loadView('stream-assignment')">Stream Assignment</li>
                   <li id="sidebar-stu-ec-assign" class="sa-sub-sub" onclick="loadView('extra-curricular-assignment')">Extra Curricular Activity Assignment</li>
                 </ul>
@@ -257,7 +258,7 @@ const FORM_VIEWS = new Set([
   // Academic setup
   'sa-academic-years', 'sa-sessions', 'sa-session-types',
   // Utilities with add/edit forms
-  'utilities-student-sources', 'utilities-streams', 'utilities-funding-sources',
+  'utilities-student-sources', 'utilities-streams', 'utilities-funding-sources', 'utilities-sports-houses',
   'student-classes',
   // Transport
   'transport-routes-add', 'transport-routes-edit',
@@ -336,6 +337,9 @@ async function loadView(view) {
     case 'stu-funding-sources':
       setActiveSidebarItem('sidebar-stu-funding'); openStuUtilitiesDropdown();
       await loadFundingSourcesView(main); break;
+    case 'utilities-sports-houses':
+      setActiveSidebarItem('sidebar-stu-sports-houses'); openStuUtilitiesDropdown();
+      await loadSportsHousesView(main); break;
     case 'stream-assignment':
       setActiveSidebarItem('sidebar-stu-stream-assign'); openStuUtilitiesDropdown();
       await loadStreamAssignmentView(main); break;

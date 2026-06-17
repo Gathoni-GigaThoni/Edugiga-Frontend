@@ -330,6 +330,10 @@ async function loadStudentFormView(container) {
     if (res && res.ok) data = await res.json();
     else { const r2 = await apiFetch(`${API_BASE}/students/${_currentEditStudentId}`); if (r2 && r2.ok) data = await r2.json(); }
   }
+  // Backend uses academic_level_id/school_class_id/academic_year_id — map them onto
+  // the level_id/class_id/academic_year_id names used internally throughout this form.
+  if (data.academic_level_id != null && data.level_id == null) data.level_id = data.academic_level_id;
+  if (data.school_class_id   != null && data.class_id == null) data.class_id = data.school_class_id;
   window._stuFormData = data;
   _stuEditDirty = false;
   _renderStuEditTabContent(_stuEditActiveTab);
@@ -572,7 +576,7 @@ function _wireStuPersonalTab() {
         await _deriveStuTermAndClass();
       } else {
         const fd = window._stuFormData || {};
-        fd.term_id = null; fd.class_id = null;
+        fd.term_id = null; fd.class_id = null; fd.academic_year_id = null;
         fd._derived_term_name = null; fd._derived_class_name = null;
         fd._derivation_error = null;
         const confirmEl = document.getElementById('se-class-term-confirm');
@@ -643,7 +647,7 @@ async function _deriveStuTermAndClass() {
   const levelErrEl  = document.getElementById('err-se-level');
 
   const priorClassId = d.class_id;
-  d.term_id = null; d.class_id = null;
+  d.term_id = null; d.class_id = null; d.academic_year_id = null;
   d._derived_term_name = null; d._derived_class_name = null; d._derivation_error = null;
 
   if (confirmEl) confirmEl.innerHTML = '';
@@ -663,6 +667,7 @@ async function _deriveStuTermAndClass() {
 
   const { term, year } = resolved;
   d.term_id = term.id;
+  d.academic_year_id = year.id;
   d._derived_term_name = term.name || term.title || '';
   d._derived_year_name = year.name || '';
 
@@ -1350,8 +1355,9 @@ async function _persistStudentRecord(showSuccessToast) {
     religion:          d.religion || '',
     physical_address:  d.physical_address || '',
     term_id:           d.term_id || null,
-    level_id:          d.level_id || null,
-    class_id:          d.class_id || null,
+    academic_level_id: d.level_id || null,
+    academic_year_id:  d.academic_year_id || null,
+    school_class_id:   d.class_id || null,
     sports_house:      d.sports_house || '',
     uses_school_transport: !!d.uses_school_transport,
     transport_selection:   d.transport_selection || null,
@@ -1402,26 +1408,9 @@ async function _persistStudentRecord(showSuccessToast) {
     return true;
   }
 
-  let msg = 'An error occurred.';
-  if (res) { try { const e = await res.json(); msg = _formatApiError(e); } catch (_) {} }
+  const msg = res ? await parseApiError(res) : 'An error occurred.';
   showToast('Error: ' + msg, 'error');
   return false;
-}
-
-// FastAPI validation errors put a list of {loc, msg, type} objects in `detail`,
-// not a string — concatenating that into a toast yields "[object Object]".
-function _formatApiError(e) {
-  const detail = e && e.detail;
-  if (typeof detail === 'string') return detail;
-  if (Array.isArray(detail)) {
-    return detail.map(d => {
-      if (typeof d === 'string') return d;
-      const field = Array.isArray(d.loc) ? d.loc[d.loc.length - 1] : '';
-      return field ? `${field}: ${d.msg}` : d.msg;
-    }).filter(Boolean).join('; ') || JSON.stringify(detail);
-  }
-  if (detail && typeof detail === 'object') return JSON.stringify(detail);
-  return JSON.stringify(e);
 }
 
 async function saveAndContinueStuTab() {
@@ -2336,6 +2325,194 @@ async function saveFundingSource(id) {
     else    { fundingSourcesData.push(item); }
     showToast(id ? 'Funding source updated!' : 'Funding source added!', 'success');
     loadView('utilities-funding-sources');
+  }
+}
+
+// ==================== 8b. UTILITIES — SPORTS HOUSES ====================
+// A Sports House is linked to either a Level (applies to every class in that level)
+// or one specific Class — never both. That link (level_id / class_id on the house
+// record) is what makes it show up in the student form's Sports House dropdown;
+// matching names alone does not create the association.
+
+let sportsHousesData = [];
+let _shPage = 1, _shPerPage = 10;
+let _shLevelsCache = null, _shClassesCache = null;
+
+async function loadSportsHousesView(container) {
+  openStuUtilitiesDropdown();
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Sports Houses</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Utilities &rsaquo; Sports Houses &rsaquo; Listing</div>
+      </div>
+      <div class="fin-controls-row">
+        <div class="fin-controls-left">
+          Show <select id="sh-per-page" onchange="changeShPerPage(this.value)">
+            ${[10,25,50].map(n => `<option value="${n}">${n}</option>`).join('')}
+          </select> entries &nbsp;|&nbsp; Total <span id="sh-total">0</span> entries
+        </div>
+        <div class="fin-controls-right">
+          <button class="fin-btn-teal" onclick="showSportsHouseForm(null)">+ Add</button>
+        </div>
+      </div>
+      <div id="sh-table"></div>
+      <div id="sh-pagination"></div>
+    </div>
+  `;
+  renderSkeletonRows('sh-table', 3);
+  const res = await apiFetch(`${API_BASE}/student-management/sports-houses/`);
+  if (res && res.ok) sportsHousesData = await res.json();
+  _shPage = 1;
+  await _stuLoadShLookups();
+  _renderSportsHousesTable();
+}
+
+async function _stuLoadShLookups() {
+  if (!_shLevelsCache) {
+    const res = await apiFetch(`${API_BASE}/academic-levels/`);
+    const raw = res && res.ok ? await res.json() : [];
+    _shLevelsCache = Array.isArray(raw) ? raw : (raw.data || raw.items || raw.results || []);
+  }
+  if (!_shClassesCache) {
+    const res = await apiFetch(`${API_BASE}/classes/`);
+    const raw = res && res.ok ? await res.json() : [];
+    _shClassesCache = Array.isArray(raw) ? raw : (raw.data || raw.items || raw.results || []);
+  }
+}
+
+function _shScopeLabel(h) {
+  if (h.level_id) {
+    const lvl = (_shLevelsCache || []).find(l => String(l.id) === String(h.level_id));
+    return `Level: ${_esc(lvl ? lvl.name : `#${h.level_id}`)}`;
+  }
+  if (h.class_id) {
+    const cls = (_shClassesCache || []).find(c => String(c.id) === String(h.class_id));
+    return `Class: ${_esc(cls ? cls.name : `#${h.class_id}`)}`;
+  }
+  return '<span style="color:#e74c3c;">Unassigned</span>';
+}
+
+function _renderSportsHousesTable() {
+  const totalEl = document.getElementById('sh-total');
+  if (totalEl) totalEl.textContent = sportsHousesData.length;
+  const start = (_shPage - 1) * _shPerPage;
+  const paged = sportsHousesData.slice(start, start + _shPerPage);
+  const pages = Math.max(1, Math.ceil(sportsHousesData.length / _shPerPage));
+
+  let rows = paged.length
+    ? paged.map(h => `<tr>
+        <td>${_esc(h.name||'')}</td>
+        <td>${_shScopeLabel(h)}</td>
+        <td class="fin-action-cell">
+          <div class="fin-action-wrap">
+            <button class="fin-action-btn" onclick="toggleStuDd(event,'sh-${h.id}')">&#8230;</button>
+            <div id="stu-dd-sh-${h.id}" class="fin-action-dropdown" style="display:none;">
+              <a href="#" onclick="showSportsHouseForm('${h.id}');return false;">&#9998; Edit</a>
+              <a href="#" onclick="deleteSportsHouse('${h.id}');return false;">&#128465; Delete</a>
+            </div>
+          </div>
+        </td>
+      </tr>`).join('')
+    : '<tr><td colspan="3" class="fin-empty">No sports houses found.</td></tr>';
+
+  const t = document.getElementById('sh-table');
+  if (t) t.innerHTML = `<div class="fin-table-wrap"><table class="fin-table">
+    <thead><tr><th>NAME</th><th>ASSIGNED TO</th><th>ACTION</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+  _mkPagination('sh-pagination', _shPage, pages, 'shGoPage');
+}
+function changeShPerPage(v) { _shPerPage = parseInt(v); _shPage = 1; _renderSportsHousesTable(); }
+function shGoPage(p)        { _shPage = p; _renderSportsHousesTable(); }
+
+function showSportsHouseForm(id) {
+  const house  = id ? sportsHousesData.find(h => String(h.id) === String(id)) : null;
+  const isEdit = !!house;
+  const scope  = house?.level_id ? 'level' : (house?.class_id ? 'class' : 'level');
+  const main   = document.getElementById('main-content');
+  if (!main) return;
+  main.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">${isEdit?'Edit':'Add'} Sports House</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Utilities &rsaquo; Sports Houses &rsaquo; ${isEdit?'Edit':'Add'}</div>
+      </div>
+      <div style="background:white;border-radius:6px;padding:28px;max-width:600px;box-shadow:0 1px 4px rgba(0,0,0,0.06);">
+        <div class="stu-form-group" style="margin-bottom:16px;">
+          <label style="font-weight:600;">Name <span style="color:#e74c3c">*</span></label>
+          <input id="sh-name" class="fin-search-input" style="width:100%!important;" value="${_esc(house?.name||'')}">
+        </div>
+        <div class="stu-form-group" style="margin-bottom:10px;">
+          <label style="font-weight:600;">Assign To</label>
+          <div style="display:flex;gap:20px;margin-top:6px;">
+            <label class="stu-checkbox-row"><input type="radio" name="sh-scope" value="level"${scope==='level'?' checked':''} onchange="_shToggleScope()"> Whole Level</label>
+            <label class="stu-checkbox-row"><input type="radio" name="sh-scope" value="class"${scope==='class'?' checked':''} onchange="_shToggleScope()"> Specific Class</label>
+          </div>
+        </div>
+        <div class="stu-form-group" id="sh-level-wrap" style="margin-bottom:16px;display:${scope==='level'?'block':'none'};">
+          <label>Level of Academics</label>
+          <select id="sh-level" class="fin-search-input" style="width:100%!important;">
+            <option value="">Please Select</option>
+            ${(_shLevelsCache||[]).map(l => `<option value="${l.id}"${String(house?.level_id)===String(l.id)?' selected':''}>${_esc(l.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="stu-form-group" id="sh-class-wrap" style="margin-bottom:16px;display:${scope==='class'?'block':'none'};">
+          <label>Class</label>
+          <select id="sh-class" class="fin-search-input" style="width:100%!important;">
+            <option value="">Please Select</option>
+            ${(_shClassesCache||[]).map(c => `<option value="${c.id}"${String(house?.class_id)===String(c.id)?' selected':''}>${_esc(c.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div style="display:flex;gap:12px;">
+          <button class="fin-btn-teal" onclick="saveSportsHouse('${id||''}')">${isEdit?'Update':'Save'}</button>
+          <button class="fin-btn-cancel" onclick="loadView('utilities-sports-houses')">Cancel</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function _shToggleScope() {
+  const scope = document.querySelector('input[name="sh-scope"]:checked')?.value;
+  const levelWrap = document.getElementById('sh-level-wrap');
+  const classWrap = document.getElementById('sh-class-wrap');
+  if (levelWrap) levelWrap.style.display = scope === 'level' ? 'block' : 'none';
+  if (classWrap) classWrap.style.display = scope === 'class' ? 'block' : 'none';
+}
+
+async function saveSportsHouse(id) {
+  const name = document.getElementById('sh-name')?.value.trim();
+  if (!name) { showToast('Name is required.', 'error'); return; }
+  const scope = document.querySelector('input[name="sh-scope"]:checked')?.value;
+  const levelId = scope === 'level' ? _fv('sh-level') : '';
+  const classId = scope === 'class' ? _fv('sh-class') : '';
+  if (scope === 'level' && !levelId) { showToast('Please select a Level.', 'error'); return; }
+  if (scope === 'class' && !classId) { showToast('Please select a Class.', 'error'); return; }
+
+  const payload = {
+    name,
+    level_id: levelId ? Number(levelId) : null,
+    class_id: classId ? Number(classId) : null,
+  };
+  const url    = id ? `${API_BASE}/student-management/sports-houses/${id}` : `${API_BASE}/student-management/sports-houses/`;
+  const method = id ? 'PATCH' : 'POST';
+  const res    = await apiFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  if (res && res.ok) {
+    showToast(id ? 'Sports house updated!' : 'Sports house added!', 'success');
+    loadView('utilities-sports-houses');
+  } else {
+    showToast(res ? await parseApiError(res) : 'Could not save sports house.', 'error');
+  }
+}
+
+async function deleteSportsHouse(id) {
+  if (!confirm('Delete this sports house?')) return;
+  const res = await apiFetch(`${API_BASE}/student-management/sports-houses/${id}`, { method: 'DELETE' });
+  if (res && (res.ok || res.status === 204)) {
+    showToast('Sports house deleted.', 'success');
+    loadView('utilities-sports-houses');
+  } else {
+    showToast(res ? await parseApiError(res) : 'Could not delete sports house.', 'error');
   }
 }
 
