@@ -1127,6 +1127,11 @@ function _stuTabGuardian(d) {
         <label>First Parent Residence</label>
         <input id="se-p1-residence" class="fin-search-input" style="width:100%!important" value="${_esc(p1.address||'')}">
       </div>
+      <div class="stu-form-group">
+        <label>First Parent ID Document Number <span style="color:#e74c3c">*</span></label>
+        <input id="se-p1-id-document" class="fin-search-input" style="width:100%!important" value="${_esc(p1.id_document||'')}">
+        <span class="stu-field-error" id="err-se-p1-id-document"></span>
+      </div>
 
       <!-- Second Parent -->
       <div class="stu-form-group" style="grid-column:span 2;font-weight:600;color:#2c3e50;border-bottom:1px solid #eee;padding-bottom:6px;margin-top:8px;">
@@ -1157,6 +1162,10 @@ function _stuTabGuardian(d) {
       <div class="stu-form-group">
         <label>Second Parent Residence</label>
         <input id="se-p2-residence" class="fin-search-input" style="width:100%!important" value="${_esc(p2.address||'')}">
+      </div>
+      <div class="stu-form-group">
+        <label>Second Parent ID Document Number</label>
+        <input id="se-p2-id-document" class="fin-search-input" style="width:100%!important" value="${_esc(p2.id_document||'')}">
       </div>
 
       <!-- Guardian Information -->
@@ -1332,8 +1341,9 @@ function _harvestStuPrevEduTab() {
   };
 }
 
-// Backend requires `relationship` on every parent entry — only enforceable while
-// the guardian tab is mounted (its inputs don't exist once you've navigated away).
+// Backend requires `relationship` on every parent entry, and `id_document` specifically
+// on the primary parent (first parent) — only enforceable while the guardian tab is
+// mounted (its inputs don't exist once you've navigated away).
 function _stuValidateGuardian() {
   if (!document.getElementById('se-p1-name')) return true;
   let valid = true;
@@ -1348,6 +1358,15 @@ function _stuValidateGuardian() {
     if (errEl) errEl.textContent = missing ? 'Relationship is required.' : '';
     if (missing) valid = false;
   });
+
+  const p1Name   = _fv('se-p1-name').trim();
+  const idDocEl  = document.getElementById('se-p1-id-document');
+  const idErrEl  = document.getElementById('err-se-p1-id-document');
+  const idMissing = !!p1Name && !_fv('se-p1-id-document').trim();
+  if (idDocEl) idDocEl.classList.toggle('error', idMissing);
+  if (idErrEl) idErrEl.textContent = idMissing ? 'ID Document Number is required for the primary parent.' : '';
+  if (idMissing) valid = false;
+
   return valid;
 }
 
@@ -1362,9 +1381,9 @@ function _harvestStuGuardianTab() {
 
   const parents = [];
   const p1 = _fv('se-p1-name').trim();
-  if (p1) parents.push({ id: prevNonGuardian[0]?.id, full_name: p1, relationship: _fv('se-p1-relationship') || null, email: _fv('se-p1-email'), phone: _fv('se-p1-phone'), address: _fv('se-p1-residence'), is_primary: true });
+  if (p1) parents.push({ id: prevNonGuardian[0]?.id, full_name: p1, relationship: _fv('se-p1-relationship') || null, email: _fv('se-p1-email'), phone: _fv('se-p1-phone'), address: _fv('se-p1-residence'), id_document: _fv('se-p1-id-document'), is_primary: true });
   const p2 = _fv('se-p2-name').trim();
-  if (p2) parents.push({ id: prevNonGuardian[1]?.id, full_name: p2, relationship: _fv('se-p2-relationship') || null, email: _fv('se-p2-email'), phone: _fv('se-p2-phone'), address: _fv('se-p2-residence'), is_primary: false });
+  if (p2) parents.push({ id: prevNonGuardian[1]?.id, full_name: p2, relationship: _fv('se-p2-relationship') || null, email: _fv('se-p2-email'), phone: _fv('se-p2-phone'), address: _fv('se-p2-residence'), id_document: _fv('se-p2-id-document'), is_primary: false });
 
   // Backend has no separate "guardian" field on the student record — a non-parent
   // guardian is just another `parents` entry with relationship: 'guardian'.
