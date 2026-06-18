@@ -3893,7 +3893,7 @@ function _renderClsTable() {
     ? paged.map(c => {
         const ay  = _clsAcademicYears.find(y => String(y.id) === String(c.academic_year_id || c.academic_year));
         const lvl = _clsLevels.find(l => String(l.id) === String(c.academic_level_id || c.academic_level));
-        const ayName  = ay  ? ay.name  : (c.academic_year_name  || '-');
+        const ayName  = ay  ? (ay.title || ay.name) : (c.academic_year_name  || '-');
         const lvlName = lvl ? lvl.name : (c.level || c.level_name || '-');
         const statusColor = c.is_active !== false ? '#27ae60' : '#e74c3c';
         const statusText  = c.is_active !== false ? 'Active'  : 'Inactive';
@@ -3949,7 +3949,7 @@ async function showClassForm(id) {
   const _levels = Array.isArray(_lvlRaw) ? _lvlRaw : (_lvlRaw.data || _lvlRaw.items || _lvlRaw.results || []);
 
   const ayOpts = _clsAcademicYears.map(y =>
-    `<option value="${_esc(String(y.id))}"${String(item?.academic_year_id || item?.academic_year) === String(y.id) ? ' selected' : ''}>${_esc(y.name)}</option>`
+    `<option value="${_esc(String(y.id))}"${String(item?.academic_year_id || item?.academic_year) === String(y.id) ? ' selected' : ''}>${_esc(y.title || y.name)}</option>`
   ).join('');
 
   const currentLevelId = String(item?.academic_level_id || item?.academic_level || '');
@@ -4035,7 +4035,8 @@ function autoFillClassName() {
   const ay        = _clsAcademicYears.find(y => String(y.id) === ayEl.value);
   if (!ay || !levelText) return;
 
-  const yearPart = ay.name.match(/\d{4}/)?.[0] || ay.name;
+  const ayLabel  = ay.title || ay.name || '';
+  const yearPart = ayLabel.match(/\d{4}/)?.[0] || ayLabel;
   if (!nameEl.value) nameEl.value = `${levelText} ${yearPart}`;
   if (!codeEl.value) codeEl.value = `${levelText.slice(0, 3).toUpperCase()}-${yearPart}`;
 }
