@@ -405,9 +405,9 @@ function _stuTabPersonal(d) {
   const ecOpts = _stuFormExtraCurriculum.map(e =>
     `<option value="${_esc(String(e.id))}"${ecIds.includes(e.id)?' selected':''}>${_esc(e.title)}</option>`).join('');
 
-  const hasSibling    = !!(d.siblings && d.siblings.length);
-  const siblingName   = hasSibling ? _esc(d.siblings[0].full_name || '') : '';
-  const siblingId     = hasSibling ? _esc(d.siblings[0].student_id || '') : '';
+  const hasSibling    = !!d.has_sibling_enrolled;
+  const siblingName   = hasSibling ? _esc(d.sibling_student_name || '') : '';
+  const siblingId     = hasSibling ? _esc(d.sibling_student_id || '') : '';
   const sibDisplay    = hasSibling ? 'block' : 'none';
 
   const isEdit = !!_currentEditStudentId;
@@ -483,9 +483,9 @@ function _stuTabPersonal(d) {
       </div>
       <div class="stu-form-group">
         <label>Sports House</label>
-        <select id="se-sports-house" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
+        <select id="se-sports-house" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;" onchange="onStuSportsHouseChange(this)">
           <option value="">Please Select</option>
-          ${(d.sports_house ? `<option selected>${_esc(d.sports_house)}</option>` : '')}
+          ${(d.sports_house_id && d.sports_house_name) ? `<option value="${d.sports_house_id}" selected>${_esc(d.sports_house_name)}</option>` : ''}
         </select>
       </div>
 
@@ -521,13 +521,13 @@ function _stuTabPersonal(d) {
       <div class="stu-form-group">
         <label style="font-size:0.85rem;font-weight:500;color:#333;">Mapped to Meal Program?</label>
         <div style="display:flex;gap:20px;margin-top:6px;">
-          <label class="stu-checkbox-row"><input type="radio" name="se-meal" value="yes"${d.meal_program?' checked':''}> Yes</label>
-          <label class="stu-checkbox-row"><input type="radio" name="se-meal" value="no"${!d.meal_program?' checked':''}> No</label>
+          <label class="stu-checkbox-row"><input type="radio" name="se-meal" value="yes"${d.mapped_to_meal_program?' checked':''}> Yes</label>
+          <label class="stu-checkbox-row"><input type="radio" name="se-meal" value="no"${!d.mapped_to_meal_program?' checked':''}> No</label>
         </div>
       </div>
       <div class="stu-form-group" style="justify-content:center;">
         <label class="stu-checkbox-row" style="margin-top:auto;">
-          <input type="checkbox" id="se-photo-consent"${d.photo_consent?' checked':''}> Parent Consents to Use of Student Photo?
+          <input type="checkbox" id="se-photo-consent"${d.parent_consents_photo?' checked':''}> Parent Consents to Use of Student Photo?
         </label>
       </div>
 
@@ -739,7 +739,7 @@ async function onStuLevelChange(levelId, clearHouse = true) {
   if (!levelId) { houseSelect.innerHTML = '<option value="">Please Select</option>'; return; }
 
   const d = window._stuFormData || {};
-  const currentHouse = clearHouse ? '' : (d.sports_house || '');
+  const currentHouseId = clearHouse ? '' : (d.sports_house_id || '');
 
   try {
     const res = await apiFetch(`${API_BASE}/academics/levels/${levelId}/sports-houses`);
@@ -747,12 +747,14 @@ async function onStuLevelChange(levelId, clearHouse = true) {
       const houses = await res.json();
       houseSelect.innerHTML = `<option value="">Please Select</option>` +
         houses.map(h =>
-          `<option value="${_esc(h.name||h.title||String(h.id))}"${(h.name||h.title)===currentHouse?' selected':''}>${_esc(h.name||h.title)}</option>`
+          `<option value="${h.id}"${String(h.id)===String(currentHouseId)?' selected':''}>${_esc(h.name)}</option>`
         ).join('');
       // Auto-select when exactly one house is associated with this level (unambiguous assignment)
-      if (houses.length === 1 && !currentHouse) {
-        houseSelect.value = houses[0].name || houses[0].title || String(houses[0].id);
+      if (houses.length === 1 && !currentHouseId) {
+        houseSelect.value = String(houses[0].id);
       }
+      d.sports_house_id   = houseSelect.value ? Number(houseSelect.value) : null;
+      d.sports_house_name = houseSelect.value ? houseSelect.options[houseSelect.selectedIndex].textContent : null;
     } else {
       houseSelect.innerHTML = '<option value="">No houses found</option>';
     }
@@ -760,6 +762,12 @@ async function onStuLevelChange(levelId, clearHouse = true) {
 
   // Re-derive class whenever the level changes (non-blocking)
   _deriveStuTermAndClass();
+}
+
+function onStuSportsHouseChange(sel) {
+  const d = window._stuFormData || (window._stuFormData = {});
+  d.sports_house_id   = sel.value ? Number(sel.value) : null;
+  d.sports_house_name = sel.value ? sel.options[sel.selectedIndex].textContent : null;
 }
 
 function validateSiblingId(input) {
@@ -1066,24 +1074,27 @@ function _transportSummaryLabel(d) {
 }
 
 function _stuTabPrevEdu(d) {
+  const pe = d.previous_education || {};
   return `
     <div class="stu-form-grid">
       <div class="stu-form-group">
         <label>Previous School Name</label>
-        <input id="se-prev-school" class="fin-search-input" style="width:100%!important" value="${_esc(d.prev_school_name||'')}">
+        <input id="se-prev-school" class="fin-search-input" style="width:100%!important" value="${_esc(pe.school_name||'')}">
       </div>
       <div class="stu-form-group">
         <label>Level Completed</label>
-        <input id="se-year-left" class="fin-search-input" style="width:100%!important" value="${_esc(d.year_left_prev_school||'')}">
+        <input id="se-year-left" class="fin-search-input" style="width:100%!important" value="${_esc(pe.level_completed||'')}">
       </div>
     </div>
   `;
 }
 
 function _stuTabGuardian(d) {
-  const p1 = (d.parents || [])[0] || {};
-  const p2 = (d.parents || [])[1] || {};
-  const g  = d.guardian || {};
+  const allParents = d.parents || [];
+  const nonGuardian = allParents.filter(p => p.relationship !== 'guardian');
+  const p1 = nonGuardian[0] || {};
+  const p2 = nonGuardian[1] || {};
+  const g  = allParents.find(p => p.relationship === 'guardian') || {};
   return `
     <div class="stu-form-grid">
       <!-- First Parent -->
@@ -1095,6 +1106,16 @@ function _stuTabGuardian(d) {
         <input id="se-p1-name" class="fin-search-input" style="width:100%!important" value="${_esc(p1.full_name||'')}">
       </div>
       <div class="stu-form-group">
+        <label>First Parent Relationship <span style="color:#e74c3c">*</span></label>
+        <select id="se-p1-relationship" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
+          <option value="">Please Select</option>
+          <option value="father"${p1.relationship==='father'?' selected':''}>Father</option>
+          <option value="mother"${p1.relationship==='mother'?' selected':''}>Mother</option>
+          <option value="guardian"${p1.relationship==='guardian'?' selected':''}>Guardian</option>
+        </select>
+        <span class="stu-field-error" id="err-se-p1-relationship"></span>
+      </div>
+      <div class="stu-form-group">
         <label>First Parent Phone</label>
         <input id="se-p1-phone" class="fin-search-input" style="width:100%!important" value="${_esc(p1.phone||'')}">
       </div>
@@ -1104,7 +1125,7 @@ function _stuTabGuardian(d) {
       </div>
       <div class="stu-form-group">
         <label>First Parent Residence</label>
-        <input id="se-p1-residence" class="fin-search-input" style="width:100%!important" value="${_esc(p1.residence||'')}">
+        <input id="se-p1-residence" class="fin-search-input" style="width:100%!important" value="${_esc(p1.address||'')}">
       </div>
 
       <!-- Second Parent -->
@@ -1116,6 +1137,16 @@ function _stuTabGuardian(d) {
         <input id="se-p2-name" class="fin-search-input" style="width:100%!important" value="${_esc(p2.full_name||'')}">
       </div>
       <div class="stu-form-group">
+        <label>Second Parent Relationship</label>
+        <select id="se-p2-relationship" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
+          <option value="">Please Select</option>
+          <option value="father"${p2.relationship==='father'?' selected':''}>Father</option>
+          <option value="mother"${p2.relationship==='mother'?' selected':''}>Mother</option>
+          <option value="guardian"${p2.relationship==='guardian'?' selected':''}>Guardian</option>
+        </select>
+        <span class="stu-field-error" id="err-se-p2-relationship"></span>
+      </div>
+      <div class="stu-form-group">
         <label>Second Parent Phone</label>
         <input id="se-p2-phone" class="fin-search-input" style="width:100%!important" value="${_esc(p2.phone||'')}">
       </div>
@@ -1125,7 +1156,7 @@ function _stuTabGuardian(d) {
       </div>
       <div class="stu-form-group">
         <label>Second Parent Residence</label>
-        <input id="se-p2-residence" class="fin-search-input" style="width:100%!important" value="${_esc(p2.residence||'')}">
+        <input id="se-p2-residence" class="fin-search-input" style="width:100%!important" value="${_esc(p2.address||'')}">
       </div>
 
       <!-- Guardian Information -->
@@ -1271,16 +1302,19 @@ function _harvestStuPersonalTab() {
   d.physical_address   = _fv('se-physical-address');
   d.level_id           = _fv('se-level') || null;
   // term_id and class_id are maintained by _deriveStuTermAndClass; do not overwrite from DOM
-  d.sports_house       = _fv('se-sports-house');
+  const houseSel = document.getElementById('se-sports-house');
+  if (houseSel) {
+    d.sports_house_id   = houseSel.value ? Number(houseSel.value) : null;
+    d.sports_house_name = houseSel.value ? houseSel.options[houseSel.selectedIndex].textContent : null;
+  }
   const ecSelect = document.getElementById('se-extra-curriculum');
   d.extra_curriculum_ids = ecSelect ? Array.from(ecSelect.selectedOptions).map(o => o.value) : (d.extra_curriculum_ids || []);
-  d.meal_program       = _fradio('se-meal') === 'yes';
-  d.photo_consent      = _fc('se-photo-consent');
+  d.mapped_to_meal_program = _fradio('se-meal') === 'yes';
+  d.parent_consents_photo  = _fc('se-photo-consent');
   d.notes              = _fv('se-notes');
-  d.siblings = _fc('se-has-sibling') ? [{
-    full_name:  _fv('se-sibling-name'),
-    student_id: _fv('se-sibling-id'),
-  }] : [];
+  d.has_sibling_enrolled = _fc('se-has-sibling');
+  d.sibling_student_name = d.has_sibling_enrolled ? _fv('se-sibling-name') : '';
+  d.sibling_student_id   = d.has_sibling_enrolled ? _fv('se-sibling-id')   : '';
   const photoEl = document.getElementById('se-photo');
   if (photoEl) _cacheStuFile('se-photo', photoEl);
   // uses_school_transport / transport_selection are kept up to date directly
@@ -1290,27 +1324,61 @@ function _harvestStuPersonalTab() {
 function _harvestStuPrevEduTab() {
   if (!document.getElementById('se-prev-school')) return;
   const d = window._stuFormData || (window._stuFormData = {});
-  d.prev_school_name      = _fv('se-prev-school');
-  d.year_left_prev_school = _fv('se-year-left');
+  const schoolName = _fv('se-prev-school');
+  d.previous_education = {
+    has_previous:     !!schoolName,
+    school_name:      schoolName,
+    level_completed:  _fv('se-year-left'),
+  };
+}
+
+// Backend requires `relationship` on every parent entry — only enforceable while
+// the guardian tab is mounted (its inputs don't exist once you've navigated away).
+function _stuValidateGuardian() {
+  if (!document.getElementById('se-p1-name')) return true;
+  let valid = true;
+  [['se-p1-name', 'se-p1-relationship', 'err-se-p1-relationship'],
+   ['se-p2-name', 'se-p2-relationship', 'err-se-p2-relationship']].forEach(([nameId, relId, errId]) => {
+    const name = _fv(nameId).trim();
+    const relEl = document.getElementById(relId);
+    const errEl = document.getElementById(errId);
+    const needsRel = !!name;
+    const missing = needsRel && !relEl.value;
+    if (relEl) relEl.classList.toggle('error', missing);
+    if (errEl) errEl.textContent = missing ? 'Relationship is required.' : '';
+    if (missing) valid = false;
+  });
+  return valid;
 }
 
 function _harvestStuGuardianTab() {
   if (!document.getElementById('se-p1-name')) return;
   const d = window._stuFormData || (window._stuFormData = {});
+  // Preserve any `.id` already assigned by a prior guardian-endpoint POST — rebuilding
+  // this array from scratch on every harvest would otherwise wipe it and cause a
+  // duplicate POST (instead of the intended PATCH) on the next save.
+  const prevNonGuardian = (d.parents || []).filter(p => p.relationship !== 'guardian');
+  const prevGuardian     = (d.parents || []).find(p => p.relationship === 'guardian');
+
   const parents = [];
   const p1 = _fv('se-p1-name').trim();
-  if (p1) parents.push({ full_name: p1, email: _fv('se-p1-email'), phone: _fv('se-p1-phone'), residence: _fv('se-p1-residence'), is_primary: true });
+  if (p1) parents.push({ id: prevNonGuardian[0]?.id, full_name: p1, relationship: _fv('se-p1-relationship') || null, email: _fv('se-p1-email'), phone: _fv('se-p1-phone'), address: _fv('se-p1-residence'), is_primary: true });
   const p2 = _fv('se-p2-name').trim();
-  if (p2) parents.push({ full_name: p2, email: _fv('se-p2-email'), phone: _fv('se-p2-phone'), residence: _fv('se-p2-residence'), is_primary: false });
-  d.parents = parents;
+  if (p2) parents.push({ id: prevNonGuardian[1]?.id, full_name: p2, relationship: _fv('se-p2-relationship') || null, email: _fv('se-p2-email'), phone: _fv('se-p2-phone'), address: _fv('se-p2-residence'), is_primary: false });
 
+  // Backend has no separate "guardian" field on the student record — a non-parent
+  // guardian is just another `parents` entry with relationship: 'guardian'.
   const gName = _fv('se-guardian-name').trim();
-  d.guardian = gName ? { full_name: gName, phone: _fv('se-guardian-phone'), email: _fv('se-guardian-email'), relationship: 'guardian' } : null;
+  if (gName) parents.push({ id: prevGuardian?.id, full_name: gName, relationship: 'guardian', phone: _fv('se-guardian-phone'), email: _fv('se-guardian-email'), is_primary: false });
+
+  d.parents = parents;
 }
 
 function _harvestStuMedicalTab() {
   if (!document.getElementById('se-allergies')) return;
   const d = window._stuFormData || (window._stuFormData = {});
+  // health_insurance/blood_group/emergency_contact_* are kept here for display only —
+  // the backend's medical record (MedicalInformationCreate) has no columns for them yet.
   d.medical = {
     allergies:               _fv('se-allergies'),
     chronic_symptoms:        _fv('se-chronic'),
@@ -1318,6 +1386,10 @@ function _harvestStuMedicalTab() {
     blood_group:             _fv('se-blood-group'),
     emergency_contact_name:  _fv('se-emrg-name'),
     emergency_contact_phone: _fv('se-emrg-phone'),
+  };
+  d.medical_info = {
+    allergies:        _fv('se-allergies'),
+    chronic_symptoms: _fv('se-chronic'),
   };
 }
 
@@ -1339,78 +1411,136 @@ function _harvestStuActiveTab() {
 }
 
 // ── Persistence ──────────────────────────────────────────────────────────────
-// Builds the payload entirely from window._stuFormData (the harvested model) so
-// it works no matter which tab is currently mounted. POSTs on first save, then
-// switches to PUT once _currentEditStudentId is captured from the response.
+// The backend models a student as several separate resources (base record,
+// previous-education, medical, guardians, transport) rather than one flat row,
+// so — unlike the old single-PUT design — saves are routed per active tab:
+//   • create (no id yet): one POST /students/ embedding everything the
+//     register schema supports (parents/previous_education/medical_info).
+//   • edit, personal tab: PATCH /students/{id} with flat fields, then sync
+//     the transport assignment via its own endpoint.
+//   • edit, prev-edu / medical tabs: PUT their dedicated sub-resource endpoint.
+//   • edit, guardian tab: POST a new /guardians entry per parent without an
+//     id yet, PATCH /guardians/{id} for ones already saved.
 
-async function _persistStudentRecord(showSuccessToast) {
-  const d = window._stuFormData || {};
-  const payload = {
-    last_name:         (d.last_name || '').trim(),
+function _stuFlatPayload(d) {
+  return {
     first_name:        (d.first_name || '').trim(),
-    gender:            d.gender || '',
-    date_of_birth:     d.date_of_birth || '',
-    joining_date:      d.joining_date || '',
-    nationality:       d.nationality || '',
-    religion:          d.religion || '',
-    physical_address:  d.physical_address || '',
+    last_name:         (d.last_name || '').trim(),
+    gender:            d.gender || null,
+    date_of_birth:     d.date_of_birth || null,
+    joining_date:      d.joining_date || null,
+    nationality:       d.nationality || null,
+    religion:          d.religion || null,
+    physical_address:  d.physical_address || null,
+    notes:             d.notes || null,
     term_id:           d.term_id || null,
     academic_level_id: d.level_id || null,
     academic_year_id:  d.academic_year_id || null,
     school_class_id:   d.class_id || null,
-    sports_house:      d.sports_house || '',
-    uses_school_transport: !!d.uses_school_transport,
-    transport_selection:   d.transport_selection || null,
-    extra_curriculum_ids: d.extra_curriculum_ids || [],
-    meal_program:      !!d.meal_program,
-    photo_consent:     !!d.photo_consent,
-    notes:             d.notes || '',
-    siblings:          d.siblings || [],
-    prev_school_name:      d.prev_school_name || '',
-    year_left_prev_school: d.year_left_prev_school || '',
-    medical: d.medical || {
-      allergies: '', chronic_symptoms: '', health_insurance: '',
-      blood_group: '', emergency_contact_name: '', emergency_contact_phone: '',
-    },
-    parents:  d.parents  || [],
-    guardian: d.guardian || null,
+    sports_house_id:   d.sports_house_id || null,
+    has_sibling_enrolled: !!d.has_sibling_enrolled,
+    sibling_student_name: d.sibling_student_name || null,
+    sibling_student_id:   d.sibling_student_id || null,
+    mapped_to_meal_program: !!d.mapped_to_meal_program,
+    parent_consents_photo: !!d.parent_consents_photo,
   };
+}
 
-  const isEdit = !!_currentEditStudentId;
-  const url    = isEdit ? `${API_BASE}/students/${_currentEditStudentId}` : `${API_BASE}/students/`;
-  const method = isEdit ? 'PUT' : 'POST';
-
-  // File inputs: se-photo (student photo), se-doc-photo / se-doc-report / se-doc-other (documents tab).
-  // Cached in window._stuFormFiles since their tabs may no longer be mounted at save time.
-  const fileEntries = Object.entries(window._stuFormFiles || {}).filter(([, f]) => f);
-  const hasFiles = fileEntries.length > 0;
-
-  let fetchOptions;
-  if (hasFiles) {
-    const formData = new FormData();
-    formData.append('data', JSON.stringify(payload));
-    fileEntries.forEach(([id, file]) => formData.append(id, file));
-    fetchOptions = { method, body: formData };
-  } else {
-    fetchOptions = { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) };
+// Best-effort — a failure here doesn't roll back the record save that already
+// succeeded, it just surfaces a separate toast so transport isn't silently lost.
+async function _stuSyncTransport(studentId, d) {
+  const sel = d.transport_selection;
+  if (d.uses_school_transport && sel && sel.route_id && sel.journey_type) {
+    const direction = sel.journey_type === 'two_way'
+      ? 'two_way'
+      : (sel.time_of_day === 'evening' ? 'one_way_evening' : 'one_way_morning');
+    const res = await apiFetch(`${API_BASE}/students/${studentId}/transport`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ route_id: String(sel.route_id), direction, use_daily_rate: false }),
+    });
+    if (!(res && res.ok)) showToast('Saved, but transport assignment failed: ' + (res ? await parseApiError(res) : 'unknown error'), 'error');
+  } else if (!d.uses_school_transport) {
+    await apiFetch(`${API_BASE}/students/${studentId}/transport`, { method: 'DELETE' }).catch(() => {});
   }
+}
 
-  const res = await apiFetch(url, fetchOptions);
+async function _persistStudentRecord(showSuccessToast) {
+  const d = window._stuFormData || {};
+  const isEdit = !!_currentEditStudentId;
 
-  if (res && res.ok) {
-    _stuEditDirty = false;
-    let saved = null;
-    try { saved = await res.json(); } catch (_) {}
-    if (!isEdit && saved && saved.id) _currentEditStudentId = saved.id;
-    if (saved) window._stuFormData = { ...(window._stuFormData || {}), ...saved };
+  if (!isEdit) {
+    const payload = {
+      ..._stuFlatPayload(d),
+      previous_education: d.previous_education || null,
+      medical_info:        d.medical_info || null,
+      parents:              d.parents || [],
+    };
+
+    // se-photo / documents-tab files have no confirmed multipart endpoint on this
+    // backend (register only documents application/json) — kept as-is pending
+    // backend clarification; see project notes.
+    const fileEntries = Object.entries(window._stuFormFiles || {}).filter(([, f]) => f);
+    const hasFiles = fileEntries.length > 0;
+    const fetchOptions = hasFiles
+      ? (() => { const fd = new FormData(); fd.append('data', JSON.stringify(payload)); fileEntries.forEach(([id, file]) => fd.append(id, file)); return { method: 'POST', body: fd }; })()
+      : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) };
+
+    const res = await apiFetch(`${API_BASE}/students/`, fetchOptions);
+    if (!(res && res.ok)) {
+      showToast('Error: ' + (res ? await parseApiError(res) : 'An error occurred.'), 'error');
+      return false;
+    }
+    const saved = await res.json();
+    _currentEditStudentId = saved.id;
+    window._stuFormData = { ...d, ...saved };
     window._stuFormFiles = {};
-    if (showSuccessToast) showToast(isEdit ? 'Student updated successfully!' : 'Student added successfully!', 'success');
+    _stuEditDirty = false;
+    await _stuSyncTransport(saved.id, d);
+    if (showSuccessToast) showToast('Student added successfully!', 'success');
     return true;
   }
 
-  const msg = res ? await parseApiError(res) : 'An error occurred.';
-  showToast('Error: ' + msg, 'error');
-  return false;
+  const id = _currentEditStudentId;
+  let ok = true, errMsg = '';
+  async function call(url, method, body) {
+    const res = await apiFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!(res && res.ok)) { ok = false; errMsg = res ? await parseApiError(res) : 'An error occurred.'; }
+    return res;
+  }
+
+  switch (_stuEditActiveTab) {
+    case 'personal':
+      await call(`${API_BASE}/students/${id}`, 'PATCH', _stuFlatPayload(d));
+      await _stuSyncTransport(id, d);
+      break;
+    case 'prev-edu':
+      await call(`${API_BASE}/students/${id}/previous-education`, 'PUT', d.previous_education || {});
+      break;
+    case 'medical':
+      await call(`${API_BASE}/students/${id}/medical`, 'PUT', d.medical_info || {});
+      break;
+    case 'guardian':
+      for (const p of (d.parents || [])) {
+        if (p.id) {
+          await call(`${API_BASE}/students/${id}/guardians/${p.id}`, 'PATCH', p);
+        } else {
+          const res = await call(`${API_BASE}/students/${id}/guardians`, 'POST', p);
+          if (res && res.ok) p.id = (await res.json()).id;
+        }
+      }
+      break;
+    case 'documents':
+      // No confirmed endpoint shape for binary uploads yet — see project notes.
+      break;
+  }
+
+  if (ok) {
+    _stuEditDirty = false;
+    if (showSuccessToast) showToast('Student updated successfully!', 'success');
+  } else {
+    showToast('Error: ' + errMsg, 'error');
+  }
+  return ok;
 }
 
 async function saveAndContinueStuTab() {
@@ -1421,6 +1551,10 @@ async function saveAndContinueStuTab() {
       showToast(_stuPersonalValidationMessage(), 'error');
       return;
     }
+  }
+  if (_stuEditActiveTab === 'guardian' && !_stuValidateGuardian()) {
+    showToast('Please select a Relationship for each parent.', 'error');
+    return;
   }
   _harvestStuActiveTab();
 
@@ -1541,8 +1675,8 @@ function _renderStudentViewBody(d, activeTab) {
           ${_svRow('Email',          d.email)}
           ${_svRow('Term',           d.cohort||d.term||d.session)}
           ${_svRow('Phone',          d.phone)}
-          ${_svRow('Meal Program',   d.meal_program ? 'Yes' : 'No')}
-          ${_svRow('Photo Consent',  d.photo_consent ? 'Yes' : 'No')}
+          ${_svRow('Meal Program',   d.mapped_to_meal_program ? 'Yes' : 'No')}
+          ${_svRow('Photo Consent',  d.parent_consents_photo ? 'Yes' : 'No')}
           ${_svRow('Transport',      _transportSummaryLabel(d))}
           <div class="stu-view-card-row">
             <span class="stu-view-card-label">Status</span>
@@ -1602,32 +1736,37 @@ function _renderStuViewTab(tabName, d) {
       ${_dRow('Level of Academics', d.class_name||d.level_of_academics)}
       ${_dRow('Stream',             d.stream)}
       ${_dRow('Term',               d.cohort||d.term||d.session)}
-      ${_dRow('Sports House',       d.sports_house)}
+      ${_dRow('Sports House',       d.sports_house_name)}
       ${_dRow('Status',             d.status||(d.is_active?'Active':'Inactive'))}
       ${_dRow('Transport',          _transportSummaryLabel(d))}
     </div>`;
-  if (tabName === 'Guardian/Family') return `
+  if (tabName === 'Guardian/Family') {
+    const allParents  = d.parents || [];
+    const nonGuardian = allParents.filter(p => p.relationship !== 'guardian');
+    const guardian     = allParents.find(p => p.relationship === 'guardian');
+    return `
     <div>
-      ${(d.parents||[]).map((p, i) => `
+      ${nonGuardian.map((p, i) => `
         <div style="border:1px solid #eee;border-radius:6px;padding:14px;margin-bottom:12px;">
-          <div style="font-weight:600;color:#2c3e50;margin-bottom:8px;">${i === 0 ? 'First Parent' : 'Second Parent'}</div>
+          <div style="font-weight:600;color:#2c3e50;margin-bottom:8px;">${i === 0 ? 'First Parent' : 'Second Parent'} ${p.relationship ? `(${_esc(p.relationship)})` : ''}</div>
           <div class="stu-detail-grid">
             ${_dRow('Name',      p.full_name)}
             ${_dRow('Phone',     p.phone)}
             ${_dRow('Email',     p.email)}
-            ${_dRow('Residence', p.residence)}
+            ${_dRow('Residence', p.address)}
           </div>
         </div>`).join('') || '<p style="color:#888;padding:16px;">No parent records.</p>'}
-      ${d.guardian && d.guardian.full_name ? `
+      ${guardian ? `
         <div style="border:1px solid #eee;border-radius:6px;padding:14px;margin-bottom:12px;">
           <div style="font-weight:600;color:#2c3e50;margin-bottom:8px;">Guardian</div>
           <div class="stu-detail-grid">
-            ${_dRow('Name',  d.guardian.full_name)}
-            ${_dRow('Phone', d.guardian.phone)}
-            ${_dRow('Email', d.guardian.email)}
+            ${_dRow('Name',  guardian.full_name)}
+            ${_dRow('Phone', guardian.phone)}
+            ${_dRow('Email', guardian.email)}
           </div>
         </div>` : ''}
     </div>`;
+  }
   if (tabName === 'Medical Information') return `
     <div class="stu-detail-grid">
       ${_dRow('Allergies',         d.medical?.allergies)}
