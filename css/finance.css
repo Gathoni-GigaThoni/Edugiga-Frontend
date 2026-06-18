@@ -389,6 +389,14 @@
 .fin-loading { color: #666; font-style: italic; padding: 20px 0; }
 .fin-error   { color: #c0392b; padding: 10px 0; }
 
+/* ── Print (Journal Entry detail modal) ── */
+@media print {
+  body * { visibility: hidden; }
+  #je-detail-print-area, #je-detail-print-area * { visibility: visible; }
+  #je-detail-print-area { position: absolute; left: 0; top: 0; width: 100%; box-shadow: none; }
+  .je-modal-no-print { display: none !important; }
+}
+
 /* ── Statement detail section label ── */
 .fin-section-label {
   font-size: 0.95rem;

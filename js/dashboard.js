@@ -102,7 +102,22 @@ function showDashboard() {
                 </ul>
               </li>
               <li onclick="loadView('cash-bank-management')">Cash and Bank Management</li>
-              <li onclick="loadView('payables')">Payables</li>
+              <li class="dropdown">
+                <span onclick="toggleDropdown('fin-payables-dropdown')">Payables ▾</span>
+                <ul id="fin-payables-dropdown" class="dropdown-menu" style="display:none;">
+                  <li id="sidebar-fin-pv"  class="sidebar-sub-sub" onclick="loadView('payables-payment-vouchers')">Payment Vouchers</li>
+                  <li id="sidebar-fin-tv"  class="sidebar-sub-sub" onclick="loadView('payables-tax-vouchers')">Tax Vouchers</li>
+                  <li id="sidebar-fin-si"  class="sidebar-sub-sub" onclick="loadView('payables-supplier-invoices')">Supplier Invoices</li>
+                  <li id="sidebar-fin-wht" class="sidebar-sub-sub" onclick="loadView('payables-wht-vat-certificates')">Supplier WHT VAT Certificate</li>
+                  <li id="sidebar-fin-ec"  class="sidebar-sub-sub" onclick="loadView('payables-expense-claims')">Expense Claims</li>
+                  <li id="sidebar-fin-ecd" class="sidebar-sub-sub" onclick="loadView('payables-expense-claim-disbursements')">Expense Claim Disbursements</li>
+                  <li id="sidebar-fin-pca" class="sidebar-sub-sub" onclick="loadView('payables-petty-cash-applications')">Petty Cash Applications</li>
+                  <li id="sidebar-fin-pcd" class="sidebar-sub-sub" onclick="loadView('payables-petty-cash-disbursements')">Petty Cash Disbursements</li>
+                  <li id="sidebar-fin-iw"  class="sidebar-sub-sub" onclick="loadView('payables-imprest-warrants')">Imprest Warrant</li>
+                  <li id="sidebar-fin-id"  class="sidebar-sub-sub" onclick="loadView('payables-imprest-disbursements')">Imprest Disbursements</li>
+                  <li id="sidebar-fin-isr" class="sidebar-sub-sub" onclick="loadView('payables-imprest-surrenders')">Imprest Surrenders</li>
+                </ul>
+              </li>
               <li class="dropdown">
                 <span onclick="toggleDropdown('fin-receivables-dropdown')">Receivables ▾</span>
                 <ul id="fin-receivables-dropdown" class="dropdown-menu" style="display:none;">
@@ -127,7 +142,36 @@ function showDashboard() {
                 </ul>
               </li>
               <li onclick="loadView('finance-setup')">Set-up</li>
-              <li onclick="loadView('finance-reports')">Reports</li>
+              <li class="dropdown">
+                <span onclick="toggleDropdown('fin-reports-dropdown')">Reports ▾</span>
+                <ul id="fin-reports-dropdown" class="dropdown-menu" style="display:none;">
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-general-ledger')">General Ledger</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-trial-balance')">Trial Balance</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-balance-sheet')">Balance Sheet</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-statement-of-financial-performance')">Statement of Financial Performance</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-statement-of-financial-position')">Statement of Financial Position</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-notes-of-financial-statement')">Notes of Financial Statement</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-cashflow-statement')">Cashflow Statement</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-daily-cash-return')">Daily Cash Return</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-cash-book')">Cash Book</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-petty-cash-report')">Petty Cash Report</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-supplier-statements')">Supplier Statements</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-tax-schedules')">Tax Schedules</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-fee-reminder')">Fee Reminder</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-fees-invoiced-per-gl-account')">Fees invoiced per GL Account</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-fees-paid-per-gl-account')">Fees Paid per GL Account</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-balances-report')">Balances Report</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-aged-student-debtors')">Aged Student Debtors</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-students-arrears-analysis')">Students Arrears Analysis</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-student-prepayment-analysis')">Student Prepayment Analysis</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-customer-aging-analysis')">Customer Aging Analysis</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-aged-payables')">Aged Payables</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-bank-reconciliation')">Bank Reconciliation Report</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-budget-vs-actual')">Statement of Budget vs Actual Comparison</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-statement-of-changes-in-net-assets')">Statement of Changes in Net Assets</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-journal-entry')">Journal Entry Report</li>
+                </ul>
+              </li>
             </ul>
           </li>
           <li onclick="loadView('inventory-management')">Inventory Management</li>
@@ -252,6 +296,13 @@ const FORM_VIEWS = new Set([
   'fin-invoice-adjustments', 'fin-sponsorship-allocations',
   'fin-fee-setup-per-class', 'fin-receive-payments',
   'fin-chart-of-accounts', 'fin-fee-accounts', 'fin-fee-items',
+  // Payables
+  'payables-payment-vouchers-add', 'payables-payment-vouchers-edit',
+  'payables-tax-vouchers-add', 'payables-supplier-invoices-add', 'payables-supplier-invoices-edit',
+  'payables-expense-claims-add', 'payables-expense-claim-disbursements-add',
+  'payables-petty-cash-applications-add', 'payables-petty-cash-disbursements-add',
+  'payables-imprest-warrants-add', 'payables-imprest-disbursements-add', 'payables-imprest-surrenders-add',
+  'journal-entries-add', 'journal-entries-edit',
   // HR / Payroll
   'hr-employee-directory', 'payroll-esp', 'payroll-fi',
   // Administration
@@ -473,13 +524,109 @@ async function loadView(view) {
       setActiveSidebarItem('sidebar-fin-pay-modes'); openFinUtilitiesDropdown();
       loadFinPlaceholderView(main, 'Payment Modes'); break;
     case 'cash-bank-management': showPlaceholder(main, 'Cash and Bank Management'); break;
-    case 'payables': showPlaceholder(main, 'Payables'); break;
+    // Payables sub-modules
+    case 'payables-payment-vouchers':
+      setActiveSidebarItem('sidebar-fin-pv'); openFinPayablesDropdown();
+      await loadPayablesPaymentVouchersView(main); break;
+    case 'payables-payment-vouchers-add':
+      openFinPayablesDropdown(); await loadPayablesPaymentVouchersAddView(main); break;
+    case 'payables-payment-vouchers-edit':
+      openFinPayablesDropdown(); await loadPayablesPaymentVouchersEditView(main); break;
+    case 'payables-tax-vouchers':
+      setActiveSidebarItem('sidebar-fin-tv'); openFinPayablesDropdown();
+      await loadPayablesTaxVouchersView(main); break;
+    case 'payables-tax-vouchers-add':
+      openFinPayablesDropdown(); await loadPayablesTaxVouchersAddView(main); break;
+    case 'payables-tax-vouchers-upcoming':
+      openFinPayablesDropdown(); await loadPayablesTaxVouchersUpcomingView(main); break;
+    case 'payables-supplier-invoices':
+      setActiveSidebarItem('sidebar-fin-si'); openFinPayablesDropdown();
+      await loadPayablesSupplierInvoicesView(main); break;
+    case 'payables-supplier-invoices-add':
+      openFinPayablesDropdown(); await loadPayablesSupplierInvoicesAddView(main); break;
+    case 'payables-supplier-invoices-edit':
+      openFinPayablesDropdown(); await loadPayablesSupplierInvoicesEditView(main); break;
+    case 'payables-supplier-invoices-missing-etims':
+      openFinPayablesDropdown(); await loadPayablesSupplierInvoicesMissingEtimsView(main); break;
+    case 'payables-wht-vat-certificates':
+      setActiveSidebarItem('sidebar-fin-wht'); openFinPayablesDropdown();
+      await loadPayablesWhtVatCertificatesView(main); break;
+    case 'payables-expense-claims':
+      setActiveSidebarItem('sidebar-fin-ec'); openFinPayablesDropdown();
+      await loadPayablesExpenseClaimsView(main); break;
+    case 'payables-expense-claims-add':
+      openFinPayablesDropdown(); await loadPayablesExpenseClaimsAddView(main); break;
+    case 'payables-expense-claim-disbursements':
+      setActiveSidebarItem('sidebar-fin-ecd'); openFinPayablesDropdown();
+      await loadPayablesExpenseClaimDisbursementsView(main); break;
+    case 'payables-expense-claim-disbursements-add':
+      openFinPayablesDropdown(); await loadPayablesExpenseClaimDisbursementsAddView(main); break;
+    case 'payables-petty-cash-applications':
+      setActiveSidebarItem('sidebar-fin-pca'); openFinPayablesDropdown();
+      await loadPayablesPettyCashApplicationsView(main); break;
+    case 'payables-petty-cash-applications-add':
+      openFinPayablesDropdown(); await loadPayablesPettyCashApplicationsAddView(main); break;
+    case 'payables-petty-cash-disbursements':
+      setActiveSidebarItem('sidebar-fin-pcd'); openFinPayablesDropdown();
+      await loadPayablesPettyCashDisbursementsView(main); break;
+    case 'payables-petty-cash-disbursements-add':
+      openFinPayablesDropdown(); await loadPayablesPettyCashDisbursementsAddView(main); break;
+    case 'payables-imprest-warrants':
+      setActiveSidebarItem('sidebar-fin-iw'); openFinPayablesDropdown();
+      await loadPayablesImprestWarrantsView(main); break;
+    case 'payables-imprest-warrants-add':
+      openFinPayablesDropdown(); await loadPayablesImprestWarrantsAddView(main); break;
+    case 'payables-imprest-warrants-overdue':
+      openFinPayablesDropdown(); await loadPayablesImprestWarrantsOverdueView(main); break;
+    case 'payables-imprest-disbursements':
+      setActiveSidebarItem('sidebar-fin-id'); openFinPayablesDropdown();
+      await loadPayablesImprestDisbursementsView(main); break;
+    case 'payables-imprest-disbursements-add':
+      openFinPayablesDropdown(); await loadPayablesImprestDisbursementsAddView(main); break;
+    case 'payables-imprest-surrenders':
+      setActiveSidebarItem('sidebar-fin-isr'); openFinPayablesDropdown();
+      await loadPayablesImprestSurrendersView(main); break;
+    case 'payables-imprest-surrenders-add':
+      openFinPayablesDropdown(); await loadPayablesImprestSurrendersAddView(main); break;
     case 'receivables': showPlaceholder(main, 'Receivables'); break;
     case 'cancellations': showPlaceholder(main, 'Cancellations'); break;
-    case 'journal-entries': showPlaceholder(main, 'Journal Entries'); break;
+    // Journal Entries
+    case 'journal-entries':
+      await loadJournalEntriesView(main); break;
+    case 'journal-entries-add':
+      await loadJournalEntryAddView(main); break;
+    case 'journal-entries-edit':
+      await loadJournalEntryEditView(main); break;
     case 'utilities': showPlaceholder(main, 'Utilities'); break;
     case 'finance-setup': showPlaceholder(main, 'Set-up'); break;
-    case 'finance-reports': showPlaceholder(main, 'Reports'); break;
+    // Finance Reports
+    case 'reports-general-ledger':
+    case 'reports-trial-balance':
+    case 'reports-balance-sheet':
+    case 'reports-statement-of-financial-performance':
+    case 'reports-statement-of-financial-position':
+    case 'reports-notes-of-financial-statement':
+    case 'reports-cashflow-statement':
+    case 'reports-daily-cash-return':
+    case 'reports-cash-book':
+    case 'reports-petty-cash-report':
+    case 'reports-supplier-statements':
+    case 'reports-tax-schedules':
+    case 'reports-fee-reminder':
+    case 'reports-fees-invoiced-per-gl-account':
+    case 'reports-fees-paid-per-gl-account':
+    case 'reports-balances-report':
+    case 'reports-aged-student-debtors':
+    case 'reports-students-arrears-analysis':
+    case 'reports-student-prepayment-analysis':
+    case 'reports-customer-aging-analysis':
+    case 'reports-aged-payables':
+    case 'reports-bank-reconciliation':
+    case 'reports-budget-vs-actual':
+    case 'reports-statement-of-changes-in-net-assets':
+    case 'reports-journal-entry':
+      openFinReportsDropdown();
+      await loadFinanceReportView(main, view); break;
     // Reports (hidden from sidebar but kept)
     case 'reports': await loadReportsView(main); break;
     // Payroll

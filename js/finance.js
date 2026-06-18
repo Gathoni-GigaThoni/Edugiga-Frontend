@@ -965,6 +965,14 @@ function openFinReceivablesDropdown() {
   const dd = document.getElementById('fin-receivables-dropdown');
   if (dd) dd.style.display = 'block';
 }
+function openFinPayablesDropdown() {
+  const dd = document.getElementById('fin-payables-dropdown');
+  if (dd) dd.style.display = 'block';
+}
+function openFinReportsDropdown() {
+  const dd = document.getElementById('fin-reports-dropdown');
+  if (dd) dd.style.display = 'block';
+}
 function openFinUtilitiesDropdown() {
   const dd = document.getElementById('fin-utilities-dropdown');
   if (dd) dd.style.display = 'block';
@@ -2143,8 +2151,6 @@ async function loadChartOfAccountsView(container) {
       const raw = await res.json();
       chartOfAccountsData.length = 0;
       _toArray(raw).forEach(r => chartOfAccountsData.push(r));
-      console.log('[Chart of Accounts] raw response:', raw, '-> parsed', chartOfAccountsData.length, 'rows');
-      if (chartOfAccountsData.length === 0) showToast('Loaded 0 accounts — check console for the raw response shape.', 'error');
     } else {
       showToast(`Could not load accounts: HTTP ${res.status} ${await parseApiError(res)}`, 'error');
     }
