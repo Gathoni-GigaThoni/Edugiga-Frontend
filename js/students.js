@@ -669,7 +669,7 @@ async function _deriveStuTermAndClass() {
   d.term_id = term.id;
   d.academic_year_id = year.id;
   d._derived_term_name = term.name || term.title || '';
-  d._derived_year_name = year.name || '';
+  d._derived_year_name = year.title || year.name || '';
 
   if (!levelId) {
     if (confirmEl) confirmEl.innerHTML = '<span style="color:#888;font-size:0.82rem;">Select Level of Academics to auto-assign class.</span>';
@@ -687,7 +687,7 @@ async function _deriveStuTermAndClass() {
     if (classes.length === 0) {
       const levelEl = document.getElementById('se-level');
       const levelName = levelEl?.options[levelEl.selectedIndex]?.text || `Level ${levelId}`;
-      if (levelErrEl) levelErrEl.textContent = `No class has been set up yet for ${levelName} in the ${year.name} academic year. Please contact an administrator to create this class before enrolling this student.`;
+      if (levelErrEl) levelErrEl.textContent = `No class has been set up yet for ${levelName} in the ${year.title || year.name} academic year. Please contact an administrator to create this class before enrolling this student.`;
       if (confirmEl) confirmEl.innerHTML = '';
       d._derivation_error = 'no_class';
       return;

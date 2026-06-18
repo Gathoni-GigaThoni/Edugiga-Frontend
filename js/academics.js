@@ -68,7 +68,7 @@ async function _fetchAndRenderAyTable() {
         const btnCls = y.is_inactive ? 'sa-status-btn-deactive' : 'sa-status-btn-active';
         const label  = y.is_inactive ? 'Deactive' : 'Active';
         rows += `<tr id="ay-row-${y.id}">
-          <td>${_ayEsc(y.name)}</td>
+          <td>${_ayEsc(y.title)}</td>
           <td>${_fmtDDMmmYYYY(y.start_date)}</td>
           <td>${_fmtDDMmmYYYY(y.end_date)}</td>
           <td>
@@ -207,7 +207,7 @@ async function submitAyAdd() {
   const res = await apiFetch(`${API_BASE}/academic-years/`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ name, start_date: start, end_date: end }),
+    body:    JSON.stringify({ title: name, start_date: start, end_date: end }),
   });
 
   if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
@@ -270,7 +270,7 @@ function _renderAyEditPage(container, year) {
         <div class="sa-form-grid-2">
           <div class="sa-form-group">
             <label class="sa-form-label">Title <span class="sa-required">*</span></label>
-            <input type="text" class="sa-form-input" value="${_ayEsc(year.name)}" disabled>
+            <input type="text" class="sa-form-input" value="${_ayEsc(year.title)}" disabled>
           </div>
           <div class="sa-form-group">
             <label class="sa-form-label">Start Date <span class="sa-required">*</span></label>
