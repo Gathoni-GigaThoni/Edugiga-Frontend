@@ -521,6 +521,7 @@ async function loadView(view) {
       break;
     default: main.innerHTML = "<p>Module not found.</p>";
   }
+  closeAllSidebarDropdowns();
 }
 
 function showPlaceholder(container, title) {
@@ -552,6 +553,14 @@ function toggleDropdown(id) {
 // ---- Sidebar active-item helpers ----
 function clearSidebarActiveItems() {
   document.querySelectorAll('.sidebar li').forEach(li => li.classList.remove('sidebar-active'));
+}
+
+// Submenus are flyout panels now (see core.css), not an in-place accordion — leaving
+// them open after navigating into a page would leave a floating panel hanging over
+// the sidebar indefinitely. loadView() closes them all once the view has rendered;
+// the highlighted sidebar-active item (set separately) still shows current location.
+function closeAllSidebarDropdowns() {
+  document.querySelectorAll('.sidebar .dropdown-menu').forEach(menu => { menu.style.display = 'none'; });
 }
 
 function setActiveSidebarItem(itemId) {

@@ -535,7 +535,7 @@ async function loadStudentInvoicesView(container) {
   _renderInvoiceListPage(container);
   try {
     const res = await fetch(`${API_BASE}/finance/invoices/`, { headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok) { studentInvoicesData.length = 0; (await res.json()).forEach(r => studentInvoicesData.push(r)); }
+    if (res.ok) { studentInvoicesData.length = 0; _toArray(await res.json()).forEach(r => studentInvoicesData.push(r)); }
   } catch (_) {}
   _renderInvTable();
 }
@@ -992,7 +992,7 @@ async function loadInvoiceAdjustmentsView(container) {
   _renderInvAdjListPage(container);
   try {
     const res = await fetch(`${API_BASE}/finance/invoice-adjustments/`, { headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok) { studentInvoiceAdjustmentsData.length = 0; (await res.json()).forEach(r => studentInvoiceAdjustmentsData.push(r)); }
+    if (res.ok) { studentInvoiceAdjustmentsData.length = 0; _toArray(await res.json()).forEach(r => studentInvoiceAdjustmentsData.push(r)); }
   } catch (_) {}
   _renderInvAdjTable();
 }
@@ -1272,7 +1272,7 @@ async function loadSponsorshipAllocationsView(container) {
   _renderSponAllocListPage(container);
   try {
     const res = await fetch(`${API_BASE}/finance/sponsorship-allocations/`, { headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok) { sponsorshipAllocationsData.length = 0; (await res.json()).forEach(r => sponsorshipAllocationsData.push(r)); }
+    if (res.ok) { sponsorshipAllocationsData.length = 0; _toArray(await res.json()).forEach(r => sponsorshipAllocationsData.push(r)); }
   } catch (_) {}
   _renderSponAllocTable();
 }
@@ -1519,7 +1519,7 @@ async function loadFeeSetupPerClassView(container) {
   _renderFeeSetupListPage(container);
   try {
     const res = await fetch(`${API_BASE}/finance/fee-setup-per-class/`, { headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok) { feeSetupPerClassData.length = 0; (await res.json()).forEach(r => feeSetupPerClassData.push(r)); }
+    if (res.ok) { feeSetupPerClassData.length = 0; _toArray(await res.json()).forEach(r => feeSetupPerClassData.push(r)); }
   } catch (_) {}
   await _fsLoadLookups();
   _renderFeeSetupTable();
@@ -1846,7 +1846,7 @@ async function loadReceivePaymentsView(container) {
   _renderRcvPayListPage(container);
   try {
     const res = await fetch(`${API_BASE}/finance/receive-payments/`, { headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok) { receivePaymentsData.length = 0; (await res.json()).forEach(r => receivePaymentsData.push(r)); }
+    if (res.ok) { receivePaymentsData.length = 0; _toArray(await res.json()).forEach(r => receivePaymentsData.push(r)); }
   } catch (_) {}
   _renderRcvPayTable();
 }
@@ -2003,7 +2003,7 @@ async function renderRcvPayAddPage(container) {
   } catch(_) {}
 
   const ledgerOpts = chartOfAccountsData.map(a =>
-    `<option value="${a.id}">${_finEsc(a.accountName||'')}</option>`).join('');
+    `<option value="${a.id}">${_finEsc(a.account_name||a.accountName||'')}</option>`).join('');
 
   container.innerHTML = `
     <div class="fin-page">
@@ -2139,7 +2139,7 @@ async function loadChartOfAccountsView(container) {
   _renderCoaListPage(container);
   try {
     const res = await fetch(`${API_BASE}/finance/accounts/`, { headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok) { chartOfAccountsData.length = 0; (await res.json()).forEach(r => chartOfAccountsData.push(r)); }
+    if (res.ok) { chartOfAccountsData.length = 0; _toArray(await res.json()).forEach(r => chartOfAccountsData.push(r)); }
   } catch (_) {}
   _renderCoaTable();
 }
@@ -2177,8 +2177,16 @@ function _coaFiltered() {
   const q = _coaSearch;
   return chartOfAccountsData.filter(a =>
     (a.number||'').toLowerCase().includes(q) ||
-    (a.accountName||'').toLowerCase().includes(q) ||
-    (a.accountType||'').toLowerCase().includes(q));
+    (a.account_name||a.accountName||'').toLowerCase().includes(q) ||
+    (a.account_type||a.accountType||'').toLowerCase().includes(q));
+}
+
+// Account records reference their parent by id (child_of) — resolve the name by
+// looking it up in the same list rather than expecting a flat "parent name" field.
+function _coaParentName(a) {
+  if (!a.child_of) return '-';
+  const parent = chartOfAccountsData.find(p => String(p.id) === String(a.child_of));
+  return parent ? (parent.account_name || parent.accountName || '-') : '-';
 }
 
 function _renderCoaTable() {
@@ -2193,11 +2201,11 @@ function _renderCoaTable() {
     ? `<tr><td colspan="9" class="fin-empty">No records found.</td></tr>`
     : paged.map(a=>`<tr>
         <td>${_finEsc(a.number||'')}</td>
-        <td>${_finEsc(a.accountName||'')}</td>
-        <td>${_finEsc(a.accountType||'-')}</td>
-        <td>${_finEsc(a.parentAccount||'-')}</td>
-        <td>${_finEsc(a.group||'-')}</td>
-        <td>${_finEsc(a.subGroup||'-')}</td>
+        <td>${_finEsc(a.account_name||a.accountName||'')}</td>
+        <td>${_finEsc(a.account_type||a.accountType||'-')}</td>
+        <td>${_finEsc(_coaParentName(a))}</td>
+        <td>${_finEsc(a.cash_flow_group||a.group||'-')}</td>
+        <td>${_finEsc(a.cash_flow_subgroup||a.subGroup||'-')}</td>
         <td>${_finEsc(a.status||'Active')}</td>
         <td>${_finEsc(a.personnel||'-')}</td>
         <td class="fin-action-cell">
@@ -2236,9 +2244,10 @@ function onCoaSearch(v)     { _coaSearch=v.trim().toLowerCase(); _coaPage=1; _re
 function coaGoPage(p)       { _coaPage=p; _renderCoaTable(); }
 
 function _coaFormHtml(acct) {
+  const childOf = acct?.child_of ?? acct?.childOf;
   const parentOpts = chartOfAccountsData
     .filter(a=> !acct || a.id!==acct.id)
-    .map(a=>`<option value="${a.id}" ${acct?.childOf===a.id?'selected':''}>${_finEsc(a.accountName||'')}</option>`).join('');
+    .map(a=>`<option value="${a.id}" ${String(childOf)===String(a.id)?'selected':''}>${_finEsc(a.account_name||a.accountName||'')}</option>`).join('');
   return `
     <div class="fin-form-grid-2">
       <div class="fin-form-group">
@@ -2248,32 +2257,32 @@ function _coaFormHtml(acct) {
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Account Name <span class="fin-required">*</span></label>
-        <input type="text" id="coa-f-name" class="fin-form-input" value="${_finEsc(acct?.accountName||'')}">
+        <input type="text" id="coa-f-name" class="fin-form-input" value="${_finEsc(acct?.account_name||acct?.accountName||'')}">
         <span class="fin-field-error" id="coa-f-name-err"></span>
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Account Type <span class="fin-required">*</span></label>
         <select id="coa-f-type" class="fin-form-select">
           <option value="">Please Select</option>
-          ${['Asset','Liability','Equity','Revenue','Expense'].map(t=>`<option value="${t}" ${acct?.accountType===t?'selected':''}>${t}</option>`).join('')}
+          ${['Asset','Liability','Equity','Revenue','Expense'].map(t=>`<option value="${t}" ${(acct?.account_type||acct?.accountType)===t?'selected':''}>${t}</option>`).join('')}
         </select>
         <span class="fin-field-error" id="coa-f-type-err"></span>
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Payment Ordering</label>
-        <input type="number" id="coa-f-ordering" class="fin-form-input" value="${acct?.paymentOrdering||''}">
+        <input type="number" id="coa-f-ordering" class="fin-form-input" value="${acct?.payment_ordering ?? acct?.paymentOrdering ?? ''}">
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Cash Flow Group</label>
         <select id="coa-f-cf-group" class="fin-form-select">
           <option value="">Please Select</option>
-          ${['Operating','Investing','Financing'].map(g=>`<option value="${g}" ${acct?.cashFlowGroup===g?'selected':''}>${g}</option>`).join('')}
+          ${['Operating','Investing','Financing'].map(g=>`<option value="${g}" ${(acct?.cash_flow_group||acct?.cashFlowGroup)===g?'selected':''}>${g}</option>`).join('')}
         </select>
         <span class="fin-field-error" id="coa-f-cfg-err"></span>
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Cash Flow Subgroup Name</label>
-        <input type="text" id="coa-f-cf-subgroup" class="fin-form-input" value="${_finEsc(acct?.cashFlowSubgroupName||'')}">
+        <input type="text" id="coa-f-cf-subgroup" class="fin-form-input" value="${_finEsc(acct?.cash_flow_subgroup||acct?.cashFlowSubgroupName||'')}">
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Child of</label>
@@ -2284,12 +2293,12 @@ function _coaFormHtml(acct) {
     </div>
     <div class="fin-form-group">
       <label class="fin-form-check-label" style="display:flex;align-items:center;gap:8px;font-size:0.9rem;cursor:pointer;">
-        <input type="checkbox" id="coa-f-fees-related" class="fin-cb" ${acct?.isStudentFeesRelated?'checked':''}> Student/Fees Related
+        <input type="checkbox" id="coa-f-fees-related" class="fin-cb" ${(acct?.is_student_fees_related ?? acct?.isStudentFeesRelated)?'checked':''}> Student/Fees Related
       </label>
     </div>
     <div class="fin-form-group">
       <label class="fin-form-check-label" style="display:flex;align-items:center;gap:8px;font-size:0.9rem;cursor:pointer;">
-        <input type="checkbox" id="coa-f-budget-item" class="fin-cb" ${acct?.isBudgetItem?'checked':''}> Budget Item
+        <input type="checkbox" id="coa-f-budget-item" class="fin-cb" ${(acct?.is_budget_item ?? acct?.isBudgetItem)?'checked':''}> Budget Item
       </label>
     </div>`;
 }
@@ -2411,7 +2420,7 @@ async function loadFeeAccountsView(container) {
   _renderFeeAcctListPage(container);
   try {
     const res = await fetch(`${API_BASE}/finance/fee-accounts/`, { headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok) { feeAccountsData.length = 0; (await res.json()).forEach(r => feeAccountsData.push(r)); }
+    if (res.ok) { feeAccountsData.length = 0; _toArray(await res.json()).forEach(r => feeAccountsData.push(r)); }
   } catch (_) {}
   _renderFeeAcctTable();
 }
@@ -2447,8 +2456,15 @@ function _faFiltered() {
   const q = _feeAcctSearch;
   return feeAccountsData.filter(a =>
     (a.number||'').toLowerCase().includes(q) ||
-    (a.accountName||'').toLowerCase().includes(q) ||
-    (a.itemName||'').toLowerCase().includes(q));
+    (a.account_name||a.accountName||'').toLowerCase().includes(q) ||
+    (a.item_name||a.itemName||'').toLowerCase().includes(q));
+}
+
+// Fee Account records reference their parent (in Chart of Accounts) by id (child_of).
+function _faParentName(a) {
+  if (!a.child_of) return '-';
+  const parent = chartOfAccountsData.find(p => String(p.id) === String(a.child_of));
+  return parent ? (parent.account_name || parent.accountName || '-') : '-';
 }
 
 function _renderFeeAcctTable() {
@@ -2463,14 +2479,14 @@ function _renderFeeAcctTable() {
     ? `<tr><td colspan="11" class="fin-empty">No records found.</td></tr>`
     : paged.map(a=>`<tr>
         <td>${_finEsc(a.number||'')}</td>
-        <td>${_finEsc(a.accountName||'')}</td>
-        <td>${_finEsc(a.accountType||'-')}</td>
-        <td>${_finEsc(a.parentAccount||'-')}</td>
+        <td>${_finEsc(a.account_name||a.accountName||'')}</td>
+        <td>${_finEsc(a.account_type||a.accountType||'-')}</td>
+        <td>${_finEsc(_faParentName(a))}</td>
         <td>${_finEsc(a.group||'-')}</td>
-        <td>${_finEsc(a.subGroup||'-')}</td>
-        <td>${_finEsc(a.itemName||'-')}</td>
-        <td>${_finEsc(a.itemCode||'-')}</td>
-        <td>${_finEsc(a.status||'Active')}</td>
+        <td>${_finEsc(a.sub_group||a.subGroup||'-')}</td>
+        <td>${_finEsc(a.item_name||a.itemName||'-')}</td>
+        <td>${_finEsc(a.item_code||a.itemCode||'-')}</td>
+        <td>${_finEsc(a.is_deactivated ? 'Inactive' : (a.status||'Active'))}</td>
         <td>${_finEsc(a.personnel||'-')}</td>
         <td class="fin-action-cell">
           <div class="fin-action-wrap">
@@ -2509,10 +2525,11 @@ function onFaSearch(v)     { _feeAcctSearch=v.trim().toLowerCase(); _feeAcctPage
 function faGoPage(p)       { _feeAcctPage=p; _renderFeeAcctTable(); }
 
 function _faFormHtml(acct) {
+  const childOf = acct?.child_of ?? acct?.childOf;
   const parentOpts = chartOfAccountsData.map(a=>
-    `<option value="${a.id}" ${acct?.childOf===a.id?'selected':''}>${_finEsc(a.accountName||'')}</option>`).join('');
+    `<option value="${a.id}" ${String(childOf)===String(a.id)?'selected':''}>${_finEsc(a.account_name||a.accountName||'')}</option>`).join('');
   const typeOpts = ['Asset','Liability','Equity','Revenue','Expense'].map(t=>
-    `<option value="${t}" ${acct?.accountType===t?'selected':''}>${t}</option>`).join('');
+    `<option value="${t}" ${(acct?.account_type||acct?.accountType)===t?'selected':''}>${t}</option>`).join('');
   return `
     <div class="fin-form-grid-2">
       <div class="fin-form-group">
@@ -2522,17 +2539,17 @@ function _faFormHtml(acct) {
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Account Name <span class="fin-required">*</span></label>
-        <input type="text" id="fa-f-name" class="fin-form-input" value="${_finEsc(acct?.accountName||'')}" ${acct?'disabled':''}>
+        <input type="text" id="fa-f-name" class="fin-form-input" value="${_finEsc(acct?.account_name||acct?.accountName||'')}" ${acct?'disabled':''}>
         <span class="fin-field-error" id="fa-f-name-err"></span>
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Item Name <span class="fin-required">*</span></label>
-        <input type="text" id="fa-f-item-name" class="fin-form-input" value="${_finEsc(acct?.itemName||'')}">
+        <input type="text" id="fa-f-item-name" class="fin-form-input" value="${_finEsc(acct?.item_name||acct?.itemName||'')}">
         <span class="fin-field-error" id="fa-f-iname-err"></span>
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Item Code <span class="fin-required">*</span></label>
-        <input type="text" id="fa-f-item-code" class="fin-form-input" value="${_finEsc(acct?.itemCode||'')}">
+        <input type="text" id="fa-f-item-code" class="fin-form-input" value="${_finEsc(acct?.item_code||acct?.itemCode||'')}">
         <span class="fin-field-error" id="fa-f-icode-err"></span>
       </div>
       <div class="fin-form-group">
@@ -2544,7 +2561,7 @@ function _faFormHtml(acct) {
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Payment Ordering</label>
-        <input type="number" id="fa-f-ordering" class="fin-form-input" value="${acct?.paymentOrdering||''}">
+        <input type="number" id="fa-f-ordering" class="fin-form-input" value="${acct?.payment_ordering ?? acct?.paymentOrdering ?? ''}">
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Child of</label>
@@ -2563,7 +2580,7 @@ function _faFormHtml(acct) {
         <label class="fin-form-label">Sub Group</label>
         <select id="fa-f-subgroup" class="fin-form-select">
           <option value="">Please Select</option>
-          ${['Revenue','Expenses','Assets','Liabilities'].map(s=>`<option value="${s}" ${acct?.subGroup===s?'selected':''}>${s}</option>`).join('')}
+          ${['Revenue','Expenses','Assets','Liabilities'].map(s=>`<option value="${s}" ${(acct?.sub_group||acct?.subGroup)===s?'selected':''}>${s}</option>`).join('')}
         </select>
       </div>
       <div class="fin-form-group">
@@ -2578,22 +2595,22 @@ function _faFormHtml(acct) {
     </div>
     <div class="fin-form-group">
       <label style="display:flex;align-items:center;gap:8px;font-size:0.9rem;cursor:pointer;">
-        <input type="checkbox" id="fa-f-fees" class="fin-cb" ${acct?.isStudentFeesRelated?'checked':''}> Student/Fees Related
+        <input type="checkbox" id="fa-f-fees" class="fin-cb" ${(acct?.is_student_fees_related ?? acct?.isStudentFeesRelated)?'checked':''}> Student/Fees Related
       </label>
     </div>
     <div class="fin-form-group">
       <label style="display:flex;align-items:center;gap:8px;font-size:0.9rem;cursor:pointer;">
-        <input type="checkbox" id="fa-f-discount" class="fin-cb" ${acct?.isDiscountAccount?'checked':''}> Discount Account
+        <input type="checkbox" id="fa-f-discount" class="fin-cb" ${(acct?.is_discount_account ?? acct?.isDiscountAccount)?'checked':''}> Discount Account
       </label>
     </div>
     <div class="fin-form-group">
       <label style="display:flex;align-items:center;gap:8px;font-size:0.9rem;cursor:pointer;">
-        <input type="checkbox" id="fa-f-budget" class="fin-cb" ${acct?.isBudgetItem?'checked':''}> Budget Item
+        <input type="checkbox" id="fa-f-budget" class="fin-cb" ${(acct?.is_budget_item ?? acct?.isBudgetItem)?'checked':''}> Budget Item
       </label>
     </div>
     <div class="fin-form-group">
       <label style="display:flex;align-items:center;gap:8px;font-size:0.9rem;cursor:pointer;">
-        <input type="checkbox" id="fa-f-deactivate" class="fin-cb" ${acct?.isDeactivated?'checked':''}> Deactivate/Activate
+        <input type="checkbox" id="fa-f-deactivate" class="fin-cb" ${(acct?.is_deactivated ?? acct?.isDeactivated)?'checked':''}> Deactivate/Activate
       </label>
     </div>`;
 }
@@ -2735,7 +2752,7 @@ async function loadFeeItemsView(container) {
   _renderFeeItemsListPage(container);
   try {
     const res = await fetch(`${API_BASE}/finance/fee-items`, { headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok) { feeItemsData.length = 0; (await res.json()).forEach(r => feeItemsData.push(r)); }
+    if (res.ok) { feeItemsData.length = 0; _toArray(await res.json()).forEach(r => feeItemsData.push(r)); }
   } catch (_) {}
   _renderFeeItemsTable();
 }
