@@ -808,7 +808,7 @@ async function submitInvoiceEdit(id) {
       body: JSON.stringify(payload)
     });
     if (res.ok) { showToast('Invoice updated!', 'success'); }
-    else { const e = await res.json().catch(()=>({})); showToast('Error: '+(e.detail||'Could not update.'), 'error'); }
+    else { showToast('Error: ' + await parseApiError(res), 'error'); }
   } catch (_) { showToast('Network error.', 'error'); }
   loadView('fin-student-invoices');
 }
@@ -933,7 +933,7 @@ async function submitBulkInvoicing() {
       body: JSON.stringify(payload)
     });
     if (res.ok) { showToast('Bulk invoices created!', 'success'); }
-    else { const e = await res.json().catch(()=>({})); showToast('Error: '+(e.detail||'Could not create bulk invoices.'), 'error'); }
+    else { showToast('Error: ' + await parseApiError(res), 'error'); }
   } catch (_) { showToast('Network error.', 'error'); }
   loadView('fin-student-invoices');
 }
@@ -1258,7 +1258,7 @@ async function submitInvAdjAdd() {
       body: JSON.stringify(payload)
     });
     if (res.ok) { showToast('Adjustment saved!', 'success'); }
-    else { const e = await res.json().catch(()=>({})); showToast('Error: '+(e.detail||'Could not save.'), 'error'); }
+    else { showToast('Error: ' + await parseApiError(res), 'error'); }
   } catch (_) { showToast('Network error.', 'error'); }
   loadView('fin-invoice-adjustments');
 }
@@ -1481,7 +1481,7 @@ async function submitSponAllocAdd() {
       body: JSON.stringify(payload)
     });
     if (res.ok) { showToast('Sponsorship allocation saved!', 'success'); }
-    else { const e = await res.json().catch(()=>({})); showToast('Error: '+(e.detail||'Could not save.'), 'error'); }
+    else { showToast('Error: ' + await parseApiError(res), 'error'); }
   } catch (_) { showToast('Network error.', 'error'); }
   loadView('fin-sponsorship-allocations');
 }
@@ -1584,7 +1584,7 @@ async function submitTriggerTermlyFees() {
       body: JSON.stringify({ term_id: parseInt(termId) })
     });
     if (res.ok) { showToast('Fees generated for the selected term!', 'success'); if (statusEl) statusEl.textContent = ''; }
-    else { const e = await res.json().catch(()=>({})); showToast('Error: '+(e.detail||'Could not generate fees.'), 'error'); if (statusEl) statusEl.textContent = ''; }
+    else { showToast('Error: ' + await parseApiError(res), 'error'); if (statusEl) statusEl.textContent = ''; }
   } catch (_) { showToast('Network error.', 'error'); if (statusEl) statusEl.textContent = ''; }
 }
 
@@ -1830,7 +1830,7 @@ async function submitFeeSetupAdd() {
         body: JSON.stringify(payload)
       });
       if (res.ok) okCount++;
-      else { const e = await res.json().catch(()=>({})); lastErr = e.detail || 'Could not save.'; }
+      else { lastErr = await parseApiError(res); }
     } catch (_) { lastErr = 'Network error.'; }
   }
   if (okCount === lineItems.length) showToast('Fee setup saved!', 'success');
@@ -2126,7 +2126,7 @@ async function submitRcvPayAdd() {
       body: JSON.stringify(payload)
     });
     if (res.ok) { showToast('Payment received!', 'success'); }
-    else { const e = await res.json().catch(()=>({})); showToast('Error: '+(e.detail||'Could not save.'), 'error'); }
+    else { showToast('Error: ' + await parseApiError(res), 'error'); }
   } catch (_) { showToast('Network error.', 'error'); }
   loadView('fin-receive-payments');
 }
@@ -2343,7 +2343,7 @@ async function submitCoaAdd() {
       body: JSON.stringify(payload)
     });
     if (res.ok) { showToast('Account added!', 'success'); }
-    else { const e = await res.json().catch(()=>({})); showToast('Error: '+(e.detail||'Could not save.'), 'error'); }
+    else { showToast('Error: ' + await parseApiError(res), 'error'); }
   } catch (_) { showToast('Network error.', 'error'); }
   loadView('fin-chart-of-accounts');
 }
@@ -2398,7 +2398,7 @@ async function submitCoaEdit(id) {
       body: JSON.stringify(payload)
     });
     if (res.ok) { showToast('Account updated!', 'success'); }
-    else { const e = await res.json().catch(()=>({})); showToast('Error: '+(e.detail||'Could not update.'), 'error'); }
+    else { showToast('Error: ' + await parseApiError(res), 'error'); }
   } catch (_) { showToast('Network error.', 'error'); }
   loadView('fin-chart-of-accounts');
 }
@@ -2653,7 +2653,7 @@ async function submitFeeAcctAdd() {
       body: JSON.stringify(payload)
     });
     if (res.ok) { showToast('Fee account added!', 'success'); }
-    else { const e = await res.json().catch(()=>({})); showToast('Error: '+(e.detail||'Could not save.'), 'error'); }
+    else { showToast('Error: ' + await parseApiError(res), 'error'); }
   } catch (_) { showToast('Network error.', 'error'); }
   loadView('fin-fee-accounts');
 }
@@ -2713,7 +2713,7 @@ async function submitFeeAcctEdit(id) {
       body: JSON.stringify(payload)
     });
     if (res.ok) { showToast('Fee account updated!', 'success'); }
-    else { const e = await res.json().catch(()=>({})); showToast('Error: '+(e.detail||'Could not update.'), 'error'); }
+    else { showToast('Error: ' + await parseApiError(res), 'error'); }
   } catch (_) { showToast('Network error.', 'error'); }
   loadView('fin-fee-accounts');
 }
@@ -2877,7 +2877,7 @@ async function submitFeeItemAdd() {
       body: JSON.stringify(payload)
     });
     if (res.ok) { showToast('Fee item added!', 'success'); _fsFeeItemsCache = null; } // invalidate so Class Fee Setup picks it up
-    else { const e = await res.json().catch(()=>({})); showToast('Error: '+(e.detail||'Could not save.'), 'error'); }
+    else { showToast('Error: ' + await parseApiError(res), 'error'); }
   } catch (_) { showToast('Network error.', 'error'); }
   loadView('fin-fee-items');
 }
