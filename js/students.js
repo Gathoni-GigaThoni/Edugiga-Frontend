@@ -1630,6 +1630,7 @@ async function loadStudentViewPage(container) {
         <h2 class="fin-title">Student Detail</h2>
         <div style="display:flex;align-items:center;gap:12px;">
           <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Student Detail</div>
+          <button class="fin-btn-teal" onclick="openStudentFeeStatement(${_currentEditStudentId})" style="padding:5px 14px!important;">&#128196; View Fee Statement</button>
           <button class="fin-btn-outline" onclick="loadView('students-list')" style="padding:5px 14px!important;">&#8592; Back</button>
         </div>
       </div>
@@ -1648,6 +1649,127 @@ async function loadStudentViewPage(container) {
   window._stuViewData = d;
   window._stuViewTab  = 'Personal Data';
   _renderStudentViewBody(d, 'Personal Data');
+}
+
+// Fee statement pulls the student's charges (created via the Class Fee Setup ->
+// "Generate Fees for Term" trigger) from GET /finance/student-fees/{id} and
+// renders them in the school's official statement layout (sample PDF on file).
+// _fs* lookups/helpers are defined in finance.js but loaded globally on this page.
+async function openStudentFeeStatement(studentId) {
+  if (!studentId) { showToast('No student selected.', 'error'); return; }
+  // Fetch fresh rather than reading window._stuViewData/_stuFormData — those are set
+  // by other pages' own async loads and may still be stale (or from a different
+  // student) if this is clicked before that page's fetch resolves.
+  const studentRes = await apiFetch(`${API_BASE}/students/${studentId}`);
+  if (!studentRes || !studentRes.ok) { showToast('Could not load student.', 'error'); return; }
+  const d = await studentRes.json();
+  if (typeof _fsLoadLookups === 'function') await _fsLoadLookups();
+
+  const termId  = d.term_id || null;
+  const classId = d.class_id || d.school_class_id || null;
+  let charges = [];
+  try {
+    const url = `${API_BASE}/finance/student-fees/${studentId}` + (termId ? `?term_id=${termId}` : '');
+    const res = await apiFetch(url);
+    if (res && res.ok) charges = await res.json();
+  } catch (_) {}
+
+  const feeItemName = id => (typeof _fsFeeItemName === 'function') ? _fsFeeItemName(id) : `#${id}`;
+  const termName     = id => (typeof _fsTermName === 'function') ? _fsTermName(id) : (id ? `Term #${id}` : '-');
+  const yearName      = cid => (typeof _fsAcademicYearName === 'function') ? _fsAcademicYearName(cid) : '-';
+  const className       = cid => (typeof _fsClassName === 'function') ? _fsClassName(cid) : '-';
+
+  const total   = charges.reduce((s,c)=>s+(parseFloat(c.amount)||0), 0);
+  const balance = charges.reduce((s,c)=>s+(parseFloat(c.balance_due)||0), 0);
+
+  const rows = charges.length
+    ? charges.map((c,i)=>`<tr style="background:${i%2?'#f4f1ea':'#fff'}">
+        <td style="padding:10px 16px;">${_esc(feeItemName(c.fee_item_id))}</td>
+        <td style="padding:10px 16px;text-align:right;">${(parseFloat(c.amount)||0).toLocaleString()}</td>
+      </tr>`).join('')
+    : `<tr><td colspan="2" style="padding:18px;text-align:center;color:#888;">No fees have been generated for this term yet. Use "Generate Fees for Term" on Class Fee Setup first.</td></tr>`;
+
+  const admissionNo = d.student_id || '-';
+  const studentName  = `${d.first_name||''} ${d.last_name||''}`.trim() || '-';
+  const printedOn      = new Date().toLocaleString('en-GB', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' });
+
+  const win = window.open('', '_blank');
+  if (!win) { showToast('Please allow pop-ups to view the statement.', 'error'); return; }
+  win.document.write(`
+    <html><head><title>Fee Statement - ${_esc(studentName)}</title>
+    <style>
+      body{font-family:Arial,Helvetica,sans-serif;color:#222;max-width:760px;margin:30px auto;padding:0 16px;}
+      .crest{color:#c9a227;text-align:center;font-size:0.8rem;letter-spacing:1px;margin-bottom:4px;}
+      h1{color:#1d2d50;text-align:center;margin:0 0 4px;font-size:1.6rem;}
+      .addr{text-align:center;color:#444;font-size:0.85rem;margin:0;}
+      .motto{text-align:center;color:#c9a227;font-style:italic;font-size:0.85rem;margin:4px 0 14px;}
+      .rule{border:none;border-top:3px solid #c9a227;margin:0 0 16px;}
+      .stmt-title{text-align:center;font-weight:700;margin-bottom:16px;}
+      .panel{border:1px solid #d8d8d8;margin-bottom:14px;border-collapse:collapse;width:100%;}
+      .panel-head{background:#1d2d50;color:#fff;padding:8px 16px;font-weight:700;}
+      .info-row{display:flex;}
+      .info-cell{flex:1;padding:8px 16px;border-bottom:1px solid #eee;font-size:0.9rem;}
+      .info-label{font-weight:700;display:inline-block;min-width:100px;}
+      .arrears{background:#efece4;padding:8px 16px;font-weight:700;display:flex;justify-content:space-between;margin-bottom:14px;}
+      table{width:100%;border-collapse:collapse;}
+      .acct-head th{background:#1d2d50;color:#fff;text-align:left;padding:10px 16px;}
+      .acct-head th:last-child{text-align:right;}
+      .total-row td{background:#c9a227;font-weight:700;padding:10px 16px;}
+      .total-row td:last-child{text-align:right;}
+      .balance-row td{background:#1d2d50;color:#fff;font-weight:700;padding:10px 16px;}
+      .balance-row td:last-child{text-align:right;}
+      .footnote{font-size:0.75rem;color:#777;margin:8px 0 18px;}
+      .pay-cols{display:flex;gap:24px;padding:14px 16px;}
+      .pay-col{flex:1;font-size:0.85rem;}
+      .pay-col h4{margin:0 0 6px;}
+      .closing{font-size:0.8rem;color:#555;margin-top:16px;}
+      @media print { .no-print{display:none;} }
+    </style></head>
+    <body>
+      <div class="crest">[ OFFICIAL CREST ]</div>
+      <h1>Seven Oaks International School</h1>
+      <p class="addr">143 Brookview, Membley | Email: admin@sevenoaks.ac | Phone: 07 XXX XXX XX</p>
+      <p class="motto">Rooted in God &middot; Growing through our Pillars &middot; From seed to oak</p>
+      <hr class="rule">
+      <div class="stmt-title">Summarised Fee Statement &mdash; ${_esc(termName(termId))}, ${_esc(yearName(classId))}</div>
+
+      <table class="panel">
+        <tr><td colspan="4" class="panel-head">Student Details</td></tr>
+        <tr><td class="info-cell"><span class="info-label">Name</span>${_esc(studentName)}</td><td class="info-cell"><span class="info-label">Admission No.</span>${_esc(admissionNo)}</td></tr>
+        <tr><td class="info-cell"><span class="info-label">Class</span>${_esc(className(classId))}</td><td class="info-cell"><span class="info-label">Programme</span>-</td></tr>
+        <tr><td class="info-cell"><span class="info-label">Stream</span>${_esc(d.stream||'N/A')}</td><td class="info-cell"><span class="info-label">Stage</span>-</td></tr>
+        <tr><td class="info-cell"><span class="info-label">Printed On</span>${_esc(printedOn)}</td><td class="info-cell"></td></tr>
+      </table>
+
+      <div class="arrears"><span>FEES ARREARS / PREPAID</span><span>0</span></div>
+
+      <table class="panel" style="margin-bottom:0;">
+        <thead><tr class="acct-head"><th>Account</th><th>Amount (KES)</th></tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot>
+          <tr class="total-row"><td>TOTAL</td><td>${total.toLocaleString()}</td></tr>
+          <tr class="balance-row"><td>Balance</td><td>${balance.toLocaleString()}</td></tr>
+        </tfoot>
+      </table>
+      <p class="footnote">*Amounts reflect the fee schedule configured for this class and term.</p>
+
+      <table class="panel">
+        <tr><td colspan="3" class="panel-head">Payment Details</td></tr>
+        <tr>
+          <td class="pay-col"><h4>Bank Transfer</h4>Bank: [Bank Name]<br>Acc Name: Seven Oaks International School<br>Acc No: [Account No.]<br>Branch: [Branch], Nairobi</td>
+          <td class="pay-col"><h4>Cheque</h4>Payable to:<br>Seven Oaks International School<br><br>Crossed &amp; marked<br>&ldquo;A/C Payee Only&rdquo;</td>
+          <td class="pay-col"><h4>M-Pesa</h4>Pay Bill No.: [Paybill]<br>Account No.: Admission No.<br>(e.g. ${_esc(admissionNo)})</td>
+        </tr>
+      </table>
+
+      <p class="closing">Kindly send your deposit slip or confirmation by email to <strong>admin@sevenoaks.ac</strong> or WhatsApp <strong>07 XXX XXX XX</strong> once fees are paid.<br>
+      Fees are payable on or before the first day of term. Thank you for partnering with us in your child's journey &mdash; from seed to oak.</p>
+
+      <div class="no-print" style="text-align:center;margin-top:20px;">
+        <button onclick="window.print()" style="padding:8px 22px;font-size:0.95rem;">Print</button>
+      </div>
+    </body></html>`);
+  win.document.close();
 }
 
 function _renderStudentViewBody(d, activeTab) {

@@ -1523,6 +1523,9 @@ async function loadFeeSetupPerClassView(container) {
   } catch (_) {}
   await _fsLoadLookups();
   _renderFeeSetupTable();
+  const triggerTermSel = document.getElementById('fs-trigger-term');
+  if (triggerTermSel) triggerTermSel.innerHTML = '<option value="">Please Select</option>' +
+    (_fsTermsCache||[]).map(t=>`<option value="${t.id}">${_finEsc(t.title||'')}</option>`).join('');
 }
 
 function _renderFeeSetupListPage(container) {
@@ -1541,14 +1544,48 @@ function _renderFeeSetupListPage(container) {
         </div>
         <div class="fin-controls-right">
           <button class="fin-btn-teal" onclick="renderFeeSetupAddPage(document.getElementById('main-content'))">+ Add</button>
+          <button class="fin-btn-outline" onclick="toggleFsTriggerBar()">Generate Fees for Term</button>
           <input type="text" class="fin-search-input" placeholder="&#128269; Search&#8230;" oninput="onFsSearch(this.value)">
           <button class="fin-btn-filter">&#9776; Filters</button>
         </div>
+      </div>
+      <div id="fs-trigger-bar" style="display:none;margin-bottom:14px;padding:12px 16px;background:#f4f1ea;border-radius:6px;align-items:center;gap:10px;">
+        <label style="font-weight:600;font-size:0.85rem;">Term</label>
+        <select id="fs-trigger-term" class="fin-form-select" style="max-width:240px;">
+          <option value="">Please Select</option>
+          ${(_fsTermsCache||[]).map(t=>`<option value="${t.id}">${_finEsc(t.title||'')}</option>`).join('')}
+        </select>
+        <button class="fin-btn-teal" onclick="submitTriggerTermlyFees()">Generate</button>
+        <span id="fs-trigger-status" style="font-size:0.85rem;"></span>
       </div>
       <div id="fs-table-container"></div>
       <div id="fs-pagination"></div>
     </div>`;
   _renderFeeSetupTable();
+}
+
+function toggleFsTriggerBar() {
+  const bar = document.getElementById('fs-trigger-bar');
+  if (bar) bar.style.display = bar.style.display === 'none' ? 'flex' : 'none';
+}
+
+// Bulk action — converts every Fee Schedule (Class Fee Setup) row for this term into
+// per-student StudentFee charges on the backend. This is what actually generates the
+// figures a student's Fee Statement (View Fee Statement, on the Student profile) shows.
+async function submitTriggerTermlyFees() {
+  const termId = document.getElementById('fs-trigger-term').value;
+  const statusEl = document.getElementById('fs-trigger-status');
+  if (!termId) { if (statusEl) statusEl.textContent = 'Please select a term.'; return; }
+  if (statusEl) statusEl.textContent = 'Generating…';
+  try {
+    const res = await fetch(`${API_BASE}/finance/trigger-termly-fees`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ term_id: parseInt(termId) })
+    });
+    if (res.ok) { showToast('Fees generated for the selected term!', 'success'); if (statusEl) statusEl.textContent = ''; }
+    else { const e = await res.json().catch(()=>({})); showToast('Error: '+(e.detail||'Could not generate fees.'), 'error'); if (statusEl) statusEl.textContent = ''; }
+  } catch (_) { showToast('Network error.', 'error'); if (statusEl) statusEl.textContent = ''; }
 }
 
 function _fsClassName(classId) {
@@ -2679,4 +2716,168 @@ async function submitFeeAcctEdit(id) {
     else { const e = await res.json().catch(()=>({})); showToast('Error: '+(e.detail||'Could not update.'), 'error'); }
   } catch (_) { showToast('Network error.', 'error'); }
   loadView('fin-fee-accounts');
+}
+
+// ==================== CHANGE 9: FEE ITEMS ====================
+// The catalog of chargeable fees (Tuition, Transport, Lunch, etc.) — this is what
+// Class Fee Setup prices per class/term and what Student Fees/Invoices ultimately
+// bill against. Backend (`/finance/fee-items`) only exposes GET/POST today, no
+// PATCH/DELETE — so there's no Edit action here yet; see project notes.
+
+let _feeItemPerPage = 10, _feeItemPage = 1, _feeItemSearch = '';
+const FEE_ITEM_CATEGORIES = [
+  { value: 'TERMLY',  label: 'Termly'  },
+  { value: 'YEARLY',  label: 'Yearly'  },
+  { value: 'ONE_OFF', label: 'One-off' },
+];
+
+async function loadFeeItemsView(container) {
+  _feeItemPage = 1; _feeItemSearch = '';
+  _renderFeeItemsListPage(container);
+  try {
+    const res = await fetch(`${API_BASE}/finance/fee-items`, { headers: { Authorization: `Bearer ${token}` } });
+    if (res.ok) { feeItemsData.length = 0; (await res.json()).forEach(r => feeItemsData.push(r)); }
+  } catch (_) {}
+  _renderFeeItemsTable();
+}
+
+function _renderFeeItemsListPage(container) {
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Fee Items</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Utilities &rsaquo; Fee Items &rsaquo; Listing</div>
+      </div>
+      <div class="fin-controls-row">
+        <div class="fin-controls-left">
+          Show <select id="fi-per-page" onchange="changeFiPerPage(this.value)">
+            ${[10,25,50,100].map(n=>`<option value="${n}" ${n===_feeItemPerPage?'selected':''}>${n}</option>`).join('')}
+          </select> entries
+          &nbsp;|&nbsp; Total <span id="fi-total">0</span> entries
+        </div>
+        <div class="fin-controls-right">
+          <input type="text" class="fin-search-input" placeholder="&#128269; Search&#8230;" oninput="onFiSearch(this.value)">
+          <button class="fin-btn-teal" onclick="renderFeeItemAddPage(document.getElementById('main-content'))">+ Add Fee Item</button>
+        </div>
+      </div>
+      <div id="fi-table-container"></div>
+      <div id="fi-pagination"></div>
+    </div>`;
+  _renderFeeItemsTable();
+}
+
+function _fiCategoryLabel(v) {
+  return (FEE_ITEM_CATEGORIES.find(c=>c.value===v)||{}).label || v || '-';
+}
+
+function _fiFiltered() {
+  if (!_feeItemSearch) return feeItemsData;
+  const q = _feeItemSearch;
+  return feeItemsData.filter(f => (f.name||'').toLowerCase().includes(q));
+}
+
+function _renderFeeItemsTable() {
+  const filtered = _fiFiltered();
+  const totalEl  = document.getElementById('fi-total');
+  if (totalEl) totalEl.textContent = filtered.length;
+  const start = (_feeItemPage-1)*_feeItemPerPage;
+  const paged = filtered.slice(start, start+_feeItemPerPage);
+  const pages = Math.max(1, Math.ceil(filtered.length/_feeItemPerPage));
+
+  let rows = paged.length===0
+    ? `<tr><td colspan="5" class="fin-empty">No records found.</td></tr>`
+    : paged.map(f=>`<tr>
+        <td>${_finEsc(String(f.id))}</td>
+        <td>${_finEsc(f.name||'')}</td>
+        <td>${_finEsc(_fiCategoryLabel(f.category))}</td>
+        <td>${_finFmt(parseFloat(f.default_amount)||0)}</td>
+        <td><span style="color:${f.is_active===false?'#e74c3c':'#27ae60'};font-weight:600;">${f.is_active===false?'Inactive':'Active'}</span></td>
+      </tr>`).join('');
+
+  const el = document.getElementById('fi-table-container');
+  if (el) el.innerHTML = `
+    <div class="fin-table-wrap"><table class="fin-table">
+      <thead><tr>
+        <th>ID</th><th>NAME</th><th>FEE TYPE</th><th>DEFAULT AMOUNT</th><th>STATUS</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+
+  let pg=''; for(let i=1;i<=pages;i++) pg+=`<button class="${i===_feeItemPage?'fin-pg-active':''}" onclick="fiGoPage(${i})">${i}</button>`;
+  const pgEl=document.getElementById('fi-pagination');
+  if(pgEl) pgEl.innerHTML=`<div class="fin-pagination">${pg}</div>`;
+}
+
+function changeFiPerPage(v){ _feeItemPerPage=parseInt(v); _feeItemPage=1; _renderFeeItemsTable(); }
+function onFiSearch(v)     { _feeItemSearch=v.trim().toLowerCase(); _feeItemPage=1; _renderFeeItemsTable(); }
+function fiGoPage(p)       { _feeItemPage=p; _renderFeeItemsTable(); }
+
+function renderFeeItemAddPage(container) {
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Add Fee Item</h2>
+        <div class="fin-breadcrumb">
+          Dashboard &rsaquo; Finance &rsaquo;
+          <a href="#" class="fin-bc-link" onclick="loadView('fin-fee-items');return false;">Fee Items</a>
+          &rsaquo; Add
+        </div>
+      </div>
+      <div class="fin-form-wrap" style="max-width:600px;">
+        <div class="fin-form-group" style="margin-bottom:16px;">
+          <label class="fin-form-label">Name <span class="fin-required">*</span></label>
+          <input type="text" id="fi-f-name" class="fin-form-input">
+          <span class="fin-field-error" id="fi-f-name-err"></span>
+        </div>
+        <div class="fin-form-group" style="margin-bottom:16px;">
+          <label class="fin-form-label">Fee Type <span class="fin-required">*</span></label>
+          <select id="fi-f-category" class="fin-form-select">
+            <option value="">Please Select</option>
+            ${FEE_ITEM_CATEGORIES.map(c=>`<option value="${c.value}">${c.label}</option>`).join('')}
+          </select>
+          <span class="fin-field-error" id="fi-f-category-err"></span>
+        </div>
+        <div class="fin-form-group" style="margin-bottom:16px;">
+          <label class="fin-form-label">Default Amount <span class="fin-required">*</span></label>
+          <input type="number" id="fi-f-amount" class="fin-form-input" step="0.01">
+          <span class="fin-field-error" id="fi-f-amount-err"></span>
+        </div>
+        <div class="fin-form-group" style="margin-bottom:20px;">
+          <label style="display:flex;align-items:center;gap:8px;font-size:0.9rem;cursor:pointer;">
+            <input type="checkbox" id="fi-f-active" class="fin-cb" checked> Active
+          </label>
+        </div>
+        <div class="fin-form-actions">
+          <button class="fin-btn-teal" onclick="submitFeeItemAdd()">Submit</button>
+          <button class="fin-btn-cancel" onclick="loadView('fin-fee-items')">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function submitFeeItemAdd() {
+  const name   = (document.getElementById('fi-f-name').value||'').trim();
+  const cat    = document.getElementById('fi-f-category').value;
+  const amtStr = document.getElementById('fi-f-amount').value;
+  const amount = parseFloat(amtStr);
+  let valid=true;
+  document.getElementById('fi-f-name-err').textContent     = name ? '' : 'This field is required.'; if(!name) valid=false;
+  document.getElementById('fi-f-category-err').textContent = cat  ? '' : 'This field is required.'; if(!cat)  valid=false;
+  document.getElementById('fi-f-amount-err').textContent   = (amtStr!=='' && !isNaN(amount)) ? '' : 'This field is required.'; if(amtStr==='' || isNaN(amount)) valid=false;
+  if (!valid) return;
+
+  const payload = {
+    name, category: cat, default_amount: amount,
+    is_active: document.getElementById('fi-f-active').checked,
+  };
+  try {
+    const res = await fetch(`${API_BASE}/finance/fee-items`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload)
+    });
+    if (res.ok) { showToast('Fee item added!', 'success'); _fsFeeItemsCache = null; } // invalidate so Class Fee Setup picks it up
+    else { const e = await res.json().catch(()=>({})); showToast('Error: '+(e.detail||'Could not save.'), 'error'); }
+  } catch (_) { showToast('Network error.', 'error'); }
+  loadView('fin-fee-items');
 }

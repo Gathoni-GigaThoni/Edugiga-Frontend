@@ -61,6 +61,7 @@ const NAV_STRUCTURE = [
     { id: 'utilities', label: 'Utilities', children: [
       { id: 'fin-chart-of-accounts', label: 'Chart of Accounts' },
       { id: 'fin-fee-accounts',      label: 'Fee Accounts' },
+      { id: 'fin-fee-items',         label: 'Fee Items' },
       { id: 'fin-groups',            label: 'Groups' },
       { id: 'fin-sub-groups',        label: 'Sub Groups' },
       { id: 'fin-fiscal-years',      label: 'Fiscal Years' },

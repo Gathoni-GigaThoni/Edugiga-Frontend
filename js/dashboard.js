@@ -119,6 +119,7 @@ function showDashboard() {
                 <ul id="fin-utilities-dropdown" class="dropdown-menu" style="display:none;">
                   <li id="sidebar-fin-coa"        class="sidebar-sub-sub" onclick="loadView('fin-chart-of-accounts')">Chart of Accounts</li>
                   <li id="sidebar-fin-fee-accts"  class="sidebar-sub-sub" onclick="loadView('fin-fee-accounts')">Fee Accounts</li>
+                  <li id="sidebar-fin-fee-items"  class="sidebar-sub-sub" onclick="loadView('fin-fee-items')">Fee Items</li>
                   <li id="sidebar-fin-groups"     class="sidebar-sub-sub" onclick="loadView('fin-groups')">Groups</li>
                   <li id="sidebar-fin-subgroups"  class="sidebar-sub-sub" onclick="loadView('fin-sub-groups')">Sub Groups</li>
                   <li id="sidebar-fin-fiscal"     class="sidebar-sub-sub" onclick="loadView('fin-fiscal-years')">Fiscal Years</li>
@@ -250,7 +251,7 @@ const FORM_VIEWS = new Set([
   'fin-student-invoices', 'fin-student-bulk-invoicing',
   'fin-invoice-adjustments', 'fin-sponsorship-allocations',
   'fin-fee-setup-per-class', 'fin-receive-payments',
-  'fin-chart-of-accounts', 'fin-fee-accounts',
+  'fin-chart-of-accounts', 'fin-fee-accounts', 'fin-fee-items',
   // HR / Payroll
   'hr-employee-directory', 'payroll-esp', 'payroll-fi',
   // Administration
@@ -456,6 +457,9 @@ async function loadView(view) {
     case 'fin-fee-accounts':
       setActiveSidebarItem('sidebar-fin-fee-accts'); openFinUtilitiesDropdown();
       loadFeeAccountsView(main); break;
+    case 'fin-fee-items':
+      setActiveSidebarItem('sidebar-fin-fee-items'); openFinUtilitiesDropdown();
+      loadFeeItemsView(main); break;
     case 'fin-groups':
       setActiveSidebarItem('sidebar-fin-groups'); openFinUtilitiesDropdown();
       loadFinPlaceholderView(main, 'Groups'); break;

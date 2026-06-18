@@ -29,6 +29,7 @@ let feeSetupPerClassData           = [];
 let receivePaymentsData            = [];
 let chartOfAccountsData            = [];
 let feeAccountsData                = [];
+let feeItemsData                   = [];
 
 // ── Global fetch wrapper ──────────────────────────────────────────────────────
 // Attaches Authorization header, handles 401, and retries once on network
