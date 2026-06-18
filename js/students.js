@@ -4074,7 +4074,7 @@ async function saveClass(id) {
     is_active:        document.getElementById('cls-f-status')?.value !== 'false',
   };
 
-  const url    = id ? `${API_BASE}/classes/${id}/` : `${API_BASE}/classes/`;
+  const url    = id ? `${API_BASE}/classes/${id}` : `${API_BASE}/classes/`;
   const method = id ? 'PATCH' : 'POST';
   const res    = await apiFetch(url, {
     method,
