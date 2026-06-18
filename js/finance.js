@@ -2139,8 +2139,18 @@ async function loadChartOfAccountsView(container) {
   _renderCoaListPage(container);
   try {
     const res = await fetch(`${API_BASE}/finance/accounts/`, { headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok) { chartOfAccountsData.length = 0; _toArray(await res.json()).forEach(r => chartOfAccountsData.push(r)); }
-  } catch (_) {}
+    if (res.ok) {
+      const raw = await res.json();
+      chartOfAccountsData.length = 0;
+      _toArray(raw).forEach(r => chartOfAccountsData.push(r));
+      console.log('[Chart of Accounts] raw response:', raw, '-> parsed', chartOfAccountsData.length, 'rows');
+      if (chartOfAccountsData.length === 0) showToast('Loaded 0 accounts — check console for the raw response shape.', 'error');
+    } else {
+      showToast(`Could not load accounts: HTTP ${res.status} ${await parseApiError(res)}`, 'error');
+    }
+  } catch (e) {
+    showToast('Network error loading accounts: ' + e.message, 'error');
+  }
   _renderCoaTable();
 }
 
