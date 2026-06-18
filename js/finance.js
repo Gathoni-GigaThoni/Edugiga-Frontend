@@ -1487,8 +1487,32 @@ async function submitSponAllocAdd() {
 }
 
 // ==================== CHANGE 3: FEE SET-UP PER CLASS ====================
+// Backend models this as one FeeSchedule row per (fee_item, class, term) — not a
+// single multi-field document with session/department/study-mode — so the
+// "line items" UX below issues one POST per line item, each scoped to the
+// chosen Class + Term (verified against the live API's OpenAPI schema).
 
 let _feeSetupPerPage = 10, _feeSetupPage = 1, _feeSetupSearch = '';
+let _fsAcademicYearsCache = null, _fsClassesCache = null, _fsTermsCache = null, _fsFeeItemsCache = null;
+
+async function _fsLoadLookups() {
+  if (!_fsAcademicYearsCache) {
+    const res = await fetch(`${API_BASE}/academic-years/`, { headers: { Authorization: `Bearer ${token}` } });
+    _fsAcademicYearsCache = res.ok ? await res.json() : [];
+  }
+  if (!_fsClassesCache) {
+    const res = await fetch(`${API_BASE}/classes/`, { headers: { Authorization: `Bearer ${token}` } });
+    _fsClassesCache = res.ok ? await res.json() : [];
+  }
+  if (!_fsTermsCache) {
+    const res = await fetch(`${API_BASE}/terms`, { headers: { Authorization: `Bearer ${token}` } });
+    _fsTermsCache = res.ok ? await res.json() : [];
+  }
+  if (!_fsFeeItemsCache) {
+    const res = await fetch(`${API_BASE}/finance/fee-items`, { headers: { Authorization: `Bearer ${token}` } });
+    _fsFeeItemsCache = res.ok ? await res.json() : [];
+  }
+}
 
 async function loadFeeSetupPerClassView(container) {
   _feeSetupPage = 1; _feeSetupSearch = '';
@@ -1497,6 +1521,7 @@ async function loadFeeSetupPerClassView(container) {
     const res = await fetch(`${API_BASE}/finance/fee-setup-per-class/`, { headers: { Authorization: `Bearer ${token}` } });
     if (res.ok) { feeSetupPerClassData.length = 0; (await res.json()).forEach(r => feeSetupPerClassData.push(r)); }
   } catch (_) {}
+  await _fsLoadLookups();
   _renderFeeSetupTable();
 }
 
@@ -1515,7 +1540,6 @@ function _renderFeeSetupListPage(container) {
           &nbsp;|&nbsp; Total <span id="fs-total">0</span> entries
         </div>
         <div class="fin-controls-right">
-          <button class="fin-btn-teal" onclick="alert('Advance Fee Setup — coming soon.')">Advance Fee Setup</button>
           <button class="fin-btn-teal" onclick="renderFeeSetupAddPage(document.getElementById('main-content'))">+ Add</button>
           <input type="text" class="fin-search-input" placeholder="&#128269; Search&#8230;" oninput="onFsSearch(this.value)">
           <button class="fin-btn-filter">&#9776; Filters</button>
@@ -1527,12 +1551,32 @@ function _renderFeeSetupListPage(container) {
   _renderFeeSetupTable();
 }
 
+function _fsClassName(classId) {
+  const c = (_fsClassesCache||[]).find(c=>String(c.id)===String(classId));
+  return c ? (c.name||'') : (classId ? `#${classId}` : '-');
+}
+function _fsTermName(termId) {
+  const t = (_fsTermsCache||[]).find(t=>String(t.id)===String(termId));
+  return t ? (t.title||'') : (termId ? `#${termId}` : '-');
+}
+function _fsAcademicYearName(classId) {
+  const c = (_fsClassesCache||[]).find(c=>String(c.id)===String(classId));
+  if (!c) return '-';
+  const ay = (_fsAcademicYearsCache||[]).find(y=>String(y.id)===String(c.academic_year_id));
+  return ay ? (ay.title||'') : '-';
+}
+function _fsFeeItemName(feeItemId) {
+  const fi = (_fsFeeItemsCache||[]).find(f=>String(f.id)===String(feeItemId));
+  return fi ? (fi.name||'') : `#${feeItemId}`;
+}
+
 function _fsFiltered() {
   if (!_feeSetupSearch) return feeSetupPerClassData;
   const q = _feeSetupSearch;
   return feeSetupPerClassData.filter(f =>
-    (f.classCode||'').toLowerCase().includes(q) ||
-    (f.session||'').toLowerCase().includes(q));
+    _fsClassName(f.class_id).toLowerCase().includes(q) ||
+    _fsTermName(f.term_id).toLowerCase().includes(q) ||
+    _fsFeeItemName(f.fee_item_id).toLowerCase().includes(q));
 }
 
 function _renderFeeSetupTable() {
@@ -1544,16 +1588,13 @@ function _renderFeeSetupTable() {
   const pages = Math.max(1, Math.ceil(filtered.length/_feeSetupPerPage));
 
   let rows = paged.length===0
-    ? `<tr><td colspan="9" class="fin-empty">No records found.</td></tr>`
+    ? `<tr><td colspan="6" class="fin-empty">No records found.</td></tr>`
     : paged.map(f=>`<tr>
-        <td>${_finEsc(f.classCode||'')}</td>
-        <td>${_finEsc(f.session||'-')}</td>
-        <td>${_finEsc(f.sessionType||'-')}</td>
-        <td>${_finEsc(f.academicYear||'-')}</td>
-        <td>${_finEsc(f.studentName||'-')}</td>
-        <td>${_finFmt(f.amount||0)}</td>
-        <td>${_finEsc(f.status||'-')}</td>
-        <td>${_finEsc(f.personnel||'-')}</td>
+        <td>${_finEsc(_fsClassName(f.class_id))}</td>
+        <td>${_finEsc(_fsAcademicYearName(f.class_id))}</td>
+        <td>${_finEsc(_fsTermName(f.term_id))}</td>
+        <td>${_finEsc(_fsFeeItemName(f.fee_item_id))}</td>
+        <td>${_finFmt(parseFloat(f.amount)||0)}</td>
         <td class="fin-action-cell">
           <div class="fin-action-wrap">
             <button class="fin-action-btn" onclick="toggleFinFeeSetupDropdown(event,'${f.id}')">&#8230;</button>
@@ -1569,8 +1610,8 @@ function _renderFeeSetupTable() {
   if (el) el.innerHTML = `
     <div class="fin-table-wrap"><table class="fin-table">
       <thead><tr>
-        <th>CLASS</th><th>SESSION</th><th>SESSION TYPE</th><th>ACADEMIC YEAR</th>
-        <th>STUDENT NAME</th><th>AMOUNT</th><th>STATUS</th><th>PERSONNEL</th><th>ACTION</th>
+        <th>CLASS</th><th>ACADEMIC YEAR</th><th>TERM</th>
+        <th>ACCOUNT VOTE/HEAD</th><th>AMOUNT</th><th>ACTION</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table></div>`;
@@ -1592,17 +1633,12 @@ function fsGoPage(p)       { _feeSetupPage=p; _renderFeeSetupTable(); }
 
 function openFeeSetupDetail(id) {
   document.querySelectorAll('[id^="fin-fee-setup-dd-"]').forEach(d=>d.style.display='none');
-  const fee = feeSetupPerClassData.find(f=>f.id===id);
+  const fee = feeSetupPerClassData.find(f=>String(f.id)===String(id));
   if (!fee) return;
   _renderFeeSetupDetailPage(document.getElementById('main-content'), fee);
 }
 
 function _renderFeeSetupDetailPage(container, fee) {
-  const liRows = (fee.lineItems||[]).map((li,i)=>`
-    <tr><td>${i+1}</td><td>${_finEsc(li.account||'')}</td><td>${_finFmt(li.amount||0)}</td></tr>`).join('') ||
-    `<tr><td colspan="3" class="fin-empty">No records found.</td></tr>`;
-  const total = (fee.lineItems||[]).reduce((s,li)=>s+(li.amount||0),0);
-
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -1617,20 +1653,12 @@ function _renderFeeSetupDetailPage(container, fee) {
         <button class="fin-btn-teal" onclick="window.print()">Print</button>
       </div>
       <div class="fin-info-grid">
-        <div class="fin-info-item"><span class="fin-info-label">Class Code</span><span class="fin-info-value">${_finEsc(fee.classCode||'-')}</span></div>
-        <div class="fin-info-item"><span class="fin-info-label">Session</span><span class="fin-info-value">${_finEsc(fee.session||'-')}</span></div>
-        <div class="fin-info-item"><span class="fin-info-label">Student Type</span><span class="fin-info-value">${_finEsc(fee.studentType||'-')}</span></div>
-        <div class="fin-info-item"><span class="fin-info-label">Session Type</span><span class="fin-info-value">${_finEsc(fee.sessionType||'-')}</span></div>
-        <div class="fin-info-item"><span class="fin-info-label">Department</span><span class="fin-info-value">${_finEsc(fee.department||'-')}</span></div>
-        <div class="fin-info-item"><span class="fin-info-label">Academic Year</span><span class="fin-info-value">${_finEsc(fee.academicYear||'-')}</span></div>
-        <div class="fin-info-item"><span class="fin-info-label">Study Mode</span><span class="fin-info-value">${_finEsc(fee.studyMode||'-')}</span></div>
+        <div class="fin-info-item"><span class="fin-info-label">Class</span><span class="fin-info-value">${_finEsc(_fsClassName(fee.class_id))}</span></div>
+        <div class="fin-info-item"><span class="fin-info-label">Academic Year</span><span class="fin-info-value">${_finEsc(_fsAcademicYearName(fee.class_id))}</span></div>
+        <div class="fin-info-item"><span class="fin-info-label">Term</span><span class="fin-info-value">${_finEsc(_fsTermName(fee.term_id))}</span></div>
+        <div class="fin-info-item"><span class="fin-info-label">Account Vote/Head</span><span class="fin-info-value">${_finEsc(_fsFeeItemName(fee.fee_item_id))}</span></div>
+        <div class="fin-info-item"><span class="fin-info-label">Amount</span><span class="fin-info-value">${_finFmt(parseFloat(fee.amount)||0)}</span></div>
       </div>
-      <div class="fin-section-label">Line Items</div>
-      <div class="fin-table-wrap"><table class="fin-table">
-        <thead><tr><th>SN</th><th>ACCOUNT VOTE/HEAD</th><th>AMOUNT</th></tr></thead>
-        <tbody>${liRows}</tbody>
-        <tfoot><tr class="fin-tfoot-total"><td colspan="2">Total Amount</td><td>${_finFmt(total)}</td></tr></tfoot>
-      </table></div>
       <div class="fin-form-actions" style="margin-top:20px;">
         <button class="fin-btn-cancel" onclick="loadView('fin-fee-setup-per-class')">Back</button>
       </div>
@@ -1638,6 +1666,7 @@ function _renderFeeSetupDetailPage(container, fee) {
 }
 
 async function renderFeeSetupAddPage(container) {
+  await _fsLoadLookups();
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -1651,41 +1680,31 @@ async function renderFeeSetupAddPage(container) {
       <div class="fin-form-wrap" style="max-width:700px;">
         <div class="fin-form-grid-2">
           <div class="fin-form-group">
-            <label class="fin-form-label">Class Code <span class="fin-required">*</span></label>
-            <input type="text" id="fs-class-code" class="fin-form-input">
-            <span class="fin-field-error" id="fs-code-err"></span>
-          </div>
-          <div class="fin-form-group">
-            <label class="fin-form-label">Session <span class="fin-required">*</span></label>
-            <select id="fs-session" class="fin-form-select">
+            <label class="fin-form-label">Academic Year <span class="fin-required">*</span></label>
+            <select id="fs-acad-year" class="fin-form-select" onchange="onFsAcademicYearChange(this.value)">
               <option value="">Please Select</option>
+              ${(_fsAcademicYearsCache||[]).map(y=>`<option value="${y.id}">${_finEsc(y.title||'')}</option>`).join('')}
             </select>
-            <span class="fin-field-error" id="fs-sess-err"></span>
+            <span class="fin-field-error" id="fs-ay-err"></span>
           </div>
           <div class="fin-form-group">
-            <label class="fin-form-label">Student Type <span class="fin-required">*</span></label>
-            <select id="fs-student-type" class="fin-form-select">
+            <label class="fin-form-label">Class Name <span class="fin-required">*</span></label>
+            <select id="fs-class-name" class="fin-form-select" onchange="onFsClassChange(this.value)">
+              <option value="">Select Academic Year first</option>
+            </select>
+            <span class="fin-field-error" id="fs-class-err"></span>
+          </div>
+          <div class="fin-form-group">
+            <label class="fin-form-label">Class Code</label>
+            <input type="text" id="fs-class-code" class="fin-form-input" readonly>
+          </div>
+          <div class="fin-form-group">
+            <label class="fin-form-label">Term <span class="fin-required">*</span></label>
+            <select id="fs-term" class="fin-form-select">
               <option value="">Please Select</option>
-              <option value="Day">Day</option>
-              <option value="Boarding">Boarding</option>
+              ${(_fsTermsCache||[]).map(t=>`<option value="${t.id}">${_finEsc(t.title||'')}</option>`).join('')}
             </select>
-            <span class="fin-field-error" id="fs-stype-err"></span>
-          </div>
-          <div class="fin-form-group">
-            <label class="fin-form-label">Session Type</label>
-            <input type="text" id="fs-session-type" class="fin-form-input">
-          </div>
-          <div class="fin-form-group">
-            <label class="fin-form-label">Department</label>
-            <input type="text" id="fs-department" class="fin-form-input">
-          </div>
-          <div class="fin-form-group">
-            <label class="fin-form-label">Academic Year</label>
-            <input type="text" id="fs-acad-year" class="fin-form-input">
-          </div>
-          <div class="fin-form-group">
-            <label class="fin-form-label">Study Mode</label>
-            <input type="text" id="fs-study-mode" class="fin-form-input">
+            <span class="fin-field-error" id="fs-term-err"></span>
           </div>
         </div>
         <div class="fin-section-label">Line Items</div>
@@ -1704,60 +1723,81 @@ async function renderFeeSetupAddPage(container) {
         </div>
       </div>
     </div>`;
-  populateSessionDropdown('fs-session');
+}
+
+// Class options must be scoped to the chosen Academic Year, so Academic Year has
+// to be picked first even though Class Name is the visually-primary field.
+function onFsAcademicYearChange(yearId) {
+  const classSel = document.getElementById('fs-class-name');
+  if (!classSel) return;
+  document.getElementById('fs-class-code').value = '';
+  if (!yearId) { classSel.innerHTML = '<option value="">Select Academic Year first</option>'; return; }
+  const classes = (_fsClassesCache||[]).filter(c=>String(c.academic_year_id)===String(yearId));
+  classSel.innerHTML = '<option value="">Please Select</option>' +
+    classes.map(c=>`<option value="${c.id}">${_finEsc(c.name||'')}</option>`).join('');
+}
+
+function onFsClassChange(classId) {
+  const cls = (_fsClassesCache||[]).find(c=>String(c.id)===String(classId));
+  const codeEl = document.getElementById('fs-class-code');
+  if (codeEl) codeEl.value = cls ? (cls.class_code||'') : '';
 }
 
 let _fsLiCount = 0;
 function addFsLineItem() {
   const body = document.getElementById('fs-li-body');
   if (!body) return;
-  const t = Date.now();
+  const t = Date.now() + (_fsLiCount++);
   const sn = body.querySelectorAll('tr').length + 1;
+  const acctOpts = (_fsFeeItemsCache||[]).map(f=>`<option value="${f.id}">${_finEsc(f.name||'')}</option>`).join('');
   const tr = document.createElement('tr');
   tr.innerHTML = `
     <td>${sn}</td>
-    <td><input class="fin-li-input" id="fs-li-acct-${t}" placeholder="Account Vote/Head"></td>
+    <td><select class="fin-li-input" id="fs-li-acct-${t}"><option value="">Please Select</option>${acctOpts}</select></td>
     <td><input type="number" class="fin-li-input" id="fs-li-amt-${t}" placeholder="0.00" step="0.01"></td>
     <td><button class="fin-btn-li-rm" onclick="this.closest('tr').remove()">&#10005;</button></td>`;
   body.appendChild(tr);
 }
 
 async function submitFeeSetupAdd() {
-  const code  = (document.getElementById('fs-class-code').value||'').trim();
-  const sess  = document.getElementById('fs-session').value;
-  const stype = document.getElementById('fs-student-type').value;
+  const yearId  = document.getElementById('fs-acad-year').value;
+  const classId = document.getElementById('fs-class-name').value;
+  const termId  = document.getElementById('fs-term').value;
   let valid=true;
-  document.getElementById('fs-code-err').textContent  = code  ? '' : 'This field is required.'; if(!code)  valid=false;
-  document.getElementById('fs-sess-err').textContent  = sess  ? '' : 'This field is required.'; if(!sess)  valid=false;
-  document.getElementById('fs-stype-err').textContent = stype ? '' : 'This field is required.'; if(!stype) valid=false;
+  document.getElementById('fs-ay-err').textContent    = yearId  ? '' : 'This field is required.'; if(!yearId)  valid=false;
+  document.getElementById('fs-class-err').textContent = classId ? '' : 'This field is required.'; if(!classId) valid=false;
+  document.getElementById('fs-term-err').textContent  = termId  ? '' : 'This field is required.'; if(!termId)  valid=false;
   if (!valid) return;
 
   const lineItems = [];
   document.querySelectorAll('#fs-li-body tr').forEach(tr=>{
     const acctEl = tr.querySelector('[id^="fs-li-acct-"]');
     const amtEl  = tr.querySelector('[id^="fs-li-amt-"]');
-    if (acctEl) lineItems.push({ account: acctEl.value, amount: parseFloat(amtEl?.value)||0 });
+    if (acctEl && acctEl.value) lineItems.push({ fee_item_id: parseInt(acctEl.value), amount: parseFloat(amtEl?.value)||0 });
   });
-  const total = lineItems.reduce((s,li)=>s+li.amount, 0);
+  if (!lineItems.length) { showToast('Add at least one line item.', 'error'); return; }
 
-  const payload = {
-    class_code: code, session_id: sess, student_type: stype,
-    session_type:  document.getElementById('fs-session-type').value||'',
-    department:    document.getElementById('fs-department').value||'',
-    academic_year: document.getElementById('fs-acad-year').value||'',
-    study_mode:    document.getElementById('fs-study-mode').value||'',
-    line_items: lineItems, amount: total,
-    notes: document.getElementById('fs-notes').value||''
-  };
-  try {
-    const res = await fetch(`${API_BASE}/finance/fee-setup-per-class/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(payload)
-    });
-    if (res.ok) { showToast('Fee setup saved!', 'success'); }
-    else { const e = await res.json().catch(()=>({})); showToast('Error: '+(e.detail||'Could not save.'), 'error'); }
-  } catch (_) { showToast('Network error.', 'error'); }
+  const cls = (_fsClassesCache||[]).find(c=>String(c.id)===String(classId));
+  const academicLevelId = cls ? cls.academic_level_id : null;
+
+  let okCount = 0, lastErr = '';
+  for (const li of lineItems) {
+    const payload = {
+      fee_item_id: li.fee_item_id, amount: li.amount,
+      class_id: parseInt(classId), academic_level_id: academicLevelId, term_id: parseInt(termId),
+    };
+    try {
+      const res = await fetch(`${API_BASE}/finance/fee-setup-per-class/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) okCount++;
+      else { const e = await res.json().catch(()=>({})); lastErr = e.detail || 'Could not save.'; }
+    } catch (_) { lastErr = 'Network error.'; }
+  }
+  if (okCount === lineItems.length) showToast('Fee setup saved!', 'success');
+  else showToast(`Saved ${okCount}/${lineItems.length} items. Error: ${lastErr}`, 'error');
   loadView('fin-fee-setup-per-class');
 }
 
@@ -2062,7 +2102,7 @@ async function loadChartOfAccountsView(container) {
   _coaPage = 1; _coaSearch = '';
   _renderCoaListPage(container);
   try {
-    const res = await fetch(`${API_BASE}/finance/chart-of-accounts/`, { headers: { Authorization: `Bearer ${token}` } });
+    const res = await fetch(`${API_BASE}/finance/accounts/`, { headers: { Authorization: `Bearer ${token}` } });
     if (res.ok) { chartOfAccountsData.length = 0; (await res.json()).forEach(r => chartOfAccountsData.push(r)); }
   } catch (_) {}
   _renderCoaTable();
@@ -2188,7 +2228,7 @@ function _coaFormHtml(acct) {
         <input type="number" id="coa-f-ordering" class="fin-form-input" value="${acct?.paymentOrdering||''}">
       </div>
       <div class="fin-form-group">
-        <label class="fin-form-label">Cash Flow Group <span class="fin-required">*</span></label>
+        <label class="fin-form-label">Cash Flow Group</label>
         <select id="coa-f-cf-group" class="fin-form-select">
           <option value="">Please Select</option>
           ${['Operating','Investing','Financing'].map(g=>`<option value="${g}" ${acct?.cashFlowGroup===g?'selected':''}>${g}</option>`).join('')}
@@ -2248,7 +2288,7 @@ async function submitCoaAdd() {
   document.getElementById('coa-f-number-err').textContent = num  ? '' : 'This field is required.'; if(!num)  valid=false;
   document.getElementById('coa-f-name-err').textContent   = name ? '' : 'This field is required.'; if(!name) valid=false;
   document.getElementById('coa-f-type-err').textContent   = type ? '' : 'This field is required.'; if(!type) valid=false;
-  document.getElementById('coa-f-cfg-err').textContent    = cfg  ? '' : 'This field is required.'; if(!cfg)  valid=false;
+  document.getElementById('coa-f-cfg-err').textContent    = '';
   if (!valid) return;
   const payload = {
     number: num, account_name: name, account_type: type,
@@ -2260,7 +2300,7 @@ async function submitCoaAdd() {
     is_budget_item:        document.getElementById('coa-f-budget-item').checked
   };
   try {
-    const res = await fetch(`${API_BASE}/finance/chart-of-accounts/`, {
+    const res = await fetch(`${API_BASE}/finance/accounts/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(payload)
@@ -2304,8 +2344,8 @@ async function submitCoaEdit(id) {
   const cfg  = document.getElementById('coa-f-cf-group').value;
   document.getElementById('coa-f-name-err').textContent = name ? '' : 'This field is required.';
   document.getElementById('coa-f-type-err').textContent = type ? '' : 'This field is required.';
-  document.getElementById('coa-f-cfg-err').textContent  = cfg  ? '' : 'This field is required.';
-  if (!name||!type||!cfg) return;
+  document.getElementById('coa-f-cfg-err').textContent  = '';
+  if (!name||!type) return;
   const payload = {
     account_name: name, account_type: type, cash_flow_group: cfg,
     payment_ordering:       document.getElementById('coa-f-ordering').value||'',
@@ -2315,7 +2355,7 @@ async function submitCoaEdit(id) {
     is_budget_item:         document.getElementById('coa-f-budget-item').checked
   };
   try {
-    const res = await fetch(`${API_BASE}/finance/chart-of-accounts/${id}`, {
+    const res = await fetch(`${API_BASE}/finance/accounts/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(payload)
