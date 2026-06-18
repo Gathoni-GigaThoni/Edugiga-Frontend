@@ -60,6 +60,36 @@ body {
   background: #34495e;
 }
 
+/* Submenus fly out beside their parent instead of expanding the sidebar downward.
+   Each .dropdown <li> is the positioning anchor for its own .dropdown-menu panel. */
+.sidebar li.dropdown {
+  position: relative;
+}
+
+.sidebar .dropdown-menu {
+  position: absolute;
+  top: 0;
+  left: 100%;
+  min-width: 220px;
+  background: #2c3e50;
+  border: 1px solid #34495e;
+  box-shadow: 3px 3px 10px rgba(0,0,0,0.3);
+  z-index: 1000;
+}
+
+.sidebar .dropdown-menu li {
+  white-space: nowrap;
+}
+
+/* Sub-submenus (a .dropdown-menu nested inside another .dropdown-menu) open to the
+   LEFT of their own parent instead of further right, so they fold back toward the
+   sidebar instead of running off the right edge of the screen. */
+.sidebar .dropdown-menu .dropdown-menu {
+  left: auto;
+  right: 100%;
+  top: 0;
+}
+
 #main-content {
   flex: 1;
   padding: 30px;
