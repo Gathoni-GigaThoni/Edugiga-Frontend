@@ -1814,14 +1814,13 @@ async function submitFeeSetupAdd() {
   });
   if (!lineItems.length) { showToast('Add at least one line item.', 'error'); return; }
 
-  const cls = (_fsClassesCache||[]).find(c=>String(c.id)===String(classId));
-  const academicLevelId = cls ? cls.academic_level_id : null;
-
+  // Backend requires exactly one of academic_level_id/class_id/student_id — this form
+  // is scoped to a specific Class, so class_id alone is the right one to send.
   let okCount = 0, lastErr = '';
   for (const li of lineItems) {
     const payload = {
       fee_item_id: li.fee_item_id, amount: li.amount,
-      class_id: parseInt(classId), academic_level_id: academicLevelId, term_id: parseInt(termId),
+      class_id: parseInt(classId), term_id: parseInt(termId),
     };
     try {
       const res = await fetch(`${API_BASE}/finance/fee-setup-per-class/`, {
