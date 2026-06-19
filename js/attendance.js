@@ -2,7 +2,7 @@
 
 let _attClassesData  = [];
 let _attLevelsData   = [];
-let _attSessionsData = [];
+let _attTermsData = [];
 let _attStudents     = [];
 let _attLoaded       = false;
 
@@ -15,17 +15,17 @@ async function loadAttendanceView(container) {
     const [clsRes, lvlRes, sessRes] = await Promise.all([
       fetch(`${API_BASE}/classes/`,         { headers: { Authorization: `Bearer ${token}` } }),
       fetch(`${API_BASE}/academic-levels/`, { headers: { Authorization: `Bearer ${token}` } }),
-      fetch(`${API_BASE}/sessions/`,        { headers: { Authorization: `Bearer ${token}` } })
+      fetch(`${API_BASE}/terms/`,           { headers: { Authorization: `Bearer ${token}` } })
     ]);
     _attClassesData  = clsRes.ok  ? await clsRes.json()  : [];
     _attLevelsData   = lvlRes.ok  ? await lvlRes.json()  : [];
-    const rawSess    = sessRes.ok ? await sessRes.json() : [];
-    _attSessionsData = (Array.isArray(rawSess) ? rawSess : (rawSess.data || rawSess.results || []))
-      .filter(s => !s.is_inactive);
+    const rawSess  = sessRes.ok ? await sessRes.json() : [];
+    _attTermsData  = (Array.isArray(rawSess) ? rawSess : (rawSess.data || rawSess.results || []))
+      .filter(t => t.is_active !== false);
   } catch(_) {
     _attClassesData  = [];
     _attLevelsData   = [];
-    _attSessionsData = [];
+    _attTermsData    = [];
   }
 
   const today = new Date().toISOString().split('T')[0];
@@ -42,12 +42,12 @@ async function loadAttendanceView(container) {
         <div class="sa-filter-grid">
 
           <div class="sa-filter-field">
-            <label class="sa-filter-label">Session <span class="sa-required">*</span></label>
-            <select id="att-session" class="sa-filter-select">
-              <option value="">-- Select Session --</option>
-              ${_attSessionsData.map(s => `<option value="${s.id}">${s.title || s.name || ''}</option>`).join('')}
+            <label class="sa-filter-label">Term <span class="sa-required">*</span></label>
+            <select id="att-term" class="sa-filter-select">
+              <option value="">-- Select Term --</option>
+              ${_attTermsData.map(t => `<option value="${t.id}">${t.title || t.name || ''}</option>`).join('')}
             </select>
-            <span class="sa-field-error" id="att-session-err"></span>
+            <span class="sa-field-error" id="att-term-err"></span>
           </div>
 
           <div class="sa-filter-field">
@@ -121,7 +121,7 @@ async function loadAttendanceView(container) {
 function _attValidateFilters() {
   let valid = true;
   const required = [
-    { id: 'att-session',  errId: 'att-session-err'  },
+    { id: 'att-term',     errId: 'att-term-err'     },
     { id: 'att-schedule', errId: 'att-schedule-err' },
     { id: 'att-stage',    errId: 'att-stage-err'    },
   ];
@@ -150,14 +150,16 @@ async function attLoadClass() {
   tableWrap.innerHTML = '<p class="sa-loading">Loading class sheet&#8230;</p>';
 
   try {
-    const params = new URLSearchParams({ class_date: date });
-    const session = document.getElementById('att-session')?.value;
+    const params = new URLSearchParams({ date_of: date });
+    const term    = document.getElementById('att-term')?.value;
     const cls     = document.getElementById('att-class')?.value;
     const stage   = document.getElementById('att-stage')?.value;
     const stream  = document.getElementById('att-stream')?.value;
-    if (session) params.set('session_id', session);
+    if (term)    params.set('term_id', term);
     if (cls)     params.set('class_id',   cls);
-    if (stage)   params.set('stage_id',   stage);
+    // Real backend param is attendance_schedule_id, not stage_id — kept named
+    // "stage" in the UI/DOM since that's the existing label, just fixed on the wire.
+    if (stage)   params.set('attendance_schedule_id', stage);
     if (stream)  params.set('stream',     stream);
 
     const res  = await fetch(`${API_BASE}/attendance/class-sheet?${params}`, {
@@ -232,14 +234,14 @@ function _attRenderTable(container, students) {
 }
 
 function attClearFilters() {
-  ['att-session','att-class','att-schedule','att-stage','att-stream','att-student'].forEach(id => {
+  ['att-term','att-class','att-schedule','att-stage','att-stream','att-student'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
   const dateEl = document.getElementById('att-date');
   if (dateEl) dateEl.value = new Date().toISOString().split('T')[0];
 
-  ['att-session-err','att-schedule-err','att-stage-err'].forEach(id => {
+  ['att-term-err','att-schedule-err','att-stage-err'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.textContent = '';
   });
@@ -320,13 +322,13 @@ async function loadAttendanceRegisterReportView(container) {
     const [clsRes, lvlRes, sessRes] = await Promise.all([
       fetch(`${API_BASE}/classes/`,         { headers: { Authorization: `Bearer ${token}` } }),
       fetch(`${API_BASE}/academic-levels/`, { headers: { Authorization: `Bearer ${token}` } }),
-      fetch(`${API_BASE}/sessions/`,        { headers: { Authorization: `Bearer ${token}` } })
+      fetch(`${API_BASE}/terms/`,           { headers: { Authorization: `Bearer ${token}` } })
     ]);
     _attClassesData  = clsRes.ok  ? await clsRes.json()  : [];
     _attLevelsData   = lvlRes.ok  ? await lvlRes.json()  : [];
-    const rawSess    = sessRes.ok ? await sessRes.json() : [];
-    _attSessionsData = (Array.isArray(rawSess) ? rawSess : (rawSess.data || rawSess.results || []))
-      .filter(s => !s.is_inactive);
+    const rawSess  = sessRes.ok ? await sessRes.json() : [];
+    _attTermsData  = (Array.isArray(rawSess) ? rawSess : (rawSess.data || rawSess.results || []))
+      .filter(t => t.is_active !== false);
   } catch(_) {}
 
   const today = new Date().toISOString().split('T')[0];
@@ -352,12 +354,12 @@ async function loadAttendanceRegisterReportView(container) {
         <!-- Row 1 -->
         <div class="sa-filter-grid" style="grid-template-columns:repeat(4,1fr);">
           <div class="sa-filter-field">
-            <label class="sa-filter-label">Session <span class="sa-required">*</span></label>
-            <select id="rpt-session" class="sa-filter-select">
-              <option value="">-- Select Session --</option>
-              ${_attSessionsData.map(s => `<option value="${s.id}">${_rptEsc(s.title || s.name || '')}</option>`).join('')}
+            <label class="sa-filter-label">Term <span class="sa-required">*</span></label>
+            <select id="rpt-term" class="sa-filter-select">
+              <option value="">-- Select Term --</option>
+              ${_attTermsData.map(t => `<option value="${t.id}">${_rptEsc(t.title || t.name || '')}</option>`).join('')}
             </select>
-            <span class="sa-field-error" id="rpt-session-err"></span>
+            <span class="sa-field-error" id="rpt-term-err"></span>
           </div>
           <div class="sa-filter-field">
             <label class="sa-filter-label">Attendance Schedule</label>
@@ -458,7 +460,7 @@ async function loadAttendanceRegisterReportView(container) {
 function _rptValidate() {
   let ok = true;
   [
-    { id: 'rpt-session',    err: 'rpt-session-err'  },
+    { id: 'rpt-term',       err: 'rpt-term-err'     },
     { id: 'rpt-stage',      err: 'rpt-stage-err'    },
     { id: 'rpt-start-date', err: 'rpt-start-err'    },
     { id: 'rpt-end-date',   err: 'rpt-end-err'      },
@@ -621,7 +623,7 @@ function _rptChangePerPage(val) {
 }
 
 function _rptClear() {
-  ['rpt-session','rpt-schedule','rpt-stage','rpt-status','rpt-stream','rpt-gender','rpt-student'].forEach(id => {
+  ['rpt-term','rpt-schedule','rpt-stage','rpt-status','rpt-stream','rpt-gender','rpt-student'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
@@ -630,7 +632,7 @@ function _rptClear() {
     const el = document.getElementById(id);
     if (el) el.value = today;
   });
-  ['rpt-session-err','rpt-stage-err','rpt-start-err','rpt-end-err'].forEach(id => {
+  ['rpt-term-err','rpt-stage-err','rpt-start-err','rpt-end-err'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.textContent = '';
   });

@@ -7,6 +7,8 @@ let fundingSourcesData   = [];
 let studentSourcesData   = [];
 let studentReportingData = [];
 
+let _stuTermsCache  = [];
+
 let _stuListPage    = 1;
 let _stuListPerPage = 10;
 let _stuListSearch  = '';
@@ -150,12 +152,21 @@ async function refreshStudentsListing() {
   const c = document.getElementById('stu-table-container');
   if (!c) return;
   try {
-    const res = await apiFetch(`${API_BASE}/students/`);
+    const [res, termsRes] = await Promise.all([
+      apiFetch(`${API_BASE}/students/`),
+      apiFetch(`${API_BASE}/terms/`),
+    ]);
     if (!res || !res.ok) { c.innerHTML = '<p class="fin-error">Error loading students.</p>'; return; }
     allStudentsData = await res.json();
+    _stuTermsCache = (termsRes && termsRes.ok) ? _toArray(await termsRes.json()) : _stuTermsCache;
   } catch (_) { c.innerHTML = '<p class="fin-error">Failed to load students.</p>'; return; }
   _stuListPage = 1;
   _renderStuTable();
+}
+function _stuTermName(termId) {
+  if (!termId) return '-';
+  const t = _stuTermsCache.find(t => String(t.id) === String(termId));
+  return t ? (t.title || t.name || `Term ${termId}`) : '-';
 }
 
 function _stuFiltered() {
@@ -181,7 +192,7 @@ function _renderStuTable() {
   const start = (_stuListPage - 1) * _stuListPerPage;
   const paged = filtered.slice(start, start + _stuListPerPage);
   const pages = Math.max(1, Math.ceil(filtered.length / _stuListPerPage));
-  const COLS  = 8;
+  const COLS  = 9;
 
   let rows = '';
   if (paged.length === 0) {
@@ -194,9 +205,10 @@ function _renderStuTable() {
         <td>${_esc(s.student_id || '')}</td>
         <td>${_esc(`${s.first_name || ''} ${s.last_name || ''}`.trim())}</td>
         <td>${_esc(s.gender || '-')}</td>
-        <td>${_esc(s.cohort || s.term || s.session || '-')}</td>
-        <td>${_esc(s.class_name || s.level_of_academics || '-')}</td>
+        <td>${_esc(_stuTermName(s.term_id))}</td>
+        <td>${_esc(s.school_class_name || s.level_of_academics_name || '-')}</td>
         <td>${_esc(s.stream || '-')}</td>
+        <td>${_esc(s.student_type || '-')}</td>
         <td><span style="color:${statusColor};font-weight:600;">${statusText}</span></td>
         <td class="fin-action-cell">
           <div class="fin-action-wrap">
@@ -217,7 +229,7 @@ function _renderStuTable() {
       <table class="fin-table">
         <thead><tr>
           <th>STUDENT ID</th><th>STUDENT NAME</th><th>GENDER</th><th>TERM</th>
-          <th>LEVEL OF ACADEMICS</th><th>STREAM</th><th>STATUS</th><th>ACTION</th>
+          <th>LEVEL OF ACADEMICS</th><th>STREAM</th><th>STUDENT TYPE</th><th>STATUS</th><th>ACTION</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
@@ -271,14 +283,15 @@ function clearStuFilters() {
 }
 
 function exportStudentsCSV() {
-  const cols = ['Student ID','Full Name','Gender','Term','Level of Academics','Stream','Status'];
+  const cols = ['Student ID','Full Name','Gender','Term','Level of Academics','Stream','Student Type','Status'];
   const rows = _stuFiltered().map(s => [
     s.student_id || '',
     `${s.first_name || ''} ${s.last_name || ''}`.trim(),
     s.gender || '',
-    s.cohort || s.term || s.session || '',
-    s.class_name || s.level_of_academics || '',
+    _stuTermName(s.term_id),
+    s.school_class_name || s.level_of_academics_name || '',
     s.stream || '',
+    s.student_type || '',
     s.is_active ? 'Active' : 'Inactive'
   ]);
   exportTableCSV(cols, rows, 'students.csv');
@@ -329,6 +342,13 @@ async function loadStudentFormView(container) {
     const res = await apiFetch(`${API_BASE}/students/${_currentEditStudentId}/full-profile`);
     if (res && res.ok) data = await res.json();
     else { const r2 = await apiFetch(`${API_BASE}/students/${_currentEditStudentId}`); if (r2 && r2.ok) data = await r2.json(); }
+    // full-profile has no documented response schema (OpenAPI lists it as `{}`) — if it
+    // comes back wrapped (e.g. {student: {...}}) instead of flat, every field below would
+    // read as undefined and the form would render completely blank. Unwrap defensively.
+    if (data && data.first_name == null) {
+      const nested = data.student || data.data || data.profile;
+      if (nested && typeof nested === 'object') data = { ...data, ...nested };
+    }
   }
   // Backend uses academic_level_id/school_class_id/academic_year_id — map them onto
   // the level_id/class_id/academic_year_id names used internally throughout this form.
@@ -489,6 +509,15 @@ function _stuTabPersonal(d) {
         </select>
       </div>
 
+      <!-- Row 5b: Student Type -->
+      <div class="stu-form-group">
+        <label>Student Type</label>
+        <select id="se-student-type" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
+          ${['Full Day','Half Day'].map(t => `<option${(d.student_type||'Full Day')===t?' selected':''}>${t}</option>`).join('')}
+        </select>
+      </div>
+      <div></div>
+
       <!-- Row 6: Physical Address (full width) -->
       <div class="stu-form-group" style="grid-column:span 2;">
         <label>Physical Address</label>
@@ -618,13 +647,16 @@ async function fetchNextStudentId() {
 async function _resolveTermAndYearForDate(joiningDateStr) {
   if (!joiningDateStr) return null;
   try {
-    const yearRes = await apiFetch(`${API_BASE}/academic-years?date=${encodeURIComponent(joiningDateStr)}`);
+    const yearRes = await apiFetch(`${API_BASE}/academic-years/?date=${encodeURIComponent(joiningDateStr)}`);
     if (!yearRes || !yearRes.ok) return null;
     const years = await yearRes.json();
     const year = Array.isArray(years) ? years[0] : years;
     if (!year || !year.id) return null;
 
-    const termRes = await apiFetch(`${API_BASE}/terms?academic_year_id=${year.id}`);
+    // /terms (no trailing slash) is a different, unfiltered endpoint ("Cohort Term
+    // Planner" flat list) that ignores academic_year_id entirely — /terms/ is the
+    // one that actually filters by year.
+    const termRes = await apiFetch(`${API_BASE}/terms/?academic_year_id=${year.id}`);
     if (!termRes || !termRes.ok) return null;
     const raw = await termRes.json();
     const termList = Array.isArray(raw) ? raw : (raw.data || raw.results || []);
@@ -679,7 +711,13 @@ async function _deriveStuTermAndClass() {
   if (confirmEl) confirmEl.innerHTML = '<span style="color:#888;font-size:0.82rem;">Finding class&#8230;</span>';
 
   try {
-    const res = await apiFetch(`${API_BASE}/classes/?academic_level_id=${levelId}&academic_year_id=${year.id}`);
+    // Real query param is level_id, not academic_level_id — passing the wrong name
+    // meant this silently returned every class in the academic year regardless of
+    // level, so a school with only one class so far would get every student
+    // (at any level) wrongly auto-assigned to it, and any school with several
+    // classes always hit the "multiple classes found" manual-pick branch even when
+    // only one class actually matched the selected level.
+    const res = await apiFetch(`${API_BASE}/classes/?level_id=${levelId}&academic_year_id=${year.id}`);
     if (!res || !res.ok) throw new Error('api');
     const raw = await res.json();
     const classes = Array.isArray(raw) ? raw : (raw.data || raw.results || raw.items || []);
@@ -1220,6 +1258,10 @@ function _stuTabMedical(d) {
         <label>Emergency Contact Phone</label>
         <input id="se-emrg-phone" class="fin-search-input" style="width:100%!important" value="${_esc(med.emergency_contact_phone||'')}">
       </div>
+      <div class="stu-form-group">
+        <label>Emergency Contact Relationship</label>
+        <input id="se-emrg-relationship" class="fin-search-input" style="width:100%!important" placeholder="e.g. Mother, Father" value="${_esc(med.emergency_contact_relationship||'')}">
+      </div>
     </div>
   `;
 }
@@ -1310,6 +1352,7 @@ function _harvestStuPersonalTab() {
   d.religion           = _fv('se-religion');
   d.physical_address   = _fv('se-physical-address');
   d.level_id           = _fv('se-level') || null;
+  d.student_type       = _fv('se-student-type') || 'Full Day';
   // term_id and class_id are maintained by _deriveStuTermAndClass; do not overwrite from DOM
   const houseSel = document.getElementById('se-sports-house');
   if (houseSel) {
@@ -1396,20 +1439,20 @@ function _harvestStuGuardianTab() {
 function _harvestStuMedicalTab() {
   if (!document.getElementById('se-allergies')) return;
   const d = window._stuFormData || (window._stuFormData = {});
-  // health_insurance/blood_group/emergency_contact_* are kept here for display only —
-  // the backend's medical record (MedicalInformationCreate) has no columns for them yet.
-  d.medical = {
-    allergies:               _fv('se-allergies'),
-    chronic_symptoms:        _fv('se-chronic'),
-    health_insurance:        _fv('se-insurance'),
-    blood_group:             _fv('se-blood-group'),
-    emergency_contact_name:  _fv('se-emrg-name'),
-    emergency_contact_phone: _fv('se-emrg-phone'),
+  // health_insurance/blood_group/emergency_contact_* are now real columns on
+  // MedicalInformationCreate — kept in sync on both keys so re-displaying this tab
+  // after switching away shows the just-harvested values rather than stale load data.
+  const medical = {
+    allergies:                      _fv('se-allergies'),
+    chronic_symptoms:               _fv('se-chronic'),
+    health_insurance:               _fv('se-insurance'),
+    blood_group:                    _fv('se-blood-group'),
+    emergency_contact_name:         _fv('se-emrg-name'),
+    emergency_contact_phone:        _fv('se-emrg-phone'),
+    emergency_contact_relationship: _fv('se-emrg-relationship'),
   };
-  d.medical_info = {
-    allergies:        _fv('se-allergies'),
-    chronic_symptoms: _fv('se-chronic'),
-  };
+  d.medical = medical;
+  d.medical_info = medical;
 }
 
 function _harvestStuDocumentsTab() {
@@ -1457,6 +1500,7 @@ function _stuFlatPayload(d) {
     academic_year_id:  d.academic_year_id || null,
     school_class_id:   d.class_id || null,
     sports_house_id:   d.sports_house_id || null,
+    student_type:      d.student_type || 'Full Day',
     has_sibling_enrolled: !!d.has_sibling_enrolled,
     sibling_student_name: d.sibling_student_name || null,
     sibling_student_id:   d.sibling_student_id || null,
@@ -1483,6 +1527,30 @@ async function _stuSyncTransport(studentId, d) {
   }
 }
 
+// Uploads every cached file (Personal Data's Photo + the Document Uploads tab's
+// three inputs) via POST /upload/, then attaches each as a document record on the
+// student via POST /students/{id}/documents ({name, url} — additionalProperties:
+// true on the backend, so this shape is safe even if more fields get added later).
+const _STU_FILE_LABELS = {
+  'se-photo':      'Photo',
+  'se-doc-photo':  'Passport Photo',
+  'se-doc-report': 'Previous School Report',
+  'se-doc-other':  'Other Document',
+};
+async function _stuUploadCachedFiles(studentId) {
+  const entries = Object.entries(window._stuFormFiles || {}).filter(([, f]) => f);
+  for (const [inputId, file] of entries) {
+    const url = await uploadFile(file);
+    if (!url) continue;
+    const res = await apiFetch(`${API_BASE}/students/${studentId}/documents`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: _STU_FILE_LABELS[inputId] || inputId, url }),
+    });
+    if (!(res && res.ok)) showToast(`Saved, but uploading ${_STU_FILE_LABELS[inputId] || inputId} failed: ` + (res ? await parseApiError(res) : 'unknown error'), 'error');
+  }
+  window._stuFormFiles = {};
+}
+
 async function _persistStudentRecord(showSuccessToast) {
   const d = window._stuFormData || {};
   const isEdit = !!_currentEditStudentId;
@@ -1495,16 +1563,10 @@ async function _persistStudentRecord(showSuccessToast) {
       parents:              d.parents || [],
     };
 
-    // se-photo / documents-tab files have no confirmed multipart endpoint on this
-    // backend (register only documents application/json) — kept as-is pending
-    // backend clarification; see project notes.
-    const fileEntries = Object.entries(window._stuFormFiles || {}).filter(([, f]) => f);
-    const hasFiles = fileEntries.length > 0;
-    const fetchOptions = hasFiles
-      ? (() => { const fd = new FormData(); fd.append('data', JSON.stringify(payload)); fileEntries.forEach(([id, file]) => fd.append(id, file)); return { method: 'POST', body: fd }; })()
-      : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) };
-
-    const res = await apiFetch(`${API_BASE}/students/`, fetchOptions);
+    // POST /students/ only accepts application/json (no multipart) — files are
+    // uploaded separately via /upload/ then attached as document records, same
+    // pattern as the edit-mode 'documents' tab below.
+    const res = await apiFetch(`${API_BASE}/students/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     if (!(res && res.ok)) {
       showToast('Error: ' + (res ? await parseApiError(res) : 'An error occurred.'), 'error');
       return false;
@@ -1512,9 +1574,9 @@ async function _persistStudentRecord(showSuccessToast) {
     const saved = await res.json();
     _currentEditStudentId = saved.id;
     window._stuFormData = { ...d, ...saved };
-    window._stuFormFiles = {};
     _stuEditDirty = false;
     await _stuSyncTransport(saved.id, d);
+    await _stuUploadCachedFiles(saved.id);
     if (showSuccessToast) showToast('Student added successfully!', 'success');
     return true;
   }
@@ -1549,7 +1611,7 @@ async function _persistStudentRecord(showSuccessToast) {
       }
       break;
     case 'documents':
-      // No confirmed endpoint shape for binary uploads yet — see project notes.
+      await _stuUploadCachedFiles(id);
       break;
   }
 
@@ -1658,13 +1720,18 @@ async function loadStudentViewPage(container) {
   `;
 
   if (!_currentEditStudentId) { document.getElementById('stu-view-body').innerHTML = '<p class="fin-error">No student selected.</p>'; return; }
-  const [res, trRes] = await Promise.all([
-    apiFetch(`${API_BASE}/students/${_currentEditStudentId}`),
+  // StudentRead (plain GET /students/{id}) has no medical/previous_education/parents
+  // fields at all — those only come back from full-profile, same as the Edit form uses.
+  let res = await apiFetch(`${API_BASE}/students/${_currentEditStudentId}/full-profile`);
+  if (!res || !res.ok) res = await apiFetch(`${API_BASE}/students/${_currentEditStudentId}`);
+  const [trRes, termsRes] = await Promise.all([
     apiFetch(`${API_BASE}/routes/`),
+    _stuTermsCache.length ? Promise.resolve(null) : apiFetch(`${API_BASE}/terms/`),
   ]);
   if (!res || !res.ok) { document.getElementById('stu-view-body').innerHTML = '<p class="fin-error">Failed to load student.</p>'; return; }
   const d = await res.json();
   _stuFormTransportRoutes = trRes && trRes.ok ? _toArray(await trRes.json()) : (_stuFormTransportRoutes || []);
+  if (termsRes && termsRes.ok) _stuTermsCache = _toArray(await termsRes.json());
   window._stuViewData = d;
   window._stuViewTab  = 'Personal Data';
   _renderStudentViewBody(d, 'Personal Data');
@@ -1874,9 +1941,10 @@ function _renderStuViewTab(tabName, d) {
     </div>`;
   if (tabName === 'Academic Background') return `
     <div class="stu-detail-grid">
-      ${_dRow('Level of Academics', d.class_name||d.level_of_academics)}
+      ${_dRow('Level of Academics', d.school_class_name||d.level_of_academics_name)}
       ${_dRow('Stream',             d.stream)}
-      ${_dRow('Term',               d.cohort||d.term||d.session)}
+      ${_dRow('Term',               _stuTermName(d.term_id))}
+      ${_dRow('Student Type',       d.student_type)}
       ${_dRow('Sports House',       d.sports_house_name)}
       ${_dRow('Status',             d.status||(d.is_active?'Active':'Inactive'))}
       ${_dRow('Transport',          _transportSummaryLabel(d))}
@@ -1916,6 +1984,7 @@ function _renderStuViewTab(tabName, d) {
       ${_dRow('Blood Group',       d.medical?.blood_group)}
       ${_dRow('Emergency Contact', d.medical?.emergency_contact_name)}
       ${_dRow('Emergency Phone',   d.medical?.emergency_contact_phone)}
+      ${_dRow('Emergency Contact Relationship', d.medical?.emergency_contact_relationship)}
     </div>`;
   if (tabName === 'Disciplinary') return `
     <div style="padding:32px;text-align:center;color:#888;">No disciplinary records for this student.</div>`;

@@ -61,6 +61,22 @@ async function apiFetch(url, options = {}, _attempt = 0) {
   return res;
 }
 
+// ── File upload ───────────────────────────────────────────────────────────────
+// POSTs a single file to /upload/ as multipart/form-data and returns the URL the
+// backend assigns it. apiFetch() already strips Content-Type for FormData bodies
+// so the browser sets the multipart boundary itself.
+async function uploadFile(file) {
+  const fd = new FormData();
+  fd.append('file', file);
+  const res = await apiFetch(`${API_BASE}/upload/`, { method: 'POST', body: fd });
+  if (!res || !res.ok) {
+    showToast('File upload failed: ' + (res ? await parseApiError(res) : 'network error'), 'error');
+    return null;
+  }
+  const data = await res.json();
+  return data.url || data.file_url || data.path || null;
+}
+
 // ── API error parser ─────────────────────────────────────────────────────────
 // Extracts a readable string from any API error response.
 // Handles FastAPI validation errors (detail = array of objects),
@@ -85,24 +101,26 @@ async function parseApiError(res) {
 }
 
 // ── Shared dropdown populators ────────────────────────────────────────────────
-// Fetch sessions from the API and populate a <select> element.
+// Fetch terms from the API and populate a <select> element.
 // Pass selectedId to pre-select an option (for edit forms).
-async function populateSessionDropdown(selectId, selectedId = null) {
+// (Replaces the old populateSessionDropdown — /sessions/ no longer exists on the
+// backend; terms are the model that replaced sessions throughout.)
+async function populateTermDropdown(selectId, selectedId = null) {
   const select = document.getElementById(selectId);
   if (!select) return;
   try {
-    const res = await apiFetch(`${API_BASE}/sessions/`);
+    const res = await apiFetch(`${API_BASE}/terms/`);
     if (res && res.ok) {
       const data = await res.json();
-      const sessions = (Array.isArray(data) ? data : (data.data || data.results || []))
-        .filter(s => !s.is_inactive);
-      const placeholder = select.options[0]?.value === '' ? select.options[0].textContent : '-- Select Session --';
+      const terms = (Array.isArray(data) ? data : (data.data || data.results || []))
+        .filter(t => t.is_active !== false);
+      const placeholder = select.options[0]?.value === '' ? select.options[0].textContent : '-- Select Term --';
       select.innerHTML = `<option value="">${placeholder}</option>`;
-      sessions.forEach(s => {
+      terms.forEach(t => {
         const opt = document.createElement('option');
-        opt.value = s.id;
-        opt.textContent = s.title || s.name || `Session ${s.id}`;
-        if (selectedId && String(s.id) === String(selectedId)) opt.selected = true;
+        opt.value = t.id;
+        opt.textContent = t.title || t.name || `Term ${t.id}`;
+        if (selectedId && String(t.id) === String(selectedId)) opt.selected = true;
         select.appendChild(opt);
       });
     }

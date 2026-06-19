@@ -47,14 +47,14 @@ async function _finBuildLedger(studentId) {
     const rows = [];
     fees.forEach(f => rows.push({
       date:        f.date_charged || '',
-      session:     f.term_id ? `Term ${f.term_id}` : '-',
+      term:        f.term_id ? `Term ${f.term_id}` : '-',
       description: 'Fee Charge',
       debit:       parseFloat(f.amount) || 0,
       credit:      0
     }));
     payments.forEach(p => rows.push({
       date:        p.payment_date || '',
-      session:     '-',
+      term:        '-',
       description: `Payment (${p.payment_method || 'Cash'})`,
       debit:       0,
       credit:      parseFloat(p.amount) || 0
@@ -89,7 +89,7 @@ function _finLedgerTable(rows) {
       totalCredit += r.credit;
       bodyRows += `<tr>
         <td>${_finEsc(r.date)}</td>
-        <td>${_finEsc(r.session)}</td>
+        <td>${_finEsc(r.term)}</td>
         <td>${_finEsc(r.description)}</td>
         <td>${r.debit  ? _finFmt(r.debit)  : ''}</td>
         <td>${r.credit ? _finFmt(r.credit) : ''}</td>
@@ -131,7 +131,7 @@ function _finStudentInfoGrid(s) {
       </div>
       <div class="fin-info-item">
         <span class="fin-info-label">Class</span>
-        <span class="fin-info-value">${_finEsc(s.class_name || '-')}</span>
+        <span class="fin-info-value">${_finEsc(s.school_class_name || '-')}</span>
       </div>
       <div class="fin-info-item">
         <span class="fin-info-label">Admission Status</span>
@@ -219,7 +219,7 @@ function _renderSfsTable() {
       rows += `<tr>
         <td>${_finEsc(s.student_id || '')}</td>
         <td>${_finEsc((s.first_name || '') + ' ' + (s.last_name || ''))}</td>
-        <td>${_finEsc(s.class_name || '-')}</td>
+        <td>${_finEsc(s.school_class_name || '-')}</td>
         <td>${_finEsc(s.cohort || '-')}</td>
         <td>${s.is_reported ? 'Reported' : 'Not Reported'}</td>
         <td>${s.is_active ? 'Active' : 'Inactive'}</td>
@@ -310,11 +310,11 @@ async function loadSummarizedFeeStatementView(container) {
       <div class="fin-filter-section">
         <div class="fin-filter-grid">
           <div class="fin-filter-field">
-            <label class="fin-filter-label">Session <span class="fin-required">*</span></label>
-            <select id="sfs-stmt-session" class="fin-filter-select">
-              <option value="">-- Select Session --</option>
+            <label class="fin-filter-label">Term <span class="fin-required">*</span></label>
+            <select id="sfs-stmt-term" class="fin-filter-select">
+              <option value="">-- Select Term --</option>
             </select>
-            <span class="fin-field-error" id="sfs-stmt-session-err"></span>
+            <span class="fin-field-error" id="sfs-stmt-term-err"></span>
           </div>
           <div class="fin-filter-field">
             <label class="fin-filter-label">Admission No.</label>
@@ -351,13 +351,13 @@ async function loadSummarizedFeeStatementView(container) {
       <div id="sfs-stmt-results"></div>
     </div>
   `;
-  populateSessionDropdown('sfs-stmt-session');
+  populateTermDropdown('sfs-stmt-term');
 }
 
 async function submitSummarizedFilter() {
-  const sessionVal = document.getElementById('sfs-stmt-session').value;
-  const errEl      = document.getElementById('sfs-stmt-session-err');
-  if (!sessionVal) { if (errEl) errEl.textContent = 'This field is required.'; return; }
+  const termVal = document.getElementById('sfs-stmt-term').value;
+  const errEl   = document.getElementById('sfs-stmt-term-err');
+  if (!termVal) { if (errEl) errEl.textContent = 'This field is required.'; return; }
   if (errEl) errEl.textContent = '';
 
   const admno      = (document.getElementById('sfs-stmt-admno').value   || '').trim().toLowerCase();
@@ -369,13 +369,13 @@ async function submitSummarizedFilter() {
   if (resultsEl) resultsEl.innerHTML = '<p class="fin-loading">Loading&#8230;</p>';
 
   try {
-    const res = await fetch(`${API_BASE}/students/`, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) { if (resultsEl) resultsEl.innerHTML = '<p class="fin-error">Failed to load students.</p>'; return; }
+    const res = await apiFetch(`${API_BASE}/students/`);
+    if (!res || !res.ok) { if (resultsEl) resultsEl.innerHTML = '<p class="fin-error">Failed to load students.</p>'; return; }
     let students = await res.json();
 
     if (admno)   students = students.filter(s => (s.student_id || '').toLowerCase().includes(admno));
     if (nameQ)   students = students.filter(s => (`${s.first_name} ${s.last_name}`).toLowerCase().includes(nameQ));
-    if (classQ)  students = students.filter(s => (s.class_name || '').toLowerCase().includes(classQ));
+    if (classQ)  students = students.filter(s => (s.school_class_name || '').toLowerCase().includes(classQ));
     if (statusQ === 'active')   students = students.filter(s =>  s.is_active);
     if (statusQ === 'inactive') students = students.filter(s => !s.is_active);
 
@@ -387,9 +387,9 @@ async function submitSummarizedFilter() {
 }
 
 function clearSummarizedFilter() {
-  ['sfs-stmt-session','sfs-stmt-admno','sfs-stmt-stream','sfs-stmt-name','sfs-stmt-class','sfs-stmt-status']
+  ['sfs-stmt-term','sfs-stmt-admno','sfs-stmt-stream','sfs-stmt-name','sfs-stmt-class','sfs-stmt-status']
     .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
-  const errEl = document.getElementById('sfs-stmt-session-err');
+  const errEl = document.getElementById('sfs-stmt-term-err');
   if (errEl) errEl.textContent = '';
   const resultsEl = document.getElementById('sfs-stmt-results');
   if (resultsEl) resultsEl.innerHTML = '';
@@ -407,7 +407,7 @@ function _renderSummarizedResults(container, students) {
         <td>${_finEsc(s.student_id || '-')}</td>
         <td>${_finEsc((s.first_name||'') + ' ' + (s.last_name||''))}</td>
         <td>-</td>
-        <td>${_finEsc(s.class_name || '-')}</td>
+        <td>${_finEsc(s.school_class_name || '-')}</td>
         <td>${_finEsc(s.currency || 'KES')}</td>
         <td>${s.is_active ? 'Active' : 'Inactive'}</td>
         <td>-</td>
@@ -528,14 +528,42 @@ function clearStmtDateFilter(studentId) {
 }
 
 // ==================== CHANGE 4: STUDENT INVOICES — LISTING ====================
+// Rewritten against the real /invoices/ API (InvoiceRead: invoice_no, student_id,
+// term_id, issue_date, due_date, status, notes, line_items[], total_amount,
+// amount_paid, balance_due) — the old /finance/invoices/ endpoint and its
+// camelCase fields (invoiceNo/studentName/session/cohort/...) never existed.
+
+let _invStudentsCache = [], _invFeeItemsCache = [];
+async function _invLoadLookups() {
+  const [stuRes, fiRes, termsRes] = await Promise.all([
+    apiFetch(`${API_BASE}/students/`),
+    apiFetch(`${API_BASE}/finance/fee-items`),
+    _stuTermsCache && _stuTermsCache.length ? Promise.resolve(null) : apiFetch(`${API_BASE}/terms/`),
+  ]);
+  _invStudentsCache = (stuRes && stuRes.ok) ? _toArray(await stuRes.json()) : [];
+  _invFeeItemsCache = (fiRes && fiRes.ok) ? _toArray(await fiRes.json()) : [];
+  if (termsRes && termsRes.ok) window._stuTermsCache = _toArray(await termsRes.json());
+}
+function _invStudentName(id) {
+  const s = _invStudentsCache.find(s => String(s.id) === String(id));
+  return s ? `${s.first_name||''} ${s.last_name||''}`.trim() : `#${id}`;
+}
+function _invTermName(id) {
+  if (!id) return '-';
+  const t = (window._stuTermsCache||[]).find(t => String(t.id) === String(id));
+  return t ? (t.title || t.name || `Term ${id}`) : `Term ${id}`;
+}
+function _invFeeItemName(id) { return (_invFeeItemsCache.find(f => String(f.id) === String(id)) || {}).name || '-'; }
 
 async function loadStudentInvoicesView(container) {
   _invPage   = 1;
   _invSearch = '';
   _renderInvoiceListPage(container);
+  await _invLoadLookups();
   try {
-    const res = await fetch(`${API_BASE}/finance/invoices/`, { headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok) { studentInvoicesData.length = 0; _toArray(await res.json()).forEach(r => studentInvoicesData.push(r)); }
+    const res = await apiFetch(`${API_BASE}/invoices/`);
+    if (res && res.ok) { studentInvoicesData.length = 0; _toArray(await res.json()).forEach(r => studentInvoicesData.push(r)); }
+    else if (res) showToast('Could not load invoices: ' + await parseApiError(res), 'error');
   } catch (_) {}
   _renderInvTable();
 }
@@ -559,7 +587,7 @@ function _renderInvoiceListPage(container) {
           <button class="fin-export-btn" title="Export CSV">&#128202;</button>
           <input type="text" class="fin-search-input" id="inv-search" placeholder="&#128269; Search&#8230;"
                  value="" oninput="onInvSearch(this.value)">
-          <button class="fin-btn-filter">&#9776; Filters</button>
+          <button class="fin-btn-teal" onclick="loadView('fin-student-invoices-add')">+ Add</button>
         </div>
       </div>
       <div id="inv-table-container"></div>
@@ -573,9 +601,8 @@ function _invFilteredData() {
   if (!_invSearch) return studentInvoicesData;
   const q = _invSearch;
   return studentInvoicesData.filter(inv =>
-    (inv.invoiceNo   || '').toLowerCase().includes(q) ||
-    (inv.admissionNo || '').toLowerCase().includes(q) ||
-    (inv.studentName || '').toLowerCase().includes(q)
+    (inv.invoice_no || '').toLowerCase().includes(q) ||
+    _invStudentName(inv.student_id).toLowerCase().includes(q)
   );
 }
 
@@ -590,28 +617,23 @@ function _renderInvTable() {
 
   let rows = '';
   if (paged.length === 0) {
-    rows = `<tr><td colspan="13" class="fin-empty">No records found.</td></tr>`;
+    rows = `<tr><td colspan="8" class="fin-empty">No records found.</td></tr>`;
   } else {
     paged.forEach(inv => {
       rows += `<tr>
-        <td>${_finEsc(inv.invoiceNo   || '')}</td>
-
-        <td>${_finEsc(inv.costCenter  || '-')}</td>
-        <td>${_finEsc(inv.admissionNo || '-')}</td>
-        <td>${_finEsc(inv.studentName || '-')}</td>
-        <td>${_finEsc(inv.session     || '-')}</td>
-        <td>${_finEsc(inv.class       || '-')}</td>
-        <td>${_finEsc(inv.cohort      || '-')}</td>
-        <td>${_finEsc(inv.department  || '-')}</td>
-        <td>${inv.amount ? _finFmt(inv.amount) : '-'}</td>
-        <td>${_finEsc(inv.createdDate || '-')}</td>
+        <td>${_finEsc(inv.invoice_no || '')}</td>
+        <td>${_finEsc(_invStudentName(inv.student_id))}</td>
+        <td>${_finEsc(_invTermName(inv.term_id))}</td>
+        <td>${_finEsc(inv.issue_date || '-')}</td>
+        <td>${_finEsc(inv.due_date || '-')}</td>
+        <td>${inv.total_amount ? _finFmt(parseFloat(inv.total_amount)) : '-'}</td>
+        <td>${_finEsc(inv.status || '-')}</td>
         <td class="fin-action-cell">
           <div class="fin-action-wrap">
             <button class="fin-action-btn" onclick="toggleFinInvDropdown(event,'${inv.id}')">&#8230;</button>
             <div id="fin-inv-dd-${inv.id}" class="fin-action-dropdown" style="display:none;">
-              <a href="#" onclick="openInvoiceView('${inv.id}');return false;">&#128065; View</a>
-              <a href="#" onclick="openInvoicePrint('${inv.id}');return false;">&#128438; Print</a>
-              <a href="#" onclick="openInvoiceEdit('${inv.id}');return false;">&#9998; Edit</a>
+              <a href="#" onclick="openInvoiceEdit(${inv.id});return false;">&#9998; Edit</a>
+              ${inv.status !== 'void' ? `<a href="#" onclick="voidInvoice(${inv.id});return false;">&#10005; Void</a>` : ''}
             </div>
           </div>
         </td>
@@ -622,11 +644,10 @@ function _renderInvTable() {
   const tblEl = document.getElementById('inv-table-container');
   if (tblEl) tblEl.innerHTML = `
     <div class="fin-table-wrap">
-      <table class="fin-table" style="min-width:1100px;">
+      <table class="fin-table" style="min-width:900px;">
         <thead><tr>
-          <th>INVOICE NO.</th><th>COST CENTER</th><th>ADMISSION NO.</th>
-          <th>STUDENT NAME</th><th>SESSION</th><th>CLASS</th><th>COHORT</th>
-          <th>DEPARTMENT</th><th>AMOUNT</th><th>CREATED</th><th>ACTION</th>
+          <th>INVOICE NO.</th><th>STUDENT</th><th>TERM</th>
+          <th>ISSUE DATE</th><th>DUE DATE</th><th>TOTAL AMOUNT</th><th>STATUS</th><th>ACTION</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
@@ -655,14 +676,11 @@ function toggleFinInvDropdown(event, id) {
   if (dd) dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
 }
 
-function openInvoiceView(id) {
-  document.querySelectorAll('[id^="fin-inv-dd-"]').forEach(d => d.style.display = 'none');
-  loadFinPlaceholderView(document.getElementById('main-content'), 'View Invoice', 'Student Invoice');
-}
-
-function openInvoicePrint(id) {
-  document.querySelectorAll('[id^="fin-inv-dd-"]').forEach(d => d.style.display = 'none');
-  loadFinPlaceholderView(document.getElementById('main-content'), 'Print Invoice', 'Student Invoice');
+async function voidInvoice(id) {
+  if (!confirm('Void this invoice? This cannot be undone.')) return;
+  const res = await apiFetch(`${API_BASE}/invoices/${id}/void`, { method: 'POST' });
+  if (res && res.ok) { showToast('Invoice voided.', 'success'); loadView('fin-student-invoices'); }
+  else if (res) showToast('Error: ' + await parseApiError(res), 'error');
 }
 
 function openInvoiceEdit(id) {
@@ -672,17 +690,123 @@ function openInvoiceEdit(id) {
   _renderInvoiceEditPage(document.getElementById('main-content'), inv);
 }
 
-// ==================== CHANGE 5: STUDENT INVOICES — EDIT ====================
+// ==================== CHANGE 5: STUDENT INVOICES — ADD / EDIT ====================
+// PATCH /invoices/{id} only accepts term_id/issue_date/due_date/status/notes
+// (InvoiceUpdate) — line items can't be edited after creation on this backend,
+// so Edit only exposes the header fields; line items are Add-only.
+
+async function loadStudentInvoicesAddView(container) {
+  await _invLoadLookups();
+  window._invLineItems = [{ description: '', fee_item_id: '', quantity: 1, unit_price: '', discount_amount: 0 }];
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Add Student Invoice</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo;
+          <a href="#" class="fin-bc-link" onclick="loadView('fin-student-invoices');return false;">Student Invoice</a> &rsaquo; Add
+        </div>
+      </div>
+      <div class="fin-form-wrap" style="max-width:760px;">
+        <div class="fin-form-grid-2">
+          <div class="fin-form-group">
+            <label class="fin-form-label">Student <span class="fin-required">*</span></label>
+            <select id="inv-f-student" class="fin-form-select">
+              <option value="">Please Select</option>
+              ${_invStudentsCache.map(s => `<option value="${s.id}">${_finEsc(_invStudentName(s.id))} (${_finEsc(s.student_id||'')})</option>`).join('')}
+            </select>
+            <span class="fin-field-error" id="inv-f-student-err"></span>
+          </div>
+          <div class="fin-form-group">
+            <label class="fin-form-label">Term</label>
+            <select id="inv-f-term" class="fin-form-select">
+              <option value="">Please Select</option>
+              ${(window._stuTermsCache||[]).map(t => `<option value="${t.id}">${_finEsc(t.title||t.name||'')}</option>`).join('')}
+            </select>
+          </div>
+          <div class="fin-form-group">
+            <label class="fin-form-label">Issue Date <span class="fin-required">*</span></label>
+            <input type="date" id="inv-f-issue-date" class="fin-form-input" value="${_finToday()}">
+            <span class="fin-field-error" id="inv-f-issue-err"></span>
+          </div>
+          <div class="fin-form-group">
+            <label class="fin-form-label">Due Date</label>
+            <input type="date" id="inv-f-due-date" class="fin-form-input">
+          </div>
+        </div>
+        <div class="fin-form-group">
+          <label class="fin-form-label">Line Items</label>
+          <table class="fin-li-table">
+            <thead><tr><th>Description</th><th>Fee Item</th><th>Qty</th><th>Unit Price</th><th>Discount</th><th></th></tr></thead>
+            <tbody id="inv-li-body"></tbody>
+          </table>
+          <button class="fin-btn-li-add" onclick="addInvLineItem()">+ Add Line</button>
+        </div>
+        <div class="fin-form-group">
+          <label class="fin-form-label">Notes</label>
+          <textarea id="inv-f-notes" class="fin-form-textarea" rows="3"></textarea>
+        </div>
+        <div class="fin-form-actions">
+          <button class="fin-btn-teal" onclick="submitInvoiceAdd()">Submit</button>
+          <button class="fin-btn-cancel" onclick="loadView('fin-student-invoices')">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+  _renderInvLineItems();
+}
+
+function _renderInvLineItems() {
+  const body = document.getElementById('inv-li-body');
+  if (!body) return;
+  body.innerHTML = window._invLineItems.map((li, i) => `
+    <tr>
+      <td><input type="text" class="fin-li-input" value="${_finEsc(li.description)}" oninput="_invLineItems[${i}].description=this.value"></td>
+      <td><select class="fin-li-input" onchange="_invLineItems[${i}].fee_item_id=this.value">
+        <option value="">Please Select</option>
+        ${_invFeeItemsCache.map(f => `<option value="${f.id}" ${String(li.fee_item_id)===String(f.id)?'selected':''}>${_finEsc(f.name)}</option>`).join('')}
+      </select></td>
+      <td><input type="number" class="fin-li-input" value="${li.quantity}" min="1" oninput="_invLineItems[${i}].quantity=this.value"></td>
+      <td><input type="number" class="fin-li-input" value="${li.unit_price}" step="0.01" oninput="_invLineItems[${i}].unit_price=this.value"></td>
+      <td><input type="number" class="fin-li-input" value="${li.discount_amount}" step="0.01" oninput="_invLineItems[${i}].discount_amount=this.value"></td>
+      <td><button class="fin-btn-li-rm" ${window._invLineItems.length<=1?'disabled':''} onclick="removeInvLineItem(${i})">&#10005;</button></td>
+    </tr>`).join('');
+}
+function addInvLineItem() {
+  window._invLineItems.push({ description: '', fee_item_id: '', quantity: 1, unit_price: '', discount_amount: 0 });
+  _renderInvLineItems();
+}
+function removeInvLineItem(i) {
+  if (window._invLineItems.length <= 1) return;
+  window._invLineItems.splice(i, 1);
+  _renderInvLineItems();
+}
+
+async function submitInvoiceAdd() {
+  const studentId = document.getElementById('inv-f-student').value;
+  const issueDate = document.getElementById('inv-f-issue-date').value;
+  let valid = true;
+  document.getElementById('inv-f-student-err').textContent = studentId ? '' : 'This field is required.'; if (!studentId) valid = false;
+  document.getElementById('inv-f-issue-err').textContent   = issueDate ? '' : 'This field is required.'; if (!issueDate) valid = false;
+  const lineItems = window._invLineItems
+    .filter(li => li.description.trim() && li.unit_price !== '')
+    .map(li => ({ description: li.description.trim(), fee_item_id: li.fee_item_id ? parseInt(li.fee_item_id, 10) : null, quantity: parseInt(li.quantity, 10) || 1, unit_price: parseFloat(li.unit_price) || 0, discount_amount: parseFloat(li.discount_amount) || 0 }));
+  if (!valid) return;
+
+  const payload = {
+    student_id: parseInt(studentId, 10),
+    term_id: document.getElementById('inv-f-term').value ? parseInt(document.getElementById('inv-f-term').value, 10) : null,
+    issue_date: issueDate,
+    due_date: document.getElementById('inv-f-due-date').value || null,
+    notes: document.getElementById('inv-f-notes').value.trim() || null,
+    line_items: lineItems,
+  };
+  try {
+    const res = await apiFetch(`${API_BASE}/invoices/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (res && res.ok) { showToast('Invoice created!', 'success'); loadView('fin-student-invoices'); }
+    else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+  } catch (_) { showToast('Network error.', 'error'); }
+}
 
 function _renderInvoiceEditPage(container, inv) {
-  const liRows = (inv.lineItems || []).map((li, i) => `
-    <tr id="li-row-${i}">
-      <td><input type="text"   class="fin-li-input" id="li-desc-${i}"   value="${_finEsc(li.description||'')}"></td>
-      <td><input type="number" class="fin-li-input" id="li-amount-${i}" value="${li.amount||0}" step="0.01"></td>
-      <td><button class="fin-btn-li-rm" onclick="removeLineItem(${i})">&#10005;</button></td>
-    </tr>
-  `).join('');
-
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -694,126 +818,94 @@ function _renderInvoiceEditPage(container, inv) {
         </div>
       </div>
 
-      <!-- Read-only info -->
       <div class="fin-section-label" style="margin-bottom:14px;">Invoice Information</div>
       <div class="fin-info-grid" style="margin-bottom:20px;">
-        <div class="fin-info-item">
-          <span class="fin-info-label">Invoice No.</span>
-          <span class="fin-info-value">${_finEsc(inv.invoiceNo||'-')}</span>
-        </div>
-        <div class="fin-info-item">
-          <span class="fin-info-label">Invoice Date</span>
-          <span class="fin-info-value">${_finEsc(inv.invoiceDate||'-')}</span>
-        </div>
-        <div class="fin-info-item">
-          <span class="fin-info-label">Admission No.</span>
-          <span class="fin-info-value">${_finEsc(inv.admissionNo||'-')}</span>
-        </div>
-        <div class="fin-info-item">
-          <span class="fin-info-label">Student Name</span>
-          <span class="fin-info-value">${_finEsc(inv.studentName||'-')}</span>
-        </div>
-        <div class="fin-info-item">
-          <span class="fin-info-label">Session</span>
-          <span class="fin-info-value">${_finEsc(inv.session||'-')}</span>
-        </div>
-        <div class="fin-info-item">
-          <span class="fin-info-label">Session Type</span>
-          <span class="fin-info-value">${_finEsc(inv.sessionType||'-')}</span>
-        </div>
-        <div class="fin-info-item">
-          <span class="fin-info-label">Student Type</span>
-          <span class="fin-info-value">${_finEsc(inv.studentType||'-')}</span>
-        </div>
-        <div class="fin-info-item">
-          <span class="fin-info-label">Stay Status</span>
-          <span class="fin-info-value">${_finEsc(inv.stayStatus||'-')}</span>
-        </div>
-        <div class="fin-info-item">
-          <span class="fin-info-label">Class</span>
-          <span class="fin-info-value">${_finEsc(inv.class||'-')}</span>
-        </div>
+        <div class="fin-info-item"><span class="fin-info-label">Invoice No.</span><span class="fin-info-value">${_finEsc(inv.invoice_no||'-')}</span></div>
+        <div class="fin-info-item"><span class="fin-info-label">Student</span><span class="fin-info-value">${_finEsc(_invStudentName(inv.student_id))}</span></div>
+        <div class="fin-info-item"><span class="fin-info-label">Total Amount</span><span class="fin-info-value">${inv.total_amount ? _finFmt(parseFloat(inv.total_amount)) : '-'}</span></div>
+        <div class="fin-info-item"><span class="fin-info-label">Balance Due</span><span class="fin-info-value">${inv.balance_due ? _finFmt(parseFloat(inv.balance_due)) : '-'}</span></div>
       </div>
 
-      <!-- Editable fields -->
+      <!-- Line items can't be edited after creation on this backend (PATCH /invoices/{id}
+           only accepts header fields) — shown read-only for reference. -->
+      <div class="fin-section-label" style="margin-bottom:14px;">Line Items</div>
+      <table class="fin-li-table" style="margin-bottom:24px;">
+        <thead><tr><th>Description</th><th>Fee Item</th><th>Qty</th><th>Unit Price</th><th>Discount</th></tr></thead>
+        <tbody>${(inv.line_items||[]).map(li => `<tr>
+          <td>${_finEsc(li.description)}</td>
+          <td>${_finEsc(li.fee_item_id ? _invFeeItemName(li.fee_item_id) : '-')}</td>
+          <td>${_finEsc(li.quantity)}</td>
+          <td>${_finFmt(parseFloat(li.unit_price)||0)}</td>
+          <td>${_finFmt(parseFloat(li.discount_amount)||0)}</td>
+        </tr>`).join('') || '<tr><td colspan="5" class="fin-empty">No line items.</td></tr>'}</tbody>
+      </table>
+
       <div class="fin-section-label" style="margin-bottom:14px;">Edit Details</div>
       <div class="fin-form-wrap">
-        <div class="fin-form-group">
-          <label class="fin-form-label">Amount</label>
-          <input type="number" id="inv-edit-amount" class="fin-form-input"
-                 value="${inv.amount||0}" step="0.01" min="0">
+        <div class="fin-form-grid-2">
+          <div class="fin-form-group">
+            <label class="fin-form-label">Term</label>
+            <select id="inv-edit-term" class="fin-form-select">
+              <option value="">Please Select</option>
+              ${(window._stuTermsCache||[]).map(t => `<option value="${t.id}" ${String(inv.term_id)===String(t.id)?'selected':''}>${_finEsc(t.title||t.name||'')}</option>`).join('')}
+            </select>
+          </div>
+          <div class="fin-form-group">
+            <label class="fin-form-label">Status</label>
+            <select id="inv-edit-status" class="fin-form-select">
+              ${['draft','issued','paid','overdue','void'].map(s => `<option value="${s}" ${inv.status===s?'selected':''}>${s}</option>`).join('')}
+            </select>
+          </div>
+          <div class="fin-form-group">
+            <label class="fin-form-label">Issue Date</label>
+            <input type="date" id="inv-edit-issue-date" class="fin-form-input" value="${inv.issue_date||''}">
+          </div>
+          <div class="fin-form-group">
+            <label class="fin-form-label">Due Date</label>
+            <input type="date" id="inv-edit-due-date" class="fin-form-input" value="${inv.due_date||''}">
+          </div>
         </div>
         <div class="fin-form-group">
           <label class="fin-form-label">Notes</label>
           <textarea id="inv-edit-notes" class="fin-form-textarea" rows="3">${_finEsc(inv.notes||'')}</textarea>
         </div>
-
-        <!-- Line items -->
-        <div class="fin-form-group">
-          <label class="fin-form-label">Line Items</label>
-          <table class="fin-li-table">
-            <thead><tr><th>Description</th><th>Amount</th><th></th></tr></thead>
-            <tbody id="inv-li-body">${liRows}</tbody>
-          </table>
-          <button class="fin-btn-li-add" onclick="addLineItem()">+ Add Line</button>
-        </div>
-
         <div class="fin-form-actions">
-          <button class="fin-btn-teal" onclick="submitInvoiceEdit('${inv.id}')">Update</button>
+          <button class="fin-btn-teal" onclick="submitInvoiceEdit(${inv.id})">Update</button>
           <button class="fin-btn-cancel" onclick="loadView('fin-student-invoices')">Cancel</button>
         </div>
-        <div id="inv-edit-status"></div>
       </div>
     </div>
   `;
 }
 
-let _liCount = 0;
-function addLineItem() {
-  const body = document.getElementById('inv-li-body');
-  if (!body) return;
-  const i = Date.now();
-  const tr = document.createElement('tr');
-  tr.id = `li-row-${i}`;
-  tr.innerHTML = `
-    <td><input type="text"   class="fin-li-input" id="li-desc-${i}"   placeholder="Description"></td>
-    <td><input type="number" class="fin-li-input" id="li-amount-${i}" placeholder="0.00" step="0.01"></td>
-    <td><button class="fin-btn-li-rm" onclick="this.closest('tr').remove()">&#10005;</button></td>
-  `;
-  body.appendChild(tr);
-}
-
-function removeLineItem(i) {
-  const row = document.getElementById(`li-row-${i}`);
-  if (row) row.remove();
-}
-
 async function submitInvoiceEdit(id) {
-  const amount = parseFloat(document.getElementById('inv-edit-amount').value) || 0;
-  const notes  = document.getElementById('inv-edit-notes').value || '';
-  const liBody = document.getElementById('inv-li-body');
-  const lineItems = [];
-  if (liBody) {
-    liBody.querySelectorAll('tr').forEach(tr => {
-      const descEl = tr.querySelector('input[id^="li-desc-"]');
-      const amtEl  = tr.querySelector('input[id^="li-amount-"]');
-      if (descEl && amtEl) lineItems.push({ description: descEl.value, amount: parseFloat(amtEl.value) || 0 });
-    });
-  }
-  const payload = { amount, notes, lineItems };
+  const payload = {
+    term_id: document.getElementById('inv-edit-term').value ? parseInt(document.getElementById('inv-edit-term').value, 10) : null,
+    issue_date: document.getElementById('inv-edit-issue-date').value || null,
+    due_date: document.getElementById('inv-edit-due-date').value || null,
+    status: document.getElementById('inv-edit-status').value,
+    notes: document.getElementById('inv-edit-notes').value || null,
+  };
   try {
-    const res = await fetch(`${API_BASE}/finance/invoices/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(payload)
-    });
-    if (res.ok) { showToast('Invoice updated!', 'success'); }
-    else { showToast('Error: ' + await parseApiError(res), 'error'); }
+    const res = await apiFetch(`${API_BASE}/invoices/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (res && res.ok) { showToast('Invoice updated!', 'success'); }
+    else if (res) { showToast('Error: ' + await parseApiError(res), 'error'); }
   } catch (_) { showToast('Network error.', 'error'); }
   loadView('fin-student-invoices');
 }
 
 // ==================== CHANGE 6: STUDENT BULK INVOICING ====================
+// studentClassesData (the old data source here) is a global declared in config.js
+// but never populated anywhere in the app — this view's class list never actually
+// loaded. Classes don't carry session/start/end dates at all (SchoolClassRead has
+// no such fields — that's term data); rewritten to resolve the selected Term's
+// academic_year_id, then load real classes for that year via GET /classes/.
+// POST /finance/invoices/bulk's body has no fixed schema (additionalProperties:
+// true) — term_id/invoice_date/class_ids is a best-effort guess matching the
+// original shape with session_id renamed to term_id; confirm against the backend
+// if bulk invoicing doesn't behave as expected.
+
+let _bulkClassesData = [];
 
 async function loadStudentBulkInvoicingView(container) {
   container.innerHTML = `
@@ -826,11 +918,11 @@ async function loadStudentBulkInvoicingView(container) {
       <div class="fin-filter-section">
         <div class="fin-filter-grid">
           <div class="fin-filter-field">
-            <label class="fin-filter-label">Session <span class="fin-required">*</span></label>
-            <select id="bulk-session" class="fin-filter-select" onchange="onBulkSessionChange(this.value)">
+            <label class="fin-filter-label">Term <span class="fin-required">*</span></label>
+            <select id="bulk-term" class="fin-filter-select" onchange="onBulkTermChange(this.value)">
               <option value="">Please Select</option>
             </select>
-            <span class="fin-field-error" id="bulk-session-err"></span>
+            <span class="fin-field-error" id="bulk-term-err"></span>
           </div>
           <div class="fin-filter-field">
             <label class="fin-filter-label">Invoicing Date <span class="fin-required">*</span></label>
@@ -851,11 +943,11 @@ async function loadStudentBulkInvoicingView(container) {
                   <input type="checkbox" class="fin-cb" id="bulk-select-all"
                          onchange="toggleBulkSelectAll(this)">
                 </th>
-                <th>CODE</th><th>START DATE</th><th>END DATE</th>
+                <th>CODE</th><th>NAME</th><th>LEVEL</th>
               </tr>
             </thead>
             <tbody id="bulk-class-tbody">
-              <tr><td colspan="4" class="fin-empty">Select a session to load classes.</td></tr>
+              <tr><td colspan="4" class="fin-empty">Select a term to load classes.</td></tr>
             </tbody>
           </table>
         </div>
@@ -868,30 +960,36 @@ async function loadStudentBulkInvoicingView(container) {
       <div id="bulk-status"></div>
     </div>
   `;
-  populateSessionDropdown('bulk-session');
+  await populateTermDropdown('bulk-term');
 }
 
-function onBulkSessionChange(sessionId) {
+async function onBulkTermChange(termId) {
   const tbody = document.getElementById('bulk-class-tbody');
   if (!tbody) return;
-  if (!sessionId) {
-    tbody.innerHTML = `<tr><td colspan="4" class="fin-empty">Select a session to load classes.</td></tr>`;
+  if (!termId) {
+    tbody.innerHTML = `<tr><td colspan="4" class="fin-empty">Select a term to load classes.</td></tr>`;
     return;
   }
-  const classes = studentClassesData.filter(c => String(c.sessionId) === String(sessionId));
-  if (classes.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="4" class="fin-empty">No classes found for this session.</td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="4" class="fin-loading">Loading classes&#8230;</td></tr>`;
+  try {
+    const termRes = await apiFetch(`${API_BASE}/terms/${termId}`);
+    const term = termRes && termRes.ok ? await termRes.json() : null;
+    if (!term || !term.academic_year_id) { tbody.innerHTML = `<tr><td colspan="4" class="fin-empty">Could not resolve this term's academic year.</td></tr>`; return; }
+    const res = await apiFetch(`${API_BASE}/classes/?academic_year_id=${term.academic_year_id}`);
+    _bulkClassesData = (res && res.ok) ? _toArray(await res.json()) : [];
+  } catch (_) { _bulkClassesData = []; }
+  if (_bulkClassesData.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="4" class="fin-empty">No classes found for this term's academic year.</td></tr>`;
     return;
   }
-  tbody.innerHTML = classes.map((c, i) => `
+  tbody.innerHTML = _bulkClassesData.map(c => `
     <tr>
-      <td><input type="checkbox" class="fin-cb bulk-class-cb" value="${c.classCode}" data-start="${c.startDate||''}" data-end="${c.endDate||''}"></td>
-      <td>${_finEsc(c.classCode)}</td>
-      <td>${_finEsc(c.startDate || '-')}</td>
-      <td>${_finEsc(c.endDate   || '-')}</td>
+      <td><input type="checkbox" class="fin-cb bulk-class-cb" value="${c.id}"></td>
+      <td>${_finEsc(c.class_code || '-')}</td>
+      <td>${_finEsc(c.name)}</td>
+      <td>${_finEsc(c.level_name || '-')}</td>
     </tr>
   `).join('');
-  // reset select-all
   const all = document.getElementById('bulk-select-all');
   if (all) all.checked = false;
 }
@@ -901,17 +999,17 @@ function toggleBulkSelectAll(cb) {
 }
 
 async function submitBulkInvoicing() {
-  const sessionEl = document.getElementById('bulk-session');
-  const dateEl    = document.getElementById('bulk-inv-date');
+  const termEl = document.getElementById('bulk-term');
+  const dateEl = document.getElementById('bulk-inv-date');
   let valid = true;
 
-  const sessionErrEl = document.getElementById('bulk-session-err');
-  const dateErrEl    = document.getElementById('bulk-date-err');
+  const termErrEl = document.getElementById('bulk-term-err');
+  const dateErrEl = document.getElementById('bulk-date-err');
 
-  if (!sessionEl.value) { if (sessionErrEl) sessionErrEl.textContent = 'This field is required.'; valid = false; }
-  else                  { if (sessionErrEl) sessionErrEl.textContent = ''; }
-  if (!dateEl.value)    { if (dateErrEl)    dateErrEl.textContent    = 'This field is required.'; valid = false; }
-  else                  { if (dateErrEl)    dateErrEl.textContent    = ''; }
+  if (!termEl.value) { if (termErrEl) termErrEl.textContent = 'This field is required.'; valid = false; }
+  else               { if (termErrEl) termErrEl.textContent = ''; }
+  if (!dateEl.value) { if (dateErrEl) dateErrEl.textContent = 'This field is required.'; valid = false; }
+  else               { if (dateErrEl) dateErrEl.textContent = ''; }
   if (!valid) return;
 
   const checked = Array.from(document.querySelectorAll('.bulk-class-cb:checked'));
@@ -921,19 +1019,12 @@ async function submitBulkInvoicing() {
     return;
   }
 
-  const invDate = dateEl.value;
-  const today       = _finToday();
-
   const classIds = checked.map(cb => cb.value);
-  const payload  = { session_id: sessionEl.value, invoice_date: invDate, class_ids: classIds };
+  const payload  = { term_id: termEl.value, invoice_date: dateEl.value, class_ids: classIds };
   try {
-    const res = await fetch(`${API_BASE}/finance/invoices/bulk/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(payload)
-    });
-    if (res.ok) { showToast('Bulk invoices created!', 'success'); }
-    else { showToast('Error: ' + await parseApiError(res), 'error'); }
+    const res = await apiFetch(`${API_BASE}/finance/invoices/bulk`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (res && res.ok) { showToast('Bulk invoices created!', 'success'); }
+    else if (res) { showToast('Error: ' + await parseApiError(res), 'error'); }
   } catch (_) { showToast('Network error.', 'error'); }
   loadView('fin-student-invoices');
 }
@@ -2004,8 +2095,8 @@ async function renderRcvPayAddPage(container) {
     if (res.ok) {
       const students = await res.json();
       studentOpts += students.map(s =>
-        `<option value="${s.id}" data-name="${_finEsc((s.first_name||'')+' '+(s.last_name||''))}" data-class="${_finEsc(s.class_name||'-')}" data-adm="${_finEsc(s.student_id||'-')}">
-          ${_finEsc((s.first_name||'')+' '+(s.last_name||''))} (${_finEsc(s.student_id||'-')} / ${_finEsc(s.class_name||'-')})
+        `<option value="${s.id}" data-name="${_finEsc((s.first_name||'')+' '+(s.last_name||''))}" data-class="${_finEsc(s.school_class_name||'-')}" data-adm="${_finEsc(s.student_id||'-')}">
+          ${_finEsc((s.first_name||'')+' '+(s.last_name||''))} (${_finEsc(s.student_id||'-')} / ${_finEsc(s.school_class_name||'-')})
         </option>`).join('');
     }
   } catch(_) {}
@@ -2753,22 +2844,35 @@ async function submitFeeAcctEdit(id) {
 // ==================== CHANGE 9: FEE ITEMS ====================
 // The catalog of chargeable fees (Tuition, Transport, Lunch, etc.) — this is what
 // Class Fee Setup prices per class/term and what Student Fees/Invoices ultimately
-// bill against. Backend (`/finance/fee-items`) only exposes GET/POST today, no
-// PATCH/DELETE — so there's no Edit action here yet; see project notes.
+// bill against. Backend now exposes full CRUD on /finance/fee-items/{item_id}
+// (PATCH/DELETE added) plus account_id/fee_type_id FKs.
 
 let _feeItemPerPage = 10, _feeItemPage = 1, _feeItemSearch = '';
+let _fiFeeTypesCache = [], _fiAccountsCache = [];
 const FEE_ITEM_CATEGORIES = [
   { value: 'TERMLY',  label: 'Termly'  },
   { value: 'YEARLY',  label: 'Yearly'  },
   { value: 'ONE_OFF', label: 'One-off' },
 ];
 
+async function _fiLoadLookups() {
+  const [ftRes, acctRes] = await Promise.all([
+    apiFetch(`${API_BASE}/finance/fee-types/`),
+    apiFetch(`${API_BASE}/finance/accounts/`),
+  ]);
+  _fiFeeTypesCache = (ftRes && ftRes.ok) ? _toArray(await ftRes.json()) : [];
+  _fiAccountsCache = (acctRes && acctRes.ok) ? _toArray(await acctRes.json()) : [];
+}
+function _fiFeeTypeName(id) { return (_fiFeeTypesCache.find(t => String(t.id) === String(id)) || {}).name || '-'; }
+function _fiAccountName(id) { const a = _fiAccountsCache.find(a => String(a.id) === String(id)); return a ? (a.account_name || a.accountName || '-') : '-'; }
+
 async function loadFeeItemsView(container) {
   _feeItemPage = 1; _feeItemSearch = '';
   _renderFeeItemsListPage(container);
+  await _fiLoadLookups();
   try {
-    const res = await fetch(`${API_BASE}/finance/fee-items`, { headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok) { feeItemsData.length = 0; _toArray(await res.json()).forEach(r => feeItemsData.push(r)); }
+    const res = await apiFetch(`${API_BASE}/finance/fee-items`);
+    if (res && res.ok) { feeItemsData.length = 0; _toArray(await res.json()).forEach(r => feeItemsData.push(r)); }
   } catch (_) {}
   _renderFeeItemsTable();
 }
@@ -2789,6 +2893,7 @@ function _renderFeeItemsListPage(container) {
         </div>
         <div class="fin-controls-right">
           <input type="text" class="fin-search-input" placeholder="&#128269; Search&#8230;" oninput="onFiSearch(this.value)">
+          <button class="fin-btn-outline" onclick="loadView('fin-fee-types')">Fee Types</button>
           <button class="fin-btn-teal" onclick="renderFeeItemAddPage(document.getElementById('main-content'))">+ Add Fee Item</button>
         </div>
       </div>
@@ -2817,20 +2922,30 @@ function _renderFeeItemsTable() {
   const pages = Math.max(1, Math.ceil(filtered.length/_feeItemPerPage));
 
   let rows = paged.length===0
-    ? `<tr><td colspan="5" class="fin-empty">No records found.</td></tr>`
+    ? `<tr><td colspan="7" class="fin-empty">No records found.</td></tr>`
     : paged.map(f=>`<tr>
         <td>${_finEsc(String(f.id))}</td>
         <td>${_finEsc(f.name||'')}</td>
         <td>${_finEsc(_fiCategoryLabel(f.category))}</td>
+        <td>${_finEsc(f.fee_type_id ? _fiFeeTypeName(f.fee_type_id) : '-')}</td>
+        <td>${_finEsc(f.account_id ? _fiAccountName(f.account_id) : '-')}</td>
         <td>${_finFmt(parseFloat(f.default_amount)||0)}</td>
-        <td><span style="color:${f.is_active===false?'#e74c3c':'#27ae60'};font-weight:600;">${f.is_active===false?'Inactive':'Active'}</span></td>
+        <td class="fin-action-cell">
+          <div class="fin-action-wrap">
+            <button class="fin-action-btn" onclick="_pvToggleDropdown(event,'fi','${f.id}')">&#8230;</button>
+            <div id="fi-dd-${f.id}" class="fin-action-dropdown" style="display:none;">
+              <a href="#" onclick="renderFeeItemAddPage(document.getElementById('main-content'),${f.id});return false;">&#9998; Edit</a>
+              <a href="#" onclick="deleteFeeItem(${f.id});return false;">&#128465; Delete</a>
+            </div>
+          </div>
+        </td>
       </tr>`).join('');
 
   const el = document.getElementById('fi-table-container');
   if (el) el.innerHTML = `
     <div class="fin-table-wrap"><table class="fin-table">
       <thead><tr>
-        <th>ID</th><th>NAME</th><th>FEE TYPE</th><th>DEFAULT AMOUNT</th><th>STATUS</th>
+        <th>ID</th><th>NAME</th><th>CATEGORY</th><th>FEE TYPE</th><th>ACCOUNT</th><th>DEFAULT AMOUNT</th><th>ACTION</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table></div>`;
@@ -2844,50 +2959,66 @@ function changeFiPerPage(v){ _feeItemPerPage=parseInt(v); _feeItemPage=1; _rende
 function onFiSearch(v)     { _feeItemSearch=v.trim().toLowerCase(); _feeItemPage=1; _renderFeeItemsTable(); }
 function fiGoPage(p)       { _feeItemPage=p; _renderFeeItemsTable(); }
 
-function renderFeeItemAddPage(container) {
+async function renderFeeItemAddPage(container, editId) {
+  const item = editId ? feeItemsData.find(f => String(f.id) === String(editId)) : null;
+  if (!_fiFeeTypesCache.length && !_fiAccountsCache.length) await _fiLoadLookups();
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
-        <h2 class="fin-title">Add Fee Item</h2>
+        <h2 class="fin-title">${item ? 'Edit' : 'Add'} Fee Item</h2>
         <div class="fin-breadcrumb">
           Dashboard &rsaquo; Finance &rsaquo;
           <a href="#" class="fin-bc-link" onclick="loadView('fin-fee-items');return false;">Fee Items</a>
-          &rsaquo; Add
+          &rsaquo; ${item ? 'Edit' : 'Add'}
         </div>
       </div>
       <div class="fin-form-wrap" style="max-width:600px;">
         <div class="fin-form-group" style="margin-bottom:16px;">
           <label class="fin-form-label">Name <span class="fin-required">*</span></label>
-          <input type="text" id="fi-f-name" class="fin-form-input">
+          <input type="text" id="fi-f-name" class="fin-form-input" value="${_finEsc(item?.name||'')}">
           <span class="fin-field-error" id="fi-f-name-err"></span>
         </div>
         <div class="fin-form-group" style="margin-bottom:16px;">
-          <label class="fin-form-label">Fee Type <span class="fin-required">*</span></label>
+          <label class="fin-form-label">Category <span class="fin-required">*</span></label>
           <select id="fi-f-category" class="fin-form-select">
             <option value="">Please Select</option>
-            ${FEE_ITEM_CATEGORIES.map(c=>`<option value="${c.value}">${c.label}</option>`).join('')}
+            ${FEE_ITEM_CATEGORIES.map(c=>`<option value="${c.value}" ${item?.category===c.value?'selected':''}>${c.label}</option>`).join('')}
           </select>
           <span class="fin-field-error" id="fi-f-category-err"></span>
         </div>
         <div class="fin-form-group" style="margin-bottom:16px;">
+          <label class="fin-form-label">Fee Type</label>
+          <select id="fi-f-fee-type" class="fin-form-select">
+            <option value="">Please Select</option>
+            ${_fiFeeTypesCache.map(t=>`<option value="${t.id}" ${String(item?.fee_type_id)===String(t.id)?'selected':''}>${_finEsc(t.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="fin-form-group" style="margin-bottom:16px;">
+          <label class="fin-form-label">Account</label>
+          <select id="fi-f-account" class="fin-form-select">
+            <option value="">Please Select</option>
+            ${_fiAccountsCache.map(a=>`<option value="${a.id}" ${String(item?.account_id)===String(a.id)?'selected':''}>${_finEsc(a.account_name||a.accountName||'')}</option>`).join('')}
+          </select>
+        </div>
+        <div class="fin-form-group" style="margin-bottom:16px;">
           <label class="fin-form-label">Default Amount <span class="fin-required">*</span></label>
-          <input type="number" id="fi-f-amount" class="fin-form-input" step="0.01">
+          <input type="number" id="fi-f-amount" class="fin-form-input" step="0.01" value="${item?.default_amount||''}">
           <span class="fin-field-error" id="fi-f-amount-err"></span>
         </div>
         <div class="fin-form-group" style="margin-bottom:20px;">
           <label style="display:flex;align-items:center;gap:8px;font-size:0.9rem;cursor:pointer;">
-            <input type="checkbox" id="fi-f-active" class="fin-cb" checked> Active
+            <input type="checkbox" id="fi-f-active" class="fin-cb" ${item ? (item.is_active!==false?'checked':'') : 'checked'}> Active
           </label>
         </div>
         <div class="fin-form-actions">
-          <button class="fin-btn-teal" onclick="submitFeeItemAdd()">Submit</button>
+          <button class="fin-btn-teal" onclick="${item ? `submitFeeItemEdit(${item.id})` : 'submitFeeItemAdd()'}">${item ? 'Update' : 'Submit'}</button>
           <button class="fin-btn-cancel" onclick="loadView('fin-fee-items')">Cancel</button>
         </div>
       </div>
     </div>`;
 }
 
-async function submitFeeItemAdd() {
+function _fiValidate() {
   const name   = (document.getElementById('fi-f-name').value||'').trim();
   const cat    = document.getElementById('fi-f-category').value;
   const amtStr = document.getElementById('fi-f-amount').value;
@@ -2896,20 +3027,133 @@ async function submitFeeItemAdd() {
   document.getElementById('fi-f-name-err').textContent     = name ? '' : 'This field is required.'; if(!name) valid=false;
   document.getElementById('fi-f-category-err').textContent = cat  ? '' : 'This field is required.'; if(!cat)  valid=false;
   document.getElementById('fi-f-amount-err').textContent   = (amtStr!=='' && !isNaN(amount)) ? '' : 'This field is required.'; if(amtStr==='' || isNaN(amount)) valid=false;
-  if (!valid) return;
-
-  const payload = {
-    name, category: cat, default_amount: amount,
+  return valid;
+}
+function _fiPayload() {
+  return {
+    name: (document.getElementById('fi-f-name').value||'').trim(),
+    category: document.getElementById('fi-f-category').value,
+    default_amount: parseFloat(document.getElementById('fi-f-amount').value),
     is_active: document.getElementById('fi-f-active').checked,
+    fee_type_id: document.getElementById('fi-f-fee-type').value ? parseInt(document.getElementById('fi-f-fee-type').value, 10) : null,
+    account_id: document.getElementById('fi-f-account').value ? parseInt(document.getElementById('fi-f-account').value, 10) : null,
   };
+}
+
+async function submitFeeItemAdd() {
+  if (!_fiValidate()) return;
   try {
-    const res = await fetch(`${API_BASE}/finance/fee-items`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(payload)
+    const res = await apiFetch(`${API_BASE}/finance/fee-items`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(_fiPayload())
     });
-    if (res.ok) { showToast('Fee item added!', 'success'); _fsFeeItemsCache = null; } // invalidate so Class Fee Setup picks it up
-    else { showToast('Error: ' + await parseApiError(res), 'error'); }
+    if (res && res.ok) { showToast('Fee item added!', 'success'); _fsFeeItemsCache = null; } // invalidate so Class Fee Setup picks it up
+    else if (res) { showToast('Error: ' + await parseApiError(res), 'error'); }
   } catch (_) { showToast('Network error.', 'error'); }
   loadView('fin-fee-items');
+}
+
+async function submitFeeItemEdit(id) {
+  if (!_fiValidate()) return;
+  try {
+    const res = await apiFetch(`${API_BASE}/finance/fee-items/${id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(_fiPayload())
+    });
+    if (res && res.ok) { showToast('Fee item updated!', 'success'); _fsFeeItemsCache = null; }
+    else if (res) { showToast('Error: ' + await parseApiError(res), 'error'); }
+  } catch (_) { showToast('Network error.', 'error'); }
+  loadView('fin-fee-items');
+}
+
+async function deleteFeeItem(id) {
+  if (!confirm('Delete this fee item? This cannot be undone.')) return;
+  try {
+    const res = await apiFetch(`${API_BASE}/finance/fee-items/${id}`, { method: 'DELETE' });
+    if (res && res.ok) { showToast('Fee item deleted.', 'success'); _fsFeeItemsCache = null; loadView('fin-fee-items'); }
+    else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+  } catch (_) { showToast('Network error.', 'error'); }
+}
+
+// ==================== FEE TYPES ====================
+let _ftData = [];
+const _FT_API = `${API_BASE}/finance/fee-types/`;
+
+async function loadFeeTypesView(container) {
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Fee Types</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo;
+          <a href="#" class="fin-bc-link" onclick="loadView('fin-fee-items');return false;">Fee Items</a> &rsaquo; Fee Types
+        </div>
+      </div>
+      <div class="fin-controls-row">
+        <div class="fin-controls-left">Total <span id="ft-total">0</span> entries</div>
+        <div class="fin-controls-right"><button class="fin-btn-teal" onclick="renderFeeTypeForm(document.getElementById('main-content'))">+ Add Fee Type</button></div>
+      </div>
+      <div id="ft-table-container"></div>
+    </div>`;
+  renderSkeletonRows('ft-table-container', 3);
+  try {
+    const res = await apiFetch(_FT_API);
+    _ftData = (res && res.ok) ? _toArray(await res.json()) : [];
+  } catch (_) { _ftData = []; }
+  _renderFtTable();
+}
+function _renderFtTable() {
+  document.getElementById('ft-total').textContent = _ftData.length;
+  const rows = _ftData.length === 0
+    ? `<tr><td colspan="3" class="fin-empty">No records found.</td></tr>`
+    : _ftData.map(t => `<tr>
+        <td>${_finEsc(t.name)}</td>
+        <td>${_finEsc(t.description||'-')}</td>
+        <td class="fin-action-cell">
+          <a href="#" onclick="renderFeeTypeForm(document.getElementById('main-content'),${t.id});return false;">&#9998; Edit</a>
+        </td>
+      </tr>`).join('');
+  document.getElementById('ft-table-container').innerHTML = `
+    <div class="fin-table-wrap"><table class="fin-table">
+      <thead><tr><th>NAME</th><th>DESCRIPTION</th><th>ACTION</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+}
+function renderFeeTypeForm(container, editId) {
+  const item = editId ? _ftData.find(t => String(t.id) === String(editId)) : null;
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">${item ? 'Edit' : 'Add'} Fee Type</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo;
+          <a href="#" class="fin-bc-link" onclick="loadView('fin-fee-types');return false;">Fee Types</a> &rsaquo; ${item ? 'Edit' : 'Add'}
+        </div>
+      </div>
+      <div class="fin-form-wrap" style="max-width:560px;">
+        <div class="fin-form-group" style="margin-bottom:16px;">
+          <label class="fin-form-label">Name <span class="fin-required">*</span></label>
+          <input type="text" id="ft-f-name" class="fin-form-input" value="${_finEsc(item?.name||'')}" ${item?'disabled':''}>
+          <span class="fin-field-error" id="ft-f-name-err"></span>
+        </div>
+        <div class="fin-form-group" style="margin-bottom:20px;">
+          <label class="fin-form-label">Description</label>
+          <textarea id="ft-f-description" class="fin-form-textarea" rows="3">${_finEsc(item?.description||'')}</textarea>
+        </div>
+        <div class="fin-form-actions">
+          <button class="fin-btn-teal" onclick="${item ? `submitFeeTypeEdit(${item.id})` : 'submitFeeTypeAdd()'}">${item ? 'Update' : 'Submit'}</button>
+          <button class="fin-btn-cancel" onclick="loadView('fin-fee-types')">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+}
+async function submitFeeTypeAdd() {
+  const name = (document.getElementById('ft-f-name').value||'').trim();
+  if (!name) { document.getElementById('ft-f-name-err').textContent = 'This field is required.'; return; }
+  const payload = { name, description: document.getElementById('ft-f-description').value.trim() || null };
+  const res = await apiFetch(_FT_API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  if (res && res.ok) { showToast('Fee type added!', 'success'); loadView('fin-fee-types'); }
+  else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+}
+async function submitFeeTypeEdit(id) {
+  const payload = { description: document.getElementById('ft-f-description').value.trim() || null };
+  const res = await apiFetch(`${_FT_API}${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  if (res && res.ok) { showToast('Fee type updated!', 'success'); loadView('fin-fee-types'); }
+  else if (res) showToast('Error: ' + await parseApiError(res), 'error');
 }

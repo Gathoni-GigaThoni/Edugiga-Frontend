@@ -292,7 +292,7 @@ const FORM_VIEWS = new Set([
   'close-records-per-class',
   'student-reporting-add', 'student-reporting-bulk',
   // Finance
-  'fin-student-invoices', 'fin-student-bulk-invoicing',
+  'fin-student-invoices', 'fin-student-invoices-add', 'fin-student-bulk-invoicing',
   'fin-invoice-adjustments', 'fin-sponsorship-allocations',
   'fin-fee-setup-per-class', 'fin-receive-payments',
   'fin-chart-of-accounts', 'fin-fee-accounts', 'fin-fee-items',
@@ -473,6 +473,8 @@ async function loadView(view) {
     case 'fin-student-invoices':
       setActiveSidebarItem('sidebar-fin-invoices'); openFinStudentFinanceDropdown();
       loadStudentInvoicesView(main); break;
+    case 'fin-student-invoices-add':
+      openFinStudentFinanceDropdown(); loadStudentInvoicesAddView(main); break;
     case 'fin-student-bulk-invoicing':
       setActiveSidebarItem('sidebar-fin-bulk'); openFinStudentFinanceDropdown();
       loadStudentBulkInvoicingView(main); break;
@@ -511,6 +513,8 @@ async function loadView(view) {
     case 'fin-fee-items':
       setActiveSidebarItem('sidebar-fin-fee-items'); openFinUtilitiesDropdown();
       loadFeeItemsView(main); break;
+    case 'fin-fee-types':
+      openFinUtilitiesDropdown(); loadFeeTypesView(main); break;
     case 'fin-groups':
       setActiveSidebarItem('sidebar-fin-groups'); openFinUtilitiesDropdown();
       loadFinPlaceholderView(main, 'Groups'); break;
