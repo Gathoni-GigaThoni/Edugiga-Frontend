@@ -32,8 +32,11 @@ let feeAccountsData                = [];
 let feeItemsData                   = [];
 
 // ── Global fetch wrapper ──────────────────────────────────────────────────────
-// Attaches Authorization header, handles 401, and retries once on network
-// failure (the backend may be waking from sleep on the first request).
+// Attaches Authorization header, handles 401, and retries with backoff on
+// network failure — Render free-tier dynos sleep after 15 min idle and commonly
+// take 30-50s+ to wake, so a single 3s retry was nowhere near enough; this now
+// retries up to 3 times with increasing delays (3s, 8s, 15s — ~26s total).
+const _API_FETCH_RETRY_DELAYS_MS = [3000, 8000, 15000];
 async function apiFetch(url, options = {}, _attempt = 0) {
   const mergedHeaders = { ...(options.headers || {}), Authorization: `Bearer ${token}` };
   // When body is FormData the browser must set Content-Type (multipart/form-data + boundary).
@@ -44,10 +47,10 @@ async function apiFetch(url, options = {}, _attempt = 0) {
   try {
     res = await fetch(url, options);
   } catch (err) {
-    if (_attempt === 0) {
-      // Server may be waking up — wait 3 s then try once more
-      await new Promise(r => setTimeout(r, 3000));
-      return apiFetch(url, options, 1);
+    if (_attempt < _API_FETCH_RETRY_DELAYS_MS.length) {
+      if (_attempt === 0) showToast('Server is waking up, please wait…', 'info');
+      await new Promise(r => setTimeout(r, _API_FETCH_RETRY_DELAYS_MS[_attempt]));
+      return apiFetch(url, options, _attempt + 1);
     }
     console.error('apiFetch failed:', url, err.message);
     showToast('Could not reach the server. Please try again in a moment.', 'error');

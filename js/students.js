@@ -1512,6 +1512,10 @@ function _stuFlatPayload(d) {
 // Best-effort — a failure here doesn't roll back the record save that already
 // succeeded, it just surfaces a separate toast so transport isn't silently lost.
 async function _stuSyncTransport(studentId, d) {
+  // StudentRouteAssign now has an optional term_id — the backend uses it to
+  // auto-create the matching StudentFee for that term (and to void the right
+  // term's unpaid fee on removal), so it's derived from the same term_id
+  // _deriveStuTermAndClass() already resolves for the student's enrollment.
   const sel = d.transport_selection;
   if (d.uses_school_transport && sel && sel.route_id && sel.journey_type) {
     const direction = sel.journey_type === 'two_way'
@@ -1519,11 +1523,12 @@ async function _stuSyncTransport(studentId, d) {
       : (sel.time_of_day === 'evening' ? 'one_way_evening' : 'one_way_morning');
     const res = await apiFetch(`${API_BASE}/students/${studentId}/transport`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ route_id: String(sel.route_id), direction, use_daily_rate: false }),
+      body: JSON.stringify({ route_id: String(sel.route_id), direction, use_daily_rate: false, term_id: d.term_id || null }),
     });
     if (!(res && res.ok)) showToast('Saved, but transport assignment failed: ' + (res ? await parseApiError(res) : 'unknown error'), 'error');
   } else if (!d.uses_school_transport) {
-    await apiFetch(`${API_BASE}/students/${studentId}/transport`, { method: 'DELETE' }).catch(() => {});
+    const qs = d.term_id ? `?term_id=${d.term_id}` : '';
+    await apiFetch(`${API_BASE}/students/${studentId}/transport${qs}`, { method: 'DELETE' }).catch(() => {});
   }
 }
 

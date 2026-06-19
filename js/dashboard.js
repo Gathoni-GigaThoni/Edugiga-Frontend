@@ -15,6 +15,7 @@ function showDashboard() {
               <li id="sidebar-stu-cohort"        onclick="loadView('cohort-term-planner')">Cohort Term Planner</li>
               <li id="sidebar-stu-classes"       onclick="loadView('student-classes')">Classes</li>
               <li id="sidebar-stu-close-records" onclick="loadView('close-records-per-class')">Close Records Per Class</li>
+              <li id="sidebar-stu-eca-assignment" onclick="loadView('eca-assignment')">ECA Assignment</li>
               <li class="dropdown">
                 <span onclick="toggleDropdown('stu-utilities-dropdown')">Utilities ▾</span>
                 <ul id="stu-utilities-dropdown" class="dropdown-menu" style="display:none;">
@@ -377,6 +378,9 @@ async function loadView(view) {
     case 'student-close-records':
       setActiveSidebarItem('sidebar-stu-close-records'); openStuMgmtDropdowns();
       await loadCloseRecordsView(main); break;
+    case 'eca-assignment':
+      setActiveSidebarItem('sidebar-stu-eca-assignment'); openStuMgmtDropdowns();
+      await loadEcaAssignmentView(main); break;
     // Student Management – Utilities
     case 'utilities-student-sources':
       setActiveSidebarItem('sidebar-stu-sources'); openStuUtilitiesDropdown();

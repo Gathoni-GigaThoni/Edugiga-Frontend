@@ -2922,7 +2922,7 @@ function _renderFeeItemsTable() {
   const pages = Math.max(1, Math.ceil(filtered.length/_feeItemPerPage));
 
   let rows = paged.length===0
-    ? `<tr><td colspan="7" class="fin-empty">No records found.</td></tr>`
+    ? `<tr><td colspan="8" class="fin-empty">No records found.</td></tr>`
     : paged.map(f=>`<tr>
         <td>${_finEsc(String(f.id))}</td>
         <td>${_finEsc(f.name||'')}</td>
@@ -2930,6 +2930,7 @@ function _renderFeeItemsTable() {
         <td>${_finEsc(f.fee_type_id ? _fiFeeTypeName(f.fee_type_id) : '-')}</td>
         <td>${_finEsc(f.account_id ? _fiAccountName(f.account_id) : '-')}</td>
         <td>${_finFmt(parseFloat(f.default_amount)||0)}</td>
+        <td>${f.is_extra_curricular ? '<span style="display:inline-block;padding:2px 9px;border-radius:10px;font-size:0.78rem;font-weight:600;color:#1a5fb4;background:#dce8fb;">ECA</span>' : '-'}</td>
         <td class="fin-action-cell">
           <div class="fin-action-wrap">
             <button class="fin-action-btn" onclick="_pvToggleDropdown(event,'fi','${f.id}')">&#8230;</button>
@@ -2945,7 +2946,7 @@ function _renderFeeItemsTable() {
   if (el) el.innerHTML = `
     <div class="fin-table-wrap"><table class="fin-table">
       <thead><tr>
-        <th>ID</th><th>NAME</th><th>CATEGORY</th><th>FEE TYPE</th><th>ACCOUNT</th><th>DEFAULT AMOUNT</th><th>ACTION</th>
+        <th>ID</th><th>NAME</th><th>CATEGORY</th><th>FEE TYPE</th><th>ACCOUNT</th><th>DEFAULT AMOUNT</th><th>ECA</th><th>ACTION</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table></div>`;
@@ -3005,9 +3006,14 @@ async function renderFeeItemAddPage(container, editId) {
           <input type="number" id="fi-f-amount" class="fin-form-input" step="0.01" value="${item?.default_amount||''}">
           <span class="fin-field-error" id="fi-f-amount-err"></span>
         </div>
-        <div class="fin-form-group" style="margin-bottom:20px;">
+        <div class="fin-form-group" style="margin-bottom:12px;">
           <label style="display:flex;align-items:center;gap:8px;font-size:0.9rem;cursor:pointer;">
             <input type="checkbox" id="fi-f-active" class="fin-cb" ${item ? (item.is_active!==false?'checked':'') : 'checked'}> Active
+          </label>
+        </div>
+        <div class="fin-form-group" style="margin-bottom:20px;">
+          <label style="display:flex;align-items:center;gap:8px;font-size:0.9rem;cursor:pointer;">
+            <input type="checkbox" id="fi-f-eca" class="fin-cb" ${item?.is_extra_curricular?'checked':''}> Extra Curricular Activity
           </label>
         </div>
         <div class="fin-form-actions">
@@ -3035,6 +3041,7 @@ function _fiPayload() {
     category: document.getElementById('fi-f-category').value,
     default_amount: parseFloat(document.getElementById('fi-f-amount').value),
     is_active: document.getElementById('fi-f-active').checked,
+    is_extra_curricular: document.getElementById('fi-f-eca').checked,
     fee_type_id: document.getElementById('fi-f-fee-type').value ? parseInt(document.getElementById('fi-f-fee-type').value, 10) : null,
     account_id: document.getElementById('fi-f-account').value ? parseInt(document.getElementById('fi-f-account').value, 10) : null,
   };
