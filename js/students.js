@@ -307,11 +307,90 @@ const _STU_TABS = [
   { id: 'documents',  label: 'Document Uploads' },
 ];
 
+// ==================== ADD STUDENT — DRAFT PERSISTENCE ====================
+// Add-mode only (never Edit) — autosaves field values to sessionStorage so a
+// partially-filled Add Student form survives navigating away and back within
+// the same browser session.
+const STUDENT_DRAFT_KEY = 'student-add-draft';
+
+function saveStudentDraft(data) { sessionStorage.setItem(STUDENT_DRAFT_KEY, JSON.stringify(data)); }
+function loadStudentDraft() {
+  const raw = sessionStorage.getItem(STUDENT_DRAFT_KEY);
+  return raw ? JSON.parse(raw) : null;
+}
+function clearStudentDraft() { sessionStorage.removeItem(STUDENT_DRAFT_KEY); }
+
+// Merges this tab's current field values into the stored draft (other tabs'
+// previously-saved values are preserved since only one tab's fields exist in
+// the DOM at a time).
+function snapshotStudentDraft(tabContainer) {
+  const draft = loadStudentDraft() || {};
+  draft._activeTab = _stuEditActiveTab;
+  tabContainer.querySelectorAll('[data-draft-key]').forEach(field => {
+    const k = field.dataset.draftKey;
+    draft[k] = (field.type === 'checkbox' || field.type === 'radio') ? field.checked : field.value;
+  });
+  saveStudentDraft(draft);
+}
+
+// Assigns data-draft-key to every restorable field in the just-rendered tab and
+// wires autosave. Skips file inputs and read-only/disabled fields.
+function attachStudentDraftAutoSave(tabContainer) {
+  tabContainer.querySelectorAll('input,select,textarea').forEach(field => {
+    if (field.type === 'file' || field.readOnly || field.disabled || !field.id) return;
+    if (!field.dataset.draftKey) field.dataset.draftKey = field.id;
+    field.addEventListener('input',  () => snapshotStudentDraft(tabContainer));
+    field.addEventListener('change', () => snapshotStudentDraft(tabContainer));
+  });
+}
+
+// Restores any saved values for fields present in the just-rendered tab. Shows
+// the "draft restored" banner once per form open (only on the first tab shown).
+function restoreStudentDraftForTab(tabContainer, showBanner) {
+  const draft = loadStudentDraft();
+  if (!draft) return;
+
+  tabContainer.querySelectorAll('[data-draft-key]').forEach(field => {
+    if (field.id === 'se-level') return; // handled separately — its options load async
+    const k = field.dataset.draftKey;
+    if (draft[k] === undefined) return;
+    if (field.type === 'checkbox' || field.type === 'radio') field.checked = draft[k];
+    else field.value = draft[k];
+    // Re-fire change so dependent UI (toggleSiblingSection, onStuLevelChange, term
+    // derivation, etc., all wired via inline onchange) reacts to the restored value.
+    field.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+
+  if (showBanner && !tabContainer.querySelector('.draft-restored-banner')) {
+    const banner = document.createElement('div');
+    banner.className = 'draft-restored-banner';
+    banner.innerHTML = '<span>Unsaved draft restored from your last session.</span>' +
+      '<button class="draft-discard-btn" type="button">Discard draft</button>';
+    tabContainer.prepend(banner);
+    banner.querySelector('.draft-discard-btn').addEventListener('click', () => {
+      clearStudentDraft();
+      banner.remove();
+      tabContainer.querySelectorAll('[data-draft-key]').forEach(f => {
+        if (f.type === 'checkbox' || f.type === 'radio') f.checked = false;
+        else f.value = '';
+      });
+    });
+  }
+}
+
 async function loadStudentFormView(container) {
   const isEdit = !!_currentEditStudentId;
   const title  = isEdit ? 'Edit Student' : 'Add Student';
   _stuEditActiveTab    = 'personal';
   window._stuFormFiles = {};
+
+  window._stuDraftBannerShown = false;
+  if (!isEdit) {
+    const draft = loadStudentDraft();
+    if (draft && draft._activeTab && _STU_TABS.some(t => t.id === draft._activeTab)) {
+      _stuEditActiveTab = draft._activeTab;
+    }
+  }
 
   container.innerHTML = `
     <div class="fin-page" style="padding:0;">
@@ -386,15 +465,21 @@ function _renderStuEditTabContent(tabId) {
   if (!c) return;
   const d = window._stuFormData || {};
   switch (tabId) {
-    case 'personal':
+    case 'personal': {
       c.innerHTML = _stuTabPersonal(d);
       _wireStuPersonalTab();
-      populateAcademicLevelsDropdown('se-level', d.level_id).then(() => {
+      // In Add mode, prefer a restorable draft's level selection over d.level_id
+      // (which is always empty for a brand-new record) — the select's options
+      // don't exist yet, so this must be threaded through here rather than set
+      // via .value after the fact in the generic draft-restore pass below.
+      const draftLevelId = !_currentEditStudentId ? (loadStudentDraft() || {})['se-level'] : null;
+      populateAcademicLevelsDropdown('se-level', draftLevelId || d.level_id).then(() => {
         const levelSel = document.getElementById('se-level');
         if (levelSel && levelSel.value) onStuLevelChange(levelSel.value, false);
         if (d.joining_date) _deriveStuTermAndClass();
       });
       break;
+    }
     case 'prev-edu':  c.innerHTML = _stuTabPrevEdu(d);     break;
     case 'guardian':  c.innerHTML = _stuTabGuardian(d);    _wireStuGuardianTab(); break;
     case 'medical':   c.innerHTML = _stuTabMedical(d);     break;
@@ -405,6 +490,12 @@ function _renderStuEditTabContent(tabId) {
     el.addEventListener('change', () => { _stuEditDirty = true; });
     el.addEventListener('input',  () => { _stuEditDirty = true; });
   });
+
+  if (!_currentEditStudentId) {
+    attachStudentDraftAutoSave(c);
+    restoreStudentDraftForTab(c, !window._stuDraftBannerShown);
+    window._stuDraftBannerShown = true;
+  }
 }
 
 function _opts(items, valueKey, labelKey, selectedVal) {
@@ -550,8 +641,8 @@ function _stuTabPersonal(d) {
       <div class="stu-form-group">
         <label style="font-size:0.85rem;font-weight:500;color:#333;">Mapped to Meal Program?</label>
         <div style="display:flex;gap:20px;margin-top:6px;">
-          <label class="stu-checkbox-row"><input type="radio" name="se-meal" value="yes"${d.mapped_to_meal_program?' checked':''}> Yes</label>
-          <label class="stu-checkbox-row"><input type="radio" name="se-meal" value="no"${!d.mapped_to_meal_program?' checked':''}> No</label>
+          <label class="stu-checkbox-row"><input type="radio" id="se-meal-yes" name="se-meal" value="yes"${d.mapped_to_meal_program?' checked':''}> Yes</label>
+          <label class="stu-checkbox-row"><input type="radio" id="se-meal-no" name="se-meal" value="no"${!d.mapped_to_meal_program?' checked':''}> No</label>
         </div>
       </div>
       <div class="stu-form-group" style="justify-content:center;">
@@ -1580,6 +1671,7 @@ async function _persistStudentRecord(showSuccessToast) {
     _currentEditStudentId = saved.id;
     window._stuFormData = { ...d, ...saved };
     _stuEditDirty = false;
+    clearStudentDraft();
     await _stuSyncTransport(saved.id, d);
     await _stuUploadCachedFiles(saved.id);
     if (showSuccessToast) showToast('Student added successfully!', 'success');
@@ -1701,6 +1793,7 @@ async function submitStudentForm() {
 
 function cancelStudentForm() {
   if (_stuEditDirty && !confirm('You have unsaved changes. Discard them?')) return;
+  clearStudentDraft();
   _stuEditDirty = false;
   _currentEditStudentId = null;
   _stuEditActiveTab = 'personal';

@@ -1,15 +1,45 @@
 // ==================== DASHBOARD ====================
+
+// ---- Flyout group accordion persistence (sessionStorage) ----
+function flyoutGroupOpenState(ulId) {
+  return sessionStorage.getItem('flyout-group-' + ulId) === '1';
+}
+function flyoutGroupHeader(label, ulId) {
+  const open = flyoutGroupOpenState(ulId);
+  return `<span class="flyout-group-header${open ? ' flyout-group-open' : ''}" onclick="toggleDropdown('${ulId}')">${label}<span class="flyout-group-chevron">&#9656;</span></span>`;
+}
+function flyoutGroupUlStyle(ulId) {
+  return `display:${flyoutGroupOpenState(ulId) ? 'block' : 'none'};`;
+}
+
 function showDashboard() {
   const isSuperAdmin = currentUser?.clearance_level === 1 || currentUser?.role === 'super_admin';
   document.body.innerHTML = `
     <div class="container">
-      <nav class="sidebar">
-        <h2>EduGiga - Seven Oaks International School</h2>
-        <div class="sidebar-section">Dashboard</div>
-        <ul>
-          <li class="dropdown">
-            <span onclick="toggleDropdown('student-management-dropdown')">Student Management ▾</span>
-            <ul id="student-management-dropdown" class="dropdown-menu" style="display:none;">
+      <div class="left-rail" id="left-rail">
+        <button class="rail-item" data-module="student-management" title="Student Management" onclick="handleRailClick('student-management')">STU</button>
+        <button class="rail-item" data-module="student-academics" title="Student Academics" onclick="handleRailClick('student-academics')">ACAD</button>
+        <button class="rail-item" data-module="transport-management" title="Transport Management" onclick="handleRailClick('transport-management')">TRN</button>
+        <button class="rail-item" data-module="finance" title="Finance" onclick="handleRailClick('finance')">FIN</button>
+        <button class="rail-item" title="Inventory Management" onclick="loadView('inventory-management')">INV</button>
+        <button class="rail-item" title="Procurement" onclick="loadView('procurement')">PRC</button>
+        <button class="rail-item" data-module="human-resource" title="Human Resource" onclick="handleRailClick('human-resource')">HR</button>
+        <button class="rail-item" data-module="payroll" title="Payroll" onclick="handleRailClick('payroll')">PAY</button>
+        <button class="rail-item" title="Asset Management" onclick="loadView('asset-management')">AST</button>
+        <button class="rail-item" title="Communication" onclick="loadView('communication')">COM</button>
+        ${isSuperAdmin ? `<button class="rail-item" data-module="administration" title="Administration" onclick="handleRailClick('administration')">ADM</button>` : ''}
+        <button class="rail-item" title="Logout" onclick="logout()">OUT</button>
+      </div>
+
+      <div class="flyout-panel" id="flyout-panel" hidden>
+        <div class="flyout-header">
+          <span class="flyout-title" id="flyout-title"></span>
+          <button class="flyout-close" onclick="closeFlyout()">&times;</button>
+        </div>
+        <div class="flyout-nav sidebar" id="flyout-nav">
+
+          <div class="flyout-module-body" id="flyout-body-student-management" data-label="Student Management" hidden>
+            <ul id="student-management-dropdown" class="dropdown-menu">
               <li id="sidebar-stu-list"          onclick="loadView('students-list')">Students</li>
               <li id="sidebar-stu-reporting"     onclick="loadView('student-reporting')">Student Reporting</li>
               <li id="sidebar-stu-cohort"        onclick="loadView('cohort-term-planner')">Cohort Term Planner</li>
@@ -17,8 +47,8 @@ function showDashboard() {
               <li id="sidebar-stu-close-records" onclick="loadView('close-records-per-class')">Close Records Per Class</li>
               <li id="sidebar-stu-eca-assignment" onclick="loadView('eca-assignment')">ECA Assignment</li>
               <li class="dropdown">
-                <span onclick="toggleDropdown('stu-utilities-dropdown')">Utilities ▾</span>
-                <ul id="stu-utilities-dropdown" class="dropdown-menu" style="display:none;">
+                ${flyoutGroupHeader('Utilities', 'stu-utilities-dropdown')}
+                <ul id="stu-utilities-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('stu-utilities-dropdown')}">
                   <li id="sidebar-stu-sources" class="sa-sub-sub" onclick="loadView('utilities-student-sources')">Student Sources</li>
                   <li id="sidebar-stu-streams" class="sa-sub-sub" onclick="loadView('utilities-streams')">Streams</li>
                   <li id="sidebar-stu-funding" class="sa-sub-sub" onclick="loadView('utilities-funding-sources')">Funding Sources</li>
@@ -28,72 +58,72 @@ function showDashboard() {
                 </ul>
               </li>
               <li class="dropdown">
-                <span onclick="toggleDropdown('stu-reports-dropdown')">Reports ▾</span>
-                <ul id="stu-reports-dropdown" class="dropdown-menu" style="display:none;">
+                ${flyoutGroupHeader('Reports', 'stu-reports-dropdown')}
+                <ul id="stu-reports-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('stu-reports-dropdown')}">
                   <li id="sidebar-stu-report"     class="sa-sub-sub" onclick="loadView('reports-student')">Student Report</li>
                   <li id="sidebar-stu-gua-report" class="sa-sub-sub" onclick="loadView('reports-guardian')">Student Guardian Report</li>
                 </ul>
               </li>
             </ul>
-          </li>
-          <li class="dropdown">
-            <span onclick="toggleDropdown('student-academics-dropdown')">Student Academics ▾</span>
-            <ul id="student-academics-dropdown" class="dropdown-menu" style="display:none;">
+          </div>
+
+          <div class="flyout-module-body" id="flyout-body-student-academics" data-label="Student Academics" hidden>
+            <ul id="student-academics-dropdown" class="dropdown-menu">
               <li id="sidebar-att-register" onclick="loadView('attendance-register')">Attendance Register</li>
               <li class="dropdown">
-                <span onclick="toggleDropdown('att-reports-dropdown')">Attendance Reports ▾</span>
-                <ul id="att-reports-dropdown" class="dropdown-menu" style="display:none;">
+                ${flyoutGroupHeader('Attendance Reports', 'att-reports-dropdown')}
+                <ul id="att-reports-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('att-reports-dropdown')}">
                   <li id="sidebar-att-reg-report" class="sa-sub-sub" onclick="loadView('attendance-register-report')">Attendance Register Report</li>
                 </ul>
               </li>
               <li id="sidebar-formative-assessment" onclick="loadView('formative-assessment')">Formative Assessment</li>
               <li id="sidebar-sa-subjects"     onclick="loadView('sa-subjects')">Subjects</li>
               <li class="dropdown">
-                <span onclick="toggleDropdown('sa-utilities-dropdown')">Utilities ▾</span>
-                <ul id="sa-utilities-dropdown" class="dropdown-menu" style="display:none;"></ul>
+                ${flyoutGroupHeader('Utilities', 'sa-utilities-dropdown')}
+                <ul id="sa-utilities-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('sa-utilities-dropdown')}"></ul>
               </li>
               <li class="dropdown">
-                <span onclick="toggleDropdown('sa-setup-dropdown')">Set-up ▾</span>
-                <ul id="sa-setup-dropdown" class="dropdown-menu" style="display:none;"></ul>
+                ${flyoutGroupHeader('Set-up', 'sa-setup-dropdown')}
+                <ul id="sa-setup-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('sa-setup-dropdown')}"></ul>
               </li>
               <li id="sidebar-sa-sessions"     onclick="loadView('sa-sessions')">Terms</li>
               <li id="sidebar-sa-session-types" onclick="loadView('sa-session-types')">Term Types</li>
               <li id="sidebar-sa-academic-years" onclick="loadView('sa-academic-years')">Academic Years</li>
               <li id="sidebar-sa-academic-levels" onclick="loadView('sa-academic-levels')">Academic Levels</li>
             </ul>
-          </li>
-          <li class="dropdown">
-            <span onclick="toggleDropdown('transport-dropdown')">Transport Management ▾</span>
-            <ul id="transport-dropdown" class="dropdown-menu" style="display:none;">
+          </div>
+
+          <div class="flyout-module-body" id="flyout-body-transport-management" data-label="Transport Management" hidden>
+            <ul id="transport-dropdown" class="dropdown-menu">
               <li id="sidebar-trn-servicings"  onclick="loadView('transport-vehicle-servicings')">Vehicle Servicings</li>
               <li id="sidebar-trn-fueling"     onclick="loadView('transport-fueling-record')">Fueling Record</li>
               <li id="sidebar-trn-schedules"   onclick="loadView('transport-bus-schedules')">Bus Schedules</li>
               <li id="sidebar-trn-routes"      onclick="loadView('transport-routes')">Routes</li>
               <li class="dropdown">
-                <span onclick="toggleDropdown('transport-reports-dropdown')">Reports ▾</span>
-                <ul id="transport-reports-dropdown" class="dropdown-menu" style="display:none;">
+                ${flyoutGroupHeader('Reports', 'transport-reports-dropdown')}
+                <ul id="transport-reports-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('transport-reports-dropdown')}">
                   <li id="sidebar-trn-bus-boarding"     class="sa-sub-sub" onclick="loadView('transport-reports-bus-boarding')">Bus Boarding Report</li>
                   <li id="sidebar-trn-student-per-route" class="sa-sub-sub" onclick="loadView('transport-reports-student-per-route')">Student Report per Route</li>
                 </ul>
               </li>
               <li class="dropdown">
-                <span onclick="toggleDropdown('transport-utilities-dropdown')">Utilities ▾</span>
-                <ul id="transport-utilities-dropdown" class="dropdown-menu" style="display:none;">
+                ${flyoutGroupHeader('Utilities', 'transport-utilities-dropdown')}
+                <ul id="transport-utilities-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('transport-utilities-dropdown')}">
                   <li id="sidebar-trn-service-items"   class="sa-sub-sub" onclick="loadView('transport-service-items')">Service Items</li>
                   <li id="sidebar-trn-maintenance"     class="sa-sub-sub" onclick="loadView('transport-maintenance-tasks')">Maintenance Tasks</li>
                   <li id="sidebar-trn-vehicles"        class="sa-sub-sub" onclick="loadView('transport-vehicles')">Vehicles</li>
                 </ul>
               </li>
             </ul>
-          </li>
-          <li class="dropdown">
-            <span onclick="toggleDropdown('finance-dropdown')">Finance ▾</span>
-            <ul id="finance-dropdown" class="dropdown-menu" style="display:none;">
+          </div>
+
+          <div class="flyout-module-body" id="flyout-body-finance" data-label="Finance" hidden>
+            <ul id="finance-dropdown" class="dropdown-menu">
               <li onclick="loadView('student-fees-status')">Student Fees Status</li>
               <li onclick="loadView('summarized-fee-statement')">Summarized Fee Statement</li>
               <li class="dropdown">
-                <span onclick="toggleDropdown('fin-sf-dropdown')">Student Finance ▾</span>
-                <ul id="fin-sf-dropdown" class="dropdown-menu" style="display:none;">
+                ${flyoutGroupHeader('Student Finance', 'fin-sf-dropdown')}
+                <ul id="fin-sf-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('fin-sf-dropdown')}">
                   <li id="sidebar-fin-invoices"       class="sidebar-sub-sub" onclick="loadView('fin-student-invoices')">Student Invoices</li>
                   <li id="sidebar-fin-bulk"           class="sidebar-sub-sub" onclick="loadView('fin-student-bulk-invoicing')">Student Bulk Invoicing</li>
                   <li id="sidebar-fin-inv-adj"        class="sidebar-sub-sub" onclick="loadView('fin-invoice-adjustments')">Student Invoice Adjustments</li>
@@ -104,8 +134,8 @@ function showDashboard() {
               </li>
               <li onclick="loadView('cash-bank-management')">Cash and Bank Management</li>
               <li class="dropdown">
-                <span onclick="toggleDropdown('fin-payables-dropdown')">Payables ▾</span>
-                <ul id="fin-payables-dropdown" class="dropdown-menu" style="display:none;">
+                ${flyoutGroupHeader('Payables', 'fin-payables-dropdown')}
+                <ul id="fin-payables-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('fin-payables-dropdown')}">
                   <li id="sidebar-fin-pv"  class="sidebar-sub-sub" onclick="loadView('payables-payment-vouchers')">Payment Vouchers</li>
                   <li id="sidebar-fin-tv"  class="sidebar-sub-sub" onclick="loadView('payables-tax-vouchers')">Tax Vouchers</li>
                   <li id="sidebar-fin-si"  class="sidebar-sub-sub" onclick="loadView('payables-supplier-invoices')">Supplier Invoices</li>
@@ -120,8 +150,8 @@ function showDashboard() {
                 </ul>
               </li>
               <li class="dropdown">
-                <span onclick="toggleDropdown('fin-receivables-dropdown')">Receivables ▾</span>
-                <ul id="fin-receivables-dropdown" class="dropdown-menu" style="display:none;">
+                ${flyoutGroupHeader('Receivables', 'fin-receivables-dropdown')}
+                <ul id="fin-receivables-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('fin-receivables-dropdown')}">
                   <li id="sidebar-fin-rcv-pay"   class="sidebar-sub-sub" onclick="loadView('fin-receive-payments')">Receive Payments</li>
                   <li id="sidebar-fin-txns"       class="sidebar-sub-sub" onclick="loadView('fin-transactions')">Transactions</li>
                   <li id="sidebar-fin-deposit"    class="sidebar-sub-sub" onclick="loadView('fin-deposit-slip')">Deposit Slip</li>
@@ -131,8 +161,8 @@ function showDashboard() {
               <li onclick="loadView('cancellations')">Cancellations</li>
               <li onclick="loadView('journal-entries')">Journal Entries</li>
               <li class="dropdown">
-                <span onclick="toggleDropdown('fin-utilities-dropdown')">Utilities ▾</span>
-                <ul id="fin-utilities-dropdown" class="dropdown-menu" style="display:none;">
+                ${flyoutGroupHeader('Utilities', 'fin-utilities-dropdown')}
+                <ul id="fin-utilities-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('fin-utilities-dropdown')}">
                   <li id="sidebar-fin-coa"        class="sidebar-sub-sub" onclick="loadView('fin-chart-of-accounts')">Chart of Accounts</li>
                   <li id="sidebar-fin-fee-accts"  class="sidebar-sub-sub" onclick="loadView('fin-fee-accounts')">Fee Accounts</li>
                   <li id="sidebar-fin-fee-items"  class="sidebar-sub-sub" onclick="loadView('fin-fee-items')">Fee Items</li>
@@ -144,8 +174,8 @@ function showDashboard() {
               </li>
               <li onclick="loadView('finance-setup')">Set-up</li>
               <li class="dropdown">
-                <span onclick="toggleDropdown('fin-reports-dropdown')">Reports ▾</span>
-                <ul id="fin-reports-dropdown" class="dropdown-menu" style="display:none;">
+                ${flyoutGroupHeader('Reports', 'fin-reports-dropdown')}
+                <ul id="fin-reports-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('fin-reports-dropdown')}">
                   <li class="sidebar-sub-sub" onclick="loadView('reports-general-ledger')">General Ledger</li>
                   <li class="sidebar-sub-sub" onclick="loadView('reports-trial-balance')">Trial Balance</li>
                   <li class="sidebar-sub-sub" onclick="loadView('reports-balance-sheet')">Balance Sheet</li>
@@ -174,24 +204,22 @@ function showDashboard() {
                 </ul>
               </li>
             </ul>
-          </li>
-          <li onclick="loadView('inventory-management')">Inventory Management</li>
-          <li onclick="loadView('procurement')">Procurement</li>
-          <li class="dropdown">
-            <span onclick="toggleDropdown('hr-dropdown')">Human Resource ▾</span>
-            <ul id="hr-dropdown" class="dropdown-menu" style="display:none;">
+          </div>
+
+          <div class="flyout-module-body" id="flyout-body-human-resource" data-label="Human Resource" hidden>
+            <ul id="hr-dropdown" class="dropdown-menu">
               <li id="sidebar-hr-employee-directory" onclick="loadView('hr-employee-directory')">Employee Directory</li>
               <li id="sidebar-hr-staff-attendance" onclick="loadView('hr-staff-attendance')">Staff Attendance</li>
               <li id="sidebar-hr-utilities" onclick="loadView('hr-utilities')">Utilities</li>
             </ul>
-          </li>
-          <li class="dropdown">
-            <span onclick="toggleDropdown('payroll-dropdown')">Payroll ▾</span>
-            <ul id="payroll-dropdown" class="dropdown-menu" style="display:none;">
+          </div>
+
+          <div class="flyout-module-body" id="flyout-body-payroll" data-label="Payroll" hidden>
+            <ul id="payroll-dropdown" class="dropdown-menu">
               <li id="sidebar-payroll-esp" onclick="loadView('payroll-esp')">Employee Service Profile</li>
               <li class="dropdown">
-                <span onclick="toggleDropdown('payroll-utilities-dropdown')">Utilities ▾</span>
-                <ul id="payroll-utilities-dropdown" class="dropdown-menu" style="display:none;">
+                ${flyoutGroupHeader('Utilities', 'payroll-utilities-dropdown')}
+                <ul id="payroll-utilities-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('payroll-utilities-dropdown')}">
                   <li id="sidebar-payroll-pay-accounts"        class="sidebar-sub-sub" onclick="loadView('payroll-pay-accounts')">Pay Accounts</li>
                   <li id="sidebar-payroll-pay-grades"          class="sidebar-sub-sub" onclick="loadView('payroll-pay-grades')">Pay Grades</li>
                   <li id="sidebar-payroll-salary-periods"      class="sidebar-sub-sub" onclick="loadView('payroll-salary-periods')">Salary Periods</li>
@@ -202,22 +230,21 @@ function showDashboard() {
                 </ul>
               </li>
             </ul>
-          </li>
-          <li onclick="loadView('asset-management')">Asset Management</li>
-          <li onclick="loadView('communication')">Communication</li>
+          </div>
+
           ${isSuperAdmin ? `
-          <li class="dropdown">
-            <span onclick="toggleDropdown('admin-dropdown')">Administration ▾</span>
-            <ul id="admin-dropdown" class="dropdown-menu" style="display:none;">
+          <div class="flyout-module-body" id="flyout-body-administration" data-label="Administration" hidden>
+            <ul id="admin-dropdown" class="dropdown-menu">
               <li onclick="loadView('user-management')">User Management</li>
               <li onclick="loadView('admin-roles')">Roles</li>
               <li onclick="loadView('admin-setup')">Setup</li>
             </ul>
-          </li>
+          </div>
           ` : ''}
-          <li onclick="logout()">Logout</li>
-        </ul>
-      </nav>
+
+        </div>
+      </div>
+
       <main id="main-content">
         <h2>Welcome to EduGiga - Seven Oaks International School</h2>
         <p>Select a module from the sidebar.</p>
@@ -235,6 +262,47 @@ function showDashboard() {
       </main>
     </div>
   `;
+
+  document.getElementById('main-content').addEventListener('click', () => {
+    if (activeModule !== null) closeFlyout();
+  });
+}
+
+// ==================== LEFT RAIL / FLYOUT PANEL ====================
+let activeModule = null; // module key of the currently open flyout panel
+
+function handleRailClick(moduleKey) {
+  if (activeModule === moduleKey) {
+    closeFlyout();
+  } else {
+    openFlyout(moduleKey);
+  }
+}
+
+function openFlyout(moduleKey) {
+  const body = document.getElementById('flyout-body-' + moduleKey);
+  if (!body) return;
+  activeModule = moduleKey;
+
+  document.querySelectorAll('.rail-item').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.module === moduleKey);
+  });
+  document.querySelectorAll('.flyout-module-body').forEach(b => b.setAttribute('hidden', ''));
+  body.removeAttribute('hidden');
+
+  const titleEl = document.getElementById('flyout-title');
+  if (titleEl) titleEl.textContent = body.dataset.label || '';
+
+  document.getElementById('flyout-panel').removeAttribute('hidden');
+  document.body.classList.add('flyout-open');
+}
+
+function closeFlyout() {
+  activeModule = null;
+  document.querySelectorAll('.rail-item').forEach(b => b.classList.remove('active'));
+  const panel = document.getElementById('flyout-panel');
+  if (panel) panel.setAttribute('hidden', '');
+  document.body.classList.remove('flyout-open');
 }
 
 // ==================== DASHBOARD STUDENT SEARCH WIDGET ====================
@@ -677,6 +745,7 @@ async function loadView(view) {
     default: main.innerHTML = "<p>Module not found.</p>";
   }
   closeAllSidebarDropdowns();
+  closeFlyout();
 }
 
 function showPlaceholder(container, title) {
@@ -701,7 +770,12 @@ function loadSaPlaceholderView(container, title) {
 
 function toggleDropdown(id) {
   const menu = document.getElementById(id);
-  menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+  if (!menu) return;
+  const nowOpen = menu.style.display !== 'block';
+  menu.style.display = nowOpen ? 'block' : 'none';
+  sessionStorage.setItem('flyout-group-' + id, nowOpen ? '1' : '0');
+  const header = menu.previousElementSibling;
+  if (header && header.classList) header.classList.toggle('flyout-group-open', nowOpen);
 }
 
 

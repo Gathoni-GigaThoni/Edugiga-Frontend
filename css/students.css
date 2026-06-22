@@ -439,3 +439,24 @@
   color: #78350f;
   font-size: 0.9rem;
 }
+
+/* ── Add Student draft-restored banner ── */
+.draft-restored-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #fff8e1;
+  border: 1px solid #ffe082;
+  border-radius: 6px;
+  padding: 10px 16px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: #5d4037;
+}
+.draft-discard-btn {
+  border: none; background: none;
+  color: #e65100; cursor: pointer;
+  font-weight: 600; font-size: 13px;
+  padding: 0; margin-left: 16px;
+  text-decoration: underline;
+}

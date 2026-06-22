@@ -369,6 +369,124 @@ th {
 .stu-detail-label { font-size: 0.78rem; color: #888; font-weight: 500; text-transform: uppercase; letter-spacing: 0.03em; }
 .stu-detail-value { font-size: 0.92rem; color: #2c3e50; font-weight: 500; }
 
+/* ==================== LEFT RAIL + FLYOUT NAVIGATION ==================== */
+
+.left-rail {
+  position: fixed;
+  top: 0; left: 0; bottom: 0;
+  width: 64px;
+  background: #2c3e50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 16px;
+  z-index: 200;
+  overflow-y: auto;
+}
+
+.rail-item {
+  width: 48px; height: 48px;
+  display: flex; align-items: center; justify-content: center;
+  border: none; background: transparent; cursor: pointer;
+  border-radius: 8px; margin-bottom: 4px;
+  color: rgba(255,255,255,0.7);
+  font-size: 0.7rem; font-weight: 700; letter-spacing: 0.02em;
+  transition: background 0.15s, color 0.15s;
+  position: relative;
+}
+.rail-item:hover { background: rgba(255,255,255,0.1); color: #fff; }
+.rail-item.active { background: rgba(255,255,255,0.15); color: #fff; }
+.rail-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 8px; bottom: 8px;
+  width: 3px;
+  background: #e8528a;
+  border-radius: 0 2px 2px 0;
+}
+
+/* FLYOUT PANEL */
+.flyout-panel {
+  position: fixed;
+  top: 0; left: 64px; bottom: 0;
+  width: 280px;
+  background: #fff;
+  box-shadow: 2px 0 8px rgba(0,0,0,0.12);
+  z-index: 190;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.flyout-panel[hidden] { display: none; }
+
+.flyout-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid #eee;
+  flex-shrink: 0;
+}
+.flyout-title { font-weight: 700; font-size: 16px; color: #0d3349; }
+.flyout-close {
+  border: none; background: none; cursor: pointer;
+  font-size: 20px; color: #999; padding: 2px 6px;
+  border-radius: 4px; line-height: 1;
+}
+.flyout-close:hover { background: #f0f0f0; color: #333; }
+
+.flyout-nav { flex: 1; overflow-y: auto; padding: 8px 0; }
+
+.flyout-module-body[hidden] { display: none; }
+
+/* Top-level module list (rail replaces the old toggle) — always shown */
+.flyout-module-body > ul.dropdown-menu {
+  position: static !important;
+  display: block !important;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  margin: 0;
+}
+
+/* Nested group accordions (Utilities / Reports etc.) render inline below their
+   header instead of popping out — display still toggled inline by toggleDropdown() */
+.flyout-module-body .dropdown-menu .dropdown-menu {
+  position: static !important;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  margin-left: 16px;
+  border-left: 2px solid #e0e0e0;
+}
+
+.flyout-nav.sidebar { width: auto; background: #fff; color: #333; padding: 8px 0; }
+.flyout-nav.sidebar li { padding: 10px 20px; border-bottom: 1px solid #f3f3f3; color: #333; font-size: 0.88rem; }
+.flyout-nav.sidebar li:hover { background: #f5f8fa; }
+.flyout-nav.sidebar li.sidebar-active {
+  background: #f0fafa;
+  color: #00b5b8;
+  font-weight: 600;
+  border-left: 3px solid #e8528a;
+  padding-left: 17px;
+}
+
+.flyout-group-header {
+  display: flex; align-items: center; justify-content: space-between;
+  cursor: pointer; user-select: none;
+}
+.flyout-group-chevron {
+  font-size: 10px; color: #888;
+  display: inline-block;
+  transition: transform 0.2s;
+}
+.flyout-group-header.flyout-group-open .flyout-group-chevron { transform: rotate(90deg); }
+
+/* content area offset for the fixed rail + panel */
+#main-content { margin-left: 64px; transition: margin-left 0.2s; }
+body.flyout-open #main-content { margin-left: 344px; }
+
 /* ── Student search cards ── */
 .stu-cards-grid {
   display: grid;
