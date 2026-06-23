@@ -331,6 +331,17 @@
   font-style: italic;
 }
 
+.stu-sibling-preview {
+  font-size: 0.82rem;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: 5px;
+  line-height: 1.5;
+  background: #e3f7f7;
+  border: 1px solid #80deea;
+  color: #00695c;
+}
+
 /* ── Transport selection cascade ── */
 .stu-transport-summary {
   font-size: 0.83rem;

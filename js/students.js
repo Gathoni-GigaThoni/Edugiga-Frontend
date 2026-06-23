@@ -663,12 +663,13 @@ function _stuTabPersonal(d) {
             <div class="stu-form-group">
               <label>Sibling Student ID</label>
               <input id="se-sibling-id" class="fin-search-input" style="width:100%!important" value="${siblingId}"
-                     placeholder="SOIS-0000001" oninput="validateSiblingId(this)">
+                     placeholder="SOIS-0000001" oninput="validateSiblingId(this);updateSiblingDiscountPreview()">
               <small style="color:#888;font-size:0.78rem;">Format: SOIS-0000001</small>
               <span class="stu-field-error" id="err-se-sibling-id"></span>
             </div>
           </div>
           <p class="stu-sibling-note">Sibling discount will be applied automatically based on age order.</p>
+          <p id="se-sibling-discount-preview" class="stu-sibling-preview" hidden></p>
         </div>
       </div>
 
@@ -687,8 +688,10 @@ function _wireStuPersonalTab() {
     dob.addEventListener('change', () => {
       const ageEl = document.getElementById('se-age-display');
       if (ageEl) ageEl.textContent = calculateAge(dob.value);
+      updateSiblingDiscountPreview();
     });
   }
+  updateSiblingDiscountPreview();
   const joiningDate = document.getElementById('se-joining-date');
   if (joiningDate) {
     joiningDate.addEventListener('change', async () => {
@@ -914,6 +917,55 @@ function toggleSiblingSection() {
   const chk = document.getElementById('se-has-sibling');
   const sec = document.getElementById('se-sibling-section');
   if (sec) sec.style.display = chk?.checked ? 'block' : 'none';
+  updateSiblingDiscountPreview();
+}
+
+// Informational only — does not affect the submitted payload. Compares the
+// current student's date_of_birth against the sibling's to show which tier
+// (and configured %) they'll likely fall under. Only handles the two-sibling
+// case; the backend computes the definitive tier (incl. 3rd/4th child) across
+// the whole sibling group when invoices are generated.
+async function updateSiblingDiscountPreview() {
+  const siblingIdField = document.getElementById('se-sibling-id');
+  const dobField       = document.getElementById('se-dob');
+  const previewEl      = document.getElementById('se-sibling-discount-preview');
+  if (!previewEl) return;
+
+  const siblingId  = siblingIdField ? siblingIdField.value.trim() : '';
+  const currentDob = dobField ? dobField.value : '';
+
+  if (!siblingId || !currentDob || !/^SOIS-\d{7}$/.test(siblingId)) {
+    previewEl.hidden = true;
+    return;
+  }
+
+  const res = await apiFetch(`${API_BASE}/students/?search=${encodeURIComponent(siblingId)}`);
+  if (!res || !res.ok) { previewEl.hidden = true; return; }
+
+  const all = await res.json().catch(() => []);
+  const siblingRecord = _toArray(all).find(s => s.student_id === siblingId);
+  if (!siblingRecord || !siblingRecord.date_of_birth) { previewEl.hidden = true; return; }
+
+  const discountSettings = await fetchDiscountSettings();
+
+  const currentDate = new Date(currentDob);
+  const siblingDate = new Date(siblingRecord.date_of_birth);
+
+  let tier, pct;
+  if (currentDate < siblingDate) {
+    tier = 'First Child';
+    pct  = discountSettings ? discountSettings.first_child_percentage : null;
+  } else {
+    tier = 'Second Child';
+    pct  = discountSettings ? discountSettings.second_child_percentage : null;
+  }
+
+  const pctText = (pct !== null && pct !== undefined)
+    ? `and will receive a <strong>${pct}%</strong> tuition discount`
+    : '(discount percentage not yet configured in Discount Setup)';
+
+  previewEl.innerHTML = `Based on birth dates, this student will be treated as the <strong>${tier}</strong> ${pctText}.`;
+  previewEl.hidden = false;
 }
 
 // File inputs live on different tabs that get torn down on tab switch, so the selected

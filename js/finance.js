@@ -1068,6 +1068,191 @@ function openFinUtilitiesDropdown() {
   const dd = document.getElementById('fin-utilities-dropdown');
   if (dd) dd.style.display = 'block';
 }
+function openFinSetupDropdown() {
+  const dd = document.getElementById('fin-setup-dropdown');
+  if (dd) dd.style.display = 'block';
+}
+
+// ==================== DISCOUNT SETUP ====================
+// Singleton settings record: GET fetches the current config (404/null = not
+// yet configured), POST creates it the first time, PUT updates it thereafter.
+
+let _discountSettingsId = null;
+
+async function renderFinanceDiscountSetup(container) {
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Set-up</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Set-up</div>
+      </div>
+      <div class="fin-form-wrap">
+        <div class="fin-form-grid-2">
+          <div class="fin-form-group">
+            <label class="fin-form-label">Discount Account <span class="fin-required">*</span></label>
+            <select id="disc-account" class="fin-form-select">
+              <option value="">Please Select</option>
+            </select>
+            <span class="fin-field-error" id="err-disc-account"></span>
+          </div>
+          <div class="fin-form-group">
+            <label class="fin-form-label">First Child (%)</label>
+            <input type="number" id="disc-first" class="fin-form-input" min="0" max="100" step="0.01">
+          </div>
+          <div class="fin-form-group">
+            <label class="fin-form-label">Second Child (%)</label>
+            <input type="number" id="disc-second" class="fin-form-input" min="0" max="100" step="0.01">
+          </div>
+          <div class="fin-form-group">
+            <label class="fin-form-label">Third Child (%)</label>
+            <input type="number" id="disc-third" class="fin-form-input" min="0" max="100" step="0.01">
+          </div>
+          <div class="fin-form-group">
+            <label class="fin-form-label">Fourth Child (%)</label>
+            <input type="number" id="disc-fourth" class="fin-form-input" min="0" max="100" step="0.01">
+          </div>
+          <div class="fin-form-group"></div>
+        </div>
+        <div class="fin-form-actions">
+          <button class="fin-btn-teal" id="disc-submit-btn" onclick="saveDiscountSetup()">Submit</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  await Promise.all([
+    _loadDiscountAccountDropdown(),
+    _loadExistingDiscountSettings()
+  ]);
+}
+
+async function _loadDiscountAccountDropdown() {
+  const select = document.getElementById('disc-account');
+  if (!select) return;
+
+  let accounts = [];
+  const res = await apiFetch(`${API_BASE}/finance/fee-accounts/`);
+  if (res && res.ok) {
+    const all = await res.json().catch(() => []);
+    accounts = _toArray(all).filter(a => {
+      const isDiscount  = a.is_discount_account ?? a.isDiscountAccount;
+      const deactivated = a.is_deactivated ?? a.isDeactivated;
+      return isDiscount === true && !deactivated;
+    });
+  } else if (res) {
+    showToast('Failed to load discount accounts.', 'error');
+  }
+
+  accounts.forEach(acct => {
+    const opt = document.createElement('option');
+    opt.value = acct.id;
+    opt.textContent = acct.account_name || acct.accountName || acct.item_name || acct.itemName || `Account ${acct.id}`;
+    select.appendChild(opt);
+  });
+
+  if (accounts.length === 0) {
+    const hint = document.createElement('p');
+    hint.className = 'fin-field-hint fin-field-hint-warning';
+    hint.textContent = 'No discount accounts found. Please create a discount account under Chart of Accounts before configuring sibling discounts.';
+    select.insertAdjacentElement('afterend', hint);
+  }
+}
+
+async function _loadExistingDiscountSettings() {
+  _discountSettingsId = null;
+  const res = await apiFetch(`${API_BASE}/finance/discount-setup/`);
+  if (!res || res.status === 404 || !res.ok) {
+    if (res && res.status !== 404) showToast('Failed to load existing discount settings.', 'error');
+    return;
+  }
+
+  const data = await res.json().catch(() => null);
+  if (!data || !data.id) return;
+
+  _discountSettingsId = data.id;
+
+  const select = document.getElementById('disc-account');
+  if (select && data.discount_account_id != null) select.value = String(data.discount_account_id);
+
+  const setField = (id, val) => {
+    const el = document.getElementById(id);
+    if (el && val !== null && val !== undefined) el.value = val;
+  };
+  setField('disc-first',  data.first_child_percentage);
+  setField('disc-second', data.second_child_percentage);
+  setField('disc-third',  data.third_child_percentage);
+  setField('disc-fourth', data.fourth_child_percentage);
+}
+
+async function saveDiscountSetup() {
+  const accountSelect = document.getElementById('disc-account');
+  const accountId = accountSelect.value;
+  const errEl = document.getElementById('err-disc-account');
+
+  if (!accountId) {
+    if (errEl) errEl.textContent = 'Please select a discount account.';
+    accountSelect.classList.add('error');
+    return;
+  }
+  if (errEl) errEl.textContent = '';
+  accountSelect.classList.remove('error');
+
+  const pctIds = ['disc-first', 'disc-second', 'disc-third', 'disc-fourth'];
+  for (const id of pctIds) {
+    const raw = document.getElementById(id).value;
+    if (raw === '') continue;
+    const val = parseFloat(raw);
+    if (isNaN(val) || val < 0 || val > 100) {
+      showToast('Percentage values must be between 0 and 100.', 'error');
+      document.getElementById(id).focus();
+      return;
+    }
+  }
+
+  const parseOptional = (id) => {
+    const v = document.getElementById(id).value;
+    return v === '' ? null : parseFloat(v);
+  };
+
+  const payload = {
+    discount_account_id:     parseInt(accountId, 10),
+    first_child_percentage:  parseOptional('disc-first'),
+    second_child_percentage: parseOptional('disc-second'),
+    third_child_percentage:  parseOptional('disc-third'),
+    fourth_child_percentage: parseOptional('disc-fourth')
+  };
+
+  const submitBtn = document.getElementById('disc-submit-btn');
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Saving...';
+
+  const method = _discountSettingsId === null ? 'POST' : 'PUT';
+  const res = await apiFetch(`${API_BASE}/finance/discount-setup/`, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  submitBtn.disabled = false;
+  submitBtn.textContent = 'Submit';
+
+  if (!res) return;
+  if (res.ok) {
+    const saved = await res.json().catch(() => null);
+    if (saved && saved.id) _discountSettingsId = saved.id;
+    showToast('Discount setup saved successfully.', 'success');
+  } else {
+    showToast(await parseApiError(res), 'error');
+  }
+}
+
+// Used by the Add Student form's sibling-discount preview (js/students.js)
+// so it doesn't need to know the discount-setup endpoint shape directly.
+async function fetchDiscountSettings() {
+  const res = await apiFetch(`${API_BASE}/finance/discount-setup/`);
+  if (!res || !res.ok) return null;
+  return await res.json().catch(() => null);
+}
 
 // Close all extended finance dropdowns on outside click
 document.addEventListener('click', () => {

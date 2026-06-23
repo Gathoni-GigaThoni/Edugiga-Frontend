@@ -172,7 +172,13 @@ function showDashboard() {
                   <li id="sidebar-fin-pay-modes"  class="sidebar-sub-sub" onclick="loadView('fin-payment-modes')">Payment Modes</li>
                 </ul>
               </li>
-              <li onclick="loadView('finance-setup')">Set-up</li>
+              <li class="dropdown">
+                ${flyoutGroupHeader('Set-up', 'fin-setup-dropdown')}
+                <ul id="fin-setup-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('fin-setup-dropdown')}">
+                  <li id="sidebar-fin-setup-main"     class="sidebar-sub-sub" onclick="loadView('finance-setup')">Main Settings</li>
+                  <li id="sidebar-fin-discount-setup" class="sidebar-sub-sub" onclick="loadView('finance-discount-setup')">Discount Setup</li>
+                </ul>
+              </li>
               <li class="dropdown">
                 ${flyoutGroupHeader('Reports', 'fin-reports-dropdown')}
                 <ul id="fin-reports-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('fin-reports-dropdown')}">
@@ -364,7 +370,7 @@ const FORM_VIEWS = new Set([
   'fin-student-invoices', 'fin-student-invoices-add', 'fin-student-bulk-invoicing',
   'fin-invoice-adjustments', 'fin-sponsorship-allocations',
   'fin-fee-setup-per-class', 'fin-receive-payments',
-  'fin-chart-of-accounts', 'fin-fee-accounts', 'fin-fee-items',
+  'fin-chart-of-accounts', 'fin-fee-accounts', 'fin-fee-items', 'finance-discount-setup',
   // Payables
   'payables-payment-vouchers-add', 'payables-payment-vouchers-edit',
   'payables-tax-vouchers-add', 'payables-supplier-invoices-add', 'payables-supplier-invoices-edit',
@@ -674,7 +680,12 @@ async function loadView(view) {
     case 'journal-entries-edit':
       await loadJournalEntryEditView(main); break;
     case 'utilities': showPlaceholder(main, 'Utilities'); break;
-    case 'finance-setup': showPlaceholder(main, 'Set-up'); break;
+    case 'finance-setup':
+      setActiveSidebarItem('sidebar-fin-setup-main'); openFinSetupDropdown();
+      loadFinPlaceholderView(main, 'Set-up'); break;
+    case 'finance-discount-setup':
+      setActiveSidebarItem('sidebar-fin-discount-setup'); openFinSetupDropdown();
+      await renderFinanceDiscountSetup(main); break;
     // Finance Reports
     case 'reports-general-ledger':
     case 'reports-trial-balance':

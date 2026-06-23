@@ -371,6 +371,28 @@
   cursor: pointer;
 }
 
+/* ── Discount Setup — error state + helper hints ── */
+.fin-form-select.error,
+.fin-form-input.error { border-color: #e0534a; }
+
+.fin-field-hint {
+  font-size: 0.8rem;
+  margin-top: 6px;
+  padding: 8px 12px;
+  border-radius: 5px;
+  line-height: 1.5;
+}
+.fin-field-hint-warning {
+  background: #fff8e1;
+  border: 1px solid #ffe082;
+  color: #5d4037;
+}
+.fin-field-hint-info {
+  background: #e3f7f7;
+  border: 1px solid #80deea;
+  color: #00695c;
+}
+
 /* .fin-pagination / .fin-pg-active — styles now in core.css (.app-pagination shared rule) */
 
 /* ── Toast ── */
