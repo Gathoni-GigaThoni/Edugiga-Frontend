@@ -1,103 +1,4 @@
 // ==================== ROLES ====================
-// Single source-of-truth for the navigation structure.
-// The Permissions table is generated entirely from this object.
-// Adding a module/sub-module here automatically adds it to every role's Permissions table.
-const NAV_STRUCTURE = [
-  { id: 'student-management', label: 'Student Management', children: [
-    { id: 'student-search',          label: 'Student Search' },
-    { id: 'student-id-cards',        label: 'ID Cards' },
-    { id: 'students-list',           label: 'Students' },
-    { id: 'student-applicants',      label: 'Applicants' },
-    { id: 'student-reporting',       label: 'Student Reporting' },
-    { id: 'student-cohort-planner',  label: 'Cohort Term Planner' },
-    { id: 'student-classes',         label: 'Classes' },
-    { id: 'student-close-records',   label: 'Close Records Per Class' },
-    { id: 'student-management-utilities', label: 'Utilities', children: [
-      { id: 'utilities-student-sources',   label: 'Student Sources' },
-      { id: 'utilities-streams',           label: 'Streams' },
-      { id: 'utilities-funding-sources',   label: 'Funding Sources' },
-      { id: 'utilities-sports-houses',     label: 'Sports Houses' },
-    ]},
-    { id: 'student-management-reports', label: 'Reports', children: [
-      { id: 'reports-student',  label: 'Student Report' },
-      { id: 'reports-guardian', label: 'Student Guardian Report' },
-    ]},
-  ]},
-  { id: 'student-academics', label: 'Student Academics', children: [
-    { id: 'attendance-register', label: 'Attendance Register' },
-    { id: 'attendance-reports',  label: 'Attendance Reports', children: [
-      { id: 'attendance-register-report', label: 'Attendance Register Report' }
-    ]},
-    { id: 'formative-assessment',  label: 'Formative Assessment' },
-    { id: 'sa-subjects',           label: 'Subjects' },
-    { id: 'sa-utilities',          label: 'Utilities' },
-    { id: 'sa-setup',              label: 'Set-up' },
-    { id: 'sa-sessions',           label: 'Terms' },
-    { id: 'sa-session-types',      label: 'Term Types' },
-    { id: 'sa-academic-years',     label: 'Academic Years' }
-  ]},
-  { id: 'transport-management', label: 'Transport Management' },
-  { id: 'finance', label: 'Finance', children: [
-    { id: 'student-fees-status',       label: 'Student Fees Status' },
-    { id: 'summarized-fee-statement',  label: 'Summarized Fee Statement' },
-    { id: 'student-finance', label: 'Student Finance', children: [
-      { id: 'fin-student-invoices',         label: 'Student Invoices' },
-      { id: 'fin-student-bulk-invoicing',   label: 'Student Bulk Invoicing' },
-      { id: 'fin-invoice-adjustments',      label: 'Student Invoice Adjustments' },
-      { id: 'fin-sponsorship-allocations',  label: 'Sponsorship Allocations' },
-      { id: 'fin-sponsorship-managements',  label: 'Sponsorship Managements' },
-      { id: 'fin-fee-setup-per-class',      label: 'Fee Set-up per Class' }
-    ]},
-    { id: 'cash-bank-management',      label: 'Cash and Bank Management' },
-    { id: 'payables',                  label: 'Payables' },
-    { id: 'receivables', label: 'Receivables', children: [
-      { id: 'fin-receive-payments', label: 'Receive Payments' },
-      { id: 'fin-transactions',     label: 'Transactions' },
-      { id: 'fin-deposit-slip',     label: 'Deposit Slip' },
-      { id: 'fin-credit-notes',     label: 'Credit Notes' }
-    ]},
-    { id: 'cancellations',             label: 'Cancellations' },
-    { id: 'journal-entries',           label: 'Journal Entries' },
-    { id: 'utilities', label: 'Utilities', children: [
-      { id: 'fin-chart-of-accounts', label: 'Chart of Accounts' },
-      { id: 'fin-fee-accounts',      label: 'Fee Accounts' },
-      { id: 'fin-fee-items',         label: 'Fee Items' },
-      { id: 'fin-groups',            label: 'Groups' },
-      { id: 'fin-sub-groups',        label: 'Sub Groups' },
-      { id: 'fin-fiscal-years',      label: 'Fiscal Years' },
-      { id: 'fin-payment-modes',     label: 'Payment Modes' }
-    ]},
-    { id: 'finance-setup',             label: 'Set-up' },
-    { id: 'finance-reports',           label: 'Reports' }
-  ]},
-  { id: 'inventory-management', label: 'Inventory Management' },
-  { id: 'procurement',          label: 'Procurement' },
-  { id: 'human-resource', label: 'Human Resource', children: [
-    { id: 'hr-employee-directory', label: 'Employee Directory' },
-    { id: 'hr-staff-attendance',   label: 'Staff Attendance' },
-    { id: 'hr-utilities',          label: 'Utilities' }
-  ]},
-  { id: 'payroll', label: 'Payroll', children: [
-    { id: 'payroll-esp', label: 'Employee Service Profile' },
-    { id: 'payroll-utilities', label: 'Utilities', children: [
-      { id: 'payroll-pay-accounts',        label: 'Pay Accounts' },
-      { id: 'payroll-pay-grades',          label: 'Pay Grades' },
-      { id: 'payroll-salary-periods',      label: 'Salary Periods' },
-      { id: 'payroll-salary-disbursement', label: 'Salary Disbursement Mode' },
-      { id: 'payroll-fi',                  label: 'Financial Institutions' },
-      { id: 'payroll-employee-events',     label: 'Employee Events' },
-      { id: 'payroll-employee-status',     label: 'Employee Status' }
-    ]}
-  ]},
-  { id: 'asset-management',     label: 'Asset Management' },
-  { id: 'communication',        label: 'Communication' },
-  { id: 'administration', label: 'Administration', children: [
-    { id: 'user-management', label: 'User Management' },
-    { id: 'admin-roles',     label: 'Roles' },
-    { id: 'admin-setup',     label: 'Setup' }
-  ]}
-];
-
 let rolesData = [];
 let rolesPerPage = 10;
 
@@ -312,150 +213,342 @@ async function submitEditRole(roleId) {
 }
 
 // ---- Permissions ----
+// Single source-of-truth for the Permissions table. Adding a module/action
+// here automatically adds it to every role's Permissions view.
+const PERMISSIONS_TREE = [
+  { key: 'dashboard',      label: 'Dashboard',      actions: ['view'] },
+  { key: 'staff-calendar', label: 'Staff Calendar',  actions: ['view'] },
+  {
+    key: 'student-management', label: 'Student Management', actions: ['view'],
+    children: [
+      { key: 'student-search',   label: 'Student Search',   actions: ['view'] },
+      { key: 'id-cards',         label: 'ID Cards',         actions: ['view'] },
+      { key: 'id-card-holder',   label: 'ID Card Holder',   actions: ['view'] },
+      {
+        key: 'students', label: 'Students',
+        actions: [
+          'view', 'add', 'edit', 'delete',
+          'fee_balance', 'can_edit_student_no', 'hostel_allocation',
+          'restrict_academic_background', 'restrict_guardian_family',
+          'restrict_disability_medical', 'restrict_disciplinary',
+          'restrict_document', 'restrict_applicant_documents'
+        ]
+      },
+      { key: 'applicants',             label: 'Applicants',             actions: ['view', 'add', 'edit', 'delete'] },
+      { key: 'student-reporting',      label: 'Student Reporting',      actions: ['view', 'add', 'delete'] },
+      { key: 'cohort-session-planner', label: 'Cohort Session Planner', actions: ['view', 'add', 'edit', 'delete'] },
+      { key: 'classes',                label: 'Classes',                actions: ['view', 'add', 'edit', 'delete', 'status', 'teachers'] }
+    ]
+  },
+  {
+    key: 'academics', label: 'Academics', actions: ['view'],
+    children: [
+      { key: 'academic-years',  label: 'Academic Years',  actions: ['view', 'add', 'edit', 'delete'] },
+      { key: 'academic-levels', label: 'Academic Levels', actions: ['view', 'add', 'edit', 'delete'] },
+      { key: 'terms',            label: 'Terms',            actions: ['view', 'add', 'edit', 'delete'] },
+      { key: 'term-types',       label: 'Term Types',       actions: ['view', 'add', 'edit', 'delete'] }
+    ]
+  },
+  {
+    key: 'finance', label: 'Finance', actions: ['view'],
+    children: [
+      { key: 'student-fees-status',      label: 'Student Fees Status',      actions: ['view'] },
+      { key: 'summarized-fee-statement', label: 'Summarized Fee Statement', actions: ['view'] },
+      {
+        key: 'student-finance', label: 'Student Finance', actions: ['view'],
+        children: [
+          { key: 'student-invoices',       label: 'Student Invoices',       actions: ['view'] },
+          { key: 'student-bulk-invoicing', label: 'Student Bulk Invoicing', actions: ['view'] },
+          { key: 'student-invoice-adjustments', label: 'Student Invoice Adjustments', actions: ['view', 'add', 'approver', 'allow_backdating'] },
+          { key: 'capitation-disbursements',    label: 'Capitation Disbursements',    actions: ['view', 'add'] },
+          { key: 'fees-in-kind',                label: 'Fees in Kind',                actions: ['view', 'add'] },
+          { key: 'sponsorship-allocations',     label: 'Sponsorship Allocations',     actions: ['view', 'add', 'allow_backdating'] },
+          { key: 'sponsorship-managements',     label: 'Sponsorship Managements',     actions: ['view', 'add', 'edit', 'delete'] }
+        ]
+      },
+      { key: 'inter-bank-transfers', label: 'Inter Bank Transfers', actions: ['view', 'add', 'allow_backdating'] },
+      {
+        key: 'payables', label: 'Payables', actions: ['view'],
+        children: [
+          { key: 'payment-vouchers',       label: 'Payment Vouchers',       actions: ['view', 'add', 'overdraw_budget', 'allow_backdating'] },
+          { key: 'supplier-journal-entry', label: 'Supplier Journal Entry', actions: ['view', 'add'] },
+          { key: 'tax-vouchers',           label: 'Tax Vouchers',           actions: ['view', 'add', 'allow_backdating'] },
+          { key: 'voucher-postings',       label: 'Voucher Postings',       actions: ['view', 'add', 'allow_backdating', 'distributions'] },
+          { key: 'supplier-invoices',      label: 'Supplier Invoices',      actions: ['view', 'add', 'edit', 'delete', 'overdraw_budget', 'allow_backdating'] },
+          { key: 'supplier-wht-vat-certificates',  label: 'Supplier WHT VAT Certificates',  actions: ['view', 'add'] },
+          { key: 'expense-claims',                 label: 'Expense Claims',                 actions: ['view', 'add', 'overdraw_budget', 'admin', 'allow_backdating'] },
+          { key: 'expense-claim-disbursements',    label: 'Expense Claim Disbursements',    actions: ['view', 'add', 'admin'] },
+          { key: 'petty-cash-applications',        label: 'Petty Cash Applications',        actions: ['view', 'add', 'overdraw_budget', 'admin', 'allow_backdating'] },
+          { key: 'petty-cash-disbursements',       label: 'Petty Cash Disbursements',       actions: ['view', 'add', 'admin', 'allow_backdating'] }
+        ]
+      }
+    ]
+  },
+  {
+    key: 'inventory-management', label: 'Inventory Management', actions: ['view'],
+    children: [
+      { key: 'inventory-items',      label: 'Inventory Items',      actions: ['view', 'add', 'edit', 'delete'] },
+      { key: 'inventory-categories', label: 'Inventory Categories', actions: ['view', 'add', 'edit', 'delete'] },
+      { key: 'inventory-stock',      label: 'Stock',                actions: ['view', 'add', 'edit'] }
+    ]
+  },
+  {
+    key: 'procurement', label: 'Procurement', actions: ['view'],
+    children: [
+      { key: 'purchase-orders', label: 'Purchase Orders', actions: ['view', 'add', 'edit', 'delete', 'approve'] },
+      { key: 'suppliers',       label: 'Suppliers',       actions: ['view', 'add', 'edit', 'delete'] }
+    ]
+  },
+  {
+    key: 'human-resource', label: 'Human Resource', actions: ['view'],
+    children: [
+      { key: 'employees',                 label: 'Employees',                 actions: ['view', 'add', 'edit', 'delete'] },
+      { key: 'employee-service-profiles', label: 'Employee Service Profiles', actions: ['view', 'add'] },
+      { key: 'leave-management',          label: 'Leave Management',          actions: ['view', 'add', 'approve'] }
+    ]
+  },
+  {
+    key: 'payroll', label: 'Payroll', actions: ['view'],
+    children: [
+      { key: 'payroll-runs',           label: 'Payroll Runs',           actions: ['view', 'add', 'approve'] },
+      { key: 'financial-institutions', label: 'Financial Institutions', actions: ['view', 'add', 'edit', 'delete'] }
+    ]
+  },
+  {
+    key: 'communication', label: 'Communication', actions: ['view'],
+    children: [
+      { key: 'sms',   label: 'SMS',   actions: ['view', 'add'] },
+      { key: 'email', label: 'Email', actions: ['view', 'add'] }
+    ]
+  }
+];
+
+const ACTION_LABELS = {
+  view:                          'View',
+  add:                           'Add',
+  edit:                          'Edit',
+  delete:                        'Delete',
+  fee_balance:                   'Fee balance',
+  can_edit_student_no:           'Can edit student no',
+  hostel_allocation:             'Hostel allocation',
+  restrict_academic_background:  'Restrict academic background',
+  restrict_guardian_family:      'Restrict guardian family',
+  restrict_disability_medical:   'Restrict disability medical',
+  restrict_disciplinary:         'Restrict disciplinary',
+  restrict_document:             'Restrict document',
+  restrict_applicant_documents:  'Restrict applicant documents',
+  status:                        'Status',
+  teachers:                      'Teachers',
+  approver:                      'Approver',
+  allow_backdating:              'Allow-backdating',
+  overdraw_budget:               'Overdraw budget',
+  distributions:                 'Distributions',
+  admin:                         'ADMIN',
+  approve:                       'Approve'
+};
+
 function openRolePermissions(roleId) {
   document.querySelectorAll('[id^="role-dd-"]').forEach(d => d.style.display = 'none');
   const role = rolesData.find(r => r.id === roleId);
   if (!role) return;
-  renderRolePermissionsPage(document.getElementById("main-content"), role);
+  sessionStorage.setItem('permissions-role-id', roleId);
+  sessionStorage.setItem('permissions-role-name', role.title || '');
+  loadView('admin-role-permissions');
 }
 
-function renderRolePermissionsPage(container, role) {
+function renderAdminRolePermissions(container) {
   container.innerHTML = `
     <div class="role-page">
       <div class="role-header-row">
         <h2 class="role-title">Permissions</h2>
-        <div class="role-breadcrumb">
-          Dashboard &rsaquo; Role &rsaquo;
-          <a href="#" class="role-bc-link" onclick="loadView('admin-roles')">${role.title}</a>
-          &rsaquo; Permissions
-        </div>
+        <div class="role-breadcrumb" id="role-perm-breadcrumb"></div>
       </div>
-      <table class="role-perm-table">
-        <thead>
-          <tr>
-            <th class="role-perm-th-mod">MODULE</th>
-            <th class="role-perm-th-sel">SELECT ALL <input type="checkbox" id="role-master-cb" class="role-master-cb" onchange="toggleRoleMasterAll(this,'${role.id}')"></th>
-            <th class="role-perm-th-act">ACTIONS</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${buildPermRows(NAV_STRUCTURE, 0, role.id)}
-        </tbody>
-      </table>
+      <div id="permissions-table-container"></div>
       <div style="margin-top:16px;display:flex;gap:12px;">
-        <button class="role-btn-submit" onclick="saveRolePermissions('${role.id}')">Save Permissions</button>
-        <button class="role-btn-cancel" onclick="loadView('admin-roles')">Cancel</button>
+        <button class="role-btn-submit" id="perm-save-btn">Save</button>
+        <button class="role-btn-cancel" id="perm-cancel-btn">Cancel</button>
       </div>
       <div id="role-perm-status" class="role-form-status" style="margin-top:8px;"></div>
     </div>
   `;
-  syncMasterCheckbox(role.id);
+  document.getElementById('perm-save-btn').addEventListener('click', savePermissions);
+  document.getElementById('perm-cancel-btn').addEventListener('click', () => loadView('admin-roles'));
+  loadPermissionsView();
 }
 
-async function saveRolePermissions(roleId) {
-  const role = rolesData.find(r => r.id === roleId);
-  if (!role) return;
+async function loadPermissionsView() {
+  const roleId   = sessionStorage.getItem('permissions-role-id');
+  const roleName = sessionStorage.getItem('permissions-role-name') || '';
 
-  // Collect every checked permission as "moduleId:action" strings
-  const permissionIds = [];
-  document.querySelectorAll(`.role-perm-cb[data-role="${roleId}"]`).forEach(cb => {
-    if (cb.checked) permissionIds.push(`${cb.dataset.mod}:${cb.dataset.action}`);
+  if (!roleId) {
+    showToast('No role selected. Please go back to Roles.', 'error');
+    loadView('admin-roles');
+    return;
+  }
+
+  const bc = document.getElementById('role-perm-breadcrumb');
+  if (bc) {
+    bc.innerHTML = `Dashboard &rsaquo; Role &rsaquo; <a href="#" class="role-bc-link" onclick="loadView('admin-roles')">${roleName}</a> &rsaquo; Permissions`;
+  }
+
+  const container = document.getElementById('permissions-table-container');
+  if (container) container.innerHTML = '<p style="padding:16px;color:#777;">Loading&#8230;</p>';
+
+  let currentPermissions = [];
+  const res = await apiFetch(`${API_BASE}/roles/${roleId}/`);
+  if (res && res.ok) {
+    const role = await res.json().catch(() => null);
+    currentPermissions = (role && role.permissions) || [];
+  } else if (res) {
+    showToast('Failed to load current permissions.', 'error');
+  }
+
+  const enabledSet = new Set(currentPermissions.map(p => (typeof p === 'string' ? p : p.code)));
+  renderPermissionsTable(enabledSet);
+}
+
+function renderPermissionsTable(enabledSet) {
+  const container = document.getElementById('permissions-table-container');
+  if (!container) return;
+  container.innerHTML = '';
+
+  const table = document.createElement('table');
+  table.className = 'perm-table';
+
+  // ── HEADER ──────────────────────────────────────────────────
+  const thead = table.createTHead();
+  const hr = thead.insertRow();
+  const moduleHeader = document.createElement('th');
+  moduleHeader.className = 'perm-th-mod';
+  moduleHeader.innerHTML =
+    'MODULE &nbsp; <label class="perm-select-all-label">' +
+    '<input type="checkbox" id="perm-select-all"> SELECT ALL</label>';
+  hr.appendChild(moduleHeader);
+  const actionsHeader = document.createElement('th');
+  actionsHeader.className = 'perm-th-act';
+  actionsHeader.textContent = 'ACTIONS';
+  hr.appendChild(actionsHeader);
+
+  // ── BODY ────────────────────────────────────────────────────
+  const tbody = table.createTBody();
+  PERMISSIONS_TREE.forEach(module => appendPermModule(table, tbody, module, enabledSet, 0));
+
+  container.appendChild(table);
+
+  document.getElementById('perm-select-all').addEventListener('change', (e) => {
+    container.querySelectorAll('input[type="checkbox"].perm-action-cb')
+      .forEach(cb => { cb.checked = e.target.checked; });
   });
+}
+
+// Appends a module's own row to parentTbody, then (if it has children) creates
+// a sibling <tbody> of child rows that the expand/collapse toggle shows/hides.
+function appendPermModule(table, parentTbody, module, enabledSet, depth) {
+  appendModuleRow(parentTbody, module, enabledSet, depth);
+  if (!module.children) return;
+
+  const childrenWrapper = document.createElement('tbody');
+  childrenWrapper.dataset.parentKey = module.key;
+  childrenWrapper.className = 'perm-children perm-children-hidden';
+  module.children.forEach(child => appendPermModule(table, childrenWrapper, child, enabledSet, depth + 1));
+  table.appendChild(childrenWrapper);
+}
+
+function appendModuleRow(tbody, module, enabledSet, depth) {
+  const tr = tbody.insertRow();
+  tr.dataset.moduleKey = module.key;
+  tr.className = 'perm-row perm-depth-' + Math.min(depth, 2);
+
+  // ── MODULE CELL ─────────────────────────────────────────────
+  const moduleCell = tr.insertCell();
+  moduleCell.className = 'perm-module-cell';
+
+  const hasChildren = !!(module.children && module.children.length);
+  if (hasChildren) {
+    const toggleBtn = document.createElement('button');
+    toggleBtn.type = 'button';
+    toggleBtn.className = 'perm-expand-btn';
+    toggleBtn.innerHTML = '&#43;';
+    toggleBtn.setAttribute('aria-expanded', 'false');
+    toggleBtn.addEventListener('click', () => {
+      const expanded = toggleBtn.getAttribute('aria-expanded') === 'true';
+      toggleBtn.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+      toggleBtn.innerHTML = expanded ? '&#43;' : '&#8722;';
+      document.querySelectorAll(`.perm-children[data-parent-key="${module.key}"]`)
+        .forEach(el => el.classList.toggle('perm-children-hidden', expanded));
+    });
+    moduleCell.appendChild(toggleBtn);
+
+    const groupCb = document.createElement('input');
+    groupCb.type = 'checkbox';
+    groupCb.className = 'perm-group-select-all';
+    groupCb.title = 'Select all permissions within ' + module.label;
+    groupCb.addEventListener('change', (e) => {
+      getAllDescendantKeys(module).forEach(k => {
+        document.querySelectorAll(`input[type="checkbox"].perm-action-cb[data-module="${k}"]`)
+          .forEach(cb => { cb.checked = e.target.checked; });
+      });
+    });
+    moduleCell.appendChild(groupCb);
+  }
+
+  const nameSpan = document.createElement('span');
+  nameSpan.className = 'perm-module-name perm-depth-' + Math.min(depth, 2);
+  nameSpan.style.marginLeft = (depth * 14) + 'px';
+  nameSpan.textContent = module.label;
+  moduleCell.appendChild(nameSpan);
+
+  // ── ACTIONS CELL ────────────────────────────────────────────
+  const actionsCell = tr.insertCell();
+  actionsCell.className = 'perm-actions-cell';
+
+  module.actions.forEach(action => {
+    const permCode = module.key + '.' + action;
+    const label = document.createElement('label');
+    label.className = 'perm-action-label';
+
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'perm-action-cb';
+    cb.dataset.module = module.key;
+    cb.dataset.action = action;
+    cb.dataset.code   = permCode;
+    cb.checked = enabledSet.has(permCode);
+
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(' ' + (ACTION_LABELS[action] || action)));
+    actionsCell.appendChild(label);
+  });
+}
+
+function getAllDescendantKeys(module) {
+  const keys = [module.key];
+  if (module.children) module.children.forEach(c => keys.push(...getAllDescendantKeys(c)));
+  return keys;
+}
+
+async function savePermissions() {
+  const roleId = sessionStorage.getItem('permissions-role-id');
+  if (!roleId) return;
+
+  const checkedBoxes = document.querySelectorAll('input[type="checkbox"].perm-action-cb:checked');
+  const permissionCodes = Array.from(checkedBoxes).map(cb => cb.dataset.code);
 
   const res = await apiFetch(`${API_BASE}/roles/${roleId}/permissions/`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ permission_ids: permissionIds }),
+    body: JSON.stringify({ permission_codes: permissionCodes }),
   });
   if (!res) return;
+
+  const statusEl = document.getElementById('role-perm-status');
   if (res.ok) {
-    showToast('Permissions saved!', 'success');
-    const statusEl = document.getElementById('role-perm-status');
-    if (statusEl) statusEl.innerHTML = '<span style="color:#27ae60;">Permissions saved successfully.</span>';
+    showToast('Permissions saved successfully.', 'success');
+    if (statusEl) statusEl.innerHTML = '<span class="role-status-success">Permissions saved successfully.</span>';
   } else {
-    showToast(await parseApiError(res), 'error');
+    const msg = await parseApiError(res);
+    showToast(msg, 'error');
+    if (statusEl) statusEl.innerHTML = `<span class="role-status-error">${msg}</span>`;
   }
-}
-
-function buildPermRows(nodes, depth, roleId) {
-  let html = '';
-  nodes.forEach(node => {
-    const perms = (rolesData.find(r => r.id === roleId)?.permissions || {})[node.id] || {};
-    const v = !!perms.view, a = !!perms.add, e = !!perms.edit, d = !!perms.delete;
-    const allChecked = v && a && e && d;
-    const indent = 12 + depth * 18;
-    const childClass = depth > 0 ? ' role-perm-child' : '';
-    const labelClass = depth > 0 ? 'role-module-label role-module-label--child' : 'role-module-label';
-
-    html += `<tr class="role-perm-row${childClass}">
-      <td class="role-perm-mod-cell" style="padding-left:${indent}px">
-        <span class="${labelClass}">${node.label}</span>
-      </td>
-      <td class="role-perm-sel-cell">
-        <input type="checkbox" class="role-row-sel-cb"
-          data-mod="${node.id}" data-role="${roleId}"
-          onchange="toggleRoleRowAll(this)"
-          ${allChecked ? 'checked' : ''}>
-      </td>
-      <td class="role-perm-act-cell">
-        ${['view','add','edit','delete'].map(action =>
-          `<label class="role-perm-label"><input type="checkbox" class="role-perm-cb" data-mod="${node.id}" data-action="${action}" data-role="${roleId}" onchange="saveRolePermChange(this)" ${perms[action] ? 'checked' : ''}> ${action[0].toUpperCase() + action.slice(1)}</label>`
-        ).join('')}
-      </td>
-    </tr>`;
-
-    if (node.children) html += buildPermRows(node.children, depth + 1, roleId);
-  });
-  return html;
-}
-
-function saveRolePermChange(cb) {
-  const roleId = cb.dataset.role, modId = cb.dataset.mod, action = cb.dataset.action;
-  const role = rolesData.find(r => r.id === roleId);
-  if (!role) return;
-  if (!role.permissions[modId]) role.permissions[modId] = {};
-  role.permissions[modId][action] = cb.checked;
-  syncRowSelCheckbox(roleId, modId);
-  syncMasterCheckbox(roleId);
-}
-
-function toggleRoleRowAll(rowCb) {
-  const roleId = rowCb.dataset.role, modId = rowCb.dataset.mod, checked = rowCb.checked;
-  document.querySelectorAll(`.role-perm-cb[data-mod="${modId}"][data-role="${roleId}"]`).forEach(cb => {
-    cb.checked = checked;
-    const role = rolesData.find(r => r.id === roleId);
-    if (!role) return;
-    if (!role.permissions[modId]) role.permissions[modId] = {};
-    role.permissions[modId][cb.dataset.action] = checked;
-  });
-  syncMasterCheckbox(roleId);
-}
-
-function toggleRoleMasterAll(masterCb, roleId) {
-  const checked = masterCb.checked;
-  document.querySelectorAll(`.role-perm-cb[data-role="${roleId}"]`).forEach(cb => {
-    cb.checked = checked;
-    const role = rolesData.find(r => r.id === roleId);
-    if (!role) return;
-    if (!role.permissions[cb.dataset.mod]) role.permissions[cb.dataset.mod] = {};
-    role.permissions[cb.dataset.mod][cb.dataset.action] = checked;
-  });
-  document.querySelectorAll(`.role-row-sel-cb[data-role="${roleId}"]`).forEach(cb => {
-    cb.checked = checked;
-  });
-}
-
-function syncRowSelCheckbox(roleId, modId) {
-  const cbs = document.querySelectorAll(`.role-perm-cb[data-mod="${modId}"][data-role="${roleId}"]`);
-  const allChecked = cbs.length > 0 && Array.from(cbs).every(cb => cb.checked);
-  const rowCb = document.querySelector(`.role-row-sel-cb[data-mod="${modId}"][data-role="${roleId}"]`);
-  if (rowCb) rowCb.checked = allChecked;
-}
-
-function syncMasterCheckbox(roleId) {
-  const allCbs = document.querySelectorAll(`.role-perm-cb[data-role="${roleId}"]`);
-  const allChecked = allCbs.length > 0 && Array.from(allCbs).every(cb => cb.checked);
-  const master = document.getElementById("role-master-cb");
-  if (master) master.checked = allChecked;
 }
 

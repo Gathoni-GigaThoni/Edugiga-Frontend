@@ -220,33 +220,15 @@
 }
 
 /* ==================== ROLES — PERMISSIONS TABLE ==================== */
-.role-perm-table {
+.perm-table {
   width: 100%;
   border-collapse: collapse;
   background: white;
   box-shadow: 0 1px 4px rgba(0,0,0,0.05);
-  margin-top: 0;
+  font-size: 0.88rem;
 }
-.role-perm-th-mod {
-  background: #f2f2f2;
-  padding: 10px 12px;
-  font-size: 0.82rem;
-  font-weight: bold;
-  border-bottom: 2px solid #ddd;
-  width: 32%;
-  text-align: left;
-}
-.role-perm-th-sel {
-  background: #f2f2f2;
-  padding: 10px 12px;
-  font-size: 0.82rem;
-  font-weight: bold;
-  border-bottom: 2px solid #ddd;
-  width: 14%;
-  text-align: center;
-  white-space: nowrap;
-}
-.role-perm-th-act {
+.perm-th-mod,
+.perm-th-act {
   background: #f2f2f2;
   padding: 10px 12px;
   font-size: 0.82rem;
@@ -254,66 +236,83 @@
   border-bottom: 2px solid #ddd;
   text-align: left;
 }
-.role-perm-row td {
-  padding: 9px 12px;
-  border-bottom: 1px solid #eee;
-  vertical-align: middle;
-}
-.role-perm-child td {
-  background: #fafafa;
-}
-.role-perm-row:hover td {
-  background: #f4f9f9;
-}
-.role-perm-sel-cell {
-  text-align: center;
-}
-.role-perm-act-cell {
-  white-space: nowrap;
-}
+.perm-th-mod { width: 35%; }
 
-/* Checkboxes in permissions table */
-.role-perm-label {
+.perm-select-all-label {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 0.88rem;
-  color: #444;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #555;
   cursor: pointer;
-  margin-right: 16px;
-  white-space: nowrap;
-}
-.role-perm-label input[type="checkbox"],
-.role-row-sel-cb,
-.role-master-cb {
-  width: auto !important;
-  max-width: none !important;
-  display: inline-block !important;
-  margin: 0 !important;
-  padding: 0 !important;
-  cursor: pointer;
-  flex-shrink: 0;
-  vertical-align: middle;
-}
-.role-master-cb {
-  margin-left: 6px !important;
+  text-transform: uppercase;
 }
 
-/* Module name labels */
-.role-module-label {
-  display: inline-block;
-  background: #2db3b3;
-  color: white;
-  padding: 3px 10px;
-  border-radius: 12px;
-  font-size: 0.82rem;
-  font-weight: 600;
-  white-space: nowrap;
+.perm-row td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #eee;
+  vertical-align: top;
 }
-.role-module-label--child {
-  background: #2c3e50;
-  font-weight: normal;
-  font-size: 0.8rem;
-  padding: 2px 8px;
+.perm-row:hover td {
+  background: #f4f9f9;
+}
+.perm-children-hidden {
+  display: none;
+}
+
+.perm-module-cell {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+/* Module name colours by depth — matches the app's active-state accent colours */
+.perm-module-name { font-weight: 600; }
+.perm-module-name.perm-depth-0 { color: #e8528a; }
+.perm-module-name.perm-depth-1 { color: #00b5b8; }
+.perm-module-name.perm-depth-2 { color: #555; font-weight: normal; font-size: 0.86rem; }
+
+.perm-expand-btn {
+  width: 20px; height: 20px; min-width: 20px;
+  background: #e8528a;
+  color: #fff;
+  border: none;
+  border-radius: 3px;
+  font-weight: 700;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0;
+}
+.perm-expand-btn:hover { background: #d43d73; }
+
+.perm-group-select-all {
+  width: auto !important;
+  margin: 3px 0 0 !important;
+  cursor: pointer;
+}
+
+.perm-actions-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+}
+.perm-action-label {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 18px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  color: #444;
+}
+.perm-action-label input[type="checkbox"] {
+  width: auto !important;
+  margin: 0 5px 0 0 !important;
+  padding: 0 !important;
+  accent-color: #0d3349;
+  cursor: pointer;
 }
 

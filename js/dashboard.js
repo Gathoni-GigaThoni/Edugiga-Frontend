@@ -375,7 +375,7 @@ const FORM_VIEWS = new Set([
   // HR / Payroll
   'hr-employee-directory', 'payroll-esp', 'payroll-fi',
   // Administration
-  'user-management', 'admin-roles',
+  'user-management', 'admin-roles', 'admin-role-permissions',
   // Academic setup
   'sa-academic-years', 'sa-sessions', 'sa-session-types',
   // Utilities with add/edit forms
@@ -734,6 +734,7 @@ async function loadView(view) {
     case 'administration': await loadAdministrationView(main); break;
     case 'user-management': await loadUserManagementView(main); break;
     case 'admin-roles': loadRolesListingView(main); break;
+    case 'admin-role-permissions': renderAdminRolePermissions(main); break;
     case 'admin-setup': showPlaceholder(main, 'Setup'); break;
     // Empty modules
     case 'inventory-management':
