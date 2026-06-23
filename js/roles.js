@@ -6,6 +6,13 @@ function generateRoleId() {
   return 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
 
+// roleId arriving from an onclick="...('${r.id}')" attribute is always a string,
+// but backend-issued role ids are typically numeric — String() both sides so the
+// lookup doesn't silently fail (and the caller just does nothing) on type mismatch.
+function findRoleById(roleId) {
+  return rolesData.find(r => String(r.id) === String(roleId));
+}
+
 document.addEventListener('click', () => {
   document.querySelectorAll('[id^="role-dd-"]').forEach(d => d.style.display = 'none');
 });
@@ -154,8 +161,8 @@ async function submitAddRole() {
 // ---- Edit Role ----
 function openRoleEdit(roleId) {
   document.querySelectorAll('[id^="role-dd-"]').forEach(d => d.style.display = 'none');
-  const role = rolesData.find(r => r.id === roleId);
-  if (!role) return;
+  const role = findRoleById(roleId);
+  if (!role) { showToast('Role not found. Please refresh the Roles list.', 'error'); return; }
   renderRoleEditPage(document.getElementById("main-content"), role);
 }
 
@@ -192,7 +199,7 @@ async function submitEditRole(roleId) {
     return;
   }
 
-  const role = rolesData.find(r => r.id === roleId);
+  const role = findRoleById(roleId);
   const res = await apiFetch(`${API_BASE}/roles/${roleId}/`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -201,7 +208,7 @@ async function submitEditRole(roleId) {
   if (!res) return;
   if (res.ok) {
     const saved = await res.json().catch(() => null);
-    const idx = rolesData.findIndex(r => r.id === roleId);
+    const idx = rolesData.findIndex(r => String(r.id) === String(roleId));
     if (idx !== -1) rolesData[idx] = { ...rolesData[idx], ...(saved || {}), title };
     showToast('Role updated!', 'success');
     loadView('admin-roles');
@@ -349,8 +356,8 @@ const ACTION_LABELS = {
 
 function openRolePermissions(roleId) {
   document.querySelectorAll('[id^="role-dd-"]').forEach(d => d.style.display = 'none');
-  const role = rolesData.find(r => r.id === roleId);
-  if (!role) return;
+  const role = findRoleById(roleId);
+  if (!role) { showToast('Role not found. Please refresh the Roles list.', 'error'); return; }
   sessionStorage.setItem('permissions-role-id', roleId);
   sessionStorage.setItem('permissions-role-name', role.title || '');
   loadView('admin-role-permissions');
