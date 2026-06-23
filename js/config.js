@@ -1,6 +1,6 @@
 // app.js
 
-const API_BASE = "https://edugiga-sois-api.onrender.com";
+const API_BASE = "https://edugiga-sois-api.onrender.com/api";
 
 // ── Token & user – restored from sessionStorage on page load ──────────────────
 let token = sessionStorage.getItem('edugiga_token') || '';
