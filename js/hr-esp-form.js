@@ -79,12 +79,7 @@ function renderHrEspFormPage(container) {
           <div class="hr-form-group">
             <label class="hr-form-label">Pay Grade <span class="hr-required">*</span></label>
             <select id="hr-esp-pay-grade" class="hr-form-select">
-              <option value="">Please Select</option>
-              <option value="Grade 1" ${sel(pre('pay_grade'),'Grade 1')}>Grade 1</option>
-              <option value="Grade 2" ${sel(pre('pay_grade'),'Grade 2')}>Grade 2</option>
-              <option value="Grade 3" ${sel(pre('pay_grade'),'Grade 3')}>Grade 3</option>
-              <option value="Grade 4" ${sel(pre('pay_grade'),'Grade 4')}>Grade 4</option>
-              <option value="Grade 5" ${sel(pre('pay_grade'),'Grade 5')}>Grade 5</option>
+              ${_renderEspPayGradeOptions(pre('pay_grade'))}
             </select>
           </div>
           <div class="hr-form-group hr-form-span2">
@@ -166,6 +161,34 @@ function renderHrEspFormPage(container) {
       </div>
     </div>
   `;
+}
+
+// Pay Grade options come from the real PayGrade list (/payroll/utilities/pay-grades/)
+// now that it's a managed resource — cached and lazily fetched since this form
+// is rendered synchronously from several call sites.
+let _espPayGradesCache = null;
+
+function _renderEspPayGradeOptions(selected) {
+  const sel = (val, opt) => val === opt ? 'selected' : '';
+  if (_espPayGradesCache === null) {
+    _loadEspPayGrades(selected);
+    return `<option value="">Loading&#8230;</option>`;
+  }
+  return `<option value="">Please Select</option>` +
+    _espPayGradesCache.map(g => `<option value="${g.name}" ${sel(selected, g.name)}>${g.name}</option>`).join('');
+}
+
+async function _loadEspPayGrades(selected) {
+  try {
+    const res = await apiFetch(`${API_BASE}/payroll/utilities/pay-grades/`);
+    _espPayGradesCache = (res && res.ok) ? await res.json() : [];
+  } catch (_) { _espPayGradesCache = []; }
+  const select = document.getElementById('hr-esp-pay-grade');
+  if (select) {
+    const sel = (val, opt) => val === opt ? 'selected' : '';
+    select.innerHTML = `<option value="">Please Select</option>` +
+      _espPayGradesCache.map(g => `<option value="${g.name}" ${sel(selected, g.name)}>${g.name}</option>`).join('');
+  }
 }
 
 function renderHrEspBankSection() {

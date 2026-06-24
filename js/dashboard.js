@@ -383,6 +383,7 @@ const FORM_VIEWS = new Set([
   'journal-entries-add', 'journal-entries-edit',
   // HR / Payroll
   'hr-employee-directory', 'payroll-esp', 'payroll-fi',
+  'payroll-pay-grades-add', 'payroll-pay-grades-edit',
   // Administration
   'user-management', 'admin-roles', 'admin-role-permissions',
   // Academic setup
@@ -739,7 +740,13 @@ async function loadView(view) {
       showPlaceholder(main, 'Pay Accounts'); break;
     case 'payroll-pay-grades':
       setActiveSidebarItem('sidebar-payroll-pay-grades'); openPayrollDropdowns();
-      showPlaceholder(main, 'Pay Grades'); break;
+      await loadPayGradesView(main); break;
+    case 'payroll-pay-grades-add':
+      openPayrollDropdowns();
+      await loadPayGradeFormView(main, null); break;
+    case 'payroll-pay-grades-edit':
+      openPayrollDropdowns();
+      await loadPayGradeFormView(main, window._currentEditPayGradeId); break;
     case 'payroll-salary-periods':
       setActiveSidebarItem('sidebar-payroll-salary-periods'); openPayrollDropdowns();
       showPlaceholder(main, 'Salary Periods'); break;

@@ -473,3 +473,140 @@ async function submitFiEdit(id) {
     }
   } catch (_) { showToast('Network error. Please try again.', 'error'); }
 }
+
+// ==================== PAY GRADES ====================
+let payGradesData = [];
+window._currentEditPayGradeId = null;
+
+async function loadPayGradesView(container) {
+  container.innerHTML = `
+    <div class="payroll-page">
+      <div class="hr-header-row">
+        <h2 class="hr-title">Pay Grades</h2>
+        <div class="hr-breadcrumb">Dashboard &rsaquo; Payroll &rsaquo; Pay Grades &rsaquo; Listing</div>
+      </div>
+      <div class="hr-controls-row">
+        <div class="hr-controls-right">
+          <button class="hr-add-btn" onclick="loadView('payroll-pay-grades-add')">+ Add</button>
+        </div>
+      </div>
+      <div class="hr-table-wrap">
+        <div id="pay-grades-table-container"></div>
+      </div>
+    </div>
+  `;
+  try {
+    const res = await fetch(`${API_BASE}/payroll/utilities/pay-grades/`, { headers: { Authorization: `Bearer ${token}` } });
+    payGradesData = res.ok ? await res.json() : [];
+  } catch (_) { payGradesData = []; }
+  renderPayGradesTable();
+}
+
+function renderPayGradesTable() {
+  const el = document.getElementById('pay-grades-table-container');
+  if (!el) return;
+  const rows = payGradesData.length === 0
+    ? `<tr><td colspan="3" class="hr-empty">No records found</td></tr>`
+    : payGradesData.map((g, i) => `<tr>
+        <td>${g.name || ''}</td>
+        <td>${g.base_salary != null ? g.base_salary : '-'}</td>
+        <td class="hr-action-cell">
+          <div class="hr-action-wrap">
+            <button class="hr-action-btn" onclick="togglePayGradeDropdown(event,${i})">&#8230;</button>
+            <div id="pay-grade-dd-${i}" class="hr-action-dropdown" style="display:none;">
+              <a href="#" onclick="payGradeEdit(${i});return false;">&#9998; Edit</a>
+              <a href="#" onclick="payGradeDelete(${i});return false;">&#128465; Delete</a>
+            </div>
+          </div>
+        </td>
+      </tr>`).join('');
+  el.innerHTML = `<table class="hr-table"><thead><tr><th>NAME</th><th>BASE SALARY</th><th>ACTION</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function togglePayGradeDropdown(event, idx) {
+  event.stopPropagation();
+  document.querySelectorAll('[id^="pay-grade-dd-"]').forEach(d => { if (d.id !== `pay-grade-dd-${idx}`) d.style.display = 'none'; });
+  const dd = document.getElementById(`pay-grade-dd-${idx}`);
+  if (dd) dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+}
+
+document.addEventListener('click', () => {
+  document.querySelectorAll('[id^="pay-grade-dd-"]').forEach(d => d.style.display = 'none');
+});
+
+function payGradeEdit(idx) {
+  window._currentEditPayGradeId = payGradesData[idx].id;
+  loadView('payroll-pay-grades-edit');
+}
+
+async function payGradeDelete(idx) {
+  const grade = payGradesData[idx];
+  if (!grade || !confirm(`Delete pay grade "${grade.name}"?`)) return;
+  try {
+    const res = await fetch(`${API_BASE}/payroll/utilities/pay-grades/${grade.id}`, {
+      method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.ok) { showToast('Pay grade deleted.', 'success'); loadPayGradesView(document.getElementById('main-content')); }
+    else showToast(await parseApiError(res), 'error');
+  } catch (_) { showToast('Network error.', 'error'); }
+}
+
+async function loadPayGradeFormView(container, gradeId) {
+  const isEdit = !!gradeId;
+  let grade = {};
+  if (isEdit) {
+    try {
+      const res = await fetch(`${API_BASE}/payroll/utilities/pay-grades/${gradeId}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) grade = await res.json();
+    } catch (_) {}
+  }
+  container.innerHTML = `
+    <div class="payroll-page">
+      <div class="hr-header-row">
+        <h2 class="hr-title">${isEdit ? 'Edit' : 'Add'} Pay Grade</h2>
+        <div class="hr-breadcrumb">Dashboard &rsaquo; Payroll &rsaquo; Pay Grades &rsaquo; ${isEdit ? 'Edit' : 'Add'}</div>
+      </div>
+      <div class="hr-tab-body">
+        <div class="hr-form-grid">
+          <div class="hr-form-group">
+            <label class="hr-form-label">Name <span class="hr-required">*</span></label>
+            <input type="text" id="pay-grade-name" class="hr-form-input" value="${(grade.name || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}">
+          </div>
+          <div class="hr-form-group">
+            <label class="hr-form-label">Base Salary</label>
+            <input type="number" id="pay-grade-base-salary" class="hr-form-input" step="0.01" min="0" value="${grade.base_salary ?? ''}">
+          </div>
+        </div>
+        <div class="hr-form-actions">
+          <button class="hr-btn-form-submit" onclick="submitPayGradeForm(${isEdit ? `'${gradeId}'` : 'null'})">${isEdit ? 'Update' : 'Submit'}</button>
+          <button class="hr-btn-form-cancel" onclick="loadView('payroll-pay-grades')">Cancel</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function submitPayGradeForm(gradeId) {
+  const name = (document.getElementById('pay-grade-name')?.value || '').trim();
+  if (!name) { showToast('Name is required.', 'error'); return; }
+  const baseSalaryRaw = document.getElementById('pay-grade-base-salary')?.value;
+  const payload = {
+    name,
+    base_salary: baseSalaryRaw === '' ? null : parseFloat(baseSalaryRaw),
+  };
+  const isEdit = !!gradeId;
+  try {
+    const res = await fetch(`${API_BASE}/payroll/utilities/pay-grades/${isEdit ? gradeId : ''}`, {
+      method: isEdit ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) {
+      showToast(isEdit ? 'Pay grade updated!' : 'Pay grade created!', 'success');
+      window._currentEditPayGradeId = null;
+      loadView('payroll-pay-grades');
+    } else {
+      showToast(await parseApiError(res), 'error');
+    }
+  } catch (_) { showToast('Network error.', 'error'); }
+}
