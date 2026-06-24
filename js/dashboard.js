@@ -125,6 +125,7 @@ function showDashboard() {
                 ${flyoutGroupHeader('Student Finance', 'fin-sf-dropdown')}
                 <ul id="fin-sf-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('fin-sf-dropdown')}">
                   <li id="sidebar-fin-invoices"       class="sidebar-sub-sub" onclick="loadView('fin-student-invoices')">Student Invoices</li>
+                  <li id="sidebar-fin-fee-assign"     class="sidebar-sub-sub" onclick="loadView('fin-student-fee-assignments')">Student Fee Assignments</li>
                   <li id="sidebar-fin-bulk"           class="sidebar-sub-sub" onclick="loadView('fin-student-bulk-invoicing')">Student Bulk Invoicing</li>
                   <li id="sidebar-fin-inv-adj"        class="sidebar-sub-sub" onclick="loadView('fin-invoice-adjustments')">Student Invoice Adjustments</li>
                   <li id="sidebar-fin-spon-alloc"     class="sidebar-sub-sub" onclick="loadView('fin-sponsorship-allocations')">Sponsorship Allocations</li>
@@ -177,6 +178,7 @@ function showDashboard() {
                 <ul id="fin-setup-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('fin-setup-dropdown')}">
                   <li id="sidebar-fin-setup-main"     class="sidebar-sub-sub" onclick="loadView('finance-setup')">Main Settings</li>
                   <li id="sidebar-fin-discount-setup" class="sidebar-sub-sub" onclick="loadView('finance-discount-setup')">Discount Setup</li>
+                  <li id="sidebar-fin-sibling-groups"  class="sidebar-sub-sub" onclick="loadView('finance-sibling-groups')">Sibling Groups</li>
                 </ul>
               </li>
               <li class="dropdown">
@@ -368,9 +370,10 @@ const FORM_VIEWS = new Set([
   'student-reporting-add', 'student-reporting-bulk',
   // Finance
   'fin-student-invoices', 'fin-student-invoices-add', 'fin-student-bulk-invoicing',
-  'fin-invoice-adjustments', 'fin-sponsorship-allocations',
+  'fin-invoice-adjustments', 'fin-sponsorship-allocations', 'fin-student-fee-assignments',
   'fin-fee-setup-per-class', 'fin-receive-payments',
   'fin-chart-of-accounts', 'fin-fee-accounts', 'fin-fee-items', 'finance-discount-setup',
+  'finance-sibling-groups-add',
   // Payables
   'payables-payment-vouchers-add', 'payables-payment-vouchers-edit',
   'payables-tax-vouchers-add', 'payables-supplier-invoices-add', 'payables-supplier-invoices-edit',
@@ -549,6 +552,9 @@ async function loadView(view) {
       loadStudentInvoicesView(main); break;
     case 'fin-student-invoices-add':
       openFinStudentFinanceDropdown(); loadStudentInvoicesAddView(main); break;
+    case 'fin-student-fee-assignments':
+      setActiveSidebarItem('sidebar-fin-fee-assign'); openFinStudentFinanceDropdown();
+      loadStudentFeeAssignmentsView(main); break;
     case 'fin-student-bulk-invoicing':
       setActiveSidebarItem('sidebar-fin-bulk'); openFinStudentFinanceDropdown();
       loadStudentBulkInvoicingView(main); break;
@@ -682,6 +688,12 @@ async function loadView(view) {
     case 'finance-discount-setup':
       setActiveSidebarItem('sidebar-fin-discount-setup'); openFinSetupDropdown();
       await renderFinanceDiscountSetup(main); break;
+    case 'finance-sibling-groups':
+      setActiveSidebarItem('sidebar-fin-sibling-groups'); openFinSetupDropdown();
+      await loadSiblingGroupsView(main); break;
+    case 'finance-sibling-groups-add':
+      openFinSetupDropdown();
+      await loadSiblingGroupFormView(main); break;
     // Finance Reports
     case 'reports-general-ledger':
     case 'reports-trial-balance':

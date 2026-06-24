@@ -561,7 +561,7 @@ async function loadStudentInvoicesView(container) {
   _renderInvoiceListPage(container);
   await _invLoadLookups();
   try {
-    const res = await apiFetch(`${API_BASE}/invoices/`);
+    const res = await apiFetch(`${API_BASE}/receivables/fee-invoices`);
     if (res && res.ok) { studentInvoicesData.length = 0; _toArray(await res.json()).forEach(r => studentInvoicesData.push(r)); }
     else if (res) showToast('Could not load invoices: ' + await parseApiError(res), 'error');
   } catch (_) {}
@@ -587,6 +587,8 @@ function _renderInvoiceListPage(container) {
           <button class="fin-export-btn" title="Export CSV">&#128202;</button>
           <input type="text" class="fin-search-input" id="inv-search" placeholder="&#128269; Search&#8230;"
                  value="" oninput="onInvSearch(this.value)">
+          <button class="fin-btn-cancel" onclick="openGenerateInvoiceModal()">Generate Invoice</button>
+          <button class="fin-btn-cancel" onclick="openGenerateBulkInvoiceModal()">Generate Invoices (Bulk)</button>
           <button class="fin-btn-teal" onclick="loadView('fin-student-invoices-add')">+ Add</button>
         </div>
       </div>
@@ -633,7 +635,8 @@ function _renderInvTable() {
             <button class="fin-action-btn" onclick="toggleFinInvDropdown(event,'${inv.id}')">&#8230;</button>
             <div id="fin-inv-dd-${inv.id}" class="fin-action-dropdown" style="display:none;">
               <a href="#" onclick="openInvoiceEdit(${inv.id});return false;">&#9998; Edit</a>
-              ${inv.status !== 'void' ? `<a href="#" onclick="voidInvoice(${inv.id});return false;">&#10005; Void</a>` : ''}
+              ${inv.status === 'draft' ? `<a href="#" onclick="issueInvoice(${inv.id});return false;">&#10003; Issue</a>` : ''}
+              ${inv.status !== 'cancelled' ? `<a href="#" onclick="cancelInvoice(${inv.id});return false;">&#10005; Cancel</a>` : ''}
             </div>
           </div>
         </td>
@@ -676,11 +679,185 @@ function toggleFinInvDropdown(event, id) {
   if (dd) dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
 }
 
-async function voidInvoice(id) {
-  if (!confirm('Void this invoice? This cannot be undone.')) return;
-  const res = await apiFetch(`${API_BASE}/invoices/${id}/void`, { method: 'POST' });
-  if (res && res.ok) { showToast('Invoice voided.', 'success'); loadView('fin-student-invoices'); }
+async function cancelInvoice(id) {
+  if (!confirm('Cancel this invoice? This cannot be undone.')) return;
+  const res = await apiFetch(`${API_BASE}/receivables/fee-invoices/${id}/cancel`, { method: 'POST' });
+  if (res && res.ok) { showToast('Invoice cancelled.', 'success'); loadView('fin-student-invoices'); }
   else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+}
+
+async function issueInvoice(id) {
+  const res = await apiFetch(`${API_BASE}/receivables/fee-invoices/${id}/issue`, { method: 'POST' });
+  if (res && res.ok) { showToast('Invoice issued.', 'success'); loadView('fin-student-invoices'); }
+  else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+}
+
+// ==================== INVOICE GENERATE / GENERATE-BULK ====================
+
+function _finCloseModal() {
+  const ov = document.getElementById('fin-gen-modal-overlay');
+  if (ov) ov.remove();
+}
+
+async function _finLedgerAccountOptions() {
+  const res = await apiFetch(`${API_BASE}/finance/accounts/`);
+  const accounts = (res && res.ok) ? _toArray(await res.json()) : [];
+  return accounts.map(a => `<option value="${a.id}">${_finEsc(a.account_name || a.accountName || '')}</option>`).join('');
+}
+
+async function openGenerateInvoiceModal() {
+  await _invLoadLookups();
+  const accountOpts = await _finLedgerAccountOptions();
+  const overlay = document.createElement('div');
+  overlay.id = 'fin-gen-modal-overlay';
+  overlay.style = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;';
+  overlay.innerHTML = `
+    <div style="background:white;border-radius:8px;padding:24px;max-width:480px;width:90%;">
+      <h3 style="margin-top:0;">Generate Invoice</h3>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Student <span class="fin-required">*</span></label>
+        <select id="gen-inv-student" class="fin-form-select">
+          <option value="">Please Select</option>
+          ${_invStudentsCache.map(s => `<option value="${s.id}">${_finEsc(_invStudentName(s.id))} (${_finEsc(s.student_id||'')})</option>`).join('')}
+        </select>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Term <span class="fin-required">*</span></label>
+        <select id="gen-inv-term" class="fin-form-select">
+          <option value="">Please Select</option>
+          ${(window._stuTermsCache||[]).map(t => `<option value="${t.id}">${_finEsc(t.title||t.name||'')}</option>`).join('')}
+        </select>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Due Date <span class="fin-required">*</span></label>
+        <input type="date" id="gen-inv-due-date" class="fin-form-input">
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Ledger <span class="fin-required">*</span></label>
+        <select id="gen-inv-ledger" class="fin-form-select"><option value="">Please Select</option>${accountOpts}</select>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Income Account <span class="fin-required">*</span></label>
+        <select id="gen-inv-income-account" class="fin-form-select"><option value="">Please Select</option>${accountOpts}</select>
+      </div>
+      <div class="fin-form-actions">
+        <button class="fin-btn-teal" onclick="submitGenerateInvoice()">Generate</button>
+        <button class="fin-btn-cancel" onclick="_finCloseModal()">Cancel</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitGenerateInvoice() {
+  const studentId = document.getElementById('gen-inv-student').value;
+  const termId = document.getElementById('gen-inv-term').value;
+  const dueDate = document.getElementById('gen-inv-due-date').value;
+  const ledgerId = document.getElementById('gen-inv-ledger').value;
+  const incomeAccountId = document.getElementById('gen-inv-income-account').value;
+  if (!studentId || !termId || !dueDate || !ledgerId || !incomeAccountId) {
+    showToast('All fields are required.', 'error'); return;
+  }
+  const payload = {
+    student_id: parseInt(studentId, 10),
+    term_id: parseInt(termId, 10),
+    due_date: dueDate,
+    ledger_id: parseInt(ledgerId, 10),
+    income_account_id: parseInt(incomeAccountId, 10),
+  };
+  const res = await apiFetch(`${API_BASE}/receivables/fee-invoices/generate`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+  if (res && res.ok) {
+    showToast('Invoice generated.', 'success');
+    _finCloseModal();
+    loadView('fin-student-invoices');
+  } else if (res) {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
+}
+
+async function openGenerateBulkInvoiceModal() {
+  const accountOpts = await _finLedgerAccountOptions();
+  const overlay = document.createElement('div');
+  overlay.id = 'fin-gen-modal-overlay';
+  overlay.style = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;';
+  overlay.innerHTML = `
+    <div style="background:white;border-radius:8px;padding:24px;max-width:520px;width:90%;">
+      <h3 style="margin-top:0;">Generate Invoices (Bulk)</h3>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Term <span class="fin-required">*</span></label>
+        <select id="gen-bulk-term" class="fin-form-select">
+          <option value="">Please Select</option>
+          ${(window._stuTermsCache||[]).map(t => `<option value="${t.id}">${_finEsc(t.title||t.name||'')}</option>`).join('')}
+        </select>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Due Date <span class="fin-required">*</span></label>
+        <input type="date" id="gen-bulk-due-date" class="fin-form-input">
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Ledger <span class="fin-required">*</span></label>
+        <select id="gen-bulk-ledger" class="fin-form-select"><option value="">Please Select</option>${accountOpts}</select>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Income Account <span class="fin-required">*</span></label>
+        <select id="gen-bulk-income-account" class="fin-form-select"><option value="">Please Select</option>${accountOpts}</select>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">
+          <input type="checkbox" id="gen-bulk-all-students" checked onchange="document.getElementById('gen-bulk-student-ids-wrap').style.display=this.checked?'none':'block'">
+          Process all active students
+        </label>
+      </div>
+      <div class="fin-form-group" id="gen-bulk-student-ids-wrap" style="display:none;">
+        <label class="fin-form-label">Student IDs (comma-separated)</label>
+        <input type="text" id="gen-bulk-student-ids" class="fin-form-input" placeholder="e.g. 12,13,14">
+      </div>
+      <div class="fin-form-actions">
+        <button class="fin-btn-teal" onclick="submitGenerateBulkInvoice()">Generate</button>
+        <button class="fin-btn-cancel" onclick="_finCloseModal()">Cancel</button>
+      </div>
+      <div id="gen-bulk-result" style="margin-top:14px;"></div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitGenerateBulkInvoice() {
+  const termId = document.getElementById('gen-bulk-term').value;
+  const dueDate = document.getElementById('gen-bulk-due-date').value;
+  const ledgerId = document.getElementById('gen-bulk-ledger').value;
+  const incomeAccountId = document.getElementById('gen-bulk-income-account').value;
+  if (!termId || !dueDate || !ledgerId || !incomeAccountId) {
+    showToast('Term, Due Date, Ledger, and Income Account are required.', 'error'); return;
+  }
+  const payload = {
+    term_id: parseInt(termId, 10),
+    due_date: dueDate,
+    ledger_id: parseInt(ledgerId, 10),
+    income_account_id: parseInt(incomeAccountId, 10),
+  };
+  const allStudents = document.getElementById('gen-bulk-all-students').checked;
+  if (!allStudents) {
+    const raw = document.getElementById('gen-bulk-student-ids').value.trim();
+    payload.student_ids = raw.split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+  }
+  const res = await apiFetch(`${API_BASE}/receivables/fee-invoices/generate-bulk`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+  const resultEl = document.getElementById('gen-bulk-result');
+  if (res && res.ok) {
+    const result = await res.json().catch(() => null);
+    if (resultEl && result) {
+      resultEl.innerHTML = `
+        <p style="color:#2e7d32;">Created: ${result.created?.length || 0}</p>
+        <p style="color:#888;">Skipped (already invoiced): ${result.skipped?.length || 0}</p>
+        ${result.errors?.length ? `<p style="color:#c0392b;">Errors: ${result.errors.length}</p>` : ''}`;
+    }
+    showToast('Bulk invoice generation complete.', 'success');
+    loadView('fin-student-invoices');
+  } else if (res) {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
 }
 
 function openInvoiceEdit(id) {
@@ -800,7 +977,7 @@ async function submitInvoiceAdd() {
     line_items: lineItems,
   };
   try {
-    const res = await apiFetch(`${API_BASE}/invoices/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const res = await apiFetch(`${API_BASE}/receivables/fee-invoices`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     if (res && res.ok) { showToast('Invoice created!', 'success'); loadView('fin-student-invoices'); }
     else if (res) showToast('Error: ' + await parseApiError(res), 'error');
   } catch (_) { showToast('Network error.', 'error'); }
@@ -853,7 +1030,7 @@ function _renderInvoiceEditPage(container, inv) {
           <div class="fin-form-group">
             <label class="fin-form-label">Status</label>
             <select id="inv-edit-status" class="fin-form-select">
-              ${['draft','issued','paid','overdue','void'].map(s => `<option value="${s}" ${inv.status===s?'selected':''}>${s}</option>`).join('')}
+              ${['draft','issued','partially_paid','paid','cancelled','overdue'].map(s => `<option value="${s}" ${inv.status===s?'selected':''}>${s}</option>`).join('')}
             </select>
           </div>
           <div class="fin-form-group">
@@ -887,11 +1064,158 @@ async function submitInvoiceEdit(id) {
     notes: document.getElementById('inv-edit-notes').value || null,
   };
   try {
-    const res = await apiFetch(`${API_BASE}/invoices/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const res = await apiFetch(`${API_BASE}/receivables/fee-invoices/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     if (res && res.ok) { showToast('Invoice updated!', 'success'); }
     else if (res) { showToast('Error: ' + await parseApiError(res), 'error'); }
   } catch (_) { showToast('Network error.', 'error'); }
   loadView('fin-student-invoices');
+}
+
+// ==================== STUDENT FEE ASSIGNMENTS ====================
+
+let _sfaData = [], _sfaFilterStudentId = '', _sfaFilterTermId = '';
+
+async function loadStudentFeeAssignmentsView(container) {
+  await _invLoadLookups();
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Student Fee Assignments</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Student Finance &rsaquo; Student Fee Assignments</div>
+      </div>
+      <div class="fin-controls-row">
+        <div class="fin-controls-left">
+          <select id="sfa-filter-student" class="fin-filter-select" onchange="onSfaFilterChange()">
+            <option value="">All Students</option>
+            ${_invStudentsCache.map(s => `<option value="${s.id}">${_finEsc(_invStudentName(s.id))} (${_finEsc(s.student_id||'')})</option>`).join('')}
+          </select>
+          <select id="sfa-filter-term" class="fin-filter-select" onchange="onSfaFilterChange()" style="margin-left:8px;">
+            <option value="">All Terms</option>
+            ${(window._stuTermsCache||[]).map(t => `<option value="${t.id}">${_finEsc(t.title||t.name||'')}</option>`).join('')}
+          </select>
+        </div>
+        <div class="fin-controls-right">
+          <button class="fin-btn-teal" onclick="openCreateFeeAssignmentModal()">+ Add Assignment</button>
+        </div>
+      </div>
+      <div id="sfa-table-container"></div>
+    </div>`;
+  await _sfaLoad();
+}
+
+async function onSfaFilterChange() {
+  _sfaFilterStudentId = document.getElementById('sfa-filter-student')?.value || '';
+  _sfaFilterTermId    = document.getElementById('sfa-filter-term')?.value || '';
+  await _sfaLoad();
+}
+
+async function _sfaLoad() {
+  const params = new URLSearchParams();
+  if (_sfaFilterStudentId) params.set('student_id', _sfaFilterStudentId);
+  if (_sfaFilterTermId)    params.set('term_id', _sfaFilterTermId);
+  const qs = params.toString();
+  const res = await apiFetch(`${API_BASE}/receivables/student-fee-assignments/${qs ? '?' + qs : ''}`);
+  _sfaData = (res && res.ok) ? _toArray(await res.json()) : [];
+  _sfaRenderTable();
+}
+
+function _sfaRenderTable() {
+  const el = document.getElementById('sfa-table-container');
+  if (!el) return;
+  const rows = _sfaData.length === 0
+    ? `<tr><td colspan="7" class="fin-empty">No records found.</td></tr>`
+    : _sfaData.map(a => `<tr>
+        <td>${_finEsc(_invStudentName(a.student_id))}</td>
+        <td>${_finEsc(_invTermName(a.term_id))}</td>
+        <td>${a.fee_schedule_id}</td>
+        <td>${a.override_amount != null ? _finFmt(parseFloat(a.override_amount)) : '-'}</td>
+        <td>${a.created_from_previous_term ? 'Yes' : 'No'}</td>
+        <td>${_finEsc(a.source_type || '-')}</td>
+        <td class="fin-action-cell"><a href="#" onclick="deleteFeeAssignment(${a.id});return false;">&#128465; Delete</a></td>
+      </tr>`).join('');
+  el.innerHTML = `
+    <div class="fin-table-wrap">
+      <table class="fin-table">
+        <thead><tr>
+          <th>STUDENT</th><th>TERM</th><th>FEE SCHEDULE</th><th>OVERRIDE AMOUNT</th>
+          <th>FROM PREV. TERM</th><th>SOURCE</th><th>ACTION</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+async function deleteFeeAssignment(id) {
+  if (!confirm('Delete this fee assignment?')) return;
+  const res = await apiFetch(`${API_BASE}/receivables/student-fee-assignments/${id}`, { method: 'DELETE' });
+  if (res && res.ok) { showToast('Assignment deleted.', 'success'); await _sfaLoad(); }
+  else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+}
+
+async function openCreateFeeAssignmentModal() {
+  const schedRes = await apiFetch(`${API_BASE}/receivables/setup/fee-schedules`);
+  const schedules = (schedRes && schedRes.ok) ? _toArray(await schedRes.json()) : [];
+  const overlay = document.createElement('div');
+  overlay.id = 'fin-gen-modal-overlay';
+  overlay.style = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;';
+  overlay.innerHTML = `
+    <div style="background:white;border-radius:8px;padding:24px;max-width:480px;width:90%;">
+      <h3 style="margin-top:0;">Add Student Fee Assignment</h3>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Student <span class="fin-required">*</span></label>
+        <select id="sfa-add-student" class="fin-form-select">
+          <option value="">Please Select</option>
+          ${_invStudentsCache.map(s => `<option value="${s.id}">${_finEsc(_invStudentName(s.id))} (${_finEsc(s.student_id||'')})</option>`).join('')}
+        </select>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Term <span class="fin-required">*</span></label>
+        <select id="sfa-add-term" class="fin-form-select">
+          <option value="">Please Select</option>
+          ${(window._stuTermsCache||[]).map(t => `<option value="${t.id}">${_finEsc(t.title||t.name||'')}</option>`).join('')}
+        </select>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Fee Schedule <span class="fin-required">*</span></label>
+        <select id="sfa-add-schedule" class="fin-form-select">
+          <option value="">Please Select</option>
+          ${schedules.map(s => `<option value="${s.id}">${_finEsc(s.name || `Schedule ${s.id}`)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Override Amount</label>
+        <input type="number" id="sfa-add-override" class="fin-form-input" step="0.01" placeholder="Optional">
+      </div>
+      <div class="fin-form-actions">
+        <button class="fin-btn-teal" onclick="submitCreateFeeAssignment()">Submit</button>
+        <button class="fin-btn-cancel" onclick="_finCloseModal()">Cancel</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitCreateFeeAssignment() {
+  const studentId = document.getElementById('sfa-add-student').value;
+  const termId = document.getElementById('sfa-add-term').value;
+  const scheduleId = document.getElementById('sfa-add-schedule').value;
+  if (!studentId || !termId || !scheduleId) { showToast('Student, Term, and Fee Schedule are required.', 'error'); return; }
+  const overrideRaw = document.getElementById('sfa-add-override').value;
+  const payload = {
+    student_id: parseInt(studentId, 10),
+    term_id: parseInt(termId, 10),
+    fee_schedule_id: parseInt(scheduleId, 10),
+    override_amount: overrideRaw === '' ? null : parseFloat(overrideRaw),
+  };
+  const res = await apiFetch(`${API_BASE}/receivables/student-fee-assignments/`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+  if (res && res.ok) {
+    showToast('Fee assignment created.', 'success');
+    _finCloseModal();
+    await _sfaLoad();
+  } else if (res) {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
 }
 
 // ==================== CHANGE 6: STUDENT BULK INVOICING ====================
@@ -1257,6 +1581,215 @@ async function fetchDiscountSettings() {
   if (!res || !res.ok) return null;
   const list = await res.json().catch(() => null);
   return Array.isArray(list) ? (list[0] || null) : (list?.results ? (list.results[0] || null) : list);
+}
+
+// ==================== SIBLING GROUPS ====================
+// Backend only exposes create (POST), get-by-id (GET) and add-student — there is
+// no list-all endpoint, so this view is a lookup (by group id or by a member
+// student) rather than a paginated table.
+
+let _sgFoundGroup = null;
+let _sgNewPicks = [null, null, null]; // up to 3 {id, student_id, name}
+
+async function loadSiblingGroupsView(container) {
+  _sgFoundGroup = null;
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Sibling Groups</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Set-up &rsaquo; Sibling Groups</div>
+      </div>
+      <div class="fin-form-wrap" style="max-width:680px;">
+        <div class="fin-form-group">
+          <label class="fin-form-label">Look up a group by Group ID or a member student</label>
+          <div style="display:flex;gap:10px;align-items:flex-start;">
+            <input id="sg-lookup-id" type="number" min="1" class="fin-form-input" style="max-width:160px;" placeholder="Group ID">
+            <span style="padding-top:10px;color:#888;">or</span>
+            <div style="position:relative;flex:1;">
+              <input id="sg-lookup-student" class="fin-search-input" style="width:100%!important" placeholder="Search student by name or SOIS ID&#8230;" oninput="sgLookupStudentSearch(this.value)" autocomplete="off">
+              <div id="sg-lookup-student-dd" class="fin-action-dropdown" style="display:none;max-height:200px;overflow-y:auto;position:absolute;top:100%;left:0;width:100%;z-index:100;"></div>
+            </div>
+            <button class="fin-btn-teal" onclick="sgLookupById()">Find</button>
+          </div>
+        </div>
+        <div id="sg-lookup-result" style="margin-top:16px;"></div>
+        <div class="fin-form-actions" style="margin-top:24px;">
+          <button class="fin-btn-teal" onclick="loadView('finance-sibling-groups-add')">Create New Sibling Group</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function sgLookupStudentSearch(val) {
+  const dd = document.getElementById('sg-lookup-student-dd');
+  if (!dd) return;
+  if (!val.trim()) { dd.style.display = 'none'; return; }
+  const res = await apiFetch(`${API_BASE}/students/?search=${encodeURIComponent(val)}`);
+  const list = (res && res.ok) ? await res.json() : [];
+  if (!list.length) {
+    dd.innerHTML = '<div style="padding:10px 14px;color:#888;font-size:0.88rem;">No results found</div>';
+    dd.style.display = 'block';
+    return;
+  }
+  dd.innerHTML = list.slice(0, 10).map(s =>
+    `<a href="#" onclick="sgLookupStudentSelect(${s.id},${s.sibling_group_id ?? 'null'},'${_finEsc(s.student_id||'')} — ${_finEsc(`${s.first_name||''} ${s.last_name||''}`.trim())}');return false;">
+       ${_finEsc(s.student_id||'')} — ${_finEsc(`${s.first_name||''} ${s.last_name||''}`.trim())}
+     </a>`
+  ).join('');
+  dd.style.display = 'block';
+}
+
+function sgLookupStudentSelect(studentId, siblingGroupId, label) {
+  const inp = document.getElementById('sg-lookup-student');
+  if (inp) inp.value = label;
+  const dd = document.getElementById('sg-lookup-student-dd');
+  if (dd) dd.style.display = 'none';
+  if (!siblingGroupId) {
+    document.getElementById('sg-lookup-result').innerHTML =
+      '<p style="color:#c0392b;font-size:0.88rem;">This student is not in a sibling group yet.</p>';
+    return;
+  }
+  document.getElementById('sg-lookup-id').value = siblingGroupId;
+  sgLookupById();
+}
+
+async function sgLookupById() {
+  const id = document.getElementById('sg-lookup-id')?.value;
+  const resultEl = document.getElementById('sg-lookup-result');
+  if (!id) { showToast('Enter a Group ID or pick a student.', 'error'); return; }
+  resultEl.innerHTML = '<p style="color:#888;">Loading&#8230;</p>';
+  const res = await apiFetch(`${API_BASE}/receivables/sibling-groups/${id}`);
+  if (!res || !res.ok) {
+    _sgFoundGroup = null;
+    resultEl.innerHTML = '<p style="color:#c0392b;font-size:0.88rem;">Group not found.</p>';
+    return;
+  }
+  const group = await res.json().catch(() => null);
+  _sgFoundGroup = group;
+  if (!group) { resultEl.innerHTML = '<p style="color:#c0392b;font-size:0.88rem;">Group not found.</p>'; return; }
+
+  resultEl.innerHTML = `
+    <div style="background:#f9fafb;border:1px solid #e0e0e0;border-radius:6px;padding:16px;">
+      <p><strong>Group #${group.id}</strong> — ${_finEsc(group.name || '')}</p>
+      <p>Member student IDs: ${(group.student_ids || []).join(', ') || '—'}</p>
+      <div style="display:flex;gap:10px;align-items:flex-start;margin-top:10px;">
+        <div style="position:relative;flex:1;max-width:360px;">
+          <input id="sg-add-student" class="fin-search-input" style="width:100%!important" placeholder="Add a student to this group&#8230;" oninput="sgAddStudentSearch(this.value)" autocomplete="off">
+          <div id="sg-add-student-dd" class="fin-action-dropdown" style="display:none;max-height:200px;overflow-y:auto;position:absolute;top:100%;left:0;width:100%;z-index:100;"></div>
+        </div>
+      </div>
+    </div>`;
+}
+
+let _sgAddStudentId = null;
+
+async function sgAddStudentSearch(val) {
+  const dd = document.getElementById('sg-add-student-dd');
+  if (!dd) return;
+  if (!val.trim()) { dd.style.display = 'none'; return; }
+  const res = await apiFetch(`${API_BASE}/students/?search=${encodeURIComponent(val)}`);
+  const list = (res && res.ok) ? await res.json() : [];
+  dd.innerHTML = list.length ? list.slice(0, 10).map(s =>
+    `<a href="#" onclick="sgAddStudentSelect(${s.id},'${_finEsc(s.student_id||'')} — ${_finEsc(`${s.first_name||''} ${s.last_name||''}`.trim())}');return false;">
+       ${_finEsc(s.student_id||'')} — ${_finEsc(`${s.first_name||''} ${s.last_name||''}`.trim())}
+     </a>`
+  ).join('') : '<div style="padding:10px 14px;color:#888;font-size:0.88rem;">No results found</div>';
+  dd.style.display = 'block';
+}
+
+function sgAddStudentSelect(studentId, label) {
+  _sgAddStudentId = studentId;
+  const inp = document.getElementById('sg-add-student');
+  if (inp) inp.value = label;
+  const dd = document.getElementById('sg-add-student-dd');
+  if (dd) dd.style.display = 'none';
+  sgSubmitAddStudent();
+}
+
+async function sgSubmitAddStudent() {
+  if (!_sgFoundGroup || !_sgAddStudentId) return;
+  const res = await apiFetch(`${API_BASE}/receivables/sibling-groups/${_sgFoundGroup.id}/add-student/${_sgAddStudentId}`, {
+    method: 'POST',
+  });
+  if (res && res.ok) {
+    showToast('Student added to sibling group.', 'success');
+    sgLookupById();
+  } else {
+    showToast(await parseApiError(res), 'error');
+  }
+}
+
+async function loadSiblingGroupFormView(container) {
+  _sgNewPicks = [null, null, null];
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Create Sibling Group</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Set-up &rsaquo; Sibling Groups &rsaquo; Create</div>
+      </div>
+      <div class="fin-form-wrap" style="max-width:680px;">
+        <div class="fin-form-group">
+          <label class="fin-form-label">Group Name</label>
+          <input id="sg-add-name" class="fin-form-input" placeholder="Optional — auto-derived from parent surname if left blank">
+        </div>
+        ${[0, 1, 2].map(i => `
+          <div class="fin-form-group">
+            <label class="fin-form-label">Student ${i + 1}${i === 0 ? ' <span class="fin-required">*</span>' : ' (optional)'}</label>
+            <div style="position:relative;">
+              <input id="sg-add-pick-${i}" class="fin-search-input" style="width:100%!important" placeholder="Search student by name or SOIS ID&#8230;" oninput="sgPickSearch(${i},this.value)" autocomplete="off">
+              <div id="sg-add-pick-${i}-dd" class="fin-action-dropdown" style="display:none;max-height:200px;overflow-y:auto;position:absolute;top:100%;left:0;width:100%;z-index:100;"></div>
+            </div>
+          </div>`).join('')}
+        <div class="fin-form-actions">
+          <button class="fin-btn-teal" onclick="submitSiblingGroupCreate()">Submit</button>
+          <button class="fin-btn-cancel" onclick="loadView('finance-sibling-groups')">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function sgPickSearch(slot, val) {
+  const dd = document.getElementById(`sg-add-pick-${slot}-dd`);
+  if (!dd) return;
+  if (!val.trim()) { dd.style.display = 'none'; return; }
+  const res = await apiFetch(`${API_BASE}/students/?search=${encodeURIComponent(val)}`);
+  const list = (res && res.ok) ? await res.json() : [];
+  dd.innerHTML = list.length ? list.slice(0, 10).map(s =>
+    `<a href="#" onclick="sgPickSelect(${slot},${s.id},'${_finEsc(s.student_id||'')} — ${_finEsc(`${s.first_name||''} ${s.last_name||''}`.trim())}');return false;">
+       ${_finEsc(s.student_id||'')} — ${_finEsc(`${s.first_name||''} ${s.last_name||''}`.trim())}
+     </a>`
+  ).join('') : '<div style="padding:10px 14px;color:#888;font-size:0.88rem;">No results found</div>';
+  dd.style.display = 'block';
+}
+
+function sgPickSelect(slot, studentId, label) {
+  _sgNewPicks[slot] = studentId;
+  const inp = document.getElementById(`sg-add-pick-${slot}`);
+  if (inp) inp.value = label;
+  const dd = document.getElementById(`sg-add-pick-${slot}-dd`);
+  if (dd) dd.style.display = 'none';
+}
+
+async function submitSiblingGroupCreate() {
+  const studentIds = _sgNewPicks.filter(id => id != null);
+  if (studentIds.length < 1) { showToast('Select at least one student.', 'error'); return; }
+  if (studentIds.length > 3) { showToast('A sibling group can have at most 3 students.', 'error'); return; }
+
+  const name = document.getElementById('sg-add-name')?.value.trim();
+  const payload = { student_ids: studentIds };
+  if (name) payload.name = name;
+
+  const res = await apiFetch(`${API_BASE}/receivables/sibling-groups/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (res && res.ok) {
+    showToast('Sibling group created.', 'success');
+    loadView('finance-sibling-groups');
+  } else {
+    showToast(await parseApiError(res), 'error');
+  }
 }
 
 // Close all extended finance dropdowns on outside click
