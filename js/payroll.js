@@ -56,12 +56,12 @@ function renderPayrollEspTable() {
 
   let html = `<table class="hr-table"><thead><tr>
     <th>EMP. CODE</th><th>EMP NAME</th><th>DEPARTMENT</th><th>REASON/EVENT</th>
-    <th>PROCESSING METHOD</th><th>PAY GRADE</th><th>RANK</th>
-    <th>AMOUNT</th><th>EFFECTIVE DATE</th><th>ACTION</th>
+    <th>PROCESSING METHOD</th><th>PAY GRADE</th>
+    <th>BASIC SALARY</th><th>EFFECTIVE DATE</th><th>ACTION</th>
   </tr></thead><tbody>`;
 
   if (pageData.length === 0) {
-    html += `<tr><td colspan="10" class="hr-empty">No records found</td></tr>`;
+    html += `<tr><td colspan="9" class="hr-empty">No records found</td></tr>`;
   } else {
     pageData.forEach((sp, i) => {
       const idx = start + i;
@@ -72,8 +72,7 @@ function renderPayrollEspTable() {
         <td>${sp.reason_event || ''}</td>
         <td>${sp.processing_method || ''}</td>
         <td>${sp.pay_grade || ''}</td>
-        <td>${sp.rank || ''}</td>
-        <td>${sp.amount || ''}</td>
+        <td>${sp.basic_salary || ''}</td>
         <td>${sp.effective_date || ''}</td>
         <td class="hr-action-cell">
           <div class="hr-action-wrap">

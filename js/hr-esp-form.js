@@ -78,7 +78,7 @@ function renderHrEspFormPage(container) {
           </div>
           <div class="hr-form-group">
             <label class="hr-form-label">Pay Grade <span class="hr-required">*</span></label>
-            <select id="hr-esp-pay-grade" class="hr-form-select" onchange="onHrEspSalaryFields()">
+            <select id="hr-esp-pay-grade" class="hr-form-select">
               <option value="">Please Select</option>
               <option value="Grade 1" ${sel(pre('pay_grade'),'Grade 1')}>Grade 1</option>
               <option value="Grade 2" ${sel(pre('pay_grade'),'Grade 2')}>Grade 2</option>
@@ -87,31 +87,19 @@ function renderHrEspFormPage(container) {
               <option value="Grade 5" ${sel(pre('pay_grade'),'Grade 5')}>Grade 5</option>
             </select>
           </div>
-          <div class="hr-form-group">
-            <label class="hr-form-label">Rank <span class="hr-required">*</span></label>
-            <select id="hr-esp-rank" class="hr-form-select" onchange="onHrEspSalaryFields()">
-              <option value="">Please Select</option>
-              <option value="Junior" ${sel(pre('rank'),'Junior')}>Junior</option>
-              <option value="Mid"    ${sel(pre('rank'),'Mid')}>Mid</option>
-              <option value="Senior" ${sel(pre('rank'),'Senior')}>Senior</option>
-              <option value="Lead"   ${sel(pre('rank'),'Lead')}>Lead</option>
-            </select>
-          </div>
           <div class="hr-form-group hr-form-span2">
             <label class="hr-form-label">Basic Salary</label>
-            <input type="text" id="hr-esp-basic-salary" class="hr-form-input hr-form-readonly" value="${pre('amount')}" readonly placeholder="Auto-populated from Pay Grade and Rank">
+            <input type="number" id="hr-esp-basic-salary" class="hr-form-input" step="0.01" min="0" value="${pre('basic_salary')}" placeholder="Enter basic salary">
           </div>
         </div>
 
         <div class="hr-esp-sheltered-section">
           <label class="hr-form-label">Shettered from Paying</label>
           <div class="hr-esp-sheltered-row">
-            <label class="hr-form-checkbox-label"><input type="checkbox" id="hr-esp-sh-paye"    class="hr-form-cb" ${sp.sheltered_from_paying?.paye         ? 'checked' : ''}> P.A.Y.E.</label>
-            <label class="hr-form-checkbox-label"><input type="checkbox" id="hr-esp-sh-nhif"    class="hr-form-cb" ${sp.sheltered_from_paying?.nhif         ? 'checked' : ''}> N.H.I.F.</label>
-            <label class="hr-form-checkbox-label"><input type="checkbox" id="hr-esp-sh-shif"    class="hr-form-cb" ${sp.sheltered_from_paying?.shif         ? 'checked' : ''}> S.H.I.F.</label>
-            <label class="hr-form-checkbox-label"><input type="checkbox" id="hr-esp-sh-nssf"    class="hr-form-cb" ${sp.sheltered_from_paying?.nssf         ? 'checked' : ''}> N.S.S.F.</label>
-            <label class="hr-form-checkbox-label"><input type="checkbox" id="hr-esp-sh-housing" class="hr-form-cb" ${sp.sheltered_from_paying?.housing_levy  ? 'checked' : ''}> Housing Levy</label>
-            <label class="hr-form-checkbox-label"><input type="checkbox" id="hr-esp-sh-pension" class="hr-form-cb" ${sp.sheltered_from_paying?.pension        ? 'checked' : ''}> Pension</label>
+            <label class="hr-form-checkbox-label"><input type="checkbox" id="hr-esp-sh-paye"    class="hr-form-cb" ${sp.sheltered_paye         ? 'checked' : ''}> P.A.Y.E.</label>
+            <label class="hr-form-checkbox-label"><input type="checkbox" id="hr-esp-sh-shif"    class="hr-form-cb" ${sp.sheltered_shif         ? 'checked' : ''}> S.H.I.F.</label>
+            <label class="hr-form-checkbox-label"><input type="checkbox" id="hr-esp-sh-nssf"    class="hr-form-cb" ${sp.sheltered_nssf         ? 'checked' : ''}> N.S.S.F.</label>
+            <label class="hr-form-checkbox-label"><input type="checkbox" id="hr-esp-sh-housing" class="hr-form-cb" ${sp.sheltered_housing_levy ? 'checked' : ''}> Housing Levy</label>
           </div>
         </div>
 
@@ -299,12 +287,6 @@ function onHrEspEmpCodeChange() {
   if (deptEl) deptEl.value = emp ? (emp.department || '') : '';
 }
 
-function onHrEspSalaryFields() {
-  const payGrade = document.getElementById('hr-esp-pay-grade')?.value || '';
-  const rank     = document.getElementById('hr-esp-rank')?.value || '';
-  const el = document.getElementById('hr-esp-basic-salary');
-  if (el) el.value = (payGrade && rank) ? '' : '';
-}
 
 function cancelHrEspForm() {
   const main = document.getElementById('main-content');
@@ -327,14 +309,12 @@ async function submitHrEspForm() {
   const empCode = (document.getElementById('hr-esp-emp-code')?.value || '').trim();
   const reasonEvent       = document.getElementById('hr-esp-reason-event')?.value || '';
   const payGrade          = document.getElementById('hr-esp-pay-grade')?.value || '';
-  const rank              = document.getElementById('hr-esp-rank')?.value || '';
   const disbursementMode  = document.getElementById('hr-esp-disbursement-mode')?.value || '';
   const effectiveDate     = document.getElementById('hr-esp-effective-date')?.value || '';
 
   if (!empCode)          { showToast('Employee Code is required.', 'error'); return; }
   if (!reasonEvent)      { showToast('Reason/Event is required.', 'error'); return; }
   if (!payGrade)         { showToast('Pay Grade is required.', 'error'); return; }
-  if (!rank)             { showToast('Rank is required.', 'error'); return; }
   if (!disbursementMode) { showToast('Salary Disbursement Mode is required.', 'error'); return; }
   if (!effectiveDate)    { showToast('Effective Date is required.', 'error'); return; }
 
@@ -356,20 +336,15 @@ async function submitHrEspForm() {
     reason_event:              reasonEvent,
     processing_method:         document.getElementById('hr-esp-processing-method')?.value || '',
     pay_grade:                 payGrade,
-    rank,
-    amount:                    document.getElementById('hr-esp-basic-salary')?.value || null,
+    basic_salary:              parseFloat(document.getElementById('hr-esp-basic-salary')?.value) || null,
     effective_date:            effectiveDate,
     end_date:                  document.getElementById('hr-esp-end-date')?.value || null,
     employee_status:           document.getElementById('hr-esp-emp-status')?.value || '',
     salary_disbursement_mode:  disbursementMode,
-    sheltered_from_paying: {
-      paye:         document.getElementById('hr-esp-sh-paye')?.checked    || false,
-      nhif:         document.getElementById('hr-esp-sh-nhif')?.checked    || false,
-      shif:         document.getElementById('hr-esp-sh-shif')?.checked    || false,
-      nssf:         document.getElementById('hr-esp-sh-nssf')?.checked    || false,
-      housing_levy: document.getElementById('hr-esp-sh-housing')?.checked || false,
-      pension:      document.getElementById('hr-esp-sh-pension')?.checked  || false,
-    },
+    sheltered_paye:            document.getElementById('hr-esp-sh-paye')?.checked    || false,
+    sheltered_shif:            document.getElementById('hr-esp-sh-shif')?.checked    || false,
+    sheltered_nssf:            document.getElementById('hr-esp-sh-nssf')?.checked    || false,
+    sheltered_housing_levy:    document.getElementById('hr-esp-sh-housing')?.checked || false,
     bank_accounts: bankAccountsForApi,
     notes: document.getElementById('hr-esp-notes')?.value || '',
   };

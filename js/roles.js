@@ -243,7 +243,7 @@ const PERMISSIONS_TREE = [
       },
       { key: 'applicants',             label: 'Applicants',             actions: ['view', 'add', 'edit', 'delete'] },
       { key: 'student-reporting',      label: 'Student Reporting',      actions: ['view', 'add', 'delete'] },
-      { key: 'cohort-session-planner', label: 'Cohort Session Planner', actions: ['view', 'add', 'edit', 'delete'] },
+      { key: 'cohort-term-planner',    label: 'Cohort Term Planner',    actions: ['view', 'add', 'edit', 'delete'] },
       { key: 'classes',                label: 'Classes',                actions: ['view', 'add', 'edit', 'delete', 'status', 'teachers'] }
     ]
   },

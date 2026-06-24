@@ -4310,7 +4310,7 @@ async function saveClass(id) {
   }
 }
 
-// ==================== 12. COHORT SESSION PLANNER ====================
+// ==================== 12. COHORT TERM PLANNER ====================
 
 // ── State ────────────────────────────────────────────────────────────────────
 let _cspAllClasses   = [];
@@ -4358,7 +4358,7 @@ function _cspFmtPeriod(start, end) {
 }
 
 // ── Listing ───────────────────────────────────────────────────────────────────
-async function loadCohortSessionPlannerView(container) {
+async function loadCohortTermPlannerView(container) {
   setActiveSidebarItem('sidebar-stu-cohort');
   openStuMgmtDropdowns();
   _cspPage       = 1;
@@ -4545,7 +4545,7 @@ function cspOpenEdit(id) {
 }
 
 // ── Add / Edit Form ───────────────────────────────────────────────────────────
-async function loadCohortSessionPlannerFormView(container) {
+async function loadCohortTermPlannerFormView(container) {
   const isEdit = !!_currentCspId;
   const title  = isEdit ? 'Edit Cohort Term Planner' : 'Add Cohort Term Planner';
 

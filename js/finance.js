@@ -55,7 +55,7 @@ async function _finBuildLedger(studentId) {
     payments.forEach(p => rows.push({
       date:        p.payment_date || '',
       term:        '-',
-      description: `Payment (${p.payment_method || 'Cash'})`,
+      description: `Payment (${p.payment_method || 'N/A'})`,
       debit:       0,
       credit:      parseFloat(p.amount) || 0
     }));
@@ -1160,13 +1160,14 @@ async function _loadDiscountAccountDropdown() {
 
 async function _loadExistingDiscountSettings() {
   _discountSettingsId = null;
-  const res = await apiFetch(`${API_BASE}/finance/discount-setup/`);
+  const res = await apiFetch(`${API_BASE}/receivables/setup/discount-policies`);
   if (!res || res.status === 404 || !res.ok) {
     if (res && res.status !== 404) showToast('Failed to load existing discount settings.', 'error');
     return;
   }
 
-  const data = await res.json().catch(() => null);
+  const list = await res.json().catch(() => null);
+  const data = Array.isArray(list) ? list[0] : (list?.results ? list.results[0] : list);
   if (!data || !data.id) return;
 
   _discountSettingsId = data.id;
@@ -1227,7 +1228,10 @@ async function saveDiscountSetup() {
   submitBtn.textContent = 'Saving...';
 
   const method = _discountSettingsId === null ? 'POST' : 'PUT';
-  const res = await apiFetch(`${API_BASE}/finance/discount-setup/`, {
+  const url = _discountSettingsId === null
+    ? `${API_BASE}/receivables/setup/discount-policies`
+    : `${API_BASE}/receivables/setup/discount-policies/${_discountSettingsId}`;
+  const res = await apiFetch(url, {
     method,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -1249,9 +1253,10 @@ async function saveDiscountSetup() {
 // Used by the Add Student form's sibling-discount preview (js/students.js)
 // so it doesn't need to know the discount-setup endpoint shape directly.
 async function fetchDiscountSettings() {
-  const res = await apiFetch(`${API_BASE}/finance/discount-setup/`);
+  const res = await apiFetch(`${API_BASE}/receivables/setup/discount-policies`);
   if (!res || !res.ok) return null;
-  return await res.json().catch(() => null);
+  const list = await res.json().catch(() => null);
+  return Array.isArray(list) ? (list[0] || null) : (list?.results ? (list.results[0] || null) : list);
 }
 
 // Close all extended finance dropdowns on outside click
@@ -2332,11 +2337,8 @@ async function renderRcvPayAddPage(container) {
             <label class="fin-form-label">Payment Mode <span class="fin-required">*</span></label>
             <select id="rcv-add-mode" class="fin-form-select">
               <option value="">Please Select</option>
-              <option value="Cash">Cash</option>
-              <option value="Bank Transfer">Bank Transfer</option>
-              <option value="Cheque">Cheque</option>
-              <option value="Mobile Money">Mobile Money</option>
-              <option value="Other">Other</option>
+              <option value="bank_transfer">Bank Transfer</option>
+              <option value="mpesa">M-Pesa</option>
             </select>
             <span class="fin-field-error" id="rcv-mode-err"></span>
           </div>

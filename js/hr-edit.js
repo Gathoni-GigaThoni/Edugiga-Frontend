@@ -828,10 +828,10 @@ function deleteHrEditDependent(idx) {
 // ==================== EDIT TAB F — Employee Service Profile ====================
 function renderHrEditTabServiceProfile() {
   const rows = (hrEditRecord.service_profile || []).length === 0
-    ? `<tr><td colspan="7" class="hr-empty">No records found</td></tr>`
+    ? `<tr><td colspan="6" class="hr-empty">No records found</td></tr>`
     : (hrEditRecord.service_profile || []).map((sp, i) => `<tr>
-        <td>${sp.reason_event || ''}</td><td>${sp.pay_grade || ''}</td><td>${sp.rank || ''}</td>
-        <td>${sp.amount || ''}</td><td>${sp.effective_date || ''}</td><td>${sp.end_date || ''}</td>
+        <td>${sp.reason_event || ''}</td><td>${sp.pay_grade || ''}</td>
+        <td>${sp.basic_salary || ''}</td><td>${sp.effective_date || ''}</td><td>${sp.end_date || ''}</td>
         <td class="hr-action-cell">
           <div class="hr-action-wrap">
             <button class="hr-action-btn" onclick="toggleHrEditSpDropdown(event,${i})">&#8230;</button>
@@ -849,8 +849,8 @@ function renderHrEditTabServiceProfile() {
       </div>
       <div class="hr-table-wrap">
         <table class="hr-table"><thead><tr>
-          <th>REASON/EVENT</th><th>PAY GRADE</th><th>RANK</th>
-          <th>AMOUNT</th><th>EFFECTIVE DATE</th><th>END DATE</th><th>ACTION</th>
+          <th>REASON/EVENT</th><th>PAY GRADE</th>
+          <th>BASIC SALARY</th><th>EFFECTIVE DATE</th><th>END DATE</th><th>ACTION</th>
         </tr></thead><tbody>${rows}</tbody></table>
       </div>
     </div>

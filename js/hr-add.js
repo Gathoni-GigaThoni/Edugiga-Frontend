@@ -442,10 +442,10 @@ function renderHrAddTabServiceProfile() {
       </div>
       <div class="hr-table-wrap">
         <table class="hr-table"><thead><tr>
-          <th>REASON/EVENT</th><th>PAY GRADE</th><th>RANK</th>
-          <th>AMOUNT</th><th>EFFECTIVE DATE</th><th>END DATE</th><th>ACTION</th>
+          <th>REASON/EVENT</th><th>PAY GRADE</th>
+          <th>BASIC SALARY</th><th>EFFECTIVE DATE</th><th>END DATE</th><th>ACTION</th>
         </tr></thead><tbody>
-          <tr><td colspan="7" class="hr-empty">No records found</td></tr>
+          <tr><td colspan="6" class="hr-empty">No records found</td></tr>
         </tbody></table>
       </div>
     </div>
