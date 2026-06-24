@@ -392,6 +392,7 @@ const FORM_VIEWS = new Set([
   'student-classes',
   // Transport
   'transport-routes-add', 'transport-routes-edit',
+  'transport-vehicles-add', 'transport-vehicles-edit',
 ]);
 
 async function loadView(view) {
@@ -541,7 +542,13 @@ async function loadView(view) {
       loadTrnPlaceholderView(main, 'Maintenance Tasks'); break;
     case 'transport-vehicles':
       setActiveSidebarItem('sidebar-trn-vehicles'); openTransportUtilitiesDropdown();
-      loadTrnPlaceholderView(main, 'Vehicles'); break;
+      await loadBusesView(main); break;
+    case 'transport-vehicles-add':
+      openTransportUtilitiesDropdown();
+      await loadBusFormView(main, null); break;
+    case 'transport-vehicles-edit':
+      openTransportUtilitiesDropdown();
+      await loadBusFormView(main, window._currentEditBusId); break;
     // Finance (NEW sub-modules)
     case 'student-fees-status': await loadStudentFeesStatusView(main); break;
     case 'summarized-fee-statement': await loadSummarizedFeeStatementView(main); break;

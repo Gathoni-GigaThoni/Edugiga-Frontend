@@ -448,6 +448,7 @@ async function _loadStuFormDropdowns() {
   ]);
   _stuFormTransportRoutes = trRes && trRes.ok ? _toArray(await trRes.json()) : [];
   _stuFormExtraCurriculum = ecRes && ecRes.ok ? _toArray(await ecRes.json()) : [];
+  await _loadTransportPricingCache();
 }
 
 function switchStuEditTab(tabId) {
@@ -998,12 +999,29 @@ function _findTransportRoute(routeId) {
   return _stuFormTransportRoutes.find(r => String(r.id) === String(routeId)) || null;
 }
 
+// Pricing now lives on a separate sub-resource (GET /routes/{route_id}/pricing/)
+// rather than flat price fields on Route — cached per route_id since the cascade
+// modal needs synchronous lookups while rendering.
+let _transportPricingCache = {};
+
+async function _loadTransportPricingCache() {
+  _transportPricingCache = {};
+  await Promise.all((_stuFormTransportRoutes || []).map(async r => {
+    const res = await apiFetch(`${API_BASE}/routes/${r.id}/pricing/`);
+    _transportPricingCache[String(r.id)] = (res && res.ok) ? _toArray(await res.json()) : [];
+  }));
+}
+
 function _resolveTransportPrice(route, journeyType, timeOfDay) {
   if (!route) return null;
-  if (journeyType === 'two_way') return route.two_way_price ?? null;
-  if (journeyType === 'one_way' && timeOfDay === 'morning') return route.one_way_morning_price ?? null;
-  if (journeyType === 'one_way' && timeOfDay === 'evening') return route.one_way_evening_price ?? null;
-  return null;
+  const rows = _transportPricingCache[String(route.id)] || [];
+  let direction = null;
+  if (journeyType === 'two_way') direction = 'two_way';
+  else if (journeyType === 'one_way' && timeOfDay === 'morning') direction = 'one_way_morning';
+  else if (journeyType === 'one_way' && timeOfDay === 'evening') direction = 'one_way_evening';
+  if (!direction) return null;
+  const row = rows.find(p => p.direction === direction);
+  return row ? parseFloat(row.price) : null;
 }
 
 function onStuUsesTransportChange() {
@@ -1881,6 +1899,7 @@ async function loadStudentViewPage(container) {
   if (!res || !res.ok) { document.getElementById('stu-view-body').innerHTML = '<p class="fin-error">Failed to load student.</p>'; return; }
   const d = await res.json();
   _stuFormTransportRoutes = trRes && trRes.ok ? _toArray(await trRes.json()) : (_stuFormTransportRoutes || []);
+  await _loadTransportPricingCache();
   if (termsRes && termsRes.ok) _stuTermsCache = _toArray(await termsRes.json());
   window._stuViewData = d;
   window._stuViewTab  = 'Personal Data';
