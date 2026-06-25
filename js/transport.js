@@ -8,6 +8,9 @@ let _trnRoutePerPage = 10;
 window._currentEditRouteId = null;
 let _trnRouteFormDirty = false;
 
+// Drag-and-drop state for the Stops builder
+let _trnDragSrcIdx = null;
+
 // ── Placeholder for unrebuilt sub-modules ─────────────────────────────────────
 function loadTrnPlaceholderView(container, title) {
   container.innerHTML = `
@@ -186,6 +189,7 @@ async function loadTransportRouteFormView(container, routeId) {
 function _renderTrnRouteForm(container, route, routeCode, isEdit) {
   const _e = v => String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   const r = route || {};
+  const stops = (r.stops || []).slice().sort((a, b) => (a.order || 0) - (b.order || 0));
 
   const body = document.getElementById('trn-rt-form-body');
   if (!body) return;
@@ -205,29 +209,33 @@ function _renderTrnRouteForm(container, route, routeCode, isEdit) {
 
     <div class="trn-form-group">
       <label class="trn-form-label">Stops / Destinations</label>
-      ${isEdit
-        ? `<div id="trn-stops-list" class="trn-stops-list"></div>
-           <div style="display:flex;gap:8px;margin-top:8px;">
-             <input type="text" id="trn-stop-new-input" class="fin-search-input" placeholder="Destination name" style="flex:1;">
-             <button type="button" class="trn-add-stop-btn" onclick="trnAddStopLive('${route.id}')">+ Add Stop</button>
-           </div>`
-        : `<p class="trn-stops-hint">Save the route first, then add stops from its Edit page.</p>`}
+      <p class="trn-stops-hint">Add each stop on this route in order. Drag to reorder.</p>
+      <div id="trn-stops-list" class="trn-stops-list"></div>
+      <button type="button" class="trn-add-stop-btn" onclick="trnAddStop()">+ Add Stop</button>
     </div>
 
-    <div class="trn-form-group">
-      <label class="trn-form-label">Pricing</label>
-      ${isEdit
-        ? `<div id="trn-pricing-list" class="trn-stops-list"></div>
-           <div style="display:flex;gap:8px;margin-top:8px;">
-             <select id="trn-pricing-direction" class="fin-search-input" style="flex:1;">
-               <option value="two_way">Two-way</option>
-               <option value="one_way_morning">One-way Morning</option>
-               <option value="one_way_evening">One-way Evening</option>
-             </select>
-             <input type="number" id="trn-pricing-price-input" class="fin-search-input" min="0" step="0.01" placeholder="Price" style="max-width:140px;">
-             <button type="button" class="trn-add-stop-btn" onclick="trnAddPricingLive('${route.id}')">+ Add</button>
-           </div>`
-        : `<p class="trn-stops-hint">Save the route first, then set pricing from its Edit page.</p>`}
+    <div class="trn-form-grid">
+      <div class="trn-form-group">
+        <label class="trn-form-label">Two-Way Price</label>
+        <input type="number" id="trn-rt-two-way" class="fin-search-input trn-form-input" min="0" step="0.01"
+               value="${_e(r.two_way_price ?? '')}">
+        <span class="stu-field-error" id="err-trn-rt-price"></span>
+      </div>
+      <div class="trn-form-group">
+        <label class="trn-form-label">Morning Only Price</label>
+        <input type="number" id="trn-rt-morning" class="fin-search-input trn-form-input" min="0" step="0.01"
+               value="${_e(r.one_way_morning_price ?? '')}">
+      </div>
+      <div class="trn-form-group">
+        <label class="trn-form-label">Evening Only Price</label>
+        <input type="number" id="trn-rt-evening" class="fin-search-input trn-form-input" min="0" step="0.01"
+               value="${_e(r.one_way_evening_price ?? '')}">
+      </div>
+      <div class="trn-form-group">
+        <label class="trn-form-label">Daily Rate</label>
+        <input type="number" id="trn-rt-daily" class="fin-search-input trn-form-input" min="0" step="0.01"
+               value="${_e(r.daily_rate ?? '')}">
+      </div>
     </div>
 
     <div style="display:flex;gap:12px;margin-top:24px;">
@@ -238,10 +246,9 @@ function _renderTrnRouteForm(container, route, routeCode, isEdit) {
     </div>
   `;
 
-  if (isEdit) {
-    _loadTrnStopsLive(route.id);
-    _loadTrnPricingLive(route.id);
-  }
+  // Populate stop rows
+  window._trnStops = stops.map(s => s.name || '');
+  _renderTrnStopRows();
 
   // Mark dirty on any change
   body.querySelectorAll('input,textarea,select').forEach(el => {
@@ -250,100 +257,82 @@ function _renderTrnRouteForm(container, route, routeCode, isEdit) {
   });
 }
 
-// ── Stops / Destinations ─────────────────────────────────────────────────────
-// Destinations are their own resource (DestinationCreate: just {name}, no order
-// field on the backend) — managed live against /routes/{id}/destinations/ rather
-// than batched into the route payload, since RouteCreate/RouteUpdate don't accept
-// a stops field at all.
-let _trnLiveStops = [];
+// ── Stops / Destinations builder ─────────────────────────────────────────────
 
-async function _loadTrnStopsLive(routeId) {
-  const list = document.getElementById('trn-stops-list');
-  if (list) list.innerHTML = '<p class="fin-loading">Loading stops&#8230;</p>';
-  try {
-    const res = await apiFetch(`${API_BASE}/routes/${routeId}/destinations/`);
-    _trnLiveStops = (res && res.ok) ? await res.json() : [];
-  } catch (_) { _trnLiveStops = []; }
-  _renderTrnStopRows(routeId);
-}
-
-function _renderTrnStopRows(routeId) {
+function _renderTrnStopRows() {
   const list = document.getElementById('trn-stops-list');
   if (!list) return;
-  if (!_trnLiveStops.length) { list.innerHTML = '<p style="color:#888;font-size:0.85rem;">No stops added yet.</p>'; return; }
-  list.innerHTML = _trnLiveStops.map(s => `
-    <div class="trn-stop-row">
-      <input type="text" class="fin-search-input trn-stop-input" value="${String(s.name||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}" disabled>
-      <button type="button" class="trn-stop-remove" onclick="trnRemoveStopLive('${routeId}',${s.id})" title="Remove stop">&#x2715;</button>
+  const stops = window._trnStops || [];
+  if (!stops.length) { list.innerHTML = ''; return; }
+
+  list.innerHTML = stops.map((name, i) => `
+    <div class="trn-stop-row" draggable="true" data-idx="${i}"
+         ondragstart="trnStopDragStart(event,${i})"
+         ondragover="trnStopDragOver(event)"
+         ondrop="trnStopDrop(event,${i})"
+         ondragend="trnStopDragEnd(event)">
+      <span class="trn-stop-handle" title="Drag to reorder">&#9776;</span>
+      <input type="text" class="fin-search-input trn-stop-input" value="${String(name||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}"
+             oninput="_trnStopInput(${i},this.value)"
+             onblur="_trnStopBlur(${i},this.value)"
+             placeholder="Destination name">
+      <button type="button" class="trn-stop-remove" onclick="trnRemoveStop(${i})" title="Remove stop">&#x2715;</button>
     </div>
   `).join('');
 }
 
-async function trnAddStopLive(routeId) {
-  const input = document.getElementById('trn-stop-new-input');
-  const name = (input?.value || '').trim();
-  if (!name) return;
-  const res = await apiFetch(`${API_BASE}/routes/${routeId}/destinations/`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
-  });
-  if (res && res.ok) { if (input) input.value = ''; await _loadTrnStopsLive(routeId); }
-  else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+function trnAddStop() {
+  window._trnStops = window._trnStops || [];
+  window._trnStops.push('');
+  _trnRouteFormDirty = true;
+  _renderTrnStopRows();
+  // Focus the new input
+  const rows = document.querySelectorAll('.trn-stop-input');
+  if (rows.length) rows[rows.length - 1].focus();
 }
 
-async function trnRemoveStopLive(routeId, destId) {
-  const res = await apiFetch(`${API_BASE}/routes/${routeId}/destinations/${destId}`, { method: 'DELETE' });
-  if (res && res.ok) await _loadTrnStopsLive(routeId);
-  else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+function trnRemoveStop(idx) {
+  window._trnStops = window._trnStops || [];
+  window._trnStops.splice(idx, 1);
+  _trnRouteFormDirty = true;
+  _renderTrnStopRows();
 }
 
-// ── Transport Pricing ────────────────────────────────────────────────────────
-const _trnDirectionLabels = { two_way: 'Two-way', one_way_morning: 'One-way Morning', one_way_evening: 'One-way Evening' };
-let _trnLivePricing = [];
-
-async function _loadTrnPricingLive(routeId) {
-  const list = document.getElementById('trn-pricing-list');
-  if (list) list.innerHTML = '<p class="fin-loading">Loading pricing&#8230;</p>';
-  try {
-    const res = await apiFetch(`${API_BASE}/routes/${routeId}/pricing/`);
-    _trnLivePricing = (res && res.ok) ? await res.json() : [];
-  } catch (_) { _trnLivePricing = []; }
-  _renderTrnPricingRows(routeId);
+function _trnStopInput(idx, val) {
+  window._trnStops = window._trnStops || [];
+  window._trnStops[idx] = val;
+  _trnRouteFormDirty = true;
 }
 
-function _renderTrnPricingRows(routeId) {
-  const list = document.getElementById('trn-pricing-list');
-  if (!list) return;
-  if (!_trnLivePricing.length) { list.innerHTML = '<p style="color:#888;font-size:0.85rem;">No pricing set yet.</p>'; return; }
-  list.innerHTML = _trnLivePricing.map(p => `
-    <div class="trn-stop-row">
-      <input type="text" class="fin-search-input trn-stop-input" value="${_trnDirectionLabels[p.direction] || p.direction} — ${_finFmt(parseFloat(p.price)||0)}" disabled>
-      <button type="button" class="trn-stop-remove" onclick="trnRemovePricingLive('${routeId}',${p.id})" title="Remove pricing">&#x2715;</button>
-    </div>
-  `).join('');
+// Auto-remove empty stop rows on blur (smoother than blocking submission on them)
+function _trnStopBlur(idx, val) {
+  if (!val.trim()) trnRemoveStop(idx);
 }
 
-async function trnAddPricingLive(routeId) {
-  const direction = document.getElementById('trn-pricing-direction')?.value;
-  const priceRaw   = document.getElementById('trn-pricing-price-input')?.value;
-  if (!direction || priceRaw === '' || priceRaw === undefined) { showToast('Direction and price are required.', 'error'); return; }
-  const price = parseFloat(priceRaw);
-  if (isNaN(price) || price < 0) { showToast('Price must be a non-negative number.', 'error'); return; }
-  const res = await apiFetch(`${API_BASE}/routes/${routeId}/pricing/`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ direction, price }),
-  });
-  if (res && res.ok) {
-    const priceInput = document.getElementById('trn-pricing-price-input');
-    if (priceInput) priceInput.value = '';
-    await _loadTrnPricingLive(routeId);
-  } else if (res) {
-    showToast('Error: ' + await parseApiError(res), 'error');
-  }
+// ── HTML5 drag-and-drop for stop reordering ───────────────────────────────────
+function trnStopDragStart(event, idx) {
+  _trnDragSrcIdx = idx;
+  event.dataTransfer.effectAllowed = 'move';
+  event.currentTarget.classList.add('trn-stop-dragging');
 }
-
-async function trnRemovePricingLive(routeId, pricingId) {
-  const res = await apiFetch(`${API_BASE}/routes/${routeId}/pricing/${pricingId}`, { method: 'DELETE' });
-  if (res && res.ok) await _loadTrnPricingLive(routeId);
-  else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+function trnStopDragOver(event) {
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'move';
+}
+function trnStopDrop(event, targetIdx) {
+  event.preventDefault();
+  if (_trnDragSrcIdx === null || _trnDragSrcIdx === targetIdx) return;
+  const stops = window._trnStops || [];
+  const [moved] = stops.splice(_trnDragSrcIdx, 1);
+  stops.splice(targetIdx, 0, moved);
+  window._trnStops = stops;
+  _trnDragSrcIdx = null;
+  _trnRouteFormDirty = true;
+  _renderTrnStopRows();
+}
+function trnStopDragEnd(event) {
+  event.currentTarget.classList.remove('trn-stop-dragging');
+  _trnDragSrcIdx = null;
 }
 
 // ── Form submission ───────────────────────────────────────────────────────────
@@ -351,18 +340,47 @@ async function trnRemovePricingLive(routeId, pricingId) {
 async function submitTrnRouteForm(routeId) {
   const name = (document.getElementById('trn-rt-name')?.value || '').trim();
   const errName  = document.getElementById('err-trn-rt-name');
-  if (errName) errName.textContent = '';
+  const errPrice = document.getElementById('err-trn-rt-price');
+
+  if (errName)  errName.textContent  = '';
+  if (errPrice) errPrice.textContent = '';
 
   if (!name) {
     if (errName) errName.textContent = 'Route Name is required.';
     return;
   }
 
+  const twoWay  = document.getElementById('trn-rt-two-way')?.value;
+  const morning = document.getElementById('trn-rt-morning')?.value;
+  const evening = document.getElementById('trn-rt-evening')?.value;
+  const daily   = document.getElementById('trn-rt-daily')?.value;
+
+  const prices = [twoWay, morning, evening, daily].map(v => v !== '' && v !== undefined ? parseFloat(v) : null);
+  const hasAtLeastOnePrice = prices.some(p => p !== null && !isNaN(p) && p >= 0);
+  if (!hasAtLeastOnePrice) {
+    if (errPrice) errPrice.textContent = 'At least one price field must be provided.';
+    return;
+  }
+  const negativePrice = prices.some(p => p !== null && !isNaN(p) && p < 0);
+  if (negativePrice) {
+    if (errPrice) errPrice.textContent = 'Prices must be non-negative.';
+    return;
+  }
+
+  // Collect stops — filter out any empty rows left over
+  const stops = (window._trnStops || [])
+    .map((s, i) => ({ order: i + 1, name: (s || '').trim() }))
+    .filter(s => s.name);
+
   const isEdit = !!routeId;
-  // RouteCreate/RouteUpdate have no description/is_active/stops fields, and
-  // pricing now lives on its own sub-resource (/routes/{id}/pricing/) rather
-  // than flat fields on Route — see trnAddPricingLive/trnRemovePricingLive.
-  const payload = { name };
+  const payload = {
+    name,
+    stops,
+    two_way_price:            prices[0],
+    one_way_morning_price:    prices[1],
+    one_way_evening_price:    prices[2],
+    daily_rate:               prices[3],
+  };
 
   const url    = isEdit ? `${API_BASE}/routes/${routeId}` : `${API_BASE}/routes/`;
   const method = isEdit ? 'PUT' : 'POST';

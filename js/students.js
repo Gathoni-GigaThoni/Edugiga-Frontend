@@ -448,7 +448,6 @@ async function _loadStuFormDropdowns() {
   ]);
   _stuFormTransportRoutes = trRes && trRes.ok ? _toArray(await trRes.json()) : [];
   _stuFormExtraCurriculum = ecRes && ecRes.ok ? _toArray(await ecRes.json()) : [];
-  await _loadTransportPricingCache();
 }
 
 function switchStuEditTab(tabId) {
@@ -518,8 +517,6 @@ function _stuTabPersonal(d) {
     `<option value="${_esc(String(e.id))}"${ecIds.includes(e.id)?' selected':''}>${_esc(e.name)}</option>`).join('');
 
   const hasSibling    = !!d.has_sibling_enrolled;
-  const siblingName   = hasSibling ? _esc(d.sibling_student_name || '') : '';
-  const siblingId     = hasSibling ? _esc(d.sibling_student_id || '') : '';
   const sibDisplay    = hasSibling ? 'block' : 'none';
 
   const isEdit = !!_currentEditStudentId;
@@ -656,19 +653,13 @@ function _stuTabPersonal(d) {
       <div class="stu-form-group" style="grid-column:span 2;">
         <label class="stu-checkbox-row"><input type="checkbox" id="se-has-sibling"${hasSibling?' checked':''} onchange="toggleSiblingSection()"> Has Sibling Enrolled?</label>
         <div id="se-sibling-section" style="display:${sibDisplay};margin-top:10px;padding:14px;background:#f9fafb;border-radius:6px;border:1px solid #e0e0e0;">
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px 24px;">
-            <div class="stu-form-group">
-              <label>Sibling Student Name</label>
-              <input id="se-sibling-name" class="fin-search-input" style="width:100%!important" value="${siblingName}">
-            </div>
-            <div class="stu-form-group">
-              <label>Sibling Student ID</label>
-              <input id="se-sibling-id" class="fin-search-input" style="width:100%!important" value="${siblingId}"
-                     placeholder="SOIS-0000001" oninput="validateSiblingId(this);updateSiblingDiscountPreview()">
-              <small style="color:#888;font-size:0.78rem;">Format: SOIS-0000001</small>
-              <span class="stu-field-error" id="err-se-sibling-id"></span>
-            </div>
+          <div id="se-sibling-list" class="trn-stops-list"></div>
+          <div style="position:relative;max-width:420px;margin-top:8px;">
+            <input id="se-sibling-search" class="fin-search-input" style="width:100%!important" placeholder="Search sibling by name or SOIS ID&#8230;"
+                   oninput="stuSibPickSearch(this.value)" autocomplete="off">
+            <div id="se-sibling-search-dd" class="fin-action-dropdown" style="display:none;max-height:200px;overflow-y:auto;position:absolute;top:100%;left:0;width:100%;z-index:100;"></div>
           </div>
+          <small style="color:#888;font-size:0.78rem;display:block;margin-top:4px;">A sibling group can have at most 3 students in total.</small>
           <p class="stu-sibling-note">Sibling discount will be applied automatically based on age order.</p>
           <p id="se-sibling-discount-preview" class="stu-sibling-preview" hidden></p>
         </div>
@@ -717,6 +708,7 @@ function _wireStuPersonalTab() {
   if (isAdd) fetchNextStudentId();
 
   _renderStuTransportSummary();
+  _initStuSiblingPicks(window._stuFormData || {});
 }
 
 async function fetchNextStudentId() {
@@ -903,17 +895,6 @@ function onStuSportsHouseChange(sel) {
   d.sports_house_name = sel.value ? sel.options[sel.selectedIndex].textContent : null;
 }
 
-function validateSiblingId(input) {
-  const errEl = document.getElementById('err-se-sibling-id');
-  if (!input.value || /^SOIS-\d{7}$/.test(input.value)) {
-    if (errEl) errEl.textContent = '';
-    input.classList.remove('error');
-  } else {
-    if (errEl) errEl.textContent = 'Format must be SOIS-0000001 (7 digits).';
-    input.classList.add('error');
-  }
-}
-
 function toggleSiblingSection() {
   const chk = document.getElementById('se-has-sibling');
   const sec = document.getElementById('se-sibling-section');
@@ -921,36 +902,122 @@ function toggleSiblingSection() {
   updateSiblingDiscountPreview();
 }
 
+// ── Sibling Enrolment — wired to the real Sibling Groups resource ────────────
+// A group holds up to 3 students total. window._stuSiblingExisting are members
+// already persisted on d.sibling_group_id (resolved on tab load); _stuSiblingNewPicks
+// are picks made in this session, only sent to the backend on save (see
+// _stuSyncSiblingGroup) since creating/joining a group requires this student's
+// own numeric id, which doesn't exist yet in Add mode until the record is saved.
+window._stuSiblingExisting  = window._stuSiblingExisting  || [];
+window._stuSiblingNewPicks  = window._stuSiblingNewPicks  || [];
+
+async function _initStuSiblingPicks(d) {
+  window._stuSiblingNewPicks = [];
+  window._stuSiblingExisting = [];
+  if (!d.sibling_group_id) { _renderStuSiblingList(); return; }
+  const res = await apiFetch(`${API_BASE}/receivables/sibling-groups/${d.sibling_group_id}`);
+  const group = (res && res.ok) ? await res.json().catch(() => null) : null;
+  const otherIds = (group?.student_ids || []).filter(id => String(id) !== String(d.id));
+  window._stuSiblingExisting = (await Promise.all(otherIds.map(async id => {
+    const r = await apiFetch(`${API_BASE}/students/${id}`);
+    if (!r || !r.ok) return null;
+    const s = await r.json().catch(() => null);
+    if (!s) return null;
+    return { id: s.id, student_id: s.student_id, name: `${s.first_name||''} ${s.last_name||''}`.trim(), date_of_birth: s.date_of_birth };
+  }))).filter(Boolean);
+  _renderStuSiblingList();
+}
+
+function _stuSiblingTotalCount() {
+  return window._stuSiblingExisting.length + window._stuSiblingNewPicks.length;
+}
+
+function _renderStuSiblingList() {
+  const list = document.getElementById('se-sibling-list');
+  if (!list) return;
+  const rows = [
+    ...window._stuSiblingExisting.map(p => ({ ...p, removable: false })),
+    ...window._stuSiblingNewPicks.map((p, i) => ({ ...p, removable: true, idx: i })),
+  ];
+  list.innerHTML = rows.length ? rows.map(p => `
+    <div class="trn-stop-row">
+      <input type="text" class="fin-search-input trn-stop-input" value="${_esc(p.name)} — ${_esc(p.student_id||'')}" disabled>
+      ${p.removable
+        ? `<button type="button" class="trn-stop-remove" onclick="stuSibRemovePick(${p.idx})" title="Remove">&#x2715;</button>`
+        : `<span style="color:#888;font-size:0.78rem;padding:0 8px;white-space:nowrap;">already linked</span>`}
+    </div>
+  `).join('') : '<p style="color:#888;font-size:0.85rem;">No siblings added yet.</p>';
+
+  const searchInput = document.getElementById('se-sibling-search');
+  const full = _stuSiblingTotalCount() >= 2; // +1 for this student = group max of 3
+  if (searchInput) {
+    searchInput.disabled = full;
+    searchInput.placeholder = full ? 'Sibling group is full (max 3 students)' : 'Search sibling by name or SOIS ID…';
+  }
+}
+
+async function stuSibPickSearch(val) {
+  const dd = document.getElementById('se-sibling-search-dd');
+  if (!dd) return;
+  if (!val.trim()) { dd.style.display = 'none'; return; }
+  const res = await apiFetch(`${API_BASE}/students/?search=${encodeURIComponent(val)}`);
+  const list = (res && res.ok) ? _toArray(await res.json().catch(() => [])) : [];
+  const taken = new Set([
+    String(_currentEditStudentId || ''),
+    ...window._stuSiblingExisting.map(p => String(p.id)),
+    ...window._stuSiblingNewPicks.map(p => String(p.id)),
+  ]);
+  const filtered = list.filter(s => !taken.has(String(s.id)));
+  dd.innerHTML = filtered.length ? filtered.slice(0, 10).map(s => {
+    const name = `${s.first_name||''} ${s.last_name||''}`.trim();
+    return `<a href="#" onclick="stuSibPickSelect(${s.id},'${_finEsc(s.student_id||'')}','${_finEsc(name)}','${_finEsc(s.date_of_birth||'')}');return false;">
+       ${_finEsc(s.student_id||'')} — ${_finEsc(name)}
+     </a>`;
+  }).join('') : '<div style="padding:10px 14px;color:#888;font-size:0.88rem;">No results found</div>';
+  dd.style.display = 'block';
+}
+
+function stuSibPickSelect(id, studentId, name, dateOfBirth) {
+  if (_stuSiblingTotalCount() >= 2) { showToast('A sibling group can have at most 3 students.', 'error'); return; }
+  window._stuSiblingNewPicks.push({ id, student_id: studentId, name, date_of_birth: dateOfBirth || null });
+  const input = document.getElementById('se-sibling-search');
+  if (input) input.value = '';
+  const dd = document.getElementById('se-sibling-search-dd');
+  if (dd) dd.style.display = 'none';
+  _stuEditDirty = true;
+  _renderStuSiblingList();
+  updateSiblingDiscountPreview();
+}
+
+function stuSibRemovePick(idx) {
+  window._stuSiblingNewPicks.splice(idx, 1);
+  _stuEditDirty = true;
+  _renderStuSiblingList();
+  updateSiblingDiscountPreview();
+}
+
 // Informational only — does not affect the submitted payload. Compares the
-// current student's date_of_birth against the sibling's to show which tier
-// (and configured %) they'll likely fall under. Only handles the two-sibling
-// case; the backend computes the definitive tier (incl. 3rd/4th child) across
-// the whole sibling group when invoices are generated.
+// current student's date_of_birth against the first sibling's to show which tier
+// (and configured %) they'll likely fall under. The backend computes the
+// definitive tier (incl. 3rd/4th child) across the whole sibling group when
+// invoices are generated.
 async function updateSiblingDiscountPreview() {
-  const siblingIdField = document.getElementById('se-sibling-id');
-  const dobField       = document.getElementById('se-dob');
-  const previewEl      = document.getElementById('se-sibling-discount-preview');
+  const dobField   = document.getElementById('se-dob');
+  const previewEl  = document.getElementById('se-sibling-discount-preview');
   if (!previewEl) return;
 
-  const siblingId  = siblingIdField ? siblingIdField.value.trim() : '';
+  const sibling    = window._stuSiblingExisting[0] || window._stuSiblingNewPicks[0];
   const currentDob = dobField ? dobField.value : '';
 
-  if (!siblingId || !currentDob || !/^SOIS-\d{7}$/.test(siblingId)) {
+  if (!sibling || !sibling.date_of_birth || !currentDob) {
     previewEl.hidden = true;
     return;
   }
 
-  const res = await apiFetch(`${API_BASE}/students/?search=${encodeURIComponent(siblingId)}`);
-  if (!res || !res.ok) { previewEl.hidden = true; return; }
-
-  const all = await res.json().catch(() => []);
-  const siblingRecord = _toArray(all).find(s => s.student_id === siblingId);
-  if (!siblingRecord || !siblingRecord.date_of_birth) { previewEl.hidden = true; return; }
-
   const discountSettings = await fetchDiscountSettings();
 
   const currentDate = new Date(currentDob);
-  const siblingDate = new Date(siblingRecord.date_of_birth);
+  const siblingDate = new Date(sibling.date_of_birth);
 
   let tier, pct;
   if (currentDate < siblingDate) {
@@ -999,29 +1066,17 @@ function _findTransportRoute(routeId) {
   return _stuFormTransportRoutes.find(r => String(r.id) === String(routeId)) || null;
 }
 
-// Pricing now lives on a separate sub-resource (GET /routes/{route_id}/pricing/)
-// rather than flat price fields on Route — cached per route_id since the cascade
-// modal needs synchronous lookups while rendering.
-let _transportPricingCache = {};
-
-async function _loadTransportPricingCache() {
-  _transportPricingCache = {};
-  await Promise.all((_stuFormTransportRoutes || []).map(async r => {
-    const res = await apiFetch(`${API_BASE}/routes/${r.id}/pricing/`);
-    _transportPricingCache[String(r.id)] = (res && res.ok) ? _toArray(await res.json()) : [];
-  }));
-}
-
+// Pricing lives as flat fields on Route (two_way_price, one_way_morning_price,
+// one_way_evening_price, daily_rate) — no sub-resource fetch needed.
 function _resolveTransportPrice(route, journeyType, timeOfDay) {
   if (!route) return null;
-  const rows = _transportPricingCache[String(route.id)] || [];
-  let direction = null;
-  if (journeyType === 'two_way') direction = 'two_way';
-  else if (journeyType === 'one_way' && timeOfDay === 'morning') direction = 'one_way_morning';
-  else if (journeyType === 'one_way' && timeOfDay === 'evening') direction = 'one_way_evening';
-  if (!direction) return null;
-  const row = rows.find(p => p.direction === direction);
-  return row ? parseFloat(row.price) : null;
+  let price = null;
+  if (journeyType === 'two_way') price = route.two_way_price;
+  else if (journeyType === 'one_way' && timeOfDay === 'morning') price = route.one_way_morning_price;
+  else if (journeyType === 'one_way' && timeOfDay === 'evening') price = route.one_way_evening_price;
+  if (price === null || price === undefined || price === '') return null;
+  const n = parseFloat(price);
+  return isNaN(n) ? null : n;
 }
 
 function onStuUsesTransportChange() {
@@ -1527,9 +1582,13 @@ function _harvestStuPersonalTab() {
   d.mapped_to_meal_program = _fradio('se-meal') === 'yes';
   d.parent_consents_photo  = _fc('se-photo-consent');
   d.notes              = _fv('se-notes');
-  d.has_sibling_enrolled = _fc('se-has-sibling');
-  d.sibling_student_name = d.has_sibling_enrolled ? _fv('se-sibling-name') : '';
-  d.sibling_student_id   = d.has_sibling_enrolled ? _fv('se-sibling-id')   : '';
+  d.has_sibling_enrolled = _fc('se-has-sibling') || _stuSiblingTotalCount() > 0;
+  // Backend's flat fields only hold one sibling — kept in sync with the first
+  // entry for backward compat; the full set is synced to the real Sibling
+  // Groups resource in _stuSyncSiblingGroup once this student has an id.
+  const firstSibling = window._stuSiblingExisting[0] || window._stuSiblingNewPicks[0];
+  d.sibling_student_name = d.has_sibling_enrolled && firstSibling ? firstSibling.name : '';
+  d.sibling_student_id   = d.has_sibling_enrolled && firstSibling ? firstSibling.student_id : '';
   const photoEl = document.getElementById('se-photo');
   if (photoEl) _cacheStuFile('se-photo', photoEl);
   // uses_school_transport / transport_selection are kept up to date directly
@@ -1712,6 +1771,37 @@ async function _stuSyncTransport(studentId, d) {
   }
 }
 
+// Best-effort — a failure here doesn't roll back the record save that already
+// succeeded. New sibling picks made this session are only committed to the real
+// Sibling Groups resource once this student has a numeric id: either added to
+// the existing group (POST .../add-student/{id}) or used to create a brand new
+// one (POST /receivables/sibling-groups/ with this student + the new picks,
+// capped at 3 total per the backend's group-size rule).
+async function _stuSyncSiblingGroup(studentId, d) {
+  const newPicks = window._stuSiblingNewPicks || [];
+  if (!newPicks.length) return;
+
+  if (d.sibling_group_id) {
+    for (const p of newPicks) {
+      const res = await apiFetch(`${API_BASE}/receivables/sibling-groups/${d.sibling_group_id}/add-student/${p.id}`, { method: 'POST' });
+      if (!(res && res.ok)) showToast(`Saved, but adding ${p.name} to the sibling group failed: ` + (res ? await parseApiError(res) : 'unknown error'), 'error');
+    }
+  } else {
+    const studentIds = [studentId, ...newPicks.map(p => p.id)].slice(0, 3);
+    const res = await apiFetch(`${API_BASE}/receivables/sibling-groups/`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ student_ids: studentIds }),
+    });
+    if (res && res.ok) {
+      const group = await res.json().catch(() => null);
+      if (group) d.sibling_group_id = group.id;
+    } else {
+      showToast('Saved, but creating the sibling group failed: ' + (res ? await parseApiError(res) : 'unknown error'), 'error');
+    }
+  }
+  window._stuSiblingExisting = (window._stuSiblingExisting || []).concat(newPicks);
+  window._stuSiblingNewPicks = [];
+}
+
 // Uploads every cached file (Personal Data's Photo + the Document Uploads tab's
 // three inputs) via POST /upload/, then attaches each as a document record on the
 // student via POST /students/{id}/documents ({name, url} — additionalProperties:
@@ -1762,6 +1852,7 @@ async function _persistStudentRecord(showSuccessToast) {
     _stuEditDirty = false;
     clearStudentDraft();
     await _stuSyncTransport(saved.id, d);
+    await _stuSyncSiblingGroup(saved.id, window._stuFormData);
     await _stuUploadCachedFiles(saved.id);
     if (showSuccessToast) showToast('Student added successfully!', 'success');
     return true;
@@ -1779,6 +1870,7 @@ async function _persistStudentRecord(showSuccessToast) {
     case 'personal':
       await call(`${API_BASE}/students/${id}`, 'PATCH', _stuFlatPayload(d));
       await _stuSyncTransport(id, d);
+      await _stuSyncSiblingGroup(id, d);
       break;
     case 'prev-edu':
       await call(`${API_BASE}/students/${id}/previous-education`, 'PUT', d.previous_education || {});
@@ -1918,7 +2010,6 @@ async function loadStudentViewPage(container) {
   if (!res || !res.ok) { document.getElementById('stu-view-body').innerHTML = '<p class="fin-error">Failed to load student.</p>'; return; }
   const d = await res.json();
   _stuFormTransportRoutes = trRes && trRes.ok ? _toArray(await trRes.json()) : (_stuFormTransportRoutes || []);
-  await _loadTransportPricingCache();
   if (termsRes && termsRes.ok) _stuTermsCache = _toArray(await termsRes.json());
   window._stuViewData = d;
   window._stuViewTab  = 'Personal Data';
