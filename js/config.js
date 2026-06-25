@@ -135,20 +135,24 @@ async function populateAcademicLevelsDropdown(selectId, selectedId = null) {
   const select = document.getElementById(selectId);
   if (!select) return;
   try {
-    const res = await apiFetch(`${API_BASE}/academic-levels/`);
-    if (res && res.ok) {
-      const raw = await res.json();
-      const levels = Array.isArray(raw) ? raw : (raw.data || raw.items || raw.results || []);
-      const placeholder = select.options[0]?.value === '' ? select.options[0].textContent : '-- Select Level --';
-      select.innerHTML = `<option value="">${placeholder}</option>`;
-      levels.forEach(l => {
-        const opt = document.createElement('option');
-        opt.value = l.id;
-        opt.textContent = l.name;
-        if (selectedId && String(l.id) === String(selectedId)) opt.selected = true;
-        select.appendChild(opt);
-      });
+    if (!window._academicLevelsCache || !window._academicLevelsCache.length) {
+      const res = await apiFetch(`${API_BASE}/academic-levels/`);
+      if (res && res.ok) {
+        const raw = await res.json();
+        window._academicLevelsCache = Array.isArray(raw) ? raw : (raw.data || raw.items || raw.results || []);
+      }
     }
+    const levels = window._academicLevelsCache || [];
+    const placeholder = select.options[0]?.value === '' ? select.options[0].textContent : '-- Select Level --';
+    select.innerHTML = `<option value="">${placeholder}</option>`;
+    levels.forEach(l => {
+      const opt = document.createElement('option');
+      opt.value = l.id;
+      opt.textContent = l.name;
+      if (l.description) opt.dataset.description = l.description;
+      if (selectedId && String(l.id) === String(selectedId)) opt.selected = true;
+      select.appendChild(opt);
+    });
   } catch (e) { console.error('populateAcademicLevelsDropdown:', e); }
 }
 

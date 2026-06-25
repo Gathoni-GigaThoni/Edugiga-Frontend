@@ -588,6 +588,7 @@ function _stuTabPersonal(d) {
           <option value="">Please Select</option>
         </select>
         <span class="stu-field-error" id="err-se-level"></span>
+        <div id="se-level-age-hint" style="margin-top:3px;font-size:0.81rem;color:#2c7a4b;font-style:italic;"></div>
         <div id="se-class-term-confirm" style="margin-top:4px;font-size:0.82rem;"></div>
       </div>
       <div class="stu-form-group">
@@ -674,6 +675,36 @@ function _stuTabPersonal(d) {
   `;
 }
 
+function _suggestLevelFromAge(dobValue) {
+  if (!dobValue) return;
+  const today = new Date();
+  const birth = new Date(dobValue);
+  const age   = today.getFullYear() - birth.getFullYear()
+    - (today < new Date(today.getFullYear(), birth.getMonth(), birth.getDate()) ? 1 : 0);
+  const levelSel  = document.getElementById('se-level');
+  const hintEl    = document.getElementById('se-level-age-hint');
+  if (!levelSel) return;
+  // Only suggest if user hasn't already picked a level
+  if (levelSel.value) { if (hintEl) hintEl.textContent = ''; return; }
+  let match = null;
+  Array.from(levelSel.options).forEach(opt => {
+    if (!opt.value) return;
+    const desc = opt.dataset.description || '';
+    const m = desc.match(/(\d+)\s*[-–to]+\s*(\d+)/);
+    if (m) {
+      const min = parseInt(m[1], 10), max = parseInt(m[2], 10);
+      if (age >= min && age <= max) match = opt;
+    }
+  });
+  if (match) {
+    levelSel.value = match.value;
+    levelSel.dispatchEvent(new Event('change'));
+    if (hintEl) hintEl.textContent = `Suggested based on age ${age}: ${match.textContent}. You may change this.`;
+  } else {
+    if (hintEl) hintEl.textContent = `Age ${age} — no level description matched; please select manually.`;
+  }
+}
+
 function _wireStuPersonalTab() {
   const dob = document.getElementById('se-dob');
   if (dob) {
@@ -681,6 +712,7 @@ function _wireStuPersonalTab() {
       const ageEl = document.getElementById('se-age-display');
       if (ageEl) ageEl.textContent = calculateAge(dob.value);
       updateSiblingDiscountPreview();
+      _suggestLevelFromAge(dob.value);
     });
   }
   updateSiblingDiscountPreview();
@@ -857,6 +889,9 @@ function onStuManualClassChange(classId) {
 }
 
 async function onStuLevelChange(levelId, clearHouse = true) {
+  // If the user manually picks a level, clear the DOB suggestion hint
+  const hintEl = document.getElementById('se-level-age-hint');
+  if (hintEl && clearHouse) hintEl.textContent = '';
   const houseSelect = document.getElementById('se-sports-house');
   if (!houseSelect) return;
 
@@ -1469,12 +1504,14 @@ function _stuTabMedical(d) {
         </select>
       </div>
       <div class="stu-form-group">
-        <label>Emergency Contact Name</label>
+        <label>Emergency Contact Name <span class="fin-required">*</span></label>
         <input id="se-emrg-name" class="fin-search-input" style="width:100%!important" value="${_esc(med.emergency_contact_name||'')}">
+        <span class="stu-field-error" id="err-se-emrg-name"></span>
       </div>
       <div class="stu-form-group">
-        <label>Emergency Contact Phone</label>
+        <label>Emergency Contact Phone <span class="fin-required">*</span></label>
         <input id="se-emrg-phone" class="fin-search-input" style="width:100%!important" value="${_esc(med.emergency_contact_phone||'')}">
+        <span class="stu-field-error" id="err-se-emrg-phone"></span>
       </div>
       <div class="stu-form-group">
         <label>Emergency Contact Relationship</label>
@@ -1539,6 +1576,25 @@ function _stuValidatePersonal() {
   // Block if term/class auto-derivation is in an error state
   const fd = window._stuFormData || {};
   if (fd._derivation_error) valid = false;
+  return valid;
+}
+
+function _stuValidateMedical() {
+  // Validates against live DOM when on the medical tab; falls back to _stuFormData
+  // when called from submitStudentForm while on a different tab.
+  const onTab = !!document.getElementById('se-emrg-name');
+  const name  = onTab ? (document.getElementById('se-emrg-name').value||'').trim()
+                      : ((window._stuFormData||{}).medical_info?.emergency_contact_name||'').trim();
+  const phone = onTab ? (document.getElementById('se-emrg-phone').value||'').trim()
+                      : ((window._stuFormData||{}).medical_info?.emergency_contact_phone||'').trim();
+  let valid = true;
+  if (onTab) {
+    const nameErr  = document.getElementById('err-se-emrg-name');
+    const phoneErr = document.getElementById('err-se-emrg-phone');
+    if (nameErr)  nameErr.textContent  = name  ? '' : 'Emergency contact name is required.';
+    if (phoneErr) phoneErr.textContent = phone ? '' : 'Emergency contact phone is required.';
+  }
+  if (!name || !phone) valid = false;
   return valid;
 }
 
@@ -1915,6 +1971,10 @@ async function saveAndContinueStuTab() {
     showToast('Please complete the required primary parent fields (Relationship, Phone, Email, ID Document).', 'error');
     return;
   }
+  if (_stuEditActiveTab === 'medical' && !_stuValidateMedical()) {
+    showToast('Emergency contact name and phone are required.', 'error');
+    return;
+  }
   _harvestStuActiveTab();
 
   const btn = document.getElementById('stu-form-submit-btn');
@@ -1944,6 +2004,12 @@ function _updateStuFormFooter() {
 
 async function submitStudentForm() {
   _harvestStuActiveTab();
+  // Emergency contact check before leaving whatever tab is active
+  if (!_stuValidateMedical()) {
+    if (_stuEditActiveTab !== 'medical') switchStuEditTab('medical');
+    showToast('Emergency contact name and phone are required before saving.', 'error');
+    return;
+  }
   if (_stuEditActiveTab !== 'personal') {
     switchStuEditTab('personal');
     await new Promise(r => setTimeout(r, 50));
@@ -2008,7 +2074,20 @@ async function loadStudentViewPage(container) {
     _stuTermsCache.length ? Promise.resolve(null) : apiFetch(`${API_BASE}/terms/`),
   ]);
   if (!res || !res.ok) { document.getElementById('stu-view-body').innerHTML = '<p class="fin-error">Failed to load student.</p>'; return; }
-  const d = await res.json();
+  let d = await res.json();
+  // Same shape-normalisation as the edit form: unwrap nested wrappers
+  if (d && d.first_name == null) {
+    const nested = d.student || d.data || d.profile;
+    if (nested && typeof nested === 'object') d = { ...d, ...nested };
+  }
+  // API returns medical_info; view templates read d.medical — alias both
+  if (!d.medical && d.medical_info) d.medical = d.medical_info;
+  // Canonical id mappings used throughout the view
+  if (d.academic_level_id != null && d.level_id == null)  d.level_id = d.academic_level_id;
+  if (d.school_class_id   != null && d.class_id == null)  d.class_id = d.school_class_id;
+  // Extra display-name fallbacks for sidebar card and Academic tab
+  if (!d.class_name)              d.class_name              = d.school_class_name || d.level_of_academics || d.level_name || null;
+  if (!d.level_of_academics_name) d.level_of_academics_name = d.school_class_name || d.class_name || d.level_name || null;
   _stuFormTransportRoutes = trRes && trRes.ok ? _toArray(await trRes.json()) : (_stuFormTransportRoutes || []);
   if (termsRes && termsRes.ok) _stuTermsCache = _toArray(await termsRes.json());
   window._stuViewData = d;
@@ -2173,7 +2252,7 @@ function _renderStudentViewBody(d, activeTab) {
         <div class="stu-view-fee-row">
           <span style="font-size:0.83rem;color:#888;">Fee Balance</span>
           <span style="color:#e74c3c;font-weight:700;font-size:1rem;">${_esc(String(d.fee_balance ?? '-'))}</span>
-          <a href="#" onclick="openFeeStatement(${d.id});return false;" class="fin-btn-teal"
+          <a href="#" onclick="openStudentFeeStatement(${d.id});return false;" class="fin-btn-teal"
              style="padding:5px 12px!important;font-size:0.78rem;margin-top:4px;">View Fee Statement</a>
         </div>
       </div>
