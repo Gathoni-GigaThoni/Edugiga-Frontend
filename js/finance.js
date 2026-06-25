@@ -3380,6 +3380,11 @@ function _renderFeeAcctTable() {
   if(pgEl) pgEl.innerHTML=`<div class="fin-pagination">${pg}</div>`;
 }
 
+function onFaItemSelect(name) {
+  const item = feeItemsData.find(f => f.name === name);
+  document.getElementById('fa-f-item-code').value = item ? (item.code || '') : '';
+}
+
 function toggleFinFeeAcctDropdown(e,id) {
   e.stopPropagation();
   document.querySelectorAll('[id^="fin-fee-acct-dd-"]').forEach(d=>{ if(d.id!==`fin-fee-acct-dd-${id}`) d.style.display='none'; });
@@ -3409,13 +3414,16 @@ function _faFormHtml(acct) {
         <span class="fin-field-error" id="fa-f-name-err"></span>
       </div>
       <div class="fin-form-group">
-        <label class="fin-form-label">Item Name <span class="fin-required">*</span></label>
-        <input type="text" id="fa-f-item-name" class="fin-form-input" value="${_finEsc(acct?.item_name||acct?.itemName||'')}">
+        <label class="fin-form-label">Fee Item <span class="fin-required">*</span></label>
+        <select id="fa-f-item-name" class="fin-form-select" onchange="onFaItemSelect(this.value)" ${acct?'disabled':''}>
+          <option value="">Please Select</option>
+          ${feeItemsData.map(f=>`<option value="${_finEsc(f.name)}" ${(acct?.item_name||acct?.itemName)===f.name?'selected':''}>${_finEsc(f.name)}</option>`).join('')}
+        </select>
         <span class="fin-field-error" id="fa-f-iname-err"></span>
       </div>
       <div class="fin-form-group">
-        <label class="fin-form-label">Item Code <span class="fin-required">*</span></label>
-        <input type="text" id="fa-f-item-code" class="fin-form-input" value="${_finEsc(acct?.item_code||acct?.itemCode||'')}">
+        <label class="fin-form-label">Fee Code</label>
+        <input type="text" id="fa-f-item-code" class="fin-form-input" value="${_finEsc(acct?.item_code||acct?.itemCode||'')}" readonly style="background:#f5f5f5;color:#555;cursor:default;">
         <span class="fin-field-error" id="fa-f-icode-err"></span>
       </div>
       <div class="fin-form-group">
@@ -3481,7 +3489,13 @@ function _faFormHtml(acct) {
     </div>`;
 }
 
-function renderFeeAcctAddPage(container) {
+async function renderFeeAcctAddPage(container) {
+  if (!feeItemsData.length) {
+    try {
+      const r = await apiFetch(`${API_BASE}/finance/fee-items/`);
+      if (r && r.ok) { feeItemsData.length = 0; _toArray(await r.json()).forEach(x => feeItemsData.push(x)); }
+    } catch (_) {}
+  }
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -3511,8 +3525,7 @@ async function submitFeeAcctAdd() {
   let valid=true;
   document.getElementById('fa-f-num-err').textContent   = num   ? '' : 'This field is required.'; if(!num)   valid=false;
   document.getElementById('fa-f-name-err').textContent  = name  ? '' : 'This field is required.'; if(!name)  valid=false;
-  document.getElementById('fa-f-iname-err').textContent = iname ? '' : 'This field is required.'; if(!iname) valid=false;
-  document.getElementById('fa-f-icode-err').textContent = icode ? '' : 'This field is required.'; if(!icode) valid=false;
+  document.getElementById('fa-f-iname-err').textContent = iname ? '' : 'Please select a Fee Item.'; if(!iname) valid=false;
   document.getElementById('fa-f-type-err').textContent  = type  ? '' : 'This field is required.'; if(!type)  valid=false;
   if (!valid) return;
   const childOfId = document.getElementById('fa-f-child-of').value;
@@ -3540,10 +3553,16 @@ async function submitFeeAcctAdd() {
   loadView('fin-fee-accounts');
 }
 
-function openFeeAcctEdit(id) {
+async function openFeeAcctEdit(id) {
   document.querySelectorAll('[id^="fin-fee-acct-dd-"]').forEach(d=>d.style.display='none');
   const acct = feeAccountsData.find(a=>String(a.id)===String(id));
   if (!acct) return;
+  if (!feeItemsData.length) {
+    try {
+      const r = await apiFetch(`${API_BASE}/finance/fee-items/`);
+      if (r && r.ok) { feeItemsData.length = 0; _toArray(await r.json()).forEach(x => feeItemsData.push(x)); }
+    } catch (_) {}
+  }
   const container = document.getElementById('main-content');
   container.innerHTML = `
     <div class="fin-page">
@@ -3607,6 +3626,14 @@ const FEE_ITEM_CATEGORIES = [
   { value: 'YEARLY',  label: 'Yearly'  },
   { value: 'ONE_OFF', label: 'One-off' },
 ];
+
+function _genFeeItemCode() {
+  const max = feeItemsData.reduce((m, f) => {
+    const match = (f.code || '').match(/^FI-(\d+)$/);
+    return match ? Math.max(m, parseInt(match[1], 10)) : m;
+  }, 0);
+  return 'FI-' + String(max + 1).padStart(4, '0');
+}
 
 async function _fiLoadLookups() {
   const res = await apiFetch(`${API_BASE}/accounts/?is_active=true`);
@@ -3724,6 +3751,10 @@ async function renderFeeItemAddPage(container, editId) {
       </div>
       <div class="fin-form-wrap" style="max-width:600px;">
         <div class="fin-form-group" style="margin-bottom:16px;">
+          <label class="fin-form-label">Fee Item Code</label>
+          <input type="text" id="fi-f-code" class="fin-form-input" value="${item ? _finEsc(item.code||'') : _genFeeItemCode()}" readonly style="background:#f5f5f5;color:#555;cursor:default;">
+        </div>
+        <div class="fin-form-group" style="margin-bottom:16px;">
           <label class="fin-form-label">Name <span class="fin-required">*</span></label>
           <input type="text" id="fi-f-name" class="fin-form-input" value="${_finEsc(item?.name||'')}">
           <span class="fin-field-error" id="fi-f-name-err"></span>
@@ -3779,6 +3810,7 @@ function _fiValidate() {
 }
 function _fiPayload() {
   return {
+    code: document.getElementById('fi-f-code').value,
     name: (document.getElementById('fi-f-name').value||'').trim(),
     category: document.getElementById('fi-f-category').value,
     default_amount: parseFloat(document.getElementById('fi-f-amount').value),
@@ -3817,6 +3849,277 @@ async function deleteFeeItem(id) {
   try {
     const res = await apiFetch(`${API_BASE}/finance/fee-items/${id}`, { method: 'DELETE' });
     if (res && res.ok) { showToast('Fee item deleted.', 'success'); _fsFeeItemsCache = null; loadView('fin-fee-items'); }
+    else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+  } catch (_) { showToast('Network error.', 'error'); }
+}
+
+// ==================== GENERAL ITEMS ====================
+// Non-student income and expense line items (e.g. canteen sales, grants, utilities).
+// Each is linked to a Chart-of-Accounts entry and auto-coded GI-0001…
+// Backend: GET/POST /finance/general-items/  |  GET/PATCH/DELETE /finance/general-items/{id}
+// Model: GeneralItem  |  Schemas: GeneralItemCreate, GeneralItemRead, GeneralItemUpdate
+// Fields: id, code, name, type(INCOME|EXPENSE), sub_type, account_id, default_amount,
+//         description, is_active
+
+let generalItemsData = [];
+let _giPerPage = 10, _giPage = 1, _giSearch = '';
+let _giAccountsCache = [];
+const GI_TYPES = [
+  { value: 'INCOME',  label: 'Income'  },
+  { value: 'EXPENSE', label: 'Expense' },
+];
+const GI_SUBTYPES = {
+  INCOME:  ['Sales','Donations','Grants','Rental Income','Interest','Other Income'],
+  EXPENSE: ['Utilities','Maintenance','Stationery','Salaries','Transport','Other Expense'],
+};
+
+function _genGeneralItemCode() {
+  const max = generalItemsData.reduce((m, g) => {
+    const match = (g.code || '').match(/^GI-(\d+)$/);
+    return match ? Math.max(m, parseInt(match[1], 10)) : m;
+  }, 0);
+  return 'GI-' + String(max + 1).padStart(4, '0');
+}
+
+async function _giLoadAccounts() {
+  if (_giAccountsCache.length) return;
+  const res = await apiFetch(`${API_BASE}/accounts/?is_active=true`);
+  _giAccountsCache = (res && res.ok) ? _toArray(await res.json()) : [];
+}
+
+function _giAccountName(id) {
+  const a = _giAccountsCache.find(a => String(a.id) === String(id));
+  return a ? `${a.number || ''} — ${a.account_name || '-'}` : '-';
+}
+
+async function loadGeneralItemsView(container) {
+  _giPage = 1; _giSearch = '';
+  _renderGiListPage(container);
+  await _giLoadAccounts();
+  try {
+    const res = await apiFetch(`${API_BASE}/finance/general-items/`);
+    if (res && res.ok) { generalItemsData.length = 0; _toArray(await res.json()).forEach(r => generalItemsData.push(r)); }
+  } catch (_) {}
+  _renderGiTable();
+}
+
+function _renderGiListPage(container) {
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">General Items</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Utilities &rsaquo; General Items &rsaquo; Listing</div>
+      </div>
+      <div class="fin-controls-row">
+        <div class="fin-controls-left">
+          Show <select id="gi-per-page" onchange="_giChangePerPage(this.value)">
+            ${[10,25,50,100].map(n=>`<option value="${n}" ${n===_giPerPage?'selected':''}>${n}</option>`).join('')}
+          </select> entries
+          &nbsp;|&nbsp; Total <span id="gi-total">0</span> entries
+        </div>
+        <div class="fin-controls-right">
+          <input type="text" class="fin-search-input" placeholder="&#128269; Search&#8230;" oninput="_giOnSearch(this.value)">
+          <button class="fin-btn-teal" onclick="renderGeneralItemForm(document.getElementById('main-content'))">+ Add General Item</button>
+        </div>
+      </div>
+      <div id="gi-table-container"></div>
+      <div id="gi-pagination"></div>
+    </div>`;
+  _renderGiTable();
+}
+
+function _giFiltered() {
+  if (!_giSearch) return generalItemsData;
+  const q = _giSearch;
+  return generalItemsData.filter(g =>
+    (g.code||'').toLowerCase().includes(q) ||
+    (g.name||'').toLowerCase().includes(q) ||
+    (g.type||'').toLowerCase().includes(q));
+}
+
+function _renderGiTable() {
+  const filtered = _giFiltered();
+  const totalEl  = document.getElementById('gi-total');
+  if (totalEl) totalEl.textContent = filtered.length;
+  const start = (_giPage-1)*_giPerPage;
+  const paged = filtered.slice(start, start+_giPerPage);
+  const pages = Math.max(1, Math.ceil(filtered.length/_giPerPage));
+
+  let rows = paged.length===0
+    ? `<tr><td colspan="8" class="fin-empty">No records found.</td></tr>`
+    : paged.map(g=>`<tr>
+        <td>${_finEsc(g.code||'')}</td>
+        <td>${_finEsc(g.name||'')}</td>
+        <td><span style="padding:2px 8px;border-radius:10px;font-size:0.78rem;font-weight:600;${g.type==='INCOME'?'color:#276a3f;background:#d4edda;':'color:#842029;background:#f8d7da;'}">${_finEsc(g.type||'-')}</span></td>
+        <td>${_finEsc(g.sub_type||'-')}</td>
+        <td>${_finEsc(g.account_id ? _giAccountName(g.account_id) : '-')}</td>
+        <td>${_finFmt(parseFloat(g.default_amount)||0)}</td>
+        <td>${g.is_active!==false ? '<span style="color:#276a3f;font-weight:600;">Active</span>' : '<span style="color:#842029;font-weight:600;">Inactive</span>'}</td>
+        <td class="fin-action-cell">
+          <div class="fin-action-wrap">
+            <button class="fin-action-btn" onclick="_pvToggleDropdown(event,'gi','${g.id}')">&#8230;</button>
+            <div id="gi-dd-${g.id}" class="fin-action-dropdown" style="display:none;">
+              <a href="#" onclick="renderGeneralItemForm(document.getElementById('main-content'),${g.id});return false;">&#9998; Edit</a>
+              <a href="#" onclick="_giDelete(${g.id});return false;">&#128465; Delete</a>
+            </div>
+          </div>
+        </td>
+      </tr>`).join('');
+
+  const el = document.getElementById('gi-table-container');
+  if (el) el.innerHTML = `
+    <div class="fin-table-wrap"><table class="fin-table">
+      <thead><tr>
+        <th>CODE</th><th>NAME</th><th>TYPE</th><th>SUB-TYPE</th><th>ACCOUNT</th><th>DEFAULT AMOUNT</th><th>STATUS</th><th>ACTION</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+
+  let pg=''; for(let i=1;i<=pages;i++) pg+=`<button class="${i===_giPage?'fin-pg-active':''}" onclick="_giGoPage(${i})">${i}</button>`;
+  const pgEl=document.getElementById('gi-pagination');
+  if(pgEl) pgEl.innerHTML=`<div class="fin-pagination">${pg}</div>`;
+}
+
+function _giChangePerPage(v){ _giPerPage=parseInt(v); _giPage=1; _renderGiTable(); }
+function _giOnSearch(v)     { _giSearch=v.trim().toLowerCase(); _giPage=1; _renderGiTable(); }
+function _giGoPage(p)       { _giPage=p; _renderGiTable(); }
+
+function _giSubtypeOpts(selectedType, selectedVal) {
+  const opts = GI_SUBTYPES[selectedType] || [];
+  return opts.map(s=>`<option value="${s}" ${selectedVal===s?'selected':''}>${s}</option>`).join('');
+}
+
+async function renderGeneralItemForm(container, editId) {
+  await _giLoadAccounts();
+  const item = editId ? generalItemsData.find(g => String(g.id) === String(editId)) : null;
+  const code = item ? (item.code||'') : _genGeneralItemCode();
+  const acctOpts = _giAccountsCache.map(a=>
+    `<option value="${a.id}" ${String(item?.account_id)===String(a.id)?'selected':''}>${_finEsc(a.number||'')} — ${_finEsc(a.account_name||'')}</option>`).join('');
+  const incomeSubOpts = _giSubtypeOpts('INCOME', item?.type==='INCOME'?item?.sub_type:'');
+  const expSubOpts    = _giSubtypeOpts('EXPENSE', item?.type==='EXPENSE'?item?.sub_type:'');
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">${item ? 'Edit' : 'Add'} General Item</h2>
+        <div class="fin-breadcrumb">
+          Dashboard &rsaquo; Finance &rsaquo;
+          <a href="#" class="fin-bc-link" onclick="loadView('fin-general-items');return false;">General Items</a>
+          &rsaquo; ${item ? 'Edit' : 'Add'}
+        </div>
+      </div>
+      <div class="fin-form-wrap" style="max-width:600px;">
+        <div class="fin-form-group" style="margin-bottom:16px;">
+          <label class="fin-form-label">General Item Code</label>
+          <input type="text" id="gi-f-code" class="fin-form-input" value="${_finEsc(code)}" readonly style="background:#f5f5f5;color:#555;cursor:default;">
+        </div>
+        <div class="fin-form-group" style="margin-bottom:16px;">
+          <label class="fin-form-label">Name <span class="fin-required">*</span></label>
+          <input type="text" id="gi-f-name" class="fin-form-input" value="${_finEsc(item?.name||'')}">
+          <span class="fin-field-error" id="gi-f-name-err"></span>
+        </div>
+        <div class="fin-form-group" style="margin-bottom:16px;">
+          <label class="fin-form-label">Type <span class="fin-required">*</span></label>
+          <select id="gi-f-type" class="fin-form-select" onchange="_giTypeChange(this.value)">
+            <option value="">Please Select</option>
+            ${GI_TYPES.map(t=>`<option value="${t.value}" ${item?.type===t.value?'selected':''}>${t.label}</option>`).join('')}
+          </select>
+          <span class="fin-field-error" id="gi-f-type-err"></span>
+        </div>
+        <div class="fin-form-group" style="margin-bottom:16px;">
+          <label class="fin-form-label">Sub-Type</label>
+          <select id="gi-f-subtype" class="fin-form-select">
+            <option value="">Please Select</option>
+            ${item?.type==='INCOME' ? incomeSubOpts : (item?.type==='EXPENSE' ? expSubOpts : '')}
+          </select>
+        </div>
+        <div class="fin-form-group" style="margin-bottom:16px;">
+          <label class="fin-form-label">Account</label>
+          <select id="gi-f-account" class="fin-form-select">
+            <option value="">Please Select</option>
+            ${acctOpts}
+          </select>
+        </div>
+        <div class="fin-form-group" style="margin-bottom:16px;">
+          <label class="fin-form-label">Default Amount</label>
+          <input type="number" id="gi-f-amount" class="fin-form-input" step="0.01" value="${item?.default_amount||''}">
+        </div>
+        <div class="fin-form-group" style="margin-bottom:16px;">
+          <label class="fin-form-label">Description</label>
+          <textarea id="gi-f-desc" class="fin-form-textarea" rows="3">${_finEsc(item?.description||'')}</textarea>
+        </div>
+        <div class="fin-form-group" style="margin-bottom:20px;">
+          <label style="display:flex;align-items:center;gap:8px;font-size:0.9rem;cursor:pointer;">
+            <input type="checkbox" id="gi-f-active" class="fin-cb" ${item ? (item.is_active!==false?'checked':'') : 'checked'}> Active
+          </label>
+        </div>
+        <div class="fin-form-actions">
+          <button class="fin-btn-teal" onclick="${item ? `_giSubmitEdit(${item.id})` : '_giSubmitAdd()'}">${item ? 'Update' : 'Submit'}</button>
+          <button class="fin-btn-cancel" onclick="loadView('fin-general-items')">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function _giTypeChange(type) {
+  const sel = document.getElementById('gi-f-subtype');
+  if (!sel) return;
+  const opts = GI_SUBTYPES[type] || [];
+  sel.innerHTML = `<option value="">Please Select</option>` + opts.map(s=>`<option value="${s}">${s}</option>`).join('');
+}
+
+function _giPayload() {
+  return {
+    code:           document.getElementById('gi-f-code').value,
+    name:           (document.getElementById('gi-f-name').value||'').trim(),
+    type:           document.getElementById('gi-f-type').value,
+    sub_type:       document.getElementById('gi-f-subtype').value || null,
+    account_id:     document.getElementById('gi-f-account').value ? parseInt(document.getElementById('gi-f-account').value, 10) : null,
+    default_amount: document.getElementById('gi-f-amount').value ? parseFloat(document.getElementById('gi-f-amount').value) : null,
+    description:    document.getElementById('gi-f-desc').value.trim() || null,
+    is_active:      document.getElementById('gi-f-active').checked,
+  };
+}
+
+function _giValidate() {
+  const name = (document.getElementById('gi-f-name').value||'').trim();
+  const type = document.getElementById('gi-f-type').value;
+  let valid = true;
+  document.getElementById('gi-f-name-err').textContent = name ? '' : 'This field is required.'; if(!name) valid=false;
+  document.getElementById('gi-f-type-err').textContent = type ? '' : 'This field is required.'; if(!type) valid=false;
+  return valid;
+}
+
+async function _giSubmitAdd() {
+  if (!_giValidate()) return;
+  try {
+    const res = await apiFetch(`${API_BASE}/finance/general-items/`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(_giPayload())
+    });
+    if (res && res.ok) { showToast('General item added!', 'success'); }
+    else if (res) { showToast('Error: ' + await parseApiError(res), 'error'); }
+  } catch (_) { showToast('Network error.', 'error'); }
+  loadView('fin-general-items');
+}
+
+async function _giSubmitEdit(id) {
+  if (!_giValidate()) return;
+  const payload = _giPayload();
+  delete payload.code;
+  try {
+    const res = await apiFetch(`${API_BASE}/finance/general-items/${id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+    });
+    if (res && res.ok) { showToast('General item updated!', 'success'); }
+    else if (res) { showToast('Error: ' + await parseApiError(res), 'error'); }
+  } catch (_) { showToast('Network error.', 'error'); }
+  loadView('fin-general-items');
+}
+
+async function _giDelete(id) {
+  if (!confirm('Delete this general item? This cannot be undone.')) return;
+  try {
+    const res = await apiFetch(`${API_BASE}/finance/general-items/${id}`, { method: 'DELETE' });
+    if (res && res.ok) { showToast('General item deleted.', 'success'); loadView('fin-general-items'); }
     else if (res) showToast('Error: ' + await parseApiError(res), 'error');
   } catch (_) { showToast('Network error.', 'error'); }
 }
