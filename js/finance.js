@@ -537,7 +537,7 @@ let _invStudentsCache = [], _invFeeItemsCache = [];
 async function _invLoadLookups() {
   const [stuRes, fiRes, termsRes] = await Promise.all([
     apiFetch(`${API_BASE}/students/`),
-    apiFetch(`${API_BASE}/finance/fee-items/`),
+    apiFetch(`${API_BASE}/finance/fee-items`),
     _stuTermsCache && _stuTermsCache.length ? Promise.resolve(null) : apiFetch(`${API_BASE}/terms/`),
   ]);
   _invStudentsCache = (stuRes && stuRes.ok) ? _toArray(await stuRes.json()) : [];
@@ -2331,7 +2331,7 @@ async function _fsLoadLookups() {
     _fsTermsCache = res.ok ? await res.json() : [];
   }
   if (!_fsFeeItemsCache) {
-    const res = await fetch(`${API_BASE}/finance/fee-items/`, { headers: { Authorization: `Bearer ${token}` } });
+    const res = await fetch(`${API_BASE}/finance/fee-items`, { headers: { Authorization: `Bearer ${token}` } });
     _fsFeeItemsCache = res.ok ? await res.json() : [];
   }
 }
@@ -3492,7 +3492,7 @@ function _faFormHtml(acct) {
 async function renderFeeAcctAddPage(container) {
   if (!feeItemsData.length) {
     try {
-      const r = await apiFetch(`${API_BASE}/finance/fee-items/`);
+      const r = await apiFetch(`${API_BASE}/finance/fee-items`);
       if (r && r.ok) { feeItemsData.length = 0; _toArray(await r.json()).forEach(x => feeItemsData.push(x)); }
     } catch (_) {}
   }
@@ -3559,7 +3559,7 @@ async function openFeeAcctEdit(id) {
   if (!acct) return;
   if (!feeItemsData.length) {
     try {
-      const r = await apiFetch(`${API_BASE}/finance/fee-items/`);
+      const r = await apiFetch(`${API_BASE}/finance/fee-items`);
       if (r && r.ok) { feeItemsData.length = 0; _toArray(await r.json()).forEach(x => feeItemsData.push(x)); }
     } catch (_) {}
   }
@@ -3649,7 +3649,7 @@ async function loadFeeItemsView(container) {
   _renderFeeItemsListPage(container);
   await _fiLoadLookups();
   try {
-    const res = await apiFetch(`${API_BASE}/finance/fee-items/`);
+    const res = await apiFetch(`${API_BASE}/finance/fee-items`);
     if (res && res.ok) { feeItemsData.length = 0; _toArray(await res.json()).forEach(r => feeItemsData.push(r)); }
   } catch (_) {}
   _renderFeeItemsTable();
@@ -3789,12 +3789,42 @@ async function renderFeeItemAddPage(container, editId) {
             <input type="checkbox" id="fi-f-eca" class="fin-cb" ${item?.is_extra_curricular?'checked':''}> Extra Curricular Activity
           </label>
         </div>
+        <details style="margin-bottom:20px;border:1px solid #e0e0e0;border-radius:6px;padding:12px 16px;">
+          <summary style="font-weight:600;font-size:0.9rem;cursor:pointer;color:#2c3e50;">&#9660; Advanced Options</summary>
+          <div style="margin-top:12px;">
+            <div class="fin-form-group" style="margin-bottom:10px;">
+              <label style="display:flex;align-items:center;gap:8px;font-size:0.9rem;cursor:pointer;">
+                <input type="checkbox" id="fi-f-proratable" class="fin-cb"
+                  ${item?.is_proratable?'checked':''}
+                  onchange="_fiToggleProration(this.checked)">
+                Is Proratable?
+              </label>
+            </div>
+            <div id="fi-f-proration-wrap" style="display:${item?.is_proratable?'block':'none'};margin-top:8px;">
+              <label class="fin-form-label">Proration Method</label>
+              <select id="fi-f-proration-method" class="fin-form-select">
+                <option value="">Please Select</option>
+                <option value="BY_ENROLLMENT_DATE" ${item?.proration_method==='BY_ENROLLMENT_DATE'?'selected':''}>By Enrollment Date</option>
+                <option value="BY_ATTENDANCE"       ${item?.proration_method==='BY_ATTENDANCE'?'selected':''}>By Attendance</option>
+              </select>
+            </div>
+          </div>
+        </details>
         <div class="fin-form-actions">
           <button class="fin-btn-teal" onclick="${item ? `submitFeeItemEdit(${item.id})` : 'submitFeeItemAdd()'}">${item ? 'Update' : 'Submit'}</button>
           <button class="fin-btn-cancel" onclick="loadView('fin-fee-items')">Cancel</button>
         </div>
       </div>
     </div>`;
+}
+
+function _fiToggleProration(checked) {
+  const wrap = document.getElementById('fi-f-proration-wrap');
+  if (wrap) wrap.style.display = checked ? 'block' : 'none';
+  if (!checked) {
+    const sel = document.getElementById('fi-f-proration-method');
+    if (sel) sel.value = '';
+  }
 }
 
 function _fiValidate() {
@@ -3816,6 +3846,10 @@ function _fiPayload() {
     default_amount: parseFloat(document.getElementById('fi-f-amount').value),
     is_active: document.getElementById('fi-f-active').checked,
     is_extra_curricular: document.getElementById('fi-f-eca').checked,
+    is_proratable: document.getElementById('fi-f-proratable')?.checked ?? false,
+    proration_method: document.getElementById('fi-f-proratable')?.checked
+      ? (document.getElementById('fi-f-proration-method')?.value || null)
+      : null,
     account_id: document.getElementById('fi-f-account').value ? parseInt(document.getElementById('fi-f-account').value, 10) : null,
   };
 }
@@ -3823,7 +3857,7 @@ function _fiPayload() {
 async function submitFeeItemAdd() {
   if (!_fiValidate()) return;
   try {
-    const res = await apiFetch(`${API_BASE}/finance/fee-items/`, {
+    const res = await apiFetch(`${API_BASE}/finance/fee-items`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(_fiPayload())
     });
     if (res && res.ok) { showToast('Fee item added!', 'success'); _fsFeeItemsCache = null; } // invalidate so Class Fee Setup picks it up
