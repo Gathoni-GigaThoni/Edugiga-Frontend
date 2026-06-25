@@ -537,7 +537,7 @@ let _invStudentsCache = [], _invFeeItemsCache = [];
 async function _invLoadLookups() {
   const [stuRes, fiRes, termsRes] = await Promise.all([
     apiFetch(`${API_BASE}/students/`),
-    apiFetch(`${API_BASE}/finance/fee-items`),
+    apiFetch(`${API_BASE}/finance/fee-items/`),
     _stuTermsCache && _stuTermsCache.length ? Promise.resolve(null) : apiFetch(`${API_BASE}/terms/`),
   ]);
   _invStudentsCache = (stuRes && stuRes.ok) ? _toArray(await stuRes.json()) : [];
@@ -2331,7 +2331,7 @@ async function _fsLoadLookups() {
     _fsTermsCache = res.ok ? await res.json() : [];
   }
   if (!_fsFeeItemsCache) {
-    const res = await fetch(`${API_BASE}/finance/fee-items`, { headers: { Authorization: `Bearer ${token}` } });
+    const res = await fetch(`${API_BASE}/finance/fee-items/`, { headers: { Authorization: `Bearer ${token}` } });
     _fsFeeItemsCache = res.ok ? await res.json() : [];
   }
 }
@@ -3190,15 +3190,40 @@ async function submitCoaAdd() {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(payload)
     });
-    if (res.ok) { showToast('Account added!', 'success'); }
-    else { showToast('Error: ' + await parseApiError(res), 'error'); }
+    if (res.ok) {
+      showToast('Account added!', 'success');
+      if (payload.is_student_fees_related) {
+        const faPayload = {
+          number:                  num || null,
+          account_name:            name,
+          item_name:               name,
+          item_code:               num || name,
+          account_type:            type,
+          payment_ordering:        ordering ? parseInt(ordering) : null,
+          child_of:                parentId ? parseInt(parentId) : null,
+          group:                   '',
+          sub_group:               '',
+          department:              '',
+          is_student_fees_related: true,
+          is_discount_account:     false,
+          is_budget_item:          payload.is_budget_item,
+          is_deactivated:          false,
+        };
+        const faRes = await fetch(`${API_BASE}/finance/fee-accounts/`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(faPayload)
+        });
+        if (!faRes.ok) showToast('Account saved but Fee Account sync failed: ' + await parseApiError(faRes), 'error');
+      }
+    } else { showToast('Error: ' + await parseApiError(res), 'error'); }
   } catch (_) { showToast('Network error.', 'error'); }
   loadView('fin-chart-of-accounts');
 }
 
 function openCoaEdit(id) {
   document.querySelectorAll('[id^="fin-coa-dd-"]').forEach(d=>d.style.display='none');
-  const acct = chartOfAccountsData.find(a=>a.id===id);
+  const acct = chartOfAccountsData.find(a=>String(a.id)===String(id));
   if (!acct) return;
   const container = document.getElementById('main-content');
   container.innerHTML = `
@@ -3222,7 +3247,7 @@ function openCoaEdit(id) {
 }
 
 async function submitCoaEdit(id) {
-  const idx  = chartOfAccountsData.findIndex(a=>a.id===id);
+  const idx  = chartOfAccountsData.findIndex(a=>String(a.id)===String(id));
   if (idx===-1) return;
   const name = (document.getElementById('coa-f-name').value||'').trim();
   const type = document.getElementById('coa-f-type').value;
@@ -3517,7 +3542,7 @@ async function submitFeeAcctAdd() {
 
 function openFeeAcctEdit(id) {
   document.querySelectorAll('[id^="fin-fee-acct-dd-"]').forEach(d=>d.style.display='none');
-  const acct = feeAccountsData.find(a=>a.id===id);
+  const acct = feeAccountsData.find(a=>String(a.id)===String(id));
   if (!acct) return;
   const container = document.getElementById('main-content');
   container.innerHTML = `
@@ -3541,7 +3566,7 @@ function openFeeAcctEdit(id) {
 }
 
 async function submitFeeAcctEdit(id) {
-  const idx   = feeAccountsData.findIndex(a=>a.id===id);
+  const idx   = feeAccountsData.findIndex(a=>String(a.id)===String(id));
   if (idx===-1) return;
   const iname = (document.getElementById('fa-f-item-name').value||'').trim();
   const icode = (document.getElementById('fa-f-item-code').value||'').trim();
@@ -3575,14 +3600,8 @@ async function submitFeeAcctEdit(id) {
   loadView('fin-fee-accounts');
 }
 
-// ==================== CHANGE 9: FEE ITEMS ====================
-// The catalog of chargeable fees (Tuition, Transport, Lunch, etc.) — this is what
-// Class Fee Setup prices per class/term and what Student Fees/Invoices ultimately
-// bill against. Backend now exposes full CRUD on /finance/fee-items/{item_id}
-// (PATCH/DELETE added) plus account_id/fee_type_id FKs.
-
 let _feeItemPerPage = 10, _feeItemPage = 1, _feeItemSearch = '';
-let _fiFeeTypesCache = [], _fiAccountsCache = [];
+let _fiAccountsCache = [];
 const FEE_ITEM_CATEGORIES = [
   { value: 'TERMLY',  label: 'Termly'  },
   { value: 'YEARLY',  label: 'Yearly'  },
@@ -3590,14 +3609,9 @@ const FEE_ITEM_CATEGORIES = [
 ];
 
 async function _fiLoadLookups() {
-  const [ftRes, acctRes] = await Promise.all([
-    apiFetch(`${API_BASE}/finance/fee-types/`),
-    apiFetch(`${API_BASE}/accounts/?is_active=true`),
-  ]);
-  _fiFeeTypesCache = (ftRes && ftRes.ok) ? _toArray(await ftRes.json()) : [];
-  _fiAccountsCache = (acctRes && acctRes.ok) ? _toArray(await acctRes.json()) : [];
+  const res = await apiFetch(`${API_BASE}/accounts/?is_active=true`);
+  _fiAccountsCache = (res && res.ok) ? _toArray(await res.json()) : [];
 }
-function _fiFeeTypeName(id) { return (_fiFeeTypesCache.find(t => String(t.id) === String(id)) || {}).name || '-'; }
 function _fiAccountName(id) {
   const a = _fiAccountsCache.find(a => String(a.id) === String(id));
   return a ? `${a.number || ''} — ${a.account_name || '-'}` : '-';
@@ -3608,7 +3622,7 @@ async function loadFeeItemsView(container) {
   _renderFeeItemsListPage(container);
   await _fiLoadLookups();
   try {
-    const res = await apiFetch(`${API_BASE}/finance/fee-items`);
+    const res = await apiFetch(`${API_BASE}/finance/fee-items/`);
     if (res && res.ok) { feeItemsData.length = 0; _toArray(await res.json()).forEach(r => feeItemsData.push(r)); }
   } catch (_) {}
   _renderFeeItemsTable();
@@ -3630,7 +3644,6 @@ function _renderFeeItemsListPage(container) {
         </div>
         <div class="fin-controls-right">
           <input type="text" class="fin-search-input" placeholder="&#128269; Search&#8230;" oninput="onFiSearch(this.value)">
-          <button class="fin-btn-outline" onclick="loadView('fin-fee-types')">Fee Types</button>
           <button class="fin-btn-teal" onclick="renderFeeItemAddPage(document.getElementById('main-content'))">+ Add Fee Item</button>
         </div>
       </div>
@@ -3659,12 +3672,11 @@ function _renderFeeItemsTable() {
   const pages = Math.max(1, Math.ceil(filtered.length/_feeItemPerPage));
 
   let rows = paged.length===0
-    ? `<tr><td colspan="8" class="fin-empty">No records found.</td></tr>`
+    ? `<tr><td colspan="7" class="fin-empty">No records found.</td></tr>`
     : paged.map(f=>`<tr>
         <td>${_finEsc(String(f.id))}</td>
         <td>${_finEsc(f.name||'')}</td>
         <td>${_finEsc(_fiCategoryLabel(f.category))}</td>
-        <td>${_finEsc(f.fee_type_id ? _fiFeeTypeName(f.fee_type_id) : '-')}</td>
         <td>${_finEsc(f.account_id ? _fiAccountName(f.account_id) : '-')}</td>
         <td>${_finFmt(parseFloat(f.default_amount)||0)}</td>
         <td>${f.is_extra_curricular ? '<span style="display:inline-block;padding:2px 9px;border-radius:10px;font-size:0.78rem;font-weight:600;color:#1a5fb4;background:#dce8fb;">ECA</span>' : '-'}</td>
@@ -3683,7 +3695,7 @@ function _renderFeeItemsTable() {
   if (el) el.innerHTML = `
     <div class="fin-table-wrap"><table class="fin-table">
       <thead><tr>
-        <th>ID</th><th>NAME</th><th>CATEGORY</th><th>FEE TYPE</th><th>ACCOUNT</th><th>DEFAULT AMOUNT</th><th>ECA</th><th>ACTION</th>
+        <th>ID</th><th>NAME</th><th>CATEGORY</th><th>ACCOUNT</th><th>DEFAULT AMOUNT</th><th>ECA</th><th>ACTION</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table></div>`;
@@ -3699,7 +3711,7 @@ function fiGoPage(p)       { _feeItemPage=p; _renderFeeItemsTable(); }
 
 async function renderFeeItemAddPage(container, editId) {
   const item = editId ? feeItemsData.find(f => String(f.id) === String(editId)) : null;
-  if (!_fiFeeTypesCache.length && !_fiAccountsCache.length) await _fiLoadLookups();
+  if (!_fiAccountsCache.length) await _fiLoadLookups();
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -3723,13 +3735,6 @@ async function renderFeeItemAddPage(container, editId) {
             ${FEE_ITEM_CATEGORIES.map(c=>`<option value="${c.value}" ${item?.category===c.value?'selected':''}>${c.label}</option>`).join('')}
           </select>
           <span class="fin-field-error" id="fi-f-category-err"></span>
-        </div>
-        <div class="fin-form-group" style="margin-bottom:16px;">
-          <label class="fin-form-label">Fee Type</label>
-          <select id="fi-f-fee-type" class="fin-form-select">
-            <option value="">Please Select</option>
-            ${_fiFeeTypesCache.map(t=>`<option value="${t.id}" ${String(item?.fee_type_id)===String(t.id)?'selected':''}>${_finEsc(t.name)}</option>`).join('')}
-          </select>
         </div>
         <div class="fin-form-group" style="margin-bottom:16px;">
           <label class="fin-form-label">Account</label>
@@ -3779,7 +3784,6 @@ function _fiPayload() {
     default_amount: parseFloat(document.getElementById('fi-f-amount').value),
     is_active: document.getElementById('fi-f-active').checked,
     is_extra_curricular: document.getElementById('fi-f-eca').checked,
-    fee_type_id: document.getElementById('fi-f-fee-type').value ? parseInt(document.getElementById('fi-f-fee-type').value, 10) : null,
     account_id: document.getElementById('fi-f-account').value ? parseInt(document.getElementById('fi-f-account').value, 10) : null,
   };
 }
@@ -3787,7 +3791,7 @@ function _fiPayload() {
 async function submitFeeItemAdd() {
   if (!_fiValidate()) return;
   try {
-    const res = await apiFetch(`${API_BASE}/finance/fee-items`, {
+    const res = await apiFetch(`${API_BASE}/finance/fee-items/`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(_fiPayload())
     });
     if (res && res.ok) { showToast('Fee item added!', 'success'); _fsFeeItemsCache = null; } // invalidate so Class Fee Setup picks it up
@@ -3817,87 +3821,3 @@ async function deleteFeeItem(id) {
   } catch (_) { showToast('Network error.', 'error'); }
 }
 
-// ==================== FEE TYPES ====================
-let _ftData = [];
-const _FT_API = `${API_BASE}/finance/fee-types/`;
-
-async function loadFeeTypesView(container) {
-  container.innerHTML = `
-    <div class="fin-page">
-      <div class="fin-header-row">
-        <h2 class="fin-title">Fee Types</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo;
-          <a href="#" class="fin-bc-link" onclick="loadView('fin-fee-items');return false;">Fee Items</a> &rsaquo; Fee Types
-        </div>
-      </div>
-      <div class="fin-controls-row">
-        <div class="fin-controls-left">Total <span id="ft-total">0</span> entries</div>
-        <div class="fin-controls-right"><button class="fin-btn-teal" onclick="renderFeeTypeForm(document.getElementById('main-content'))">+ Add Fee Type</button></div>
-      </div>
-      <div id="ft-table-container"></div>
-    </div>`;
-  renderSkeletonRows('ft-table-container', 3);
-  try {
-    const res = await apiFetch(_FT_API);
-    _ftData = (res && res.ok) ? _toArray(await res.json()) : [];
-  } catch (_) { _ftData = []; }
-  _renderFtTable();
-}
-function _renderFtTable() {
-  document.getElementById('ft-total').textContent = _ftData.length;
-  const rows = _ftData.length === 0
-    ? `<tr><td colspan="3" class="fin-empty">No records found.</td></tr>`
-    : _ftData.map(t => `<tr>
-        <td>${_finEsc(t.name)}</td>
-        <td>${_finEsc(t.description||'-')}</td>
-        <td class="fin-action-cell">
-          <a href="#" onclick="renderFeeTypeForm(document.getElementById('main-content'),${t.id});return false;">&#9998; Edit</a>
-        </td>
-      </tr>`).join('');
-  document.getElementById('ft-table-container').innerHTML = `
-    <div class="fin-table-wrap"><table class="fin-table">
-      <thead><tr><th>NAME</th><th>DESCRIPTION</th><th>ACTION</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table></div>`;
-}
-function renderFeeTypeForm(container, editId) {
-  const item = editId ? _ftData.find(t => String(t.id) === String(editId)) : null;
-  container.innerHTML = `
-    <div class="fin-page">
-      <div class="fin-header-row">
-        <h2 class="fin-title">${item ? 'Edit' : 'Add'} Fee Type</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo;
-          <a href="#" class="fin-bc-link" onclick="loadView('fin-fee-types');return false;">Fee Types</a> &rsaquo; ${item ? 'Edit' : 'Add'}
-        </div>
-      </div>
-      <div class="fin-form-wrap" style="max-width:560px;">
-        <div class="fin-form-group" style="margin-bottom:16px;">
-          <label class="fin-form-label">Name <span class="fin-required">*</span></label>
-          <input type="text" id="ft-f-name" class="fin-form-input" value="${_finEsc(item?.name||'')}" ${item?'disabled':''}>
-          <span class="fin-field-error" id="ft-f-name-err"></span>
-        </div>
-        <div class="fin-form-group" style="margin-bottom:20px;">
-          <label class="fin-form-label">Description</label>
-          <textarea id="ft-f-description" class="fin-form-textarea" rows="3">${_finEsc(item?.description||'')}</textarea>
-        </div>
-        <div class="fin-form-actions">
-          <button class="fin-btn-teal" onclick="${item ? `submitFeeTypeEdit(${item.id})` : 'submitFeeTypeAdd()'}">${item ? 'Update' : 'Submit'}</button>
-          <button class="fin-btn-cancel" onclick="loadView('fin-fee-types')">Cancel</button>
-        </div>
-      </div>
-    </div>`;
-}
-async function submitFeeTypeAdd() {
-  const name = (document.getElementById('ft-f-name').value||'').trim();
-  if (!name) { document.getElementById('ft-f-name-err').textContent = 'This field is required.'; return; }
-  const payload = { name, description: document.getElementById('ft-f-description').value.trim() || null };
-  const res = await apiFetch(_FT_API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-  if (res && res.ok) { showToast('Fee type added!', 'success'); loadView('fin-fee-types'); }
-  else if (res) showToast('Error: ' + await parseApiError(res), 'error');
-}
-async function submitFeeTypeEdit(id) {
-  const payload = { description: document.getElementById('ft-f-description').value.trim() || null };
-  const res = await apiFetch(`${_FT_API}${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-  if (res && res.ok) { showToast('Fee type updated!', 'success'); loadView('fin-fee-types'); }
-  else if (res) showToast('Error: ' + await parseApiError(res), 'error');
-}

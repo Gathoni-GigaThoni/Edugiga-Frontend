@@ -601,8 +601,6 @@ async function loadView(view) {
     case 'fin-fee-items':
       setActiveSidebarItem('sidebar-fin-fee-items'); openFinUtilitiesDropdown();
       loadFeeItemsView(main); break;
-    case 'fin-fee-types':
-      openFinUtilitiesDropdown(); loadFeeTypesView(main); break;
     case 'fin-groups':
       setActiveSidebarItem('sidebar-fin-groups'); openFinUtilitiesDropdown();
       loadFinPlaceholderView(main, 'Groups'); break;
