@@ -167,7 +167,7 @@ function startKeepAlive() {
   keepAliveActive = true;
   keepAliveInterval = setInterval(() => {
     // Fire-and-forget: silent GET to a cheap health endpoint
-    fetch(`${API_BASE}/health`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`${API_BASE}/terms/`, { headers: { Authorization: `Bearer ${token}` } })
       .catch(() => {});                  // ignore all errors — purely preventive
   }, 120000);                            // every 2 minutes
 }

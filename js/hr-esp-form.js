@@ -180,7 +180,7 @@ function _renderEspPayGradeOptions(selected) {
 
 async function _loadEspPayGrades(selected) {
   try {
-    const res = await apiFetch(`${API_BASE}/payroll/utilities/pay-grades/`);
+    const res = await apiFetch(`${API_BASE}/payroll/utilities/pay-grades`);
     _espPayGradesCache = (res && res.ok) ? await res.json() : [];
   } catch (_) { _espPayGradesCache = []; }
   const select = document.getElementById('hr-esp-pay-grade');

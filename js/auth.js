@@ -57,7 +57,7 @@ function _scheduleTokenRefresh() {
       const res = await fetch(`${API_BASE}/auth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ token })
+        body: JSON.stringify({ refresh_token: token })
       });
       if (res.ok) {
         const data = await res.json();

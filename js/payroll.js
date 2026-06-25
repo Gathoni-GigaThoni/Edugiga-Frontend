@@ -496,8 +496,8 @@ async function loadPayGradesView(container) {
     </div>
   `;
   try {
-    const res = await fetch(`${API_BASE}/payroll/utilities/pay-grades/`, { headers: { Authorization: `Bearer ${token}` } });
-    payGradesData = res.ok ? await res.json() : [];
+    const res = await apiFetch(`${API_BASE}/payroll/utilities/pay-grades`);
+    payGradesData = (res && res.ok) ? await res.json() : [];
   } catch (_) { payGradesData = []; }
   renderPayGradesTable();
 }
@@ -543,11 +543,9 @@ async function payGradeDelete(idx) {
   const grade = payGradesData[idx];
   if (!grade || !confirm(`Delete pay grade "${grade.name}"?`)) return;
   try {
-    const res = await fetch(`${API_BASE}/payroll/utilities/pay-grades/${grade.id}`, {
-      method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
-    });
-    if (res.ok) { showToast('Pay grade deleted.', 'success'); loadPayGradesView(document.getElementById('main-content')); }
-    else showToast(await parseApiError(res), 'error');
+    const res = await apiFetch(`${API_BASE}/payroll/utilities/pay-grades/${grade.id}`, { method: 'DELETE' });
+    if (res && res.ok) { showToast('Pay grade deleted.', 'success'); loadPayGradesView(document.getElementById('main-content')); }
+    else if (res) showToast(await parseApiError(res), 'error');
   } catch (_) { showToast('Network error.', 'error'); }
 }
 
@@ -556,8 +554,8 @@ async function loadPayGradeFormView(container, gradeId) {
   let grade = {};
   if (isEdit) {
     try {
-      const res = await fetch(`${API_BASE}/payroll/utilities/pay-grades/${gradeId}`, { headers: { Authorization: `Bearer ${token}` } });
-      if (res.ok) grade = await res.json();
+      const res = await apiFetch(`${API_BASE}/payroll/utilities/pay-grades/${gradeId}`);
+      if (res && res.ok) grade = await res.json();
     } catch (_) {}
   }
   container.innerHTML = `
@@ -596,16 +594,16 @@ async function submitPayGradeForm(gradeId) {
   };
   const isEdit = !!gradeId;
   try {
-    const res = await fetch(`${API_BASE}/payroll/utilities/pay-grades/${isEdit ? gradeId : ''}`, {
+    const res = await apiFetch(`${API_BASE}/payroll/utilities/pay-grades/${isEdit ? gradeId : ''}`, {
       method: isEdit ? 'PUT' : 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    if (res.ok) {
+    if (res && res.ok) {
       showToast(isEdit ? 'Pay grade updated!' : 'Pay grade created!', 'success');
       window._currentEditPayGradeId = null;
       loadView('payroll-pay-grades');
-    } else {
+    } else if (res) {
       showToast(await parseApiError(res), 'error');
     }
   } catch (_) { showToast('Network error.', 'error'); }
