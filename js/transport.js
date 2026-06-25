@@ -166,12 +166,11 @@ async function loadTransportRouteFormView(container, routeId) {
     route = await res.json();
   }
 
-  // Fetch next-id for add mode; flag as backend gap if endpoint doesn't exist
+  // Fetch next-id for add mode — preview only, the real id is assigned server-side on POST.
   let routeCode = '';
   if (!isEdit) {
     try {
       const idRes = await apiFetch(`${API_BASE}/routes/next-id`);
-      // TODO: backend needs GET /routes/next-id endpoint (same pattern as /students/next-id)
       if (idRes && idRes.ok) {
         const d = await idRes.json();
         routeCode = d.next_id || d.route_code || d.id || '';

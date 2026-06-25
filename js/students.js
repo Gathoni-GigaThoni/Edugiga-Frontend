@@ -444,7 +444,7 @@ async function _loadStuFormDropdowns() {
   // /transport/routes was a stale path that never matched the backend.
   const [trRes, ecRes] = await Promise.all([
     apiFetch(`${API_BASE}/routes/`),
-    apiFetch(`${API_BASE}/finance/extra-curriculum-activities`),
+    apiFetch(`${API_BASE}/student-management/extra-curriculum/`),
   ]);
   _stuFormTransportRoutes = trRes && trRes.ok ? _toArray(await trRes.json()) : [];
   _stuFormExtraCurriculum = ecRes && ecRes.ok ? _toArray(await ecRes.json()) : [];
@@ -515,7 +515,7 @@ function _stuTabPersonal(d) {
 
   const ecIds = d.extra_curriculum_ids || (d.extra_curriculum_id ? [d.extra_curriculum_id] : []);
   const ecOpts = _stuFormExtraCurriculum.map(e =>
-    `<option value="${_esc(String(e.id))}"${ecIds.includes(e.id)?' selected':''}>${_esc(e.title)}</option>`).join('');
+    `<option value="${_esc(String(e.id))}"${ecIds.includes(e.id)?' selected':''}>${_esc(e.name)}</option>`).join('');
 
   const hasSibling    = !!d.has_sibling_enrolled;
   const siblingName   = hasSibling ? _esc(d.sibling_student_name || '') : '';
@@ -1315,12 +1315,14 @@ function _stuTabGuardian(d) {
         <span class="stu-field-error" id="err-se-p1-relationship"></span>
       </div>
       <div class="stu-form-group">
-        <label>First Parent Phone</label>
+        <label>First Parent Phone <span style="color:#e74c3c">*</span></label>
         <input id="se-p1-phone" class="fin-search-input" style="width:100%!important" value="${_esc(p1.phone||'')}">
+        <span class="stu-field-error" id="err-se-p1-phone"></span>
       </div>
       <div class="stu-form-group">
-        <label>First Parent Email</label>
+        <label>First Parent Email <span style="color:#e74c3c">*</span></label>
         <input id="se-p1-email" type="email" class="fin-search-input" style="width:100%!important" value="${_esc(p1.email||'')}">
+        <span class="stu-field-error" id="err-se-p1-email"></span>
       </div>
       <div class="stu-form-group">
         <label>First Parent Residence</label>
@@ -1571,6 +1573,23 @@ function _stuValidateGuardian() {
   if (idErrEl) idErrEl.textContent = idMissing ? 'ID Document Number is required for the primary parent.' : '';
   if (idMissing) valid = false;
 
+  // Backend rejects the whole record if the primary parent is missing phone or email —
+  // enforce both here so the failure surfaces as an inline field error instead of a
+  // generic save-failed toast.
+  const phoneEl  = document.getElementById('se-p1-phone');
+  const phoneErrEl = document.getElementById('err-se-p1-phone');
+  const phoneMissing = !!p1Name && !_fv('se-p1-phone').trim();
+  if (phoneEl) phoneEl.classList.toggle('error', phoneMissing);
+  if (phoneErrEl) phoneErrEl.textContent = phoneMissing ? 'Phone is required for the primary parent.' : '';
+  if (phoneMissing) valid = false;
+
+  const emailEl  = document.getElementById('se-p1-email');
+  const emailErrEl = document.getElementById('err-se-p1-email');
+  const emailMissing = !!p1Name && !_fv('se-p1-email').trim();
+  if (emailEl) emailEl.classList.toggle('error', emailMissing);
+  if (emailErrEl) emailErrEl.textContent = emailMissing ? 'Email is required for the primary parent.' : '';
+  if (emailMissing) valid = false;
+
   return valid;
 }
 
@@ -1801,7 +1820,7 @@ async function saveAndContinueStuTab() {
     }
   }
   if (_stuEditActiveTab === 'guardian' && !_stuValidateGuardian()) {
-    showToast('Please select a Relationship for each parent.', 'error');
+    showToast('Please complete the required primary parent fields (Relationship, Phone, Email, ID Document).', 'error');
     return;
   }
   _harvestStuActiveTab();
@@ -3357,22 +3376,20 @@ async function saveStreamAssignmentChanges() {
 }
 
 // ==================== 10. UTILITIES — EXTRA CURRICULAR ACTIVITY ASSIGNMENT ====================
-// BACKEND GAPS FLAGGED:
-// 1. Fee Accounts have no field that tags an account as "Extra Curricular". The dedicated
-//    GET /finance/extra-curriculum-activities endpoint is used as the source of truth for
-//    activity column headers. Recommend adding is_extra_curricular or sub_group='Extra Curricular'
-//    to Fee Accounts when the data model is revisited.
-// 2. PUT /students/{id} has no documented 'extra_curriculum_term_id' field. The field is sent
-//    speculatively so the backend can be wired up without a frontend change. Backend should add
-//    support to trigger invoice adjustments for the selected term when EC enrolment changes.
-// 3. No bulk PUT endpoint — each student is updated separately. Recommend
-//    POST /students/bulk-update-extra-curriculum for future efficiency.
+// Backed by the dedicated grid API: GET /extra-curricular/assignments?term_id=&class_id=
+// returns { term_id, fee_items: [{id,name,default_amount}], students: [{student_id,student_name,
+// student_code, enrollments: {<fee_item_id>: bool}}] } in one call, and
+// POST /extra-curricular/bulk-assign ({term_id, assignments: [{student_id,fee_item_id,is_enrolled}]})
+// saves every changed cell in a single request. Fee items are pre-filtered server-side
+// (FeeItem.is_extra_curricular) so the frontend doesn't need to know which accounts/items
+// are "extra curricular" — the grid only ever shows the relevant columns.
 
-let _ecActivities    = [];   // from GET /finance/extra-curriculum-activities
-let _ecTerms         = [];   // from GET /terms
-let _ecStudents      = [];
-let _ecDirtyRows     = {};   // { [studentId]: { extra_curriculum_ids: number[], extra_curriculum_term_id: number|null } }
-let _ecSearchResults = [];
+let _ecTerms      = [];   // from GET /terms/
+let _ecTermId     = null; // grid is scoped to exactly one term at a time
+let _ecFeeItems   = [];   // [{id, name, default_amount}] — dynamic table columns
+let _ecStudents   = [];   // [{student_id, student_name, student_code, enrollments: {feeItemId: bool}}]
+let _ecDirtyRows  = {};   // { [studentId]: { [feeItemId]: bool } } — only changed cells
+let _ecNameFilter = '';
 let _ecPage = 1, _ecPerPage = 10;
 
 async function loadExtraCurricularAssignmentView(container) {
@@ -3386,21 +3403,26 @@ async function loadExtraCurricularAssignmentView(container) {
       <div class="fin-controls-row" style="flex-wrap:wrap;gap:12px;align-items:flex-end;">
         <div class="fin-controls-left" style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;">
           <div class="stu-form-group" style="min-width:200px;">
+            <label style="font-size:0.82rem;font-weight:500;color:#444;">Term <span style="color:#e74c3c">*</span></label>
+            <select id="ec-term-filter" class="fin-search-input"
+                    style="padding:7px 10px!important;"
+                    onchange="ecOnTermFilterChange(this.value)">
+              <option value="">Please Select</option>
+            </select>
+          </div>
+          <div class="stu-form-group" style="min-width:200px;">
             <label style="font-size:0.82rem;font-weight:500;color:#444;">Class</label>
             <select id="ec-class-filter" class="fin-search-input"
                     style="padding:7px 10px!important;"
                     onchange="ecOnClassChange(this.value)">
-              <option value="">Please Select</option>
+              <option value="">All Classes</option>
             </select>
           </div>
-          <div class="stu-form-group" style="min-width:220px;position:relative;">
+          <div class="stu-form-group" style="min-width:220px;">
             <label style="font-size:0.82rem;font-weight:500;color:#444;">Student Name</label>
             <input id="ec-name-input" type="text" class="fin-search-input"
-                   placeholder="Search student by name…" autocomplete="off"
-                   oninput="ecOnNameSearch(this.value)"
-                   onblur="setTimeout(function(){var d=document.getElementById('ec-name-dd');if(d)d.style.display='none';},200)">
-            <div id="ec-name-dd" class="fin-action-dropdown"
-                 style="display:none;top:100%;z-index:500;min-width:280px;max-height:220px;overflow-y:auto;position:absolute;"></div>
+                   placeholder="Filter loaded students…" autocomplete="off"
+                   oninput="ecOnNameFilter(this.value)">
           </div>
           <button class="fin-btn-cancel" style="margin-bottom:2px;" onclick="ecClearFilters()">Clear</button>
         </div>
@@ -3423,109 +3445,87 @@ async function loadExtraCurricularAssignmentView(container) {
   renderSkeletonRows('ec-table', 5);
   var results = await Promise.all([
     apiFetch(API_BASE + '/classes/'),
-    apiFetch(API_BASE + '/finance/extra-curriculum-activities'),
-    apiFetch(API_BASE + '/terms'),
+    apiFetch(API_BASE + '/terms/'),
   ]);
-  var classRes = results[0], actRes = results[1], termRes = results[2];
+  var classRes = results[0], termRes = results[1];
   // Update shared class cache (also used by Stream Assignment)
   if (classRes && classRes.ok) _saClasses = _toArray(await classRes.json());
-  _ecActivities = (actRes  && actRes.ok)  ? _toArray(await actRes.json())  : [];
-  _ecTerms      = (termRes && termRes.ok) ? _toArray(await termRes.json()) : [];
+  _ecTerms = (termRes && termRes.ok) ? _toArray(await termRes.json()) : [];
 
   var classSel = document.getElementById('ec-class-filter');
   if (classSel) {
-    classSel.innerHTML = '<option value="">Please Select</option>' +
+    classSel.innerHTML = '<option value="">All Classes</option>' +
       _saClasses.map(function(c) {
         return '<option value="' + _esc(String(c.id)) + '">' + _esc(c.name) + '</option>';
+      }).join('');
+  }
+
+  var defaultTerm = _ecTerms.find(function(t) { return t.is_current || t.is_active || t.current; }) || _ecTerms[0];
+  var termSel = document.getElementById('ec-term-filter');
+  if (termSel) {
+    termSel.innerHTML = '<option value="">Please Select</option>' +
+      _ecTerms.map(function(t) {
+        return '<option value="' + _esc(String(t.id)) + '"' + (defaultTerm && t.id === defaultTerm.id ? ' selected' : '') + '>' + _esc(t.name||t.title||'') + '</option>';
       }).join('');
   }
 
   _ecPage = 1;
   _ecDirtyRows = {};
   _ecStudents = [];
-  _renderEcEmptyState();
+  _ecFeeItems = [];
+  _ecNameFilter = '';
+
+  if (defaultTerm) {
+    _ecTermId = defaultTerm.id;
+    await ecLoadGrid();
+  } else {
+    _renderEcEmptyState('Please set up an academic term before assigning extra-curricular activities.');
+  }
 }
 
-function _ecDefaultTermId(student) {
-  // Prefer: student's existing EC term (future backend field) > student's enrolled term > first active term
-  if (student.extra_curriculum_term_id != null) return student.extra_curriculum_term_id;
-  if (student.term_id != null) return student.term_id;
-  var active = _ecTerms.find(function(t) { return t.is_current || t.is_active || t.current; });
-  return active ? active.id : (_ecTerms[0] ? _ecTerms[0].id : null);
-}
-
-function _renderEcEmptyState() {
+function _renderEcEmptyState(message) {
   var totalEl = document.getElementById('ec-total');
   if (totalEl) totalEl.textContent = '0';
-  var colSpan = 4 + _ecActivities.length;
-  var actHeaders = _ecActivities.map(function(a) {
-    return '<th style="text-align:center;">' + _esc(a.title||'') + '</th>';
-  }).join('');
   var t = document.getElementById('ec-table');
-  if (t) t.innerHTML = '<div class="fin-table-wrap" style="overflow-x:auto;"><table class="fin-table">'
-    + '<thead><tr><th>STUDENT NAME</th><th>STUDENT ID</th><th>CLASS</th><th>TERM</th>'
-    + actHeaders + '</tr></thead>'
-    + '<tbody><tr><td colspan="' + colSpan + '" class="fin-empty">Select a Class or search for a student to begin.</td></tr></tbody>'
+  if (t) t.innerHTML = '<div class="fin-table-wrap"><table class="fin-table">'
+    + '<thead><tr><th>STUDENT NAME</th><th>STUDENT ID</th></tr></thead>'
+    + '<tbody><tr><td colspan="2" class="fin-empty">' + _esc(message || 'Select a Term to begin.') + '</td></tr></tbody>'
     + '</table></div>';
   var pg = document.getElementById('ec-pagination');
   if (pg) pg.innerHTML = '';
 }
 
-async function ecOnClassChange(classId) {
-  var inp = document.getElementById('ec-name-input');
-  if (inp) inp.value = '';
-  var dd = document.getElementById('ec-name-dd');
-  if (dd) dd.style.display = 'none';
-
-  if (!classId) {
-    _ecStudents = [];
-    _ecDirtyRows = {};
-    _renderEcEmptyState();
+async function ecLoadGrid() {
+  if (!_ecTermId) { _renderEcEmptyState(); return; }
+  renderSkeletonRows('ec-table', 4 + _ecFeeItems.length);
+  var classId = document.getElementById('ec-class-filter')?.value || '';
+  var qs = 'term_id=' + encodeURIComponent(_ecTermId) + (classId ? '&class_id=' + encodeURIComponent(classId) : '');
+  var res = await apiFetch(API_BASE + '/extra-curricular/assignments?' + qs);
+  if (!res || !res.ok) {
+    _ecFeeItems = []; _ecStudents = [];
+    _renderEcEmptyState('Could not load assignments for this term.');
     return;
   }
-
-  renderSkeletonRows('ec-table', 4 + _ecActivities.length);
-  var res = await apiFetch(API_BASE + '/students/?class_id=' + classId);
-  _ecStudents = (res && res.ok) ? _toArray(await res.json()) : [];
+  var data = await res.json();
+  _ecFeeItems = data.fee_items || [];
+  _ecStudents = data.students || [];
   _ecPage = 1;
   _ecDirtyRows = {};
   _renderEcTable();
 }
 
-let _ecSearchTimer = null;
-function ecOnNameSearch(val) {
-  clearTimeout(_ecSearchTimer);
-  var dd = document.getElementById('ec-name-dd');
-  if (!val.trim()) { if (dd) dd.style.display = 'none'; return; }
-  _ecSearchTimer = setTimeout(async function() {
-    var res = await apiFetch(API_BASE + '/students/?search=' + encodeURIComponent(val.trim()));
-    _ecSearchResults = (res && res.ok) ? _toArray(await res.json()) : [];
-    if (!dd) return;
-    if (!_ecSearchResults.length) {
-      dd.innerHTML = '<div style="padding:10px 14px;color:#888;font-size:0.88rem;">No results found</div>';
-      dd.style.display = 'block';
-      return;
-    }
-    dd.innerHTML = _ecSearchResults.slice(0, 10).map(function(s, i) {
-      var name = _esc((s.first_name||'') + ' ' + (s.last_name||'')).trim();
-      return '<a href="#" onclick="ecSelectStudent(' + i + ');return false;">' + _esc(s.student_id||'') + ' — ' + name + '</a>';
-    }).join('');
-    dd.style.display = 'block';
-  }, 300);
+async function ecOnTermFilterChange(termId) {
+  _ecTermId = termId ? parseInt(termId) : null;
+  await ecLoadGrid();
 }
 
-function ecSelectStudent(idx) {
-  var s = _ecSearchResults[idx];
-  if (!s) return;
-  var inp = document.getElementById('ec-name-input');
-  if (inp) inp.value = (s.student_id||'') + ' — ' + ((s.first_name||'') + ' ' + (s.last_name||'')).trim();
-  var dd = document.getElementById('ec-name-dd');
-  if (dd) dd.style.display = 'none';
-  var classSel = document.getElementById('ec-class-filter');
-  if (classSel) classSel.value = '';
-  _ecStudents = [s];
+async function ecOnClassChange(classId) {
+  await ecLoadGrid();
+}
+
+function ecOnNameFilter(val) {
+  _ecNameFilter = val.trim().toLowerCase();
   _ecPage = 1;
-  _ecDirtyRows = {};
   _renderEcTable();
 }
 
@@ -3534,27 +3534,33 @@ function ecClearFilters() {
   if (classSel) classSel.value = '';
   var inp = document.getElementById('ec-name-input');
   if (inp) inp.value = '';
-  var dd = document.getElementById('ec-name-dd');
-  if (dd) dd.style.display = 'none';
-  _ecStudents = [];
-  _ecDirtyRows = {};
-  _renderEcEmptyState();
+  _ecNameFilter = '';
+  ecLoadGrid();
 }
 
 function ecChangePerPage(v) { _ecPerPage = parseInt(v); _ecPage = 1; _renderEcTable(); }
 function ecGoPage(p)         { _ecPage = p; _renderEcTable(); }
 
+function _ecFilteredStudents() {
+  if (!_ecNameFilter) return _ecStudents;
+  return _ecStudents.filter(function(s) {
+    return (s.student_name||'').toLowerCase().includes(_ecNameFilter) ||
+      (s.student_code||'').toLowerCase().includes(_ecNameFilter);
+  });
+}
+
 function _renderEcTable() {
+  var filtered = _ecFilteredStudents();
   var totalEl = document.getElementById('ec-total');
-  if (totalEl) totalEl.textContent = _ecStudents.length;
+  if (totalEl) totalEl.textContent = filtered.length;
 
   var start = (_ecPage - 1) * _ecPerPage;
-  var paged = _ecStudents.slice(start, start + _ecPerPage);
-  var pages = Math.max(1, Math.ceil(_ecStudents.length / _ecPerPage));
-  var colSpan = 4 + _ecActivities.length;
+  var paged = filtered.slice(start, start + _ecPerPage);
+  var pages = Math.max(1, Math.ceil(filtered.length / _ecPerPage));
+  var colSpan = 2 + _ecFeeItems.length;
 
-  var actHeaders = _ecActivities.map(function(a) {
-    return '<th style="text-align:center;">' + _esc(a.title||'') + '</th>';
+  var actHeaders = _ecFeeItems.map(function(a) {
+    return '<th style="text-align:center;">' + _esc(a.name||'') + '</th>';
   }).join('');
 
   var rows = '';
@@ -3562,50 +3568,28 @@ function _renderEcTable() {
     rows = '<tr><td colspan="' + colSpan + '" class="fin-empty">No students found.</td></tr>';
   } else {
     rows = paged.map(function(s) {
-      var dirty = !!_ecDirtyRows[s.id];
+      var dirty = !!_ecDirtyRows[s.student_id];
       var rowStyle = dirty ? 'background:#fffbe6;' : '';
+      var staged = _ecDirtyRows[s.student_id];
 
-      // Determine which term to pre-select for this row
-      var stagedTermId = _ecDirtyRows[s.id] ? _ecDirtyRows[s.id].extra_curriculum_term_id : undefined;
-      var currentTermId = stagedTermId !== undefined ? stagedTermId : _ecDefaultTermId(s);
-
-      // Current activity set: staged (full replace) or student's existing ids
-      var stagedEcIds = _ecDirtyRows[s.id] ? _ecDirtyRows[s.id].extra_curriculum_ids : undefined;
-      var existingEcIds = s.extra_curriculum_ids || (s.extra_curriculum_id ? [s.extra_curriculum_id] : []);
-      var activeEcIds = stagedEcIds !== undefined ? stagedEcIds : existingEcIds;
-      var activeEcStrs = activeEcIds.map(String);
-
-      var termSel = '<select class="fin-search-input" style="padding:5px 8px!important;min-width:130px;"'
-        + ' onchange="ecOnTermChange(' + s.id + ',this.value)">'
-        + '<option value="">— Select —</option>'
-        + _ecTerms.map(function(t) {
-            return '<option value="' + _esc(String(t.id)) + '"'
-              + (String(t.id) === String(currentTermId) ? ' selected' : '')
-              + '>' + _esc(t.name||t.title||'') + '</option>';
-          }).join('')
-        + '</select>';
-
-      var actCells = _ecActivities.map(function(a) {
-        var chk = activeEcStrs.indexOf(String(a.id)) !== -1 ? 'checked' : '';
+      var actCells = _ecFeeItems.map(function(a) {
+        var enrolled = staged && Object.prototype.hasOwnProperty.call(staged, a.id)
+          ? staged[a.id]
+          : !!(s.enrollments && s.enrollments[a.id]);
         return '<td style="text-align:center;">'
-          + '<input type="checkbox" id="ec-chk-' + s.id + '-' + a.id + '" ' + chk
-          + ' onchange="ecOnActivityCheck(' + s.id + ',' + a.id + ',this.checked)"'
+          + '<input type="checkbox" id="ec-chk-' + s.student_id + '-' + a.id + '" ' + (enrolled ? 'checked' : '')
+          + ' onchange="ecOnActivityCheck(' + s.student_id + ',' + a.id + ',this.checked)"'
           + ' style="width:auto;max-width:none;accent-color:#00b5b8;cursor:pointer;">'
           + '</td>';
       }).join('');
-
-      var cls = _saClasses.find(function(c) { return String(c.id) === String(s.class_id); });
-      var className = cls ? cls.name : (s.class_name || s.level_of_academics || '-');
 
       var dirtyBadge = dirty
         ? ' <span style="color:#e67e22;font-size:0.78rem;" title="Unsaved changes">*</span>'
         : '';
 
       return '<tr style="' + rowStyle + '">'
-        + '<td>' + _esc((s.first_name||'') + ' ' + (s.last_name||'')).trim() + dirtyBadge + '</td>'
-        + '<td>' + _esc(s.student_id||'') + '</td>'
-        + '<td>' + _esc(className) + '</td>'
-        + '<td>' + termSel + '</td>'
+        + '<td>' + _esc(s.student_name||'') + dirtyBadge + '</td>'
+        + '<td>' + _esc(s.student_code||'') + '</td>'
         + actCells
         + '</tr>';
     }).join('');
@@ -3613,7 +3597,7 @@ function _renderEcTable() {
 
   var t = document.getElementById('ec-table');
   if (t) t.innerHTML = '<div class="fin-table-wrap" style="overflow-x:auto;"><table class="fin-table">'
-    + '<thead><tr><th>STUDENT NAME</th><th>STUDENT ID</th><th>CLASS</th><th>TERM</th>'
+    + '<thead><tr><th>STUDENT NAME</th><th>STUDENT ID</th>'
     + actHeaders + '</tr></thead>'
     + '<tbody>' + rows + '</tbody>'
     + '</table></div>';
@@ -3621,47 +3605,17 @@ function _renderEcTable() {
   _mkPagination('ec-pagination', _ecPage, pages, 'ecGoPage');
 }
 
-function ecOnTermChange(studentId, termId) {
-  if (!_ecDirtyRows[studentId]) {
-    // First change on this row: seed full EC ids so the save payload is complete
-    var s = _ecStudents.find(function(x) { return String(x.id) === String(studentId); });
-    var existingIds = s ? (s.extra_curriculum_ids || (s.extra_curriculum_id ? [s.extra_curriculum_id] : [])) : [];
-    _ecDirtyRows[studentId] = {
-      extra_curriculum_ids: existingIds.map(Number),
-      extra_curriculum_term_id: termId ? parseInt(termId) : null,
-    };
-  } else {
-    _ecDirtyRows[studentId].extra_curriculum_term_id = termId ? parseInt(termId) : null;
-  }
-  _ecMarkDirtyRow(studentId);
-}
-
-function ecOnActivityCheck(studentId, activityId, checked) {
-  var s = _ecStudents.find(function(x) { return String(x.id) === String(studentId); });
-  if (!s) return;
-
-  if (!_ecDirtyRows[studentId]) {
-    // First change: seed current state for full-replace payload on save
-    var existingIds = s.extra_curriculum_ids || (s.extra_curriculum_id ? [s.extra_curriculum_id] : []);
-    _ecDirtyRows[studentId] = {
-      extra_curriculum_ids: existingIds.map(Number),
-      extra_curriculum_term_id: _ecDefaultTermId(s) != null ? parseInt(_ecDefaultTermId(s)) : null,
-    };
-  }
-
-  var ids = _ecDirtyRows[studentId].extra_curriculum_ids;
-  var numId = parseInt(activityId);
-  var idx = ids.indexOf(numId);
-  if (checked && idx === -1) ids.push(numId);
-  if (!checked && idx !== -1) ids.splice(idx, 1);
-
+function ecOnActivityCheck(studentId, feeItemId, checked) {
+  if (!_ecDirtyRows[studentId]) _ecDirtyRows[studentId] = {};
+  _ecDirtyRows[studentId][feeItemId] = checked;
   _ecMarkDirtyRow(studentId);
 }
 
 function _ecMarkDirtyRow(studentId) {
+  var filtered = _ecFilteredStudents();
   var start = (_ecPage - 1) * _ecPerPage;
-  var paged = _ecStudents.slice(start, start + _ecPerPage);
-  var idx = paged.findIndex(function(s) { return String(s.id) === String(studentId); });
+  var paged = filtered.slice(start, start + _ecPerPage);
+  var idx = paged.findIndex(function(s) { return String(s.student_id) === String(studentId); });
   if (idx === -1) return;
   var tbody = document.querySelector('#ec-table table tbody');
   if (!tbody) return;
@@ -3671,68 +3625,39 @@ function _ecMarkDirtyRow(studentId) {
   var nameCell = tr.cells[0];
   if (!nameCell) return;
   var s = paged[idx];
-  var baseName = _esc((s.first_name||'') + ' ' + (s.last_name||'')).trim();
-  nameCell.innerHTML = baseName + ' <span style="color:#e67e22;font-size:0.78rem;" title="Unsaved changes">*</span>';
+  nameCell.innerHTML = _esc(s.student_name||'') + ' <span style="color:#e67e22;font-size:0.78rem;" title="Unsaved changes">*</span>';
 }
 
 async function saveEcAssignmentChanges() {
-  var changed = Object.entries(_ecDirtyRows);
-  if (!changed.length) { showToast('No changes to save.', 'info'); return; }
+  var assignments = [];
+  Object.entries(_ecDirtyRows).forEach(function(entry) {
+    var studentId = entry[0], cells = entry[1];
+    Object.entries(cells).forEach(function(cellEntry) {
+      assignments.push({
+        student_id: parseInt(studentId),
+        fee_item_id: parseInt(cellEntry[0]),
+        is_enrolled: !!cellEntry[1],
+      });
+    });
+  });
+  if (!assignments.length) { showToast('No changes to save.', 'info'); return; }
 
   var btn = document.querySelector('[onclick="saveEcAssignmentChanges()"]');
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
 
-  var succeeded = 0;
-  var failedNames = [];
-  var termIdsUsed = new Set();
-
-  await Promise.all(changed.map(async function(entry) {
-    var studentId = entry[0], changes = entry[1];
-    // Send full current EC ids (full-replace semantics per existing PUT /students/{id} contract).
-    // extra_curriculum_term_id is sent speculatively — backend should add support to
-    // trigger invoice adjustment for the selected term (see backend gap notes above).
-    var payload = { extra_curriculum_ids: changes.extra_curriculum_ids };
-    if (changes.extra_curriculum_term_id != null) {
-      payload.extra_curriculum_term_id = changes.extra_curriculum_term_id;
-      termIdsUsed.add(changes.extra_curriculum_term_id);
-    }
-    var res = await apiFetch(API_BASE + '/students/' + studentId, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (res && res.ok) {
-      succeeded++;
-      delete _ecDirtyRows[studentId];
-      var s = _ecStudents.find(function(x) { return String(x.id) === String(studentId); });
-      if (s) {
-        s.extra_curriculum_ids = changes.extra_curriculum_ids;
-        if (changes.extra_curriculum_term_id != null) s.term_id = changes.extra_curriculum_term_id;
-      }
-    } else {
-      var s2 = _ecStudents.find(function(x) { return String(x.id) === String(studentId); });
-      failedNames.push(s2 ? ((s2.first_name||'') + ' ' + (s2.last_name||'')).trim() : 'Student #' + studentId);
-    }
-  }));
+  var res = await apiFetch(API_BASE + '/extra-curricular/bulk-assign', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ term_id: _ecTermId, assignments: assignments }),
+  });
 
   if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }
 
-  if (!failedNames.length) {
-    var termNames = Array.from(termIdsUsed).map(function(tid) {
-      var t = _ecTerms.find(function(x) { return String(x.id) === String(tid); });
-      return t ? (t.name || t.title || 'Term ' + tid) : 'Term ' + tid;
-    }).join(', ');
-    var invoiceNote = termNames
-      ? ' Their invoices for ' + termNames + ' will be adjusted accordingly.'
-      : '';
-    showToast(succeeded + ' student' + (succeeded !== 1 ? 's' : '') + ' updated.' + invoiceNote, 'success');
-    _renderEcTable();
+  if (res && res.ok) {
+    showToast(assignments.length + ' assignment change' + (assignments.length !== 1 ? 's' : '') + ' saved.', 'success');
+    await ecLoadGrid();
   } else {
-    var msg = succeeded
-      ? (succeeded + ' updated. Failed: ' + failedNames.join(', ') + '.')
-      : ('Save failed for: ' + failedNames.join(', ') + '.');
-    showToast(msg, succeeded ? 'warning' : 'error');
-    _renderEcTable();
+    showToast('Save failed: ' + (res ? await parseApiError(res) : 'An error occurred.'), 'error');
   }
 }
 
@@ -3846,7 +3771,7 @@ async function _loadStuRptFilterDropdowns() {
     apiFetch(`${API_BASE}/classes/`),
     apiFetch(`${API_BASE}/student-management/streams`),
     apiFetch(`${API_BASE}/routes/`),
-    apiFetch(`${API_BASE}/finance/extra-curriculum-activities`),
+    apiFetch(`${API_BASE}/student-management/extra-curriculum/`),
   ]);
   _stuRptFilterCache.types   = typesRes   && typesRes.ok   ? _toArray(await typesRes.json())   : [];
   _stuRptFilterCache.classes = classesRes && classesRes.ok ? _toArray(await classesRes.json()) : [];

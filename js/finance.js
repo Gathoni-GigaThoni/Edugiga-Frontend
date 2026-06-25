@@ -700,9 +700,9 @@ function _finCloseModal() {
 }
 
 async function _finLedgerAccountOptions() {
-  const res = await apiFetch(`${API_BASE}/finance/accounts/`);
+  const res = await apiFetch(`${API_BASE}/accounts/?is_active=true`);
   const accounts = (res && res.ok) ? _toArray(await res.json()) : [];
-  return accounts.map(a => `<option value="${a.id}">${_finEsc(a.account_name || a.accountName || '')}</option>`).join('');
+  return accounts.map(a => `<option value="${a.id}">${_finEsc(a.number)} — ${_finEsc(a.account_name || '')}</option>`).join('');
 }
 
 async function openGenerateInvoiceModal() {
@@ -2957,7 +2957,7 @@ async function loadChartOfAccountsView(container) {
   _coaPage = 1; _coaSearch = '';
   _renderCoaListPage(container);
   try {
-    const res = await fetch(`${API_BASE}/finance/accounts/`, { headers: { Authorization: `Bearer ${token}` } });
+    const res = await fetch(`${API_BASE}/accounts/`, { headers: { Authorization: `Bearer ${token}` } });
     if (res.ok) {
       const raw = await res.json();
       chartOfAccountsData.length = 0;
@@ -3008,12 +3008,12 @@ function _coaFiltered() {
     (a.account_type||a.accountType||'').toLowerCase().includes(q));
 }
 
-// Account records reference their parent by id (child_of) — resolve the name by
+// Account records reference their parent by id (parent_id) — resolve the name by
 // looking it up in the same list rather than expecting a flat "parent name" field.
 function _coaParentName(a) {
-  if (!a.child_of) return '-';
-  const parent = chartOfAccountsData.find(p => String(p.id) === String(a.child_of));
-  return parent ? (parent.account_name || parent.accountName || '-') : '-';
+  if (!a.parent_id) return '-';
+  const parent = chartOfAccountsData.find(p => String(p.id) === String(a.parent_id));
+  return parent ? (parent.account_name || '-') : '-';
 }
 
 function _renderCoaTable() {
@@ -3025,16 +3025,14 @@ function _renderCoaTable() {
   const pages = Math.max(1, Math.ceil(filtered.length/_coaPerPage));
 
   let rows = paged.length===0
-    ? `<tr><td colspan="9" class="fin-empty">No records found.</td></tr>`
+    ? `<tr><td colspan="7" class="fin-empty">No records found.</td></tr>`
     : paged.map(a=>`<tr>
         <td>${_finEsc(a.number||'')}</td>
-        <td>${_finEsc(a.account_name||a.accountName||'')}</td>
-        <td>${_finEsc(a.account_type||a.accountType||'-')}</td>
+        <td>${_finEsc(a.account_name||'')}</td>
+        <td>${_finEsc(a.account_type||'-')}</td>
         <td>${_finEsc(_coaParentName(a))}</td>
-        <td>${_finEsc(a.cash_flow_group||a.group||'-')}</td>
-        <td>${_finEsc(a.cash_flow_subgroup||a.subGroup||'-')}</td>
-        <td>${_finEsc(a.status||'Active')}</td>
-        <td>${_finEsc(a.personnel||'-')}</td>
+        <td>${_finEsc(a.cash_flow_group||'-')}</td>
+        <td>${a.is_active===false?'Inactive':'Active'}</td>
         <td class="fin-action-cell">
           <div class="fin-action-wrap">
             <button class="fin-action-btn" onclick="toggleFinCoaDropdown(event,'${a.id}')">&#8230;</button>
@@ -3050,7 +3048,7 @@ function _renderCoaTable() {
     <div class="fin-table-wrap"><table class="fin-table">
       <thead><tr>
         <th>NUMBER</th><th>ACCOUNT NAME</th><th>ACCOUNT TYPE</th><th>PARENT ACCOUNT</th>
-        <th>GROUP</th><th>SUB GROUP</th><th>STATUS</th><th>PERSONNEL</th><th>ACTION</th>
+        <th>GROUP</th><th>STATUS</th><th>ACTION</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table></div>`;
@@ -3070,64 +3068,79 @@ function changeCoaPerPage(v){ _coaPerPage=parseInt(v); _coaPage=1; _renderCoaTab
 function onCoaSearch(v)     { _coaSearch=v.trim().toLowerCase(); _coaPage=1; _renderCoaTable(); }
 function coaGoPage(p)       { _coaPage=p; _renderCoaTable(); }
 
+const _COA_CASH_FLOW_GROUPS = [
+  'Cashflow from Operating Activities',
+  'Cashflow from Investing Activities',
+  'Cashflow from Financing Activities',
+];
+
 function _coaFormHtml(acct) {
-  const childOf = acct?.child_of ?? acct?.childOf;
+  const parentId = acct?.parent_id;
   const parentOpts = chartOfAccountsData
     .filter(a=> !acct || a.id!==acct.id)
-    .map(a=>`<option value="${a.id}" ${String(childOf)===String(a.id)?'selected':''}>${_finEsc(a.account_name||a.accountName||'')}</option>`).join('');
+    .map(a=>`<option value="${a.id}" ${String(parentId)===String(a.id)?'selected':''}>${_finEsc(a.account_name||'')}</option>`).join('');
   return `
     <div class="fin-form-grid-2">
       <div class="fin-form-group">
-        <label class="fin-form-label">Number <span class="fin-required">*</span></label>
-        <input type="text" id="coa-f-number" class="fin-form-input" value="${_finEsc(acct?.number||'')}" ${acct?'disabled':''}>
+        <label class="fin-form-label">Number</label>
+        <input type="text" id="coa-f-number" class="fin-form-input" value="${_finEsc(acct?.number||'')}" ${acct?'disabled':''}
+               placeholder="${acct?'':'Auto-filled from parent — editable'}">
         <span class="fin-field-error" id="coa-f-number-err"></span>
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Account Name <span class="fin-required">*</span></label>
-        <input type="text" id="coa-f-name" class="fin-form-input" value="${_finEsc(acct?.account_name||acct?.accountName||'')}">
+        <input type="text" id="coa-f-name" class="fin-form-input" value="${_finEsc(acct?.account_name||'')}">
         <span class="fin-field-error" id="coa-f-name-err"></span>
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Account Type <span class="fin-required">*</span></label>
-        <select id="coa-f-type" class="fin-form-select">
+        <select id="coa-f-type" class="fin-form-select" ${acct?'disabled title="Account type cannot be changed after creation"':''}>
           <option value="">Please Select</option>
-          ${['Asset','Liability','Equity','Revenue','Expense'].map(t=>`<option value="${t}" ${(acct?.account_type||acct?.accountType)===t?'selected':''}>${t}</option>`).join('')}
+          ${['Asset','Liability','Equity','Income','Expense'].map(t=>`<option value="${t}" ${acct?.account_type===t?'selected':''}>${t}</option>`).join('')}
         </select>
         <span class="fin-field-error" id="coa-f-type-err"></span>
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Payment Ordering</label>
-        <input type="number" id="coa-f-ordering" class="fin-form-input" value="${acct?.payment_ordering ?? acct?.paymentOrdering ?? ''}">
+        <input type="number" id="coa-f-ordering" class="fin-form-input" value="${acct?.payment_ordering ?? ''}">
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Cash Flow Group</label>
         <select id="coa-f-cf-group" class="fin-form-select">
           <option value="">Please Select</option>
-          ${['Operating','Investing','Financing'].map(g=>`<option value="${g}" ${(acct?.cash_flow_group||acct?.cashFlowGroup)===g?'selected':''}>${g}</option>`).join('')}
+          ${_COA_CASH_FLOW_GROUPS.map(g=>`<option value="${g}" ${acct?.cash_flow_group===g?'selected':''}>${g}</option>`).join('')}
         </select>
         <span class="fin-field-error" id="coa-f-cfg-err"></span>
       </div>
       <div class="fin-form-group">
-        <label class="fin-form-label">Cash Flow Subgroup Name</label>
-        <input type="text" id="coa-f-cf-subgroup" class="fin-form-input" value="${_finEsc(acct?.cash_flow_subgroup||acct?.cashFlowSubgroupName||'')}">
-      </div>
-      <div class="fin-form-group">
-        <label class="fin-form-label">Child of</label>
-        <select id="coa-f-child-of" class="fin-form-select">
+        <label class="fin-form-label">Parent Account</label>
+        <select id="coa-f-parent" class="fin-form-select" ${acct?'':'onchange="onCoaParentChange(this.value)"'}>
           <option value="">Please Select</option>${parentOpts}
         </select>
       </div>
     </div>
     <div class="fin-form-group">
       <label class="fin-form-check-label" style="display:flex;align-items:center;gap:8px;font-size:0.9rem;cursor:pointer;">
-        <input type="checkbox" id="coa-f-fees-related" class="fin-cb" ${(acct?.is_student_fees_related ?? acct?.isStudentFeesRelated)?'checked':''}> Student/Fees Related
+        <input type="checkbox" id="coa-f-fees-related" class="fin-cb" ${acct?.is_student_fees_related?'checked':''}> Student/Fees Related
       </label>
     </div>
     <div class="fin-form-group">
       <label class="fin-form-check-label" style="display:flex;align-items:center;gap:8px;font-size:0.9rem;cursor:pointer;">
-        <input type="checkbox" id="coa-f-budget-item" class="fin-cb" ${(acct?.is_budget_item ?? acct?.isBudgetItem)?'checked':''}> Budget Item
+        <input type="checkbox" id="coa-f-budget-item" class="fin-cb" ${acct?.is_budget_item?'checked':''}> Budget Item
       </label>
     </div>`;
+}
+
+// Prefilling the Number field from the selected Parent Account — user can still override it manually.
+async function onCoaParentChange(parentId) {
+  const numInput = document.getElementById('coa-f-number');
+  if (!numInput) return;
+  if (!parentId) { numInput.value = ''; return; }
+  const res = await apiFetch(`${API_BASE}/accounts/next-number?parent_id=${parentId}`);
+  if (res && res.ok) {
+    const data = await res.json();
+    numInput.value = data.next_number || '';
+  }
 }
 
 function renderCoaAddPage(container) {
@@ -3156,23 +3169,23 @@ async function submitCoaAdd() {
   const name = (document.getElementById('coa-f-name').value||'').trim();
   const type = document.getElementById('coa-f-type').value;
   const cfg  = document.getElementById('coa-f-cf-group').value;
+  const ordering = document.getElementById('coa-f-ordering').value;
+  const parentId = document.getElementById('coa-f-parent').value;
   let valid=true;
-  document.getElementById('coa-f-number-err').textContent = num  ? '' : 'This field is required.'; if(!num)  valid=false;
   document.getElementById('coa-f-name-err').textContent   = name ? '' : 'This field is required.'; if(!name) valid=false;
   document.getElementById('coa-f-type-err').textContent   = type ? '' : 'This field is required.'; if(!type) valid=false;
   document.getElementById('coa-f-cfg-err').textContent    = '';
   if (!valid) return;
   const payload = {
-    number: num, account_name: name, account_type: type,
-    payment_ordering:      document.getElementById('coa-f-ordering').value||'',
-    cash_flow_group:       cfg,
-    cash_flow_subgroup:    document.getElementById('coa-f-cf-subgroup').value||'',
-    child_of:              document.getElementById('coa-f-child-of').value||'',
+    number: num || null, account_name: name, account_type: type,
+    payment_ordering:      ordering ? parseInt(ordering) : null,
+    cash_flow_group:       cfg || null,
+    parent_id:             parentId ? parseInt(parentId) : null,
     is_student_fees_related: document.getElementById('coa-f-fees-related').checked,
     is_budget_item:        document.getElementById('coa-f-budget-item').checked
   };
   try {
-    const res = await fetch(`${API_BASE}/finance/accounts/`, {
+    const res = await fetch(`${API_BASE}/accounts/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(payload)
@@ -3214,20 +3227,21 @@ async function submitCoaEdit(id) {
   const name = (document.getElementById('coa-f-name').value||'').trim();
   const type = document.getElementById('coa-f-type').value;
   const cfg  = document.getElementById('coa-f-cf-group').value;
+  const ordering = document.getElementById('coa-f-ordering').value;
+  const parentId = document.getElementById('coa-f-parent').value;
   document.getElementById('coa-f-name-err').textContent = name ? '' : 'This field is required.';
-  document.getElementById('coa-f-type-err').textContent = type ? '' : 'This field is required.';
   document.getElementById('coa-f-cfg-err').textContent  = '';
-  if (!name||!type) return;
+  if (!name) return;
   const payload = {
-    account_name: name, account_type: type, cash_flow_group: cfg,
-    payment_ordering:       document.getElementById('coa-f-ordering').value||'',
-    cash_flow_subgroup:     document.getElementById('coa-f-cf-subgroup').value||'',
-    child_of:               document.getElementById('coa-f-child-of').value||'',
+    // account_type is fixed at creation — not part of AccountUpdate, intentionally omitted.
+    account_name: name, cash_flow_group: cfg || null,
+    payment_ordering:       ordering ? parseInt(ordering) : null,
+    parent_id:              parentId ? parseInt(parentId) : null,
     is_student_fees_related: document.getElementById('coa-f-fees-related').checked,
     is_budget_item:         document.getElementById('coa-f-budget-item').checked
   };
   try {
-    const res = await fetch(`${API_BASE}/finance/accounts/${id}`, {
+    const res = await fetch(`${API_BASE}/accounts/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(payload)
@@ -3578,13 +3592,16 @@ const FEE_ITEM_CATEGORIES = [
 async function _fiLoadLookups() {
   const [ftRes, acctRes] = await Promise.all([
     apiFetch(`${API_BASE}/finance/fee-types/`),
-    apiFetch(`${API_BASE}/finance/accounts/`),
+    apiFetch(`${API_BASE}/accounts/?is_active=true`),
   ]);
   _fiFeeTypesCache = (ftRes && ftRes.ok) ? _toArray(await ftRes.json()) : [];
   _fiAccountsCache = (acctRes && acctRes.ok) ? _toArray(await acctRes.json()) : [];
 }
 function _fiFeeTypeName(id) { return (_fiFeeTypesCache.find(t => String(t.id) === String(id)) || {}).name || '-'; }
-function _fiAccountName(id) { const a = _fiAccountsCache.find(a => String(a.id) === String(id)); return a ? (a.account_name || a.accountName || '-') : '-'; }
+function _fiAccountName(id) {
+  const a = _fiAccountsCache.find(a => String(a.id) === String(id));
+  return a ? `${a.number || ''} — ${a.account_name || '-'}` : '-';
+}
 
 async function loadFeeItemsView(container) {
   _feeItemPage = 1; _feeItemSearch = '';
@@ -3718,7 +3735,7 @@ async function renderFeeItemAddPage(container, editId) {
           <label class="fin-form-label">Account</label>
           <select id="fi-f-account" class="fin-form-select">
             <option value="">Please Select</option>
-            ${_fiAccountsCache.map(a=>`<option value="${a.id}" ${String(item?.account_id)===String(a.id)?'selected':''}>${_finEsc(a.account_name||a.accountName||'')}</option>`).join('')}
+            ${_fiAccountsCache.map(a=>`<option value="${a.id}" ${String(item?.account_id)===String(a.id)?'selected':''}>${_finEsc(a.number)} — ${_finEsc(a.account_name||'')}</option>`).join('')}
           </select>
         </div>
         <div class="fin-form-group" style="margin-bottom:16px;">
