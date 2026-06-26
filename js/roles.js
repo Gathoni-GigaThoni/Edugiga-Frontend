@@ -544,7 +544,7 @@ async function savePermissions() {
   const res = await apiFetch(`${API_BASE}/roles/${roleId}/permissions/`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ permissions }),
+    body: JSON.stringify(permissions),
   });
   if (!res) return;
 
