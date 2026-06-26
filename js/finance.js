@@ -2340,8 +2340,8 @@ async function loadFeeSetupPerClassView(container) {
   _feeSetupPage = 1; _feeSetupSearch = '';
   _renderFeeSetupListPage(container);
   try {
-    const res = await fetch(`${API_BASE}/finance/fee-setup-per-class/`, { headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok) { feeSetupPerClassData.length = 0; _toArray(await res.json()).forEach(r => feeSetupPerClassData.push(r)); }
+    const res = await apiFetch(`${API_BASE}/finance/fee-setup-per-class`);
+    if (res && res.ok) { feeSetupPerClassData.length = 0; _toArray(await res.json()).forEach(r => feeSetupPerClassData.push(r)); }
   } catch (_) {}
   await _fsLoadLookups();
   _renderFeeSetupTable();
@@ -2645,13 +2645,13 @@ async function submitFeeSetupAdd() {
       class_id: parseInt(classId), term_id: parseInt(termId),
     };
     try {
-      const res = await fetch(`${API_BASE}/finance/fee-setup-per-class/`, {
+      const res = await apiFetch(`${API_BASE}/finance/fee-setup-per-class`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      if (res.ok) okCount++;
-      else { lastErr = await parseApiError(res); }
+      if (res && res.ok) okCount++;
+      else if (res) { lastErr = await parseApiError(res); }
     } catch (_) { lastErr = 'Network error.'; }
   }
   if (okCount === lineItems.length) showToast('Fee setup saved!', 'success');
@@ -2667,8 +2667,8 @@ async function loadReceivePaymentsView(container) {
   _rcvPayPage = 1; _rcvPaySearch = '';
   _renderRcvPayListPage(container);
   try {
-    const res = await fetch(`${API_BASE}/finance/receive-payments/`, { headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok) { receivePaymentsData.length = 0; _toArray(await res.json()).forEach(r => receivePaymentsData.push(r)); }
+    const res = await apiFetch(`${API_BASE}/finance/receive-payments`);
+    if (res && res.ok) { receivePaymentsData.length = 0; _toArray(await res.json()).forEach(r => receivePaymentsData.push(r)); }
   } catch (_) {}
   _renderRcvPayTable();
 }
@@ -2938,13 +2938,13 @@ async function submitRcvPayAdd() {
     payment_mode: mode, mode_no: modeNo, doc_date: date, amount
   };
   try {
-    const res = await fetch(`${API_BASE}/finance/receive-payments/`, {
+    const res = await apiFetch(`${API_BASE}/finance/receive-payments`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-    if (res.ok) { showToast('Payment received!', 'success'); }
-    else { showToast('Error: ' + await parseApiError(res), 'error'); }
+    if (res && res.ok) { showToast('Payment received!', 'success'); }
+    else if (res) { showToast('Error: ' + await parseApiError(res), 'error'); }
   } catch (_) { showToast('Network error.', 'error'); }
   loadView('fin-receive-payments');
 }

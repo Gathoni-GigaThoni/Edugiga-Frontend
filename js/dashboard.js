@@ -124,13 +124,16 @@ function showDashboard() {
               <li class="dropdown">
                 ${flyoutGroupHeader('Student Finance', 'fin-sf-dropdown')}
                 <ul id="fin-sf-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('fin-sf-dropdown')}">
-                  <li id="sidebar-fin-invoices"       class="sidebar-sub-sub" onclick="loadView('fin-student-invoices')">Student Invoices</li>
-                  <li id="sidebar-fin-fee-assign"     class="sidebar-sub-sub" onclick="loadView('fin-student-fee-assignments')">Student Fee Assignments</li>
-                  <li id="sidebar-fin-bulk"           class="sidebar-sub-sub" onclick="loadView('fin-student-bulk-invoicing')">Student Bulk Invoicing</li>
+                  <li id="sidebar-fin-fee-schedules"  class="sidebar-sub-sub" onclick="loadView('fin-fee-schedules')">Fee Schedules</li>
+                  <li id="sidebar-fin-fee-setup-class" class="sidebar-sub-sub" onclick="loadView('fin-fee-setup-class')">Fee Setup by Class</li>
+                  <li id="sidebar-fin-fee-assign"     class="sidebar-sub-sub" onclick="loadView('fin-fee-assignments')">Fee Assignments</li>
+                  <li id="sidebar-fin-fee-invoices"   class="sidebar-sub-sub" onclick="loadView('fin-fee-invoices')">Fee Invoices</li>
+                  <li id="sidebar-fin-bulk"           class="sidebar-sub-sub" onclick="loadView('fin-invoices-bulk')">Bulk Invoice Generate</li>
+                  <li id="sidebar-fin-invoices"       class="sidebar-sub-sub" onclick="loadView('fin-student-invoices')">Student Invoices (Legacy)</li>
                   <li id="sidebar-fin-inv-adj"        class="sidebar-sub-sub" onclick="loadView('fin-invoice-adjustments')">Student Invoice Adjustments</li>
                   <li id="sidebar-fin-spon-alloc"     class="sidebar-sub-sub" onclick="loadView('fin-sponsorship-allocations')">Sponsorship Allocations</li>
                   <li id="sidebar-fin-spon-mgmt"      class="sidebar-sub-sub" onclick="loadView('fin-sponsorship-managements')">Sponsorship Managements</li>
-                  <li id="sidebar-fin-fee-setup"      class="sidebar-sub-sub" onclick="loadView('fin-fee-setup-per-class')">Fee Set-up per Class</li>
+                  <li id="sidebar-fin-fee-setup"      class="sidebar-sub-sub" onclick="loadView('fin-fee-setup-per-class')">Class Fee Setup (Legacy)</li>
                 </ul>
               </li>
               <li onclick="loadView('cash-bank-management')">Cash and Bank Management</li>
@@ -373,6 +376,8 @@ const FORM_VIEWS = new Set([
   'fin-student-invoices', 'fin-student-invoices-add', 'fin-student-bulk-invoicing',
   'fin-invoice-adjustments', 'fin-sponsorship-allocations', 'fin-student-fee-assignments',
   'fin-fee-setup-per-class', 'fin-receive-payments',
+  'fin-fee-schedules', 'fin-fee-setup-class', 'fin-fee-assignments',
+  'fin-fee-invoices', 'fin-invoice-detail', 'fin-invoice-generate', 'fin-invoices-bulk',
   'fin-chart-of-accounts', 'fin-fee-accounts', 'fin-fee-items', 'fin-general-items', 'finance-discount-setup',
   'finance-sibling-groups-add',
   // Payables
@@ -567,6 +572,28 @@ async function loadView(view) {
     case 'fin-student-bulk-invoicing':
       setActiveSidebarItem('sidebar-fin-bulk'); openFinStudentFinanceDropdown();
       loadStudentBulkInvoicingView(main); break;
+    // Receivables (new modules)
+    case 'fin-fee-schedules':
+      setActiveSidebarItem('sidebar-fin-fee-schedules'); openFinStudentFinanceDropdown();
+      await loadFeeSchedulesView(main); break;
+    case 'fin-fee-setup-class':
+      setActiveSidebarItem('sidebar-fin-fee-setup-class'); openFinStudentFinanceDropdown();
+      await loadFeeSetupByClassView(main); break;
+    case 'fin-fee-assignments':
+      setActiveSidebarItem('sidebar-fin-fee-assign'); openFinStudentFinanceDropdown();
+      await loadFeeAssignmentsView(main); break;
+    case 'fin-fee-invoices':
+      setActiveSidebarItem('sidebar-fin-fee-invoices'); openFinStudentFinanceDropdown();
+      await loadFeeInvoicesView(main); break;
+    case 'fin-invoice-detail':
+      openFinStudentFinanceDropdown();
+      await loadInvoiceDetailView(main, window._rcvCurrentInvoiceId); break;
+    case 'fin-invoice-generate':
+      openFinStudentFinanceDropdown();
+      await loadInvoiceGenerateView(main, window._rcvGenStudentId, window._rcvGenTermId); break;
+    case 'fin-invoices-bulk':
+      setActiveSidebarItem('sidebar-fin-bulk'); openFinStudentFinanceDropdown();
+      await loadBulkInvoiceView(main); break;
     case 'fin-invoice-adjustments':
       setActiveSidebarItem('sidebar-fin-inv-adj'); openFinStudentFinanceDropdown();
       loadInvoiceAdjustmentsView(main); break;
