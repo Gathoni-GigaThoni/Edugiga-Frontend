@@ -235,13 +235,12 @@ const PERMISSIONS_TREE = [
         key: 'students', label: 'Students',
         actions: [
           'view', 'add', 'edit', 'delete',
-          'fee_balance', 'can_edit_student_no', 'hostel_allocation',
+          'fee_balance',
           'restrict_academic_background', 'restrict_guardian_family',
           'restrict_disability_medical', 'restrict_disciplinary',
           'restrict_document', 'restrict_applicant_documents'
         ]
       },
-      { key: 'applicants',             label: 'Applicants',             actions: ['view', 'add', 'edit', 'delete'] },
       { key: 'student-reporting',      label: 'Student Reporting',      actions: ['view', 'add', 'delete'] },
       { key: 'cohort-term-planner',    label: 'Cohort Term Planner',    actions: ['view', 'add', 'edit', 'delete'] },
       { key: 'classes',                label: 'Classes',                actions: ['view', 'add', 'edit', 'delete', 'status', 'teachers'] }
@@ -336,8 +335,6 @@ const ACTION_LABELS = {
   edit:                          'Edit',
   delete:                        'Delete',
   fee_balance:                   'Fee balance',
-  can_edit_student_no:           'Can edit student no',
-  hostel_allocation:             'Hostel allocation',
   restrict_academic_background:  'Restrict academic background',
   restrict_guardian_family:      'Restrict guardian family',
   restrict_disability_medical:   'Restrict disability medical',
@@ -539,12 +536,15 @@ async function savePermissions() {
   if (!roleId) return;
 
   const checkedBoxes = document.querySelectorAll('input[type="checkbox"].perm-action-cb:checked');
-  const permissionCodes = Array.from(checkedBoxes).map(cb => cb.dataset.code);
+  const permissions = Array.from(checkedBoxes).map(cb => ({
+    module_key: cb.dataset.module,
+    action: cb.dataset.action,
+  }));
 
   const res = await apiFetch(`${API_BASE}/roles/${roleId}/permissions/`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ permission_codes: permissionCodes }),
+    body: JSON.stringify({ permissions }),
   });
   if (!res) return;
 
