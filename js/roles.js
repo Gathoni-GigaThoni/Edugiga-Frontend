@@ -483,28 +483,27 @@ async function savePermissions(roleId) {
     if (!cb.disabled) moduleMap[key][`can_${cb.dataset.action}`] = cb.checked;
   });
 
-  const entries = Object.entries(moduleMap);
-  if (!entries.length) {
+  const payload = Object.entries(moduleMap).map(([module_key, flags]) => ({
+    module_key, ...flags,
+  }));
+
+  if (!payload.length) {
     if (statusEl) statusEl.innerHTML = '<span class="role-status-error">No permissions found in form.</span>';
     return;
   }
 
-  const results = await Promise.all(
-    entries.map(([module_key, flags]) =>
-      apiFetch(`${API_BASE}/roles/${roleId}/permissions`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ module_key, ...flags }),
-      })
-    )
-  );
+  const res = await apiFetch(`${API_BASE}/roles/${roleId}/permissions`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
 
-  const failed = results.filter(r => !r || !r.ok);
-  if (!failed.length) {
+  if (!res) return;
+  if (res.ok) {
     showToast('Permissions saved!', 'success');
     if (statusEl) statusEl.innerHTML = '<span class="role-status-success">Saved!</span>';
   } else {
-    const msg = failed[0] ? await parseApiError(failed[0]) : 'One or more saves failed.';
+    const msg = await parseApiError(res);
     showToast(msg, 'error');
     if (statusEl) statusEl.innerHTML = `<span class="role-status-error">${msg}</span>`;
   }
