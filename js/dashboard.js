@@ -22,7 +22,7 @@ function showDashboard() {
         <button class="rail-item" data-module="transport-management" title="Transport Management" onclick="handleRailClick('transport-management')">TRN</button>
         <button class="rail-item" data-module="finance" title="Finance" onclick="handleRailClick('finance')">FIN</button>
         <button class="rail-item" title="Inventory Management" onclick="loadView('inventory-management')">INV</button>
-        <button class="rail-item" title="Procurement" onclick="loadView('procurement')">PRC</button>
+        <button class="rail-item" data-module="procurement" title="Procurement" onclick="handleRailClick('procurement')">PRC</button>
         <button class="rail-item" data-module="human-resource" title="Human Resource" onclick="handleRailClick('human-resource')">HR</button>
         <button class="rail-item" data-module="payroll" title="Payroll" onclick="handleRailClick('payroll')">PAY</button>
         <button class="rail-item" title="Asset Management" onclick="loadView('asset-management')">AST</button>
@@ -244,6 +244,12 @@ function showDashboard() {
             </ul>
           </div>
 
+          <div class="flyout-module-body" id="flyout-body-procurement" data-label="Procurement" hidden>
+            <ul id="procurement-dropdown" class="dropdown-menu">
+              <li id="sidebar-prc-suppliers" onclick="loadView('procurement-suppliers')">Suppliers</li>
+            </ul>
+          </div>
+
           ${isSuperAdmin ? `
           <div class="flyout-module-body" id="flyout-body-administration" data-label="Administration" hidden>
             <ul id="admin-dropdown" class="dropdown-menu">
@@ -390,6 +396,8 @@ const FORM_VIEWS = new Set([
   // HR / Payroll
   'hr-employee-directory', 'payroll-esp', 'payroll-fi',
   'payroll-pay-grades-add', 'payroll-pay-grades-edit',
+  // Procurement
+  'procurement-suppliers-add', 'procurement-suppliers-edit',
   // Administration
   'user-management', 'admin-roles', 'admin-role-edit', 'admin-role-permissions',
   // Academic setup
@@ -800,8 +808,19 @@ async function loadView(view) {
     case 'admin-role-edit': await renderRoleEditPage(main); break;
     case 'admin-setup': showPlaceholder(main, 'Setup'); break;
     // Empty modules
-    case 'inventory-management':
+    // Procurement
     case 'procurement':
+    case 'procurement-suppliers':
+      setActiveSidebarItem('sidebar-prc-suppliers');
+      await loadSuppliersView(main); break;
+    case 'procurement-suppliers-add':
+      setActiveSidebarItem('sidebar-prc-suppliers');
+      await loadSupplierFormView(main, null); break;
+    case 'procurement-suppliers-edit':
+      setActiveSidebarItem('sidebar-prc-suppliers');
+      await loadSupplierFormView(main, _supEditId); break;
+    // Empty modules
+    case 'inventory-management':
     case 'asset-management':
     case 'communication':
       main.innerHTML = `<h2>${view.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</h2><p>This module is under construction.</p>`;

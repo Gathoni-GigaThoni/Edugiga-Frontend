@@ -15,12 +15,12 @@ const _PV_DISBURSEMENT_METHODS = [['cash','Cash'], ['bank_transfer','Bank Transf
 async function _pvLoadLookups(force = false) {
   if (_pvLookupsLoaded && !force) return;
   const [ledgersRes, costCentersRes, deptsRes, acctsRes, supRes, empRes] = await Promise.all([
-    apiFetch(`${API_BASE}/api/lookups/ledgers`),
-    apiFetch(`${API_BASE}/api/lookups/cost-centers`),
-    apiFetch(`${API_BASE}/api/departments/`),
-    apiFetch(`${API_BASE}/api/accounts/?is_active=true`),
-    apiFetch(`${API_BASE}/api/suppliers/`),
-    apiFetch(`${API_BASE}/api/v1/hr/employees?per_page=100`),
+    apiFetch(`${API_BASE}/lookups/ledgers`),
+    apiFetch(`${API_BASE}/lookups/cost-centers`),
+    apiFetch(`${API_BASE}/departments/`),
+    apiFetch(`${API_BASE}/finance/accounts/?is_active=true`),
+    apiFetch(`${API_BASE}/suppliers/`),
+    apiFetch(`${API_BASE}/employees/`),
   ]);
   _pvLedgers      = (ledgersRes && ledgersRes.ok)     ? _toArray(await ledgersRes.json())     : [];
   _pvCostCenters  = (costCentersRes && costCentersRes.ok) ? _toArray(await costCentersRes.json()) : [];

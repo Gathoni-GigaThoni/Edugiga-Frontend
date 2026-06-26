@@ -257,6 +257,20 @@
   gap: 16px 28px;
   margin-bottom: 16px;
 }
+.fin-span-2 { grid-column: span 2; }
+@media (max-width: 640px) { .fin-span-2 { grid-column: span 1; } }
+
+/* Status chips (shared by procurement, hr, etc.) */
+.sup-chip-active {
+  display: inline-block; padding: 2px 10px; border-radius: 12px;
+  font-size: 0.78rem; font-weight: 600; background: #d5f5e3; color: #1a8a4a;
+}
+.sup-chip-inactive {
+  display: inline-block; padding: 2px 10px; border-radius: 12px;
+  font-size: 0.78rem; font-weight: 600; background: #fadbd8; color: #c0392b;
+}
+
+.fin-form-status { margin-top: 8px; min-height: 20px; font-size: 0.9rem; }
 .fin-form-group {
   display: flex;
   flex-direction: column;

@@ -7,7 +7,7 @@
 // lines[] array on submit. There is no /print endpoint for journal entries,
 // so "Print" uses the browser's native print on the rendered detail instead.
 
-const _JE_API = `${API_BASE}/api/journal-entries/`;
+const _JE_API = `${API_BASE}/journal-entries/`;
 let _jePage = 1, _jePerPage = 10, _jeData = [];
 
 async function loadJournalEntriesView(container) {
