@@ -20,6 +20,7 @@ async function login() {
     currentUser = _decodeAndNormalise(token);
     _scheduleTokenRefresh();
     showDashboard();
+    loadCurrentUserPermissions(); // non-blocking — populates _userPermissions
   } catch (err) {
     document.getElementById("error").innerText = err.message;
   }

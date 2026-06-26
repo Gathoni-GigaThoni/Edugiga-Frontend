@@ -153,9 +153,95 @@
   background: #e0e3e8 !important;
 }
 
-/* .um-action-dropdown / .um-pagination — styles now in core.css shared rules */
-/* .um-page-active kept as alias */
+/* ── Staff-type badges ── */
+.um-staff-type-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.um-badge-super_admin { background: #2c3e50; color: white; }
+.um-badge-manager     { background: #2980b9; color: white; }
+.um-badge-teacher     { background: #27ae60; color: white; }
+.um-badge-kitchen     { background: #e67e22; color: white; }
+.um-badge-utility     { background: #8e44ad; color: white; }
+
+/* ── Assigned-role chip ── */
+.um-role-chip {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 0.78rem;
+  background: #e8f4fd;
+  color: #2471a3;
+  font-weight: 600;
+}
+.um-no-role-chip {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 0.78rem;
+  background: #fef9e7;
+  color: #d68910;
+  font-weight: 600;
+  border: 1px solid #f0ca4a;
+}
+
+/* ── Status chips ── */
+.um-status-active {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 0.78rem;
+  background: #d5f5e3;
+  color: #1a8a4a;
+  font-weight: 600;
+}
+.um-status-inactive {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 0.78rem;
+  background: #fadbd8;
+  color: #c0392b;
+  font-weight: 600;
+}
+
+/* ── Pagination ── */
+.um-pagination {
+  display: flex;
+  gap: 6px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+.um-pagination button {
+  width: auto !important;
+  min-width: 32px;
+  padding: 5px 10px !important;
+  margin: 0 !important;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: white;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.um-pagination button:hover { background: #f0f2f5; }
+
+/* .um-action-dropdown — styles now in core.css shared rules */
 .um-page-active { background: #2c3e50 !important; color: white !important; border-color: #2c3e50 !important; }
+
+/* ── User modal grid ── */
+.um-modal-wide { max-width: 560px !important; }
+.um-modal-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+@media (max-width: 520px) {
+  .um-modal-grid { grid-template-columns: 1fr; }
+}
 
 /* ==================== USER MANAGEMENT — EDIT VIEW ==================== */
 .um-form-grid {

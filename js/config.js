@@ -180,6 +180,41 @@ function stopKeepAlive() {
   keepAliveActive = false;
 }
 
+// ── Current-user permission store ────────────────────────────────────────────
+// Populated after login from GET /roles/{role_id}/permissions.
+// Keys are module_key strings; values are { can_view, can_add, can_edit, can_delete }.
+let _userPermissions = {};
+
+async function loadCurrentUserPermissions() {
+  const roleId = currentUser?.role_id;
+  if (!roleId) return;
+  try {
+    const res = await apiFetch(`${API_BASE}/roles/${roleId}/permissions`);
+    if (res && res.ok) {
+      const data = await res.json().catch(() => null);
+      const list = data?.permissions || (Array.isArray(data) ? data : []);
+      _userPermissions = {};
+      list.forEach(p => {
+        _userPermissions[p.module_key] = {
+          can_view:   !!p.can_view,
+          can_add:    !!p.can_add,
+          can_edit:   !!p.can_edit,
+          can_delete: !!p.can_delete,
+        };
+      });
+    }
+  } catch (_) {}
+}
+
+// Returns true if the current user has the given permission on a module.
+// Super admins (clearance_level 1 or role SUPER_ADMIN) bypass all checks.
+// action must be one of: 'can_view', 'can_add', 'can_edit', 'can_delete'
+function hasPermission(moduleKey, action) {
+  if (currentUser?.clearance_level === 1 || currentUser?.role === 'SUPER_ADMIN') return true;
+  const p = _userPermissions[moduleKey];
+  return !!(p && p[action]);
+}
+
 // ── Toast notifications ───────────────────────────────────────────────────────
 function showToast(message, type = 'info') {
   let container = document.getElementById('toast-container');
