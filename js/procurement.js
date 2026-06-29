@@ -10,17 +10,41 @@ document.addEventListener('click', () => {
 // ── List ──────────────────────────────────────────────────────────────────────
 
 async function loadSuppliersView(container) {
-  container.innerHTML = '<div class="fin-page"><p style="padding:16px;color:#777;">Loading…</p></div>';
-  const res = await apiFetch(`${API_BASE}/suppliers/`);
-  if (res && res.ok) {
-    const raw = await res.json().catch(() => []);
-    _supData = Array.isArray(raw) ? raw : (raw.items || raw.data || raw.results || []);
-  } else {
-    showToast('Could not load suppliers.', 'error');
-    _supData = [];
-  }
-  _supPage = 1; _supSearch = '';
-  _supRenderListPage(container);
+  await renderSplitView({
+    container,
+    title: 'Suppliers',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Procurement',view:'procurement-suppliers'},
+      {label:'Suppliers'}
+    ],
+    apiUrl: `${API_BASE}/suppliers/`,
+    searchFields: ['name','email','contact_person','phone'],
+    col1Label: 'Name', col2Label: 'Status',
+    col1: s => s.name || '—',
+    col2: s => s.status || (s.is_active===false ? 'Inactive' : 'Active'),
+    rowLabel: s => s.name || '—',
+    rowSub:   s => s.email || s.phone || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Name',           key:'name'},
+      {label:'Email',          key:'email'},
+      {label:'Phone',          key:'phone'},
+      {label:'Contact Person', key:'contact_person'},
+      {label:'KRA PIN',        key:'kra_pin'},
+      {label:'Payment Terms',  key:'payment_terms'},
+      {label:'Status',         key:'status'},
+    ],
+    renderAdd: el => {
+      el.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--grey-600)">
+        <div style="font-size:2rem;margin-bottom:12px">&#127970;</div>
+        <p style="font-weight:600;margin-bottom:8px">Add a Supplier</p>
+        <p style="font-size:13px;margin-bottom:20px">Register a new supplier with bank details and contact info.</p>
+        <button class="btn-primary" style="padding:10px 24px" onclick="loadView('procurement-suppliers-add')">+ Add Supplier</button>
+      </div>`;
+    },
+    onEdit: item => { _supEditId = item.id; loadView('procurement-suppliers-edit'); },
+  });
 }
 
 function _supRenderListPage(container) {

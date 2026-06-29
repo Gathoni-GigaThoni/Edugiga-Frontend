@@ -24,18 +24,18 @@ function showDashboard() {
             <span class="rail-logo-initials">S</span>
           </div>
         </div>
-        <button class="rail-item" data-module="student-management" title="Student Management" onclick="handleRailClick('student-management')">STU</button>
-        <button class="rail-item" data-module="student-academics" title="Student Academics" onclick="handleRailClick('student-academics')">ACAD</button>
-        <button class="rail-item" data-module="transport-management" title="Transport Management" onclick="handleRailClick('transport-management')">TRN</button>
-        <button class="rail-item" data-module="finance" title="Finance" onclick="handleRailClick('finance')">FIN</button>
-        <button class="rail-item" title="Inventory Management" onclick="loadView('inventory-management')">INV</button>
-        <button class="rail-item" data-module="procurement" title="Procurement" onclick="handleRailClick('procurement')">PRC</button>
-        <button class="rail-item" data-module="human-resource" title="Human Resource" onclick="handleRailClick('human-resource')">HR</button>
-        <button class="rail-item" data-module="payroll" title="Payroll" onclick="handleRailClick('payroll')">PAY</button>
-        <button class="rail-item" title="Asset Management" onclick="loadView('asset-management')">AST</button>
-        <button class="rail-item" title="Communication" onclick="loadView('communication')">COM</button>
-        ${isSuperAdmin ? `<button class="rail-item" data-module="administration" title="Administration" onclick="handleRailClick('administration')">ADM</button>` : ''}
-        <button class="rail-item" title="Logout" onclick="logout()">OUT</button>
+        <button class="rail-item" data-module="student-management" title="Student Management" onclick="handleRailClick('student-management')"><span class="rail-label-full">Student Management</span><span class="rail-label-short">STU</span></button>
+        <button class="rail-item" data-module="student-academics" title="Student Academics" onclick="handleRailClick('student-academics')"><span class="rail-label-full">Student Academics</span><span class="rail-label-short">ACA</span></button>
+        <button class="rail-item" data-module="transport-management" title="Transport Management" onclick="handleRailClick('transport-management')"><span class="rail-label-full">Transport</span><span class="rail-label-short">TRN</span></button>
+        <button class="rail-item" data-module="finance" title="Finance" onclick="handleRailClick('finance')"><span class="rail-label-full">Finance</span><span class="rail-label-short">FIN</span></button>
+        <button class="rail-item" title="Inventory Management" onclick="loadView('inventory-management')"><span class="rail-label-full">Inventory</span><span class="rail-label-short">INV</span></button>
+        <button class="rail-item" data-module="procurement" title="Procurement" onclick="handleRailClick('procurement')"><span class="rail-label-full">Procurement</span><span class="rail-label-short">PRC</span></button>
+        <button class="rail-item" data-module="human-resource" title="Human Resource" onclick="handleRailClick('human-resource')"><span class="rail-label-full">Human Resource</span><span class="rail-label-short">HR</span></button>
+        <button class="rail-item" data-module="payroll" title="Payroll" onclick="handleRailClick('payroll')"><span class="rail-label-full">Payroll</span><span class="rail-label-short">PAY</span></button>
+        <button class="rail-item" title="Asset Management" onclick="loadView('asset-management')"><span class="rail-label-full">Assets</span><span class="rail-label-short">AST</span></button>
+        <button class="rail-item" title="Communication" onclick="loadView('communication')"><span class="rail-label-full">Communication</span><span class="rail-label-short">COM</span></button>
+        ${isSuperAdmin ? `<button class="rail-item" data-module="administration" title="Administration" onclick="handleRailClick('administration')"><span class="rail-label-full">Administration</span><span class="rail-label-short">ADM</span></button>` : ''}
+        <button class="rail-item" title="Logout" onclick="logout()"><span class="rail-label-full">Log Out</span><span class="rail-label-short">OUT</span></button>
       </div>
 
       <div class="flyout-panel" id="flyout-panel" hidden>
@@ -381,17 +381,33 @@ async function doDashStudentSearch() {
 function _toArray(raw) { return Array.isArray(raw) ? raw : (raw?.data || raw?.items || raw?.results || []); }
 
 function renderBreadcrumb(parts) {
-  const links = parts.map((p, i) =>
-    i < parts.length - 1
-      ? `<span class="bc-link" style="cursor:pointer" onclick="history.back()">${p}</span><span class="bc-sep"> › </span>`
-      : `<span class="bc-current">${p}</span>`
-  ).join('');
+  // Each part can be a string or {label, view} object for direct navigation.
+  const links = parts.map((p, i) => {
+    const label = typeof p === 'string' ? p : p.label;
+    const view  = typeof p === 'string' ? null : p.view;
+    if (i < parts.length - 1) {
+      const onclick = view
+        ? `loadView('${view}')`
+        : `history.back()`;
+      return `<span class="bc-link" onclick="${onclick}">${label}</span><span class="bc-sep"> › </span>`;
+    }
+    return `<span class="bc-current">${label}</span>`;
+  }).join('');
   return `<nav class="view-breadcrumb">${links}</nav>`;
 }
 
 function renderSplitSkeleton() {
-  const rows = [1,2,3,4,5].map(() => '<div class="split-skeleton-row shimmer"></div>').join('');
-  return `<div class="split-layout"><div class="split-left">${rows}</div><div class="split-right">${rows}</div></div>`;
+  const rows = [1,2,3,4,5,6].map(() =>
+    `<div class="split-skeleton-row"><div class="shimmer"></div><div class="shimmer"></div></div>`
+  ).join('');
+  return `<div class="split-layout">
+    <div class="split-left">
+      <div class="split-left-header"><span class="split-left-title">Loading…</span></div>
+      <div class="split-left-col-headers"><span>—</span><span>—</span></div>
+      <div class="split-list">${rows}</div>
+    </div>
+    <div class="split-right"><div class="split-right-add"></div></div>
+  </div>`;
 }
 
 function buildDetailFields(item, fields) {
@@ -414,6 +430,13 @@ async function renderSplitView(cfg) {
   let mode = 'add';
   let searchTerm = '';
 
+  // 2-column left panel config
+  const col1Label = cfg.col1Label || 'Name';
+  const col2Label = cfg.col2Label || '';
+  const col1Fn    = cfg.col1 || cfg.rowLabel || (item => item.name || '—');
+  const col2Fn    = cfg.col2 || cfg.rowSub   || (() => '');
+  const nameLabel = cfg.rowLabel || col1Fn;
+
   container.innerHTML = renderSplitSkeleton();
 
   try {
@@ -435,20 +458,20 @@ async function renderSplitView(cfg) {
   }
 
   function renderList() {
-    const listEl = document.getElementById('split-list-items');
+    const listEl  = document.getElementById('split-list-items');
+    const countEl = document.getElementById('split-list-count');
     if (!listEl) return;
     const filtered = getFiltered();
+    if (countEl) countEl.textContent = filtered.length;
     listEl.innerHTML = filtered.map(item => {
       const isSel = selectedItem && String(selectedItem[idKey]) === String(item[idKey]);
       return `
         <div class="split-list-row${isSel ? ' active' : ''}"
              data-id="${item[idKey]}" onclick="window._splitSelectItem(${JSON.stringify(item[idKey])})">
-          <div class="split-row-body">
-            <div class="split-row-name">${cfg.rowLabel(item)}</div>
-            ${cfg.rowSub ? `<div class="split-row-sub">${cfg.rowSub(item)}</div>` : ''}
-          </div>
+          <div class="split-col1">${col1Fn(item)}</div>
+          <div class="split-col2">${col2Fn(item)}</div>
         </div>`;
-    }).join('') || `<p style="padding:24px;text-align:center;color:var(--grey-400);font-style:italic">No records found</p>`;
+    }).join('') || `<p style="padding:24px;text-align:center;color:var(--grey-400);font-style:italic;font-size:13px">No records found</p>`;
   }
 
   function renderRight() {
@@ -460,14 +483,17 @@ async function renderSplitView(cfg) {
       if (typeof cfg.renderAdd === 'function') cfg.renderAdd(rightEl);
     } else if (mode === 'detail' && selectedItem) {
       rightEl.className = 'split-right-detail';
+      const bannerTitle  = nameLabel(selectedItem);
+      const bannerSub    = cfg.rowSub ? cfg.rowSub(selectedItem) : col2Fn(selectedItem);
+      const hasEditAction = typeof cfg.onEdit === 'function' || typeof cfg.renderEdit === 'function';
       rightEl.innerHTML = `
         <div class="detail-banner">
-          <div class="detail-banner-initials">${cfg.rowLabel(selectedItem).charAt(0).toUpperCase()}</div>
+          <div class="detail-banner-initials">${bannerTitle.charAt(0).toUpperCase()}</div>
           <div>
-            <div class="detail-banner-name">${cfg.rowLabel(selectedItem)}</div>
-            ${cfg.rowSub ? `<div class="detail-banner-sub">${cfg.rowSub(selectedItem)}</div>` : ''}
+            <div class="detail-banner-name">${bannerTitle}</div>
+            ${bannerSub ? `<div class="detail-banner-sub">${bannerSub}</div>` : ''}
           </div>
-          <button class="detail-action-trigger" onclick="window._splitEditItem()">&#9998; Edit</button>
+          ${hasEditAction ? `<button class="detail-action-trigger" onclick="window._splitEditItem()">&#9998; Edit</button>` : ''}
         </div>
         <div class="detail-info-card">
           <div class="detail-fields-grid">${buildDetailFields(selectedItem, cfg.detailFields || [])}</div>
@@ -482,13 +508,20 @@ async function renderSplitView(cfg) {
     }
   }
 
+  const hasSearch = cfg.searchFields && cfg.searchFields.length > 0;
   container.innerHTML = `
     ${renderBreadcrumb(cfg.breadcrumb || [cfg.title])}
     <div class="split-layout">
       <div class="split-left">
-        <div class="split-left-search">
-          <input type="text" placeholder="Search…" oninput="window._splitSearch(this.value)">
+        <div class="split-left-header">
+          <span class="split-left-title">${cfg.title || ''}</span>
+          <span class="split-left-count" id="split-list-count">${allItems.length}</span>
         </div>
+        <div class="split-left-col-headers">
+          <span>${col1Label}</span>
+          <span>${col2Label}</span>
+        </div>
+        ${hasSearch ? `<div class="split-left-search"><input type="text" placeholder="Search…" oninput="window._splitSearch(this.value)"></div>` : ''}
         <div class="split-list" id="split-list-items"></div>
       </div>
       <div class="split-right">
@@ -503,8 +536,22 @@ async function renderSplitView(cfg) {
     renderList();
     renderRight();
   };
-  window._splitEditItem = function() { mode = 'edit'; renderRight(); };
-  window._splitGoAdd = function() { selectedItem = null; mode = 'add'; renderList(); renderRight(); };
+  window._splitEditItem = function() {
+    if (typeof cfg.onEdit === 'function') { cfg.onEdit(selectedItem); return; }
+    mode = 'edit'; renderRight();
+  };
+  window._splitGoAdd = function() {
+    if (typeof cfg.onAdd === 'function') { cfg.onAdd(); return; }
+    selectedItem = null; mode = 'add'; renderList(); renderRight();
+  };
+  window._splitReload = async function() {
+    try {
+      const resp = await apiFetch(cfg.apiUrl);
+      if (resp && resp.ok) { allItems = _toArray(await resp.json()); }
+    } catch(_) {}
+    selectedItem = null; mode = 'add';
+    renderList(); renderRight();
+  };
 
   renderList();
   renderRight();

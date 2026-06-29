@@ -151,10 +151,34 @@ let _pvPvPage = 1, _pvPvPerPage = 10, _pvPvData = [];
 const _PV_PV_API = `${API_BASE}/api/payables/payment-vouchers/`;
 
 async function loadPayablesPaymentVouchersView(container) {
-  _pvPvPage = 1;
   await _pvLoadLookups();
-  _pvRenderPvListPage(container);
-  await _pvRefreshPvData();
+  await renderSplitView({
+    container,
+    title: 'Payment Vouchers',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Finance',view:'payables-payment-vouchers'},
+      {label:'Payment Vouchers'}
+    ],
+    apiUrl: _PV_PV_API,
+    searchFields: ['voucher_no','payee_type'],
+    col1Label: 'Voucher No', col2Label: 'Status',
+    col1: v => v.voucher_no || `#${v.id}`,
+    col2: v => v.status || '—',
+    rowLabel: v => v.voucher_no || `#${v.id}`,
+    rowSub:   v => v.payee_type || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Voucher No',  key:'voucher_no', fmt:v=>v||'—'},
+      {label:'Ledger',      key:'ledger_id', fmt:v=>_pvLedgerName(v)},
+      {label:'Payee Type',  key:'payee_type', fmt:v=>v||'—'},
+      {label:'Amount',      key:'amount', fmt:v=>_pvMoney(v)},
+      {label:'Status',      key:'status', fmt:v=>v||'—'},
+      {label:'Date',        key:'created_at', fmt:v=>_pvDate(v)},
+    ],
+    onAdd:  () => loadView('payables-payment-vouchers-add'),
+    onEdit: item => { window._pvEditPvId = item.id; loadView('payables-payment-vouchers-edit'); },
+  });
 }
 
 async function _pvRefreshPvData() {
@@ -466,10 +490,33 @@ function _pvTvField(tv, key) { return tv[key] ?? tv.payment_voucher?.[key] ?? nu
 function _pvTvPvId(tv) { return tv.payment_voucher_id ?? tv.payment_voucher?.id ?? tv.id; }
 
 async function loadPayablesTaxVouchersView(container) {
-  _pvTvPage = 1;
   await _pvLoadLookups();
-  _pvRenderTvListPage(container);
-  await _pvRefreshTvData();
+  await renderSplitView({
+    container,
+    title: 'Tax Vouchers',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Finance',view:'payables-tax-vouchers'},
+      {label:'Tax Vouchers'}
+    ],
+    apiUrl: _PV_TV_API,
+    searchFields: ['voucher_no','tax_type'],
+    col1Label: 'Voucher No', col2Label: 'Tax Type',
+    col1: tv => _pvTvField(tv,'voucher_no') || `#${tv.id}`,
+    col2: tv => tv.tax_type || '—',
+    rowLabel: tv => _pvTvField(tv,'voucher_no') || `#${tv.id}`,
+    rowSub:   tv => tv.tax_type || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Voucher No', key:'voucher_no', fmt:(_,tv)=>_pvTvField(tv,'voucher_no')||'—'},
+      {label:'Tax Type',   key:'tax_type', fmt:v=>v||'—'},
+      {label:'Ledger',     key:'ledger_id', fmt:(_,tv)=>_pvLedgerName(_pvTvField(tv,'ledger_id'))},
+      {label:'Amount',     key:'amount', fmt:(_,tv)=>_pvMoney(_pvTvField(tv,'amount'))},
+      {label:'Status',     key:'status', fmt:(_,tv)=>_pvTvField(tv,'status')||'—'},
+      {label:'Date',       key:'created_at', fmt:(_,tv)=>_pvDate(_pvTvField(tv,'created_at'))},
+    ],
+    onAdd: () => loadView('payables-tax-vouchers-add'),
+  });
 }
 
 async function _pvRefreshTvData() {
@@ -704,35 +751,30 @@ async function _pvTvSubmitAdd() {
 }
 
 async function loadPayablesTaxVouchersUpcomingView(container) {
-  container.innerHTML = `
-    <div class="fin-page">
-      <div class="fin-header-row">
-        <h2 class="fin-title">Upcoming Deadlines</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Tax Vouchers &rsaquo; Upcoming Deadlines</div>
-      </div>
-      <div id="pv-tv-up-table-container"></div>
-    </div>`;
-  renderSkeletonRows('pv-tv-up-table-container', 5);
-  try {
-    const res = await apiFetch(`${API_BASE}/api/payables/tax-vouchers/upcoming-deadlines`);
-    const list = (res && res.ok) ? _toArray(await res.json()) : [];
-    const rows = list.length === 0
-      ? `<tr><td colspan="5" class="fin-empty">No upcoming deadlines.</td></tr>`
-      : list.sort((a,b) => new Date(_pvTvField(a,'remittance_due_date')||0) - new Date(_pvTvField(b,'remittance_due_date')||0))
-          .map(tv => `<tr>
-            <td>${_finEsc(tv.tax_type || '-')}</td>
-            <td>${_finEsc(_PV_MONTHS[(tv.period_month||1)-1] || '')} ${_finEsc(tv.period_year||'')}</td>
-            <td>${_pvMoney(_pvTvField(tv,'amount'))}</td>
-            <td>${_pvDate(_pvTvField(tv,'remittance_due_date'))}</td>
-            <td>${_pvBadge(_pvTvField(tv,'status'))}</td>
-          </tr>`).join('');
-    const el = document.getElementById('pv-tv-up-table-container');
-    if (el) el.innerHTML = `
-      <div class="fin-table-wrap"><table class="fin-table">
-        <thead><tr><th>TAX TYPE</th><th>PERIOD</th><th>AMOUNT</th><th>DUE DATE</th><th>STATUS</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table></div>`;
-  } catch (e) { showToast('Network error loading upcoming deadlines.', 'error'); }
+  await renderSplitView({
+    container,
+    title: 'Tax Vouchers — Upcoming Deadlines',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Finance',view:'payables-tax-vouchers'},
+      {label:'Upcoming Deadlines'}
+    ],
+    apiUrl: `${API_BASE}/api/payables/tax-vouchers/upcoming-deadlines`,
+    searchFields: ['tax_type','status'],
+    col1Label: 'Tax Type', col2Label: 'Due Date',
+    col1: tv => tv.tax_type || '—',
+    col2: tv => _pvDate(_pvTvField(tv,'remittance_due_date')) || '—',
+    rowLabel: tv => tv.tax_type || '—',
+    rowSub:   tv => _pvDate(_pvTvField(tv,'remittance_due_date')) || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Tax Type', key:'tax_type', fmt:v=>v||'—'},
+      {label:'Period',   key:'period_month', fmt:(_,tv)=>`${_PV_MONTHS[(tv.period_month||1)-1]||''} ${tv.period_year||''}`},
+      {label:'Amount',   key:'amount', fmt:(_,tv)=>_pvMoney(_pvTvField(tv,'amount'))},
+      {label:'Due Date', key:'remittance_due_date', fmt:(_,tv)=>_pvDate(_pvTvField(tv,'remittance_due_date'))},
+      {label:'Status',   key:'status', fmt:(_,tv)=>_pvTvField(tv,'status')||'—'},
+    ],
+  });
 }
 
 // ==================== A.7 SUPPLIER INVOICES ====================
@@ -740,16 +782,63 @@ let _pvSiPage = 1, _pvSiPerPage = 10, _pvSiData = [];
 const _PV_SI_API = `${API_BASE}/api/payables/supplier-invoices`;
 
 async function loadPayablesSupplierInvoicesView(container) {
-  _pvSiPage = 1;
   await _pvLoadLookups();
-  _pvRenderSiListPage(container, false);
-  await _pvRefreshSiData(`${_PV_SI_API}`);
+  await renderSplitView({
+    container,
+    title: 'Supplier Invoices',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Finance',view:'payables-supplier-invoices'},
+      {label:'Supplier Invoices'}
+    ],
+    apiUrl: `${_PV_SI_API}`,
+    searchFields: ['invoice_number'],
+    col1Label: 'Supplier', col2Label: 'Invoice No',
+    col1: inv => _pvSupplierName(inv.supplier_id) || '—',
+    col2: inv => inv.invoice_number || `#${inv.id}`,
+    rowLabel: inv => _pvSupplierName(inv.supplier_id) || '—',
+    rowSub:   inv => inv.invoice_number || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Invoice No',   key:'invoice_number', fmt:v=>v||'—'},
+      {label:'Supplier',     key:'supplier_id', fmt:v=>_pvSupplierName(v)},
+      {label:'Invoice Date', key:'invoice_date', fmt:v=>_pvDate(v)},
+      {label:'Due Date',     key:'due_date', fmt:v=>_pvDate(v)},
+      {label:'Amount',       key:'amount', fmt:v=>_pvMoney(v)},
+      {label:'Status',       key:'status', fmt:v=>v||'—'},
+    ],
+    onAdd:  () => loadView('payables-supplier-invoices-add'),
+    onEdit: item => { window._pvEditSiId = item.id; loadView('payables-supplier-invoices-edit'); },
+  });
 }
 async function loadPayablesSupplierInvoicesMissingEtimsView(container) {
-  _pvSiPage = 1;
   await _pvLoadLookups();
-  _pvRenderSiListPage(container, true);
-  await _pvRefreshSiData(`${_PV_SI_API}/missing-etims`);
+  await renderSplitView({
+    container,
+    title: 'Supplier Invoices — Missing eTIMS',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Finance',view:'payables-supplier-invoices'},
+      {label:'Missing eTIMS'}
+    ],
+    apiUrl: `${_PV_SI_API}/missing-etims`,
+    searchFields: ['invoice_number'],
+    col1Label: 'Supplier', col2Label: 'Invoice No',
+    col1: inv => _pvSupplierName(inv.supplier_id) || '—',
+    col2: inv => inv.invoice_number || `#${inv.id}`,
+    rowLabel: inv => _pvSupplierName(inv.supplier_id) || '—',
+    rowSub:   inv => inv.invoice_number || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Invoice No',   key:'invoice_number', fmt:v=>v||'—'},
+      {label:'Supplier',     key:'supplier_id', fmt:v=>_pvSupplierName(v)},
+      {label:'Invoice Date', key:'invoice_date', fmt:v=>_pvDate(v)},
+      {label:'Due Date',     key:'due_date', fmt:v=>_pvDate(v)},
+      {label:'Amount',       key:'amount', fmt:v=>_pvMoney(v)},
+      {label:'eTIMS No',     key:'etims_invoice_number', fmt:v=>v||'Missing'},
+    ],
+    onEdit: item => { window._pvEditSiId = item.id; loadView('payables-supplier-invoices-edit'); },
+  });
 }
 
 async function _pvRefreshSiData(url) {
@@ -950,20 +1039,29 @@ const _PV_WHT_API = `${API_BASE}/api/payables/wht-vat-certificates`;
 
 async function loadPayablesWhtVatCertificatesView(container) {
   await _pvLoadLookups();
-  container.innerHTML = `
-    <div class="fin-page">
-      <div class="fin-header-row">
-        <h2 class="fin-title">Supplier WHT VAT Certificate</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Supplier WHT VAT Certificate &rsaquo; Listing</div>
-      </div>
-      <div id="pv-wht-table-container"></div>
-    </div>`;
-  renderSkeletonRows('pv-wht-table-container', 6);
-  try {
-    const res = await apiFetch(_PV_WHT_API);
-    _pvWhtData = (res && res.ok) ? _toArray(await res.json()) : [];
-  } catch (e) { _pvWhtData = []; showToast('Network error loading certificates.', 'error'); }
-  _pvRenderWhtTable();
+  await renderSplitView({
+    container,
+    title: 'Supplier WHT VAT Certificates',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Finance',view:'payables-wht-vat-certificates'},
+      {label:'WHT VAT Certificates'}
+    ],
+    apiUrl: _PV_WHT_API,
+    searchFields: ['certificate_number'],
+    col1Label: 'Certificate No', col2Label: 'Supplier',
+    col1: c => c.certificate_number || '—',
+    col2: c => _pvSupplierName(c.supplier_id) || '—',
+    rowLabel: c => c.certificate_number || '—',
+    rowSub:   c => _pvSupplierName(c.supplier_id) || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Certificate No', key:'certificate_number', fmt:v=>v||'—'},
+      {label:'Supplier',       key:'supplier_id', fmt:v=>_pvSupplierName(v)},
+      {label:'WHT Amount',     key:'wht_amount', fmt:v=>_pvMoney(v)},
+      {label:'Issue Date',     key:'issue_date', fmt:v=>_pvDate(v)},
+    ],
+  });
 }
 function _pvRenderWhtTable() {
   const rows = _pvWhtData.length === 0
@@ -1013,24 +1111,31 @@ const _PV_EC_API = `${API_BASE}/api/payables/expense-claims`;
 
 async function loadPayablesExpenseClaimsView(container) {
   await _pvLoadLookups();
-  container.innerHTML = `
-    <div class="fin-page">
-      <div class="fin-header-row">
-        <h2 class="fin-title">Expense Claims</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Expense Claims &rsaquo; Listing</div>
-      </div>
-      <div class="fin-controls-row">
-        <div class="fin-controls-left">Total <span id="pv-ec-total">0</span> entries</div>
-        <div class="fin-controls-right"><button class="fin-btn-teal" onclick="loadView('payables-expense-claims-add')">+ Add</button></div>
-      </div>
-      <div id="pv-ec-table-container"></div>
-    </div>`;
-  renderSkeletonRows('pv-ec-table-container', 6);
-  try {
-    const res = await apiFetch(_PV_EC_API);
-    _pvEcData = (res && res.ok) ? _toArray(await res.json()) : [];
-  } catch (e) { _pvEcData = []; showToast('Network error loading expense claims.', 'error'); }
-  _pvRenderEcTable();
+  await renderSplitView({
+    container,
+    title: 'Expense Claims',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Finance',view:'payables-expense-claims'},
+      {label:'Expense Claims'}
+    ],
+    apiUrl: _PV_EC_API,
+    searchFields: ['status'],
+    col1Label: 'Claimant', col2Label: 'Status',
+    col1: c => c.claimant_id ? `Employee #${c.claimant_id}` : '—',
+    col2: c => c.status || '—',
+    rowLabel: c => `Employee #${c.claimant_id}`,
+    rowSub:   c => c.status || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Claimant',     key:'claimant_id', fmt:v=>`Employee #${v}`},
+      {label:'Expense Date', key:'expense_date', fmt:v=>_pvDate(v)},
+      {label:'Account',      key:'category_id', fmt:v=>_pvAccountName(v)},
+      {label:'Amount',       key:'amount', fmt:v=>_pvMoney(v)},
+      {label:'Status',       key:'status', fmt:v=>v||'—'},
+    ],
+    onAdd: () => loadView('payables-expense-claims-add'),
+  });
 }
 function _pvRenderEcTable() {
   document.getElementById('pv-ec-total').textContent = _pvEcData.length;
@@ -1144,37 +1249,29 @@ const _PV_ECD_API = `${API_BASE}/api/payables/expense-claim-disbursements`;
 
 async function loadPayablesExpenseClaimDisbursementsView(container) {
   await _pvLoadLookups();
-  container.innerHTML = `
-    <div class="fin-page">
-      <div class="fin-header-row">
-        <h2 class="fin-title">Expense Claim Disbursements</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Expense Claim Disbursements &rsaquo; Listing</div>
-      </div>
-      <div class="fin-controls-row">
-        <div class="fin-controls-left">Total <span id="pv-ecd-total">0</span> entries</div>
-        <div class="fin-controls-right"><button class="fin-btn-teal" onclick="loadView('payables-expense-claim-disbursements-add')">+ Add</button></div>
-      </div>
-      <div id="pv-ecd-table-container"></div>
-    </div>`;
-  renderSkeletonRows('pv-ecd-table-container', 4);
-  try {
-    const res = await apiFetch(_PV_ECD_API);
-    _pvEcdData = (res && res.ok) ? _toArray(await res.json()) : [];
-  } catch (e) { _pvEcdData = []; }
-  document.getElementById('pv-ecd-total').textContent = _pvEcdData.length;
-  const rows = _pvEcdData.length === 0
-    ? `<tr><td colspan="4" class="fin-empty">No records found.</td></tr>`
-    : _pvEcdData.map(d => `<tr>
-        <td>Claim #${d.expense_claim_id}</td>
-        <td>${_pvMoney(d.disbursed_amount)}</td>
-        <td>${_pvDate(d.disbursement_date)}</td>
-        <td>JV #${d.journal_entry_id ?? '-'}</td>
-      </tr>`).join('');
-  document.getElementById('pv-ecd-table-container').innerHTML = `
-    <div class="fin-table-wrap"><table class="fin-table">
-      <thead><tr><th>CLAIMANT</th><th>AMOUNT</th><th>DISBURSEMENT DATE</th><th>LINKED JV</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table></div>`;
+  await renderSplitView({
+    container,
+    title: 'Expense Claim Disbursements',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Finance',view:'payables-expense-claim-disbursements'},
+      {label:'Expense Claim Disbursements'}
+    ],
+    apiUrl: _PV_ECD_API,
+    col1Label: 'Claim', col2Label: 'Amount',
+    col1: d => `Claim #${d.expense_claim_id}`,
+    col2: d => _pvMoney(d.disbursed_amount),
+    rowLabel: d => `Claim #${d.expense_claim_id}`,
+    rowSub:   d => _pvDate(d.disbursement_date) || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Claim Ref',         key:'expense_claim_id', fmt:v=>`Claim #${v}`},
+      {label:'Amount Disbursed',  key:'disbursed_amount', fmt:v=>_pvMoney(v)},
+      {label:'Disbursement Date', key:'disbursement_date', fmt:v=>_pvDate(v)},
+      {label:'Journal Entry',     key:'journal_entry_id', fmt:v=>v?`JV #${v}`:'—'},
+    ],
+    onAdd: () => loadView('payables-expense-claim-disbursements-add'),
+  });
 }
 async function loadPayablesExpenseClaimDisbursementsAddView(container) {
   await _pvLoadLookups();
@@ -1259,45 +1356,30 @@ const _PV_PCA_API = `${API_BASE}/api/payables/petty-cash-applications`;
 
 async function loadPayablesPettyCashApplicationsView(container) {
   await _pvLoadLookups();
-  container.innerHTML = `
-    <div class="fin-page">
-      <div class="fin-header-row">
-        <h2 class="fin-title">Petty Cash Applications</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Petty Cash Applications &rsaquo; Listing</div>
-      </div>
-      <div class="fin-controls-row">
-        <div class="fin-controls-left">Total <span id="pv-pca-total">0</span> entries</div>
-        <div class="fin-controls-right"><button class="fin-btn-teal" onclick="loadView('payables-petty-cash-applications-add')">+ Add</button></div>
-      </div>
-      <div id="pv-pca-table-container"></div>
-    </div>`;
-  renderSkeletonRows('pv-pca-table-container', 5);
-  try {
-    const res = await apiFetch(_PV_PCA_API);
-    _pvPcaData = (res && res.ok) ? _toArray(await res.json()) : [];
-  } catch (e) { _pvPcaData = []; }
-  document.getElementById('pv-pca-total').textContent = _pvPcaData.length;
-  const rows = _pvPcaData.length === 0
-    ? `<tr><td colspan="5" class="fin-empty">No records found.</td></tr>`
-    : _pvPcaData.map(a => `<tr>
-        <td>${_finEsc(currentUser && String(currentUser.id) === String(a.applicant_id) ? (currentUser.full_name || currentUser.name || 'You') : ('Employee #' + a.applicant_id))}</td>
-        <td>${_pvMoney(a.requested_amount)}</td>
-        <td>${_finEsc(a.purpose)}</td>
-        <td>${_pvBadge(a.status)}</td>
-        <td class="fin-action-cell">
-          <div class="fin-action-wrap">
-            <button class="fin-action-btn" onclick="_pvToggleDropdown(event,'pv-pca','${a.id}')">&#8230;</button>
-            <div id="pv-pca-dd-${a.id}" class="fin-action-dropdown" style="display:none;">
-              ${a.status === 'pending' ? `<a href="#" onclick="_pvPcaApprove(${a.id});return false;">&#10003; Approve</a>` : ''}
-            </div>
-          </div>
-        </td>
-      </tr>`).join('');
-  document.getElementById('pv-pca-table-container').innerHTML = `
-    <div class="fin-table-wrap"><table class="fin-table">
-      <thead><tr><th>APPLICANT</th><th>AMOUNT</th><th>PURPOSE</th><th>STATUS</th><th>ACTION</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table></div>`;
+  await renderSplitView({
+    container,
+    title: 'Petty Cash Applications',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Finance',view:'payables-petty-cash-applications'},
+      {label:'Petty Cash Applications'}
+    ],
+    apiUrl: _PV_PCA_API,
+    searchFields: ['purpose','status'],
+    col1Label: 'Purpose', col2Label: 'Status',
+    col1: a => a.purpose || '—',
+    col2: a => a.status || '—',
+    rowLabel: a => a.purpose || '—',
+    rowSub:   a => a.status || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Applicant', key:'applicant_id', fmt:v=>`Employee #${v}`},
+      {label:'Purpose',   key:'purpose', fmt:v=>v||'—'},
+      {label:'Amount',    key:'requested_amount', fmt:v=>_pvMoney(v)},
+      {label:'Status',    key:'status', fmt:v=>v||'—'},
+    ],
+    onAdd: () => loadView('payables-petty-cash-applications-add'),
+  });
 }
 async function _pvPcaApprove(id) {
   const res = await apiFetch(`${_PV_PCA_API}/${id}/approve`, { method: 'POST' });
@@ -1368,37 +1450,28 @@ const _PV_PCD_API = `${API_BASE}/api/payables/petty-cash-disbursements`;
 
 async function loadPayablesPettyCashDisbursementsView(container) {
   await _pvLoadLookups();
-  container.innerHTML = `
-    <div class="fin-page">
-      <div class="fin-header-row">
-        <h2 class="fin-title">Petty Cash Disbursements</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Petty Cash Disbursements &rsaquo; Listing</div>
-      </div>
-      <div class="fin-controls-row">
-        <div class="fin-controls-left">Total <span id="pv-pcd-total">0</span> entries</div>
-        <div class="fin-controls-right"><button class="fin-btn-teal" onclick="loadView('payables-petty-cash-disbursements-add')">+ Add</button></div>
-      </div>
-      <div id="pv-pcd-table-container"></div>
-    </div>`;
-  renderSkeletonRows('pv-pcd-table-container', 4);
-  try {
-    const res = await apiFetch(_PV_PCD_API);
-    _pvPcdData = (res && res.ok) ? _toArray(await res.json()) : [];
-  } catch (e) { _pvPcdData = []; }
-  document.getElementById('pv-pcd-total').textContent = _pvPcdData.length;
-  const rows = _pvPcdData.length === 0
-    ? `<tr><td colspan="4" class="fin-empty">No records found.</td></tr>`
-    : _pvPcdData.map(d => `<tr>
-        <td>App #${d.petty_cash_application_id}</td>
-        <td>${_pvMoney(d.disbursed_amount)}</td>
-        <td>${_pvDate(d.disbursement_date)}</td>
-        <td>App #${d.petty_cash_application_id}</td>
-      </tr>`).join('');
-  document.getElementById('pv-pcd-table-container').innerHTML = `
-    <div class="fin-table-wrap"><table class="fin-table">
-      <thead><tr><th>APPLICANT</th><th>AMOUNT DISBURSED</th><th>DISBURSEMENT DATE</th><th>APPLICATION REF</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table></div>`;
+  await renderSplitView({
+    container,
+    title: 'Petty Cash Disbursements',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Finance',view:'payables-petty-cash-disbursements'},
+      {label:'Petty Cash Disbursements'}
+    ],
+    apiUrl: _PV_PCD_API,
+    col1Label: 'Application', col2Label: 'Amount',
+    col1: d => `App #${d.petty_cash_application_id}`,
+    col2: d => _pvMoney(d.disbursed_amount),
+    rowLabel: d => `App #${d.petty_cash_application_id}`,
+    rowSub:   d => _pvDate(d.disbursement_date) || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Application Ref',   key:'petty_cash_application_id', fmt:v=>`App #${v}`},
+      {label:'Amount Disbursed',  key:'disbursed_amount', fmt:v=>_pvMoney(v)},
+      {label:'Disbursement Date', key:'disbursement_date', fmt:v=>_pvDate(v)},
+    ],
+    onAdd: () => loadView('payables-petty-cash-disbursements-add'),
+  });
 }
 async function loadPayablesPettyCashDisbursementsAddView(container) {
   await _pvLoadLookups();
@@ -1481,11 +1554,58 @@ const _PV_IW_API = `${API_BASE}/api/payables/imprest-warrants`;
 
 async function loadPayablesImprestWarrantsView(container) {
   await _pvLoadLookups();
-  await _pvRenderIwListPage(container, `${_PV_IW_API}`, false);
+  await renderSplitView({
+    container,
+    title: 'Imprest Warrant',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Finance',view:'payables-imprest-warrants'},
+      {label:'Imprest Warrant'}
+    ],
+    apiUrl: _PV_IW_API,
+    searchFields: ['purpose','status'],
+    col1Label: 'Officer', col2Label: 'Status',
+    col1: w => _pvEmployeeName(w.holder_id) || '—',
+    col2: w => w.status || '—',
+    rowLabel: w => _pvEmployeeName(w.holder_id) || '—',
+    rowSub:   w => w.status || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Officer',  key:'holder_id', fmt:v=>_pvEmployeeName(v)},
+      {label:'Purpose',  key:'purpose', fmt:v=>v||'—'},
+      {label:'Amount',   key:'authorized_amount', fmt:v=>_pvMoney(v)},
+      {label:'Period',   key:'period_start', fmt:(_,w)=>`${_pvDate(w.period_start)} – ${_pvDate(w.period_end)}`},
+      {label:'Status',   key:'status', fmt:v=>v||'—'},
+    ],
+    onAdd: () => loadView('payables-imprest-warrants-add'),
+  });
 }
 async function loadPayablesImprestWarrantsOverdueView(container) {
   await _pvLoadLookups();
-  await _pvRenderIwListPage(container, `${_PV_IW_API}/overdue`, true);
+  await renderSplitView({
+    container,
+    title: 'Imprest Warrants — Overdue',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Finance',view:'payables-imprest-warrants'},
+      {label:'Overdue'}
+    ],
+    apiUrl: `${_PV_IW_API}/overdue`,
+    searchFields: ['purpose'],
+    col1Label: 'Officer', col2Label: 'Amount',
+    col1: w => _pvEmployeeName(w.holder_id) || '—',
+    col2: w => _pvMoney(w.authorized_amount),
+    rowLabel: w => _pvEmployeeName(w.holder_id) || '—',
+    rowSub:   w => w.status || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Officer',  key:'holder_id', fmt:v=>_pvEmployeeName(v)},
+      {label:'Purpose',  key:'purpose', fmt:v=>v||'—'},
+      {label:'Amount',   key:'authorized_amount', fmt:v=>_pvMoney(v)},
+      {label:'Period',   key:'period_start', fmt:(_,w)=>`${_pvDate(w.period_start)} – ${_pvDate(w.period_end)}`},
+      {label:'Status',   key:'status', fmt:v=>v||'—'},
+    ],
+  });
 }
 async function _pvRenderIwListPage(container, url, overdueOnly) {
   container.innerHTML = `
@@ -1616,37 +1736,28 @@ const _PV_ID_API = `${API_BASE}/api/payables/imprest-disbursements`;
 
 async function loadPayablesImprestDisbursementsView(container) {
   await _pvLoadLookups();
-  container.innerHTML = `
-    <div class="fin-page">
-      <div class="fin-header-row">
-        <h2 class="fin-title">Imprest Disbursements</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Imprest Disbursements &rsaquo; Listing</div>
-      </div>
-      <div class="fin-controls-row">
-        <div class="fin-controls-left">Total <span id="pv-id-total">0</span> entries</div>
-        <div class="fin-controls-right"><button class="fin-btn-teal" onclick="loadView('payables-imprest-disbursements-add')">+ Add</button></div>
-      </div>
-      <div id="pv-id-table-container"></div>
-    </div>`;
-  renderSkeletonRows('pv-id-table-container', 4);
-  try {
-    const res = await apiFetch(_PV_ID_API);
-    _pvIdData = (res && res.ok) ? _toArray(await res.json()) : [];
-  } catch (e) { _pvIdData = []; }
-  document.getElementById('pv-id-total').textContent = _pvIdData.length;
-  const rows = _pvIdData.length === 0
-    ? `<tr><td colspan="4" class="fin-empty">No records found.</td></tr>`
-    : _pvIdData.map(d => `<tr>
-        <td>Warrant #${d.imprest_warrant_id}</td>
-        <td>-</td>
-        <td>${_pvMoney(d.disbursed_amount)}</td>
-        <td>${_pvDate(d.disbursement_date)}</td>
-      </tr>`).join('');
-  document.getElementById('pv-id-table-container').innerHTML = `
-    <div class="fin-table-wrap"><table class="fin-table">
-      <thead><tr><th>WARRANT REF</th><th>OFFICER</th><th>AMOUNT</th><th>DATE</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table></div>`;
+  await renderSplitView({
+    container,
+    title: 'Imprest Disbursements',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Finance',view:'payables-imprest-disbursements'},
+      {label:'Imprest Disbursements'}
+    ],
+    apiUrl: _PV_ID_API,
+    col1Label: 'Warrant', col2Label: 'Amount',
+    col1: d => `Warrant #${d.imprest_warrant_id}`,
+    col2: d => _pvMoney(d.disbursed_amount),
+    rowLabel: d => `Warrant #${d.imprest_warrant_id}`,
+    rowSub:   d => _pvDate(d.disbursement_date) || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Warrant Ref',       key:'imprest_warrant_id', fmt:v=>`Warrant #${v}`},
+      {label:'Amount Disbursed',  key:'disbursed_amount', fmt:v=>_pvMoney(v)},
+      {label:'Disbursement Date', key:'disbursement_date', fmt:v=>_pvDate(v)},
+    ],
+    onAdd: () => loadView('payables-imprest-disbursements-add'),
+  });
 }
 async function loadPayablesImprestDisbursementsAddView(container) {
   await _pvLoadLookups();

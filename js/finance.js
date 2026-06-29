@@ -162,28 +162,32 @@ function _finSendActionRow() {
 // ==================== CHANGE 1: STUDENT FEES STATUS ====================
 
 async function loadStudentFeesStatusView(container) {
-  container.innerHTML = `
-    <div class="fin-page">
-      <div class="fin-header-row">
-        <h2 class="fin-title">Student Fees Status</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Student Fees Status &rsaquo; Listing</div>
-      </div>
-      <div class="fin-controls-row">
-        <div class="fin-controls-left">
-          Show <select id="sfs-per-page" onchange="changeSfsPerPage(this.value)">
-            ${[10,25,50,100].map(n=>`<option value="${n}">${n}</option>`).join('')}
-          </select> entries
-          &nbsp;|&nbsp; Total <span id="sfs-total-count">0</span> entries
-        </div>
-        <div class="fin-controls-right">
-          <input type="text" class="fin-search-input" id="sfs-search" placeholder="&#128269; Search&#8230;"
-                 oninput="onSfsSearch(this.value)">
-        </div>
-      </div>
-      <div id="sfs-table-container"><p class="fin-loading">Loading&#8230;</p></div>
-    </div>
-  `;
-  await _loadSfsTable();
+  await renderSplitView({
+    container,
+    title: 'Student Fees Status',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Finance',view:'fin-student-fees-status'},
+      {label:'Student Fees Status'}
+    ],
+    apiUrl: `${API_BASE}/students/`,
+    searchFields: ['first_name','last_name','student_id'],
+    col1Label: 'Student', col2Label: 'Class',
+    col1: s => `${s.first_name||''} ${s.last_name||''}`.trim() || '—',
+    col2: s => s.school_class_name || s.cohort || '—',
+    rowLabel: s => `${s.first_name||''} ${s.last_name||''}`.trim() || '—',
+    rowSub:   s => s.student_id || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Student ID',  key:'student_id'},
+      {label:'Name',        key:'first_name', fmt:(_,s)=>`${s.first_name||''} ${s.last_name||''}`.trim()},
+      {label:'Class',       key:'school_class_name', fmt:v=>v||'—'},
+      {label:'Cohort',      key:'cohort', fmt:v=>v||'—'},
+      {label:'Reporting',   key:'is_reported', fmt:v=>v?'Reported':'Not Reported'},
+      {label:'Status',      key:'is_active', fmt:v=>v?'Active':'Inactive'},
+    ],
+    onEdit: item => openFeesDetail(item.id),
+  });
 }
 
 let _sfsPerPage = 10;
@@ -556,16 +560,35 @@ function _invTermName(id) {
 function _invFeeItemName(id) { return (_invFeeItemsCache.find(f => String(f.id) === String(id)) || {}).name || '-'; }
 
 async function loadStudentInvoicesView(container) {
-  _invPage   = 1;
-  _invSearch = '';
-  _renderInvoiceListPage(container);
   await _invLoadLookups();
-  try {
-    const res = await apiFetch(`${API_BASE}/receivables/fee-invoices`);
-    if (res && res.ok) { studentInvoicesData.length = 0; _toArray(await res.json()).forEach(r => studentInvoicesData.push(r)); }
-    else if (res) showToast('Could not load invoices: ' + await parseApiError(res), 'error');
-  } catch (_) {}
-  _renderInvTable();
+  await renderSplitView({
+    container,
+    title: 'Student Invoices',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Finance',view:'fin-student-invoices'},
+      {label:'Invoices'}
+    ],
+    apiUrl: `${API_BASE}/receivables/fee-invoices`,
+    searchFields: ['invoice_no'],
+    col1Label: 'Invoice No', col2Label: 'Student',
+    col1: inv => inv.invoice_no || `#${inv.id}`,
+    col2: inv => _invStudentName(inv.student_id) || '—',
+    rowLabel: inv => inv.invoice_no || `#${inv.id}`,
+    rowSub:   inv => _invStudentName(inv.student_id),
+    idKey: 'id',
+    detailFields: [
+      {label:'Invoice No', key:'invoice_no'},
+      {label:'Student',    key:'student_id', fmt:v=>_invStudentName(v)},
+      {label:'Term',       key:'term_id', fmt:v=>_invTermName(v)},
+      {label:'Issue Date', key:'issue_date', fmt:v=>v||'—'},
+      {label:'Due Date',   key:'due_date', fmt:v=>v||'—'},
+      {label:'Amount',     key:'total_amount', fmt:v=>_finFmt(parseFloat(v)||0)},
+      {label:'Status',     key:'status'},
+    ],
+    onAdd:  () => loadView('fin-student-invoices-add'),
+    onEdit: item => openInvoiceEdit(item.id),
+  });
 }
 
 function _renderInvoiceListPage(container) {
@@ -1810,13 +1833,32 @@ function _finGenRefNo(prefix, arr) {
 let _invAdjPerPage = 10, _invAdjPage = 1, _invAdjSearch = '';
 
 async function loadInvoiceAdjustmentsView(container) {
-  _invAdjPage = 1; _invAdjSearch = '';
-  _renderInvAdjListPage(container);
-  try {
-    const res = await fetch(`${API_BASE}/finance/invoice-adjustments/`, { headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok) { studentInvoiceAdjustmentsData.length = 0; _toArray(await res.json()).forEach(r => studentInvoiceAdjustmentsData.push(r)); }
-  } catch (_) {}
-  _renderInvAdjTable();
+  await renderSplitView({
+    container,
+    title: 'Invoice Adjustments',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Finance',view:'fin-invoice-adjustments'},
+      {label:'Invoice Adjustments'}
+    ],
+    apiUrl: `${API_BASE}/finance/invoice-adjustments/`,
+    searchFields: ['referenceNo','admissionNo','names'],
+    col1Label: 'Reference No', col2Label: 'Type / Date',
+    col1: a => a.referenceNo || '—',
+    col2: a => a.studentType || a.adjustmentDate || '—',
+    rowLabel: a => a.referenceNo || '—',
+    rowSub:   a => a.adjustmentDate || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Reference No',   key:'referenceNo', fmt:v=>v||'—'},
+      {label:'Adjustment Date',key:'adjustmentDate', fmt:v=>v||'—'},
+      {label:'Student Type',   key:'studentType', fmt:v=>v||'—'},
+      {label:'Cost Center',    key:'costCenter', fmt:v=>v||'—'},
+      {label:'Reason',         key:'reason', fmt:v=>v||'—'},
+    ],
+    onAdd:  () => renderInvAdjAddPage(document.getElementById('main-content')),
+    onEdit: item => openInvAdjDetail(item.id),
+  });
 }
 
 function _renderInvAdjListPage(container) {
@@ -2090,13 +2132,31 @@ async function submitInvAdjAdd() {
 let _sponAllocPerPage = 10, _sponAllocPage = 1, _sponAllocSearch = '';
 
 async function loadSponsorshipAllocationsView(container) {
-  _sponAllocPage = 1; _sponAllocSearch = '';
-  _renderSponAllocListPage(container);
-  try {
-    const res = await fetch(`${API_BASE}/finance/sponsorship-allocations/`, { headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok) { sponsorshipAllocationsData.length = 0; _toArray(await res.json()).forEach(r => sponsorshipAllocationsData.push(r)); }
-  } catch (_) {}
-  _renderSponAllocTable();
+  await renderSplitView({
+    container,
+    title: 'Sponsorship Allocations',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Finance',view:'fin-sponsorship-allocations'},
+      {label:'Sponsorship Allocations'}
+    ],
+    apiUrl: `${API_BASE}/finance/sponsorship-allocations/`,
+    searchFields: ['sponsorName','studentName','referenceNumber'],
+    col1Label: 'Sponsor', col2Label: 'Student',
+    col1: a => a.sponsorName || '—',
+    col2: a => a.studentName || '—',
+    rowLabel: a => a.sponsorName || a.referenceNumber || '—',
+    rowSub:   a => a.studentName || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Reference',    key:'referenceNumber', fmt:v=>v||'—'},
+      {label:'Sponsor',      key:'sponsorName', fmt:v=>v||'—'},
+      {label:'Student',      key:'studentName', fmt:v=>v||'—'},
+      {label:'Cost Center',  key:'costCenter', fmt:v=>v||'—'},
+      {label:'Amount',       key:'amount', fmt:v=>_finFmt(parseFloat(v)||0)},
+    ],
+    onAdd: () => renderSponAllocAddPage(document.getElementById('main-content')),
+  });
 }
 
 function _renderSponAllocListPage(container) {
@@ -2337,14 +2397,36 @@ async function _fsLoadLookups() {
 }
 
 async function loadFeeSetupPerClassView(container) {
-  _feeSetupPage = 1; _feeSetupSearch = '';
-  _renderFeeSetupListPage(container);
-  try {
-    const res = await apiFetch(`${API_BASE}/finance/fee-setup-per-class`);
-    if (res && res.ok) { feeSetupPerClassData.length = 0; _toArray(await res.json()).forEach(r => feeSetupPerClassData.push(r)); }
-  } catch (_) {}
   await _fsLoadLookups();
-  _renderFeeSetupTable();
+  await renderSplitView({
+    container,
+    title: 'Class Fee Setup',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Finance',view:'fin-fee-setup-per-class'},
+      {label:'Class Fee'}
+    ],
+    apiUrl: `${API_BASE}/finance/fee-setup-per-class`,
+    searchFields: [],
+    col1Label: 'Class', col2Label: 'Fee Item',
+    col1: f => _fsClassName(f.class_id),
+    col2: f => _fsFeeItemName(f.fee_item_id),
+    rowLabel: f => _fsClassName(f.class_id),
+    rowSub:   f => _fsFeeItemName(f.fee_item_id),
+    idKey: 'id',
+    detailFields: [
+      {label:'Class',          key:'class_id', fmt:v=>_fsClassName(v)},
+      {label:'Academic Year',  key:'class_id', fmt:v=>_fsAcademicYearName(v)},
+      {label:'Term',           key:'term_id', fmt:v=>_fsTermName(v)},
+      {label:'Fee Item',       key:'fee_item_id', fmt:v=>_fsFeeItemName(v)},
+      {label:'Amount',         key:'amount', fmt:v=>_finFmt(parseFloat(v)||0)},
+    ],
+    onAdd:  () => renderFeeSetupAddPage(document.getElementById('main-content')),
+    onEdit: item => openFeeSetupDetail(item.id),
+  });
+
+  // restore the "Generate Fees for Term" trigger in case it's needed
+  // (old UI had it, but it's now accessible via Add)
   const triggerTermSel = document.getElementById('fs-trigger-term');
   if (triggerTermSel) triggerTermSel.innerHTML = '<option value="">Please Select</option>' +
     (_fsTermsCache||[]).map(t=>`<option value="${t.id}">${_finEsc(t.title||'')}</option>`).join('');
@@ -2664,13 +2746,35 @@ async function submitFeeSetupAdd() {
 let _rcvPayPerPage = 10, _rcvPayPage = 1, _rcvPaySearch = '';
 
 async function loadReceivePaymentsView(container) {
-  _rcvPayPage = 1; _rcvPaySearch = '';
-  _renderRcvPayListPage(container);
-  try {
-    const res = await apiFetch(`${API_BASE}/finance/receive-payments`);
-    if (res && res.ok) { receivePaymentsData.length = 0; _toArray(await res.json()).forEach(r => receivePaymentsData.push(r)); }
-  } catch (_) {}
-  _renderRcvPayTable();
+  await renderSplitView({
+    container,
+    title: 'Receive Payments',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Finance',view:'fin-receive-payments'},
+      {label:'Receive Payments'}
+    ],
+    apiUrl: `${API_BASE}/finance/receive-payments`,
+    searchFields: ['receiptNo','name','receiveFrom'],
+    col1Label: 'Receipt No', col2Label: 'Name',
+    col1: p => p.receiptNo || '—',
+    col2: p => p.name || p.receiveFrom || '—',
+    rowLabel: p => p.receiptNo || '—',
+    rowSub:   p => p.name || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Receipt No',    key:'receiptNo', fmt:v=>v||'—'},
+      {label:'Name',          key:'name', fmt:v=>v||'—'},
+      {label:'Receive From',  key:'receiveFrom', fmt:v=>v||'—'},
+      {label:'Payment Mode',  key:'paymentMode', fmt:v=>v||'—'},
+      {label:'Mode No',       key:'modeNo', fmt:v=>v||'—'},
+      {label:'Date',          key:'docDate', fmt:v=>v||'—'},
+      {label:'Amount',        key:'amount', fmt:v=>_finFmt(parseFloat(v)||0)},
+      {label:'Cost Center',   key:'costCenter', fmt:v=>v||'—'},
+    ],
+    onAdd:  () => renderRcvPayAddPage(document.getElementById('main-content')),
+    onEdit: item => openRcvPayDetail(item.id),
+  });
 }
 
 function _renderRcvPayListPage(container) {
@@ -2954,21 +3058,33 @@ async function submitRcvPayAdd() {
 let _coaPerPage = 10, _coaPage = 1, _coaSearch = '';
 
 async function loadChartOfAccountsView(container) {
-  _coaPage = 1; _coaSearch = '';
-  _renderCoaListPage(container);
-  try {
-    const res = await fetch(`${API_BASE}/accounts/`, { headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok) {
-      const raw = await res.json();
-      chartOfAccountsData.length = 0;
-      _toArray(raw).forEach(r => chartOfAccountsData.push(r));
-    } else {
-      showToast(`Could not load accounts: HTTP ${res.status} ${await parseApiError(res)}`, 'error');
-    }
-  } catch (e) {
-    showToast('Network error loading accounts: ' + e.message, 'error');
-  }
-  _renderCoaTable();
+  await renderSplitView({
+    container,
+    title: 'Chart of Accounts',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Finance',view:'fin-chart-of-accounts'},
+      {label:'Chart of Accounts'}
+    ],
+    apiUrl: `${API_BASE}/accounts/`,
+    searchFields: ['account_name','number','account_type'],
+    col1Label: 'Account Name', col2Label: 'Type',
+    col1: a => a.account_name || '—',
+    col2: a => a.account_type || '—',
+    rowLabel: a => a.account_name || '—',
+    rowSub:   a => `#${a.number||''}`,
+    idKey: 'id',
+    detailFields: [
+      {label:'Number',       key:'number'},
+      {label:'Account Name', key:'account_name'},
+      {label:'Account Type', key:'account_type'},
+      {label:'Parent',       key:'parent_id', fmt:(_,a)=>_coaParentName(a)},
+      {label:'Cash Flow Grp',key:'cash_flow_group', fmt:v=>v||'—'},
+      {label:'Status',       key:'is_active', fmt:v=>v===false?'Inactive':'Active'},
+    ],
+    onAdd:  () => renderCoaAddPage(document.getElementById('main-content')),
+    onEdit: item => openCoaEdit(item.id),
+  });
 }
 
 function _renderCoaListPage(container) {
@@ -3282,13 +3398,35 @@ async function submitCoaEdit(id) {
 let _feeAcctPerPage = 10, _feeAcctPage = 1, _feeAcctSearch = '';
 
 async function loadFeeAccountsView(container) {
-  _feeAcctPage = 1; _feeAcctSearch = '';
-  _renderFeeAcctListPage(container);
-  try {
-    const res = await fetch(`${API_BASE}/finance/fee-accounts/`, { headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok) { feeAccountsData.length = 0; _toArray(await res.json()).forEach(r => feeAccountsData.push(r)); }
-  } catch (_) {}
-  _renderFeeAcctTable();
+  await renderSplitView({
+    container,
+    title: 'Fee Accounts',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Finance',view:'fin-fee-accounts'},
+      {label:'Fee Accounts'}
+    ],
+    apiUrl: `${API_BASE}/finance/fee-accounts/`,
+    searchFields: ['account_name','number','item_name'],
+    col1Label: 'Account Name', col2Label: 'Item',
+    col1: a => a.account_name || '—',
+    col2: a => a.item_name || '—',
+    rowLabel: a => a.account_name || '—',
+    rowSub:   a => `#${a.number||''} · ${a.item_name||''}`.trim(),
+    idKey: 'id',
+    detailFields: [
+      {label:'Number',       key:'number'},
+      {label:'Account Name', key:'account_name'},
+      {label:'Account Type', key:'account_type'},
+      {label:'Fee Item',     key:'item_name'},
+      {label:'Item Code',    key:'item_code'},
+      {label:'Group',        key:'group', fmt:v=>v||'—'},
+      {label:'Sub Group',    key:'sub_group', fmt:v=>v||'—'},
+      {label:'Status',       key:'is_deactivated', fmt:v=>v?'Inactive':'Active'},
+    ],
+    onAdd:  () => renderFeeAcctAddPage(document.getElementById('main-content')),
+    onEdit: item => openFeeAcctEdit(item.id),
+  });
 }
 
 function _renderFeeAcctListPage(container) {
@@ -3645,14 +3783,34 @@ function _fiAccountName(id) {
 }
 
 async function loadFeeItemsView(container) {
-  _feeItemPage = 1; _feeItemSearch = '';
-  _renderFeeItemsListPage(container);
   await _fiLoadLookups();
-  try {
-    const res = await apiFetch(`${API_BASE}/finance/fee-items`);
-    if (res && res.ok) { feeItemsData.length = 0; _toArray(await res.json()).forEach(r => feeItemsData.push(r)); }
-  } catch (_) {}
-  _renderFeeItemsTable();
+  await renderSplitView({
+    container,
+    title: 'Fee Items',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Finance',view:'fin-fee-items'},
+      {label:'Fee Items'}
+    ],
+    apiUrl: `${API_BASE}/finance/fee-items`,
+    searchFields: ['name','code'],
+    col1Label: 'Name', col2Label: 'Category',
+    col1: f => f.name || '—',
+    col2: f => (FEE_ITEM_CATEGORIES.find(c=>c.value===f.category)||{label:'—'}).label,
+    rowLabel: f => f.name || '—',
+    rowSub:   f => f.code || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Code',           key:'code'},
+      {label:'Name',           key:'name'},
+      {label:'Category',       key:'category', fmt:v=>(FEE_ITEM_CATEGORIES.find(c=>c.value===v)||{label:'—'}).label},
+      {label:'Default Amount', key:'default_amount', fmt:v=>_finFmt(parseFloat(v)||0)},
+      {label:'ECA',            key:'is_extra_curricular', fmt:v=>v?'Yes':'No'},
+      {label:'Status',         key:'is_active', fmt:v=>v===false?'Inactive':'Active'},
+    ],
+    onAdd:  () => renderFeeItemAddPage(document.getElementById('main-content')),
+    onEdit: item => renderFeeItemAddPage(document.getElementById('main-content'), item.id),
+  });
 }
 
 function _renderFeeItemsListPage(container) {
@@ -3927,14 +4085,34 @@ function _giAccountName(id) {
 }
 
 async function loadGeneralItemsView(container) {
-  _giPage = 1; _giSearch = '';
-  _renderGiListPage(container);
   await _giLoadAccounts();
-  try {
-    const res = await apiFetch(`${API_BASE}/finance/general-items/`);
-    if (res && res.ok) { generalItemsData.length = 0; _toArray(await res.json()).forEach(r => generalItemsData.push(r)); }
-  } catch (_) {}
-  _renderGiTable();
+  await renderSplitView({
+    container,
+    title: 'General Items',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Finance',view:'fin-general-items'},
+      {label:'General Items'}
+    ],
+    apiUrl: `${API_BASE}/finance/general-items/`,
+    searchFields: ['name','code','type'],
+    col1Label: 'Name', col2Label: 'Type',
+    col1: g => g.name || '—',
+    col2: g => g.type || '—',
+    rowLabel: g => g.name || '—',
+    rowSub:   g => g.code || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Code',           key:'code'},
+      {label:'Name',           key:'name'},
+      {label:'Type',           key:'type'},
+      {label:'Sub-Type',       key:'sub_type', fmt:v=>v||'—'},
+      {label:'Default Amount', key:'default_amount', fmt:v=>_finFmt(parseFloat(v)||0)},
+      {label:'Status',         key:'is_active', fmt:v=>v===false?'Inactive':'Active'},
+    ],
+    onAdd:  () => renderGeneralItemForm(document.getElementById('main-content')),
+    onEdit: item => renderGeneralItemForm(document.getElementById('main-content'), item.id),
+  });
 }
 
 function _renderGiListPage(container) {

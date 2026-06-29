@@ -92,9 +92,17 @@ async function loadStudentsListView(container) {
   await renderSplitView({
     container,
     title: 'Students',
-    breadcrumb: ['Dashboard', 'Student Management', 'Students'],
+    breadcrumb: [
+      { label: 'Dashboard',           view: null },
+      { label: 'Student Management',  view: 'students-list' },
+      { label: 'Students' }
+    ],
     apiUrl: `${API_BASE}/students/`,
     searchFields: ['first_name', 'last_name', 'student_id'],
+    col1Label: 'Name',
+    col2Label: 'Class / ID',
+    col1:     s => `${s.first_name || ''} ${s.last_name || ''}`.trim() || 'Unnamed',
+    col2:     s => [s.student_id, s.school_class_name || s.level_of_academics_name].filter(Boolean).join(' · '),
     rowLabel: s => `${s.first_name || ''} ${s.last_name || ''}`.trim() || 'Unnamed',
     rowSub:   s => [s.student_id, s.school_class_name || s.level_of_academics_name].filter(Boolean).join(' · '),
     idKey: 'id',
@@ -2679,31 +2687,51 @@ let _stuSrcData = [], _stuSrcPage = 1, _stuSrcPerPage = 10;
 
 async function loadStudentSourcesView(container) {
   openStuUtilitiesDropdown();
-  container.innerHTML = `
-    <div class="fin-page">
-      <div class="fin-header-row">
-        <h2 class="fin-title">Student Sources</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Utilities &rsaquo; Student Sources</div>
+  await renderSplitView({
+    container,
+    title: 'Student Sources',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Student Management',view:'students-list'},
+      {label:'Student Sources'}
+    ],
+    apiUrl: `${API_BASE}/student-management/student-sources`,
+    col1Label: 'Title', col2Label: 'Status',
+    col1: s => s.title || s.name || '—',
+    col2: s => s.is_inactive ? 'Inactive' : 'Active',
+    rowLabel: s => s.title || s.name || '—',
+    rowSub:   s => s.is_inactive ? 'Inactive' : 'Active',
+    idKey: 'id',
+    detailFields: [
+      {label:'Title',  key:'title'},
+      {label:'Status', key:'is_inactive', fmt: v => v ? 'Inactive' : 'Active'},
+    ],
+    renderAdd:  el => _stuSrcSplitForm(null, el),
+    renderEdit: (item, el) => _stuSrcSplitForm(item, el),
+  });
+}
+
+function _stuSrcSplitForm(item, el) {
+  const id = item?.id ?? null;
+  const isEdit = !!item;
+  el.innerHTML = `
+    <div style="max-width:460px">
+      <h3 class="split-right-add-title">${isEdit ? 'Edit' : 'Add'} Student Source</h3>
+      <div class="stu-form-group" style="margin-bottom:16px">
+        <label>Title <span style="color:var(--coral-500)">*</span></label>
+        <input id="stusrc-title" value="${_esc(item?.title||item?.name||'')}" style="max-width:none;width:100%">
       </div>
-      <div class="fin-controls-row">
-        <div class="fin-controls-left">
-          Show <select id="stusrc-per-page" onchange="changeStuSrcPerPage(this.value)">
-            ${[10,25,50].map(n => `<option value="${n}">${n}</option>`).join('')}
-          </select> entries &nbsp;|&nbsp; Total <span id="stusrc-total">0</span> entries
-        </div>
-        <div class="fin-controls-right">
-          <button class="fin-btn-teal" onclick="showStudentSourceForm(null)">+ Add</button>
-        </div>
+      ${isEdit ? `<div class="stu-form-group" style="margin-bottom:16px">
+        <label><input type="checkbox" id="stusrc-deactivate"${item?.is_inactive?' checked':''}> Mark as Inactive</label>
+      </div>` : ''}
+      <div style="display:flex;gap:12px;margin-top:20px">
+        <button class="btn-primary" style="padding:9px 20px" onclick="saveStudentSource('${id||''}')">
+          ${isEdit ? 'Update' : 'Save'}
+        </button>
+        <button class="btn-cancel" onclick="window._splitGoAdd?.()">Cancel</button>
       </div>
-      <div id="stusrc-table"></div>
-      <div id="stusrc-pagination"></div>
     </div>
   `;
-  renderSkeletonRows('stusrc-table', 3);
-  const res = await apiFetch(`${API_BASE}/student-management/student-sources`);
-  if (res && res.ok) _stuSrcData = await res.json();
-  _stuSrcPage = 1;
-  _renderStuSrcTable();
 }
 
 function _renderStuSrcTable() {
@@ -2789,31 +2817,57 @@ let _strPage = 1, _strPerPage = 10;
 
 async function loadStreamsView(container) {
   openStuUtilitiesDropdown();
-  container.innerHTML = `
-    <div class="fin-page">
-      <div class="fin-header-row">
-        <h2 class="fin-title">Stream</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Utilities &rsaquo; Stream &rsaquo; Listing</div>
+  await renderSplitView({
+    container,
+    title: 'Streams',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Student Management',view:'students-list'},
+      {label:'Streams'}
+    ],
+    apiUrl: `${API_BASE}/student-management/streams`,
+    col1Label: 'Title', col2Label: 'Status',
+    col1: s => s.title || '—',
+    col2: s => (s.status === 'inactive' || s.status === 'Inactive') ? 'Inactive' : 'Active',
+    rowLabel: s => s.title || '—',
+    rowSub:   s => (s.status === 'inactive' || s.status === 'Inactive') ? 'Inactive' : 'Active',
+    idKey: 'id',
+    detailFields: [
+      {label:'Title',  key:'title'},
+      {label:'Notes',  key:'notes'},
+      {label:'Status', key:'status', fmt: v => (v === 'inactive' || v === 'Inactive') ? 'Inactive' : 'Active'},
+    ],
+    renderAdd:  el => _streamSplitForm(null, el),
+    renderEdit: (item, el) => _streamSplitForm(item, el),
+  });
+}
+
+function _streamSplitForm(item, el) {
+  const id = item?.id ?? null;
+  const isEdit = !!item;
+  const inactive = item?.status === 'inactive' || item?.status === 'Inactive';
+  el.innerHTML = `
+    <div style="max-width:460px">
+      <h3 class="split-right-add-title">${isEdit ? 'Edit' : 'Add'} Stream</h3>
+      <div class="stu-form-group" style="margin-bottom:16px">
+        <label>Title <span style="color:var(--coral-500)">*</span></label>
+        <input id="stream-title" value="${_esc(item?.title||'')}" style="max-width:none;width:100%">
       </div>
-      <div class="fin-controls-row">
-        <div class="fin-controls-left">
-          Show <select id="str-per-page" onchange="changeStrPerPage(this.value)">
-            ${[10,25,50].map(n => `<option value="${n}">${n}</option>`).join('')}
-          </select> entries &nbsp;|&nbsp; Total <span id="str-total">0</span> entries
-        </div>
-        <div class="fin-controls-right">
-          <button class="fin-btn-teal" onclick="showStreamForm(null)">+ Add</button>
-        </div>
+      <div class="stu-form-group" style="margin-bottom:16px">
+        <label>Notes</label>
+        <textarea id="stream-notes" style="width:100%;max-width:none;min-height:72px;padding:8px;border:1px solid var(--grey-200);border-radius:var(--radius-sm)">${_esc(item?.notes||'')}</textarea>
       </div>
-      <div id="str-table"></div>
-      <div id="str-pagination"></div>
+      <div class="stu-form-group" style="margin-bottom:16px">
+        <label><input type="checkbox" id="stream-deactivate"${inactive?' checked':''}> Mark as Inactive</label>
+      </div>
+      <div style="display:flex;gap:12px;margin-top:20px">
+        <button class="btn-primary" style="padding:9px 20px" onclick="saveStream('${id||''}')">
+          ${isEdit ? 'Update' : 'Save'}
+        </button>
+        <button class="btn-cancel" onclick="window._splitGoAdd?.()">Cancel</button>
+      </div>
     </div>
   `;
-  renderSkeletonRows('str-table', 3);
-  const res = await apiFetch(`${API_BASE}/student-management/streams`);
-  if (res && res.ok) streamsData = await res.json();
-  _strPage = 1;
-  _renderStreamsTable();
 }
 
 function _renderStreamsTable() {
@@ -2904,31 +2958,51 @@ let _fsPage = 1, _fsPerPage = 10;
 
 async function loadFundingSourcesView(container) {
   openStuUtilitiesDropdown();
-  container.innerHTML = `
-    <div class="fin-page">
-      <div class="fin-header-row">
-        <h2 class="fin-title">Funding Source</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Utilities &rsaquo; Funding Source &rsaquo; Listing</div>
+  await renderSplitView({
+    container,
+    title: 'Funding Sources',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Student Management',view:'students-list'},
+      {label:'Funding Sources'}
+    ],
+    apiUrl: `${API_BASE}/student-management/funding-sources`,
+    col1Label: 'Title', col2Label: 'Status',
+    col1: f => f.title || '—',
+    col2: f => f.is_inactive ? 'Inactive' : 'Active',
+    rowLabel: f => f.title || '—',
+    rowSub:   f => f.is_inactive ? 'Inactive' : 'Active',
+    idKey: 'id',
+    detailFields: [
+      {label:'Title',  key:'title'},
+      {label:'Status', key:'is_inactive', fmt: v => v ? 'Inactive' : 'Active'},
+    ],
+    renderAdd:  el => _fsSplitForm(null, el),
+    renderEdit: (item, el) => _fsSplitForm(item, el),
+  });
+}
+
+function _fsSplitForm(item, el) {
+  const id = item?.id ?? null;
+  const isEdit = !!item;
+  el.innerHTML = `
+    <div style="max-width:460px">
+      <h3 class="split-right-add-title">${isEdit ? 'Edit' : 'Add'} Funding Source</h3>
+      <div class="stu-form-group" style="margin-bottom:16px">
+        <label>Title <span style="color:var(--coral-500)">*</span></label>
+        <input id="fs-title" value="${_esc(item?.title||'')}" style="max-width:none;width:100%">
       </div>
-      <div class="fin-controls-row">
-        <div class="fin-controls-left">
-          Show <select id="fs-per-page" onchange="changeFsPerPage(this.value)">
-            ${[10,25,50].map(n => `<option value="${n}">${n}</option>`).join('')}
-          </select> entries &nbsp;|&nbsp; Total <span id="fs-total">0</span> entries
-        </div>
-        <div class="fin-controls-right">
-          <button class="fin-btn-teal" onclick="showFundingSourceForm(null)">+ Add</button>
-        </div>
+      ${isEdit ? `<div class="stu-form-group" style="margin-bottom:16px">
+        <label><input type="checkbox" id="fs-deactivate"${item?.is_inactive?' checked':''}> Mark as Inactive</label>
+      </div>` : ''}
+      <div style="display:flex;gap:12px;margin-top:20px">
+        <button class="btn-primary" style="padding:9px 20px" onclick="saveFundingSource('${id||''}')">
+          ${isEdit ? 'Update' : 'Save'}
+        </button>
+        <button class="btn-cancel" onclick="window._splitGoAdd?.()">Cancel</button>
       </div>
-      <div id="fs-table"></div>
-      <div id="fs-pagination"></div>
     </div>
   `;
-  renderSkeletonRows('fs-table', 3);
-  const res = await apiFetch(`${API_BASE}/student-management/funding-sources`);
-  if (res && res.ok) fundingSourcesData = await res.json();
-  _fsPage = 1;
-  _renderFsTable();
 }
 
 function _renderFsTable() {
@@ -3021,32 +3095,84 @@ let _shLevelsCache = null, _shClassesCache = null;
 
 async function loadSportsHousesView(container) {
   openStuUtilitiesDropdown();
-  container.innerHTML = `
-    <div class="fin-page">
-      <div class="fin-header-row">
-        <h2 class="fin-title">Sports Houses</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Utilities &rsaquo; Sports Houses &rsaquo; Listing</div>
+  await _stuLoadShLookups();
+  await renderSplitView({
+    container,
+    title: 'Sports Houses',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Student Management',view:'students-list'},
+      {label:'Sports Houses'}
+    ],
+    apiUrl: `${API_BASE}/student-management/sports-houses/`,
+    col1Label: 'Name', col2Label: 'Assigned To',
+    col1: h => h.name || '—',
+    col2: h => _shScopePlain(h),
+    rowLabel: h => h.name || '—',
+    rowSub:   h => _shScopePlain(h),
+    idKey: 'id',
+    detailFields: [
+      {label:'Name',        key:'name'},
+      {label:'Assigned To', key:'level_id', fmt: (v, h) => _shScopePlain(h)},
+    ],
+    renderAdd:  el => _shSplitForm(null, el),
+    renderEdit: (item, el) => _shSplitForm(item, el),
+  });
+}
+
+function _shScopePlain(h) {
+  if (h.level_id) {
+    const lvl = (_shLevelsCache || []).find(l => String(l.id) === String(h.level_id));
+    return `Level: ${lvl ? lvl.name : `#${h.level_id}`}`;
+  }
+  if (h.class_id) {
+    const cls = (_shClassesCache || []).find(c => String(c.id) === String(h.class_id));
+    return `Class: ${cls ? cls.name : `#${h.class_id}`}`;
+  }
+  return 'Unassigned';
+}
+
+function _shSplitForm(item, el) {
+  const id = item?.id ?? null;
+  const isEdit = !!item;
+  const scope = item?.level_id ? 'level' : (item?.class_id ? 'class' : 'level');
+  el.innerHTML = `
+    <div style="max-width:480px">
+      <h3 class="split-right-add-title">${isEdit ? 'Edit' : 'Add'} Sports House</h3>
+      <div class="stu-form-group" style="margin-bottom:16px">
+        <label>Name <span style="color:var(--coral-500)">*</span></label>
+        <input id="sh-name" value="${_esc(item?.name||'')}" style="max-width:none;width:100%">
       </div>
-      <div class="fin-controls-row">
-        <div class="fin-controls-left">
-          Show <select id="sh-per-page" onchange="changeShPerPage(this.value)">
-            ${[10,25,50].map(n => `<option value="${n}">${n}</option>`).join('')}
-          </select> entries &nbsp;|&nbsp; Total <span id="sh-total">0</span> entries
-        </div>
-        <div class="fin-controls-right">
-          <button class="fin-btn-teal" onclick="showSportsHouseForm(null)">+ Add</button>
+      <div class="stu-form-group" style="margin-bottom:10px">
+        <label style="font-weight:600">Assign To</label>
+        <div style="display:flex;gap:20px;margin-top:6px">
+          <label><input type="radio" name="sh-scope" value="level"${scope==='level'?' checked':''} onchange="_shToggleScope()"> Whole Level</label>
+          <label><input type="radio" name="sh-scope" value="class"${scope==='class'?' checked':''} onchange="_shToggleScope()"> Specific Class</label>
         </div>
       </div>
-      <div id="sh-table"></div>
-      <div id="sh-pagination"></div>
+      <div class="stu-form-group" id="sh-level-wrap" style="margin-bottom:16px;display:${scope==='level'?'block':'none'}">
+        <label>Level of Academics</label>
+        <select id="sh-level" style="max-width:none;width:100%">
+          <option value="">Please Select</option>
+          ${(_shLevelsCache||[]).map(l=>`<option value="${l.id}"${String(item?.level_id)===String(l.id)?' selected':''}>${_esc(l.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="stu-form-group" id="sh-class-wrap" style="margin-bottom:16px;display:${scope==='class'?'block':'none'}">
+        <label>Class</label>
+        <select id="sh-class" style="max-width:none;width:100%">
+          <option value="">Please Select</option>
+          ${(_shClassesCache||[]).map(c=>`<option value="${c.id}"${String(item?.class_id)===String(c.id)?' selected':''}>${_esc(c.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div style="display:flex;gap:12px;margin-top:20px">
+        <button class="btn-primary" style="padding:9px 20px" onclick="saveSportsHouse('${id||''}')">
+          ${isEdit ? 'Update' : 'Save'}
+        </button>
+        <button class="btn-cancel" onclick="window._splitGoAdd?.()">Cancel</button>
+        ${isEdit ? `<button class="btn-danger" style="margin-left:auto" onclick="deleteSportsHouse('${id}')">Delete</button>` : ''}
+      </div>
     </div>
   `;
-  renderSkeletonRows('sh-table', 3);
-  const res = await apiFetch(`${API_BASE}/student-management/sports-houses/`);
-  if (res && res.ok) sportsHousesData = await res.json();
-  _shPage = 1;
-  await _stuLoadShLookups();
-  _renderSportsHousesTable();
 }
 
 async function _stuLoadShLookups() {
@@ -4142,41 +4268,108 @@ let _clsLevels = [];
 async function loadStudentClassesView(container) {
   setActiveSidebarItem('sidebar-stu-classes');
   openStuMgmtDropdowns();
-  container.innerHTML = `
-    <div class="fin-page">
-      <div class="fin-header-row">
-        <h2 class="fin-title">Classes</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Classes &rsaquo; Listing</div>
-      </div>
-      <div class="fin-controls-row">
-        <div class="fin-controls-left">
-          Show <select id="cls-per-page" onchange="changeClsPerPage(this.value)">
-            ${[10,25,50,100].map(n => `<option value="${n}">${n}</option>`).join('')}
-          </select> entries &nbsp;|&nbsp; Total <span id="cls-total">0</span> entries
-        </div>
-        <div class="fin-controls-right">
-          <input type="text" class="fin-search-input" id="cls-search" placeholder="&#128269; Search&#8230;"
-                 oninput="onClsSearch(this.value)">
-          <button class="fin-btn-teal" onclick="showClassForm(null)">+ Add Class</button>
-        </div>
-      </div>
-      <div id="cls-table"></div>
-      <div id="cls-pagination"></div>
-    </div>
-  `;
-  renderSkeletonRows('cls-table', 5);
 
-  const [clsRes, ayRes, lvlRes] = await Promise.all([
-    apiFetch(`${API_BASE}/classes/`),
+  // Pre-fetch lookup data for forms
+  const [ayRes, lvlRes] = await Promise.all([
     apiFetch(`${API_BASE}/academic-years/`),
-    apiFetch(`${API_BASE}/academic-levels/`)
+    apiFetch(`${API_BASE}/academic-levels/`),
   ]);
   const _toArr = raw => Array.isArray(raw) ? raw : (raw?.data || raw?.items || raw?.results || []);
-  _clsData          = clsRes && clsRes.ok ? _toArr(await clsRes.json()) : [];
   _clsAcademicYears = ayRes  && ayRes.ok  ? _toArr(await ayRes.json())  : [];
   _clsLevels        = lvlRes && lvlRes.ok ? _toArr(await lvlRes.json()) : [];
-  _clsPage = 1;
-  _renderClsTable();
+
+  const _lvlName = c => {
+    const l = _clsLevels.find(l => String(l.id) === String(c.academic_level_id || c.academic_level));
+    return l ? l.name : (c.level || c.level_name || '—');
+  };
+
+  await renderSplitView({
+    container,
+    title: 'Classes',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Student Management',view:'students-list'},
+      {label:'Classes'}
+    ],
+    apiUrl: `${API_BASE}/classes/`,
+    searchFields: ['name','code','class_code'],
+    col1Label: 'Class Name', col2Label: 'Level',
+    col1: c => c.name || '—',
+    col2: c => _lvlName(c),
+    rowLabel: c => c.name || '—',
+    rowSub:   c => [c.code || c.class_code, _lvlName(c)].filter(Boolean).join(' · '),
+    idKey: 'id',
+    detailFields: [
+      {label:'Class Name',    key:'name'},
+      {label:'Class Code',    key:'code', fmt:(v,c)=>v||c.class_code||'—'},
+      {label:'Level',         key:'academic_level_id', fmt:(_,c)=>_lvlName(c)},
+      {label:'Stream',        key:'stream'},
+      {label:'Capacity',      key:'capacity'},
+      {label:'Status',        key:'is_active', fmt:v=>v!==false?'Active':'Inactive'},
+    ],
+    renderAdd:  el => _clsSplitForm(null, el),
+    renderEdit: (item, el) => _clsSplitForm(item, el),
+  });
+}
+
+function _clsSplitForm(item, el) {
+  const id = item?.id ?? null;
+  const isEdit = !!item;
+  const ayOpts = _clsAcademicYears.map(y =>
+    `<option value="${y.id}"${String(item?.academic_year_id||item?.academic_year)===String(y.id)?' selected':''}>${_esc(y.title||y.name)}</option>`
+  ).join('');
+  const lvlOpts = _clsLevels.map(l =>
+    `<option value="${l.id}"${String(item?.academic_level_id||item?.academic_level)===String(l.id)?' selected':''}>${_esc(l.name)}</option>`
+  ).join('');
+  el.innerHTML = `
+    <div style="max-width:560px">
+      <h3 class="split-right-add-title">${isEdit ? 'Edit' : 'Add'} Class</h3>
+      <div class="stu-form-grid" style="grid-template-columns:1fr 1fr;gap:14px 20px">
+        <div class="stu-form-group">
+          <label>Class Name <span style="color:var(--coral-500)">*</span></label>
+          <input id="cls-f-name" value="${_esc(item?.name||'')}" style="max-width:none;width:100%" placeholder="e.g. Acorn 2026" oninput="autoFillClassName()">
+        </div>
+        <div class="stu-form-group">
+          <label>Class Code <span style="color:var(--coral-500)">*</span></label>
+          <input id="cls-f-code" value="${_esc(item?.code||item?.class_code||'')}" style="max-width:none;width:100%" placeholder="e.g. ACN-2026">
+        </div>
+        <div class="stu-form-group">
+          <label>Level <span style="color:var(--coral-500)">*</span></label>
+          <select id="cls-f-level" style="max-width:none;width:100%" onchange="autoFillClassName()">
+            <option value="">Select</option>${lvlOpts}
+          </select>
+        </div>
+        <div class="stu-form-group">
+          <label>Academic Year <span style="color:var(--coral-500)">*</span></label>
+          <select id="cls-f-ay" style="max-width:none;width:100%" onchange="autoFillClassName()">
+            <option value="">Select Academic Year</option>${ayOpts}
+          </select>
+        </div>
+        <div class="stu-form-group">
+          <label>Stream</label>
+          <input id="cls-f-stream" value="${_esc(item?.stream||'')}" style="max-width:none;width:100%" placeholder="e.g. A, B, Red">
+        </div>
+        <div class="stu-form-group">
+          <label>Capacity</label>
+          <input id="cls-f-capacity" type="number" value="${_esc(String(item?.capacity||''))}" style="max-width:none;width:100%" placeholder="Max students">
+        </div>
+        <div class="stu-form-group" style="grid-column:span 2">
+          <label>Status</label>
+          <select id="cls-f-status" style="max-width:none;width:100%">
+            <option value="true"${item?.is_active!==false?' selected':''}>Active</option>
+            <option value="false"${item?.is_active===false?' selected':''}>Inactive</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:flex;gap:12px;margin-top:20px">
+        <button class="btn-primary" style="padding:9px 20px" onclick="saveClass('${id||''}')">
+          ${isEdit ? 'Update' : 'Save'}
+        </button>
+        <button class="btn-cancel" onclick="window._splitGoAdd?.()">Cancel</button>
+      </div>
+      <div id="cls-form-status" style="margin-top:10px"></div>
+    </div>
+  `;
 }
 
 function _clsFiltered() {

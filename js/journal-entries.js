@@ -11,10 +11,37 @@ const _JE_API = `${API_BASE}/journal-entries/`;
 let _jePage = 1, _jePerPage = 10, _jeData = [];
 
 async function loadJournalEntriesView(container) {
-  _jePage = 1;
   await _pvLoadLookups();
-  _jeRenderListPage(container);
-  await _jeRefreshData();
+  await renderSplitView({
+    container,
+    title: 'Journal Entries',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Finance',view:'journal-entries'},
+      {label:'Journal Entries'}
+    ],
+    apiUrl: _JE_API,
+    searchFields: ['jv_number','reference','status'],
+    col1Label: 'JV Number', col2Label: 'Status',
+    col1: je => je.jv_number || `#${je.id}`,
+    col2: je => je.status || '—',
+    rowLabel: je => je.jv_number || `#${je.id}`,
+    rowSub:   je => je.status || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'JV Number',  key:'jv_number', fmt:v=>v||'—'},
+      {label:'Ledger',     key:'ledger_id', fmt:v=>_pvLedgerName(v)},
+      {label:'Reference',  key:'reference', fmt:v=>v||'—'},
+      {label:'Date',       key:'entry_date', fmt:v=>_pvDate(v)},
+      {label:'Amount',     key:'lines', fmt:v=>{
+        const total=(v||[]).filter(l=>l.line_type==='debit').reduce((s,l)=>s+parseFloat(l.amount||0),0);
+        return _pvMoney(total);
+      }},
+      {label:'Status',     key:'status', fmt:v=>v||'—'},
+    ],
+    onAdd: () => loadView('journal-entries-add'),
+    onEdit: item => { window._jeEditId = item.id; loadView('journal-entries-edit'); },
+  });
 }
 
 async function _jeRefreshData() {

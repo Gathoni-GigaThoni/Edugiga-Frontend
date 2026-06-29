@@ -7,7 +7,45 @@ document.addEventListener('click', () => {
   document.querySelectorAll('[id^="payroll-esp-dd-"],[id^="fi-dd-"]').forEach(d => d.style.display = 'none');
 });
 
-function loadPayrollEspListingView(container) {
+async function loadPayrollEspListingView(container) {
+  await renderSplitView({
+    container,
+    title: 'Employee Service Profiles',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Payroll',view:'payroll-esp'},
+      {label:'Service Profiles'}
+    ],
+    apiUrl: `${API_BASE}/employee-service-profiles/`,
+    searchFields: ['employee_name','employee_code','department'],
+    col1Label: 'Employee', col2Label: 'Department',
+    col1: sp => sp.employee_name || '—',
+    col2: sp => sp.department || sp.employee_code || '—',
+    rowLabel: sp => sp.employee_name || '—',
+    rowSub:   sp => sp.employee_code || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Employee',    key:'employee_name', fmt:v=>v||'—'},
+      {label:'Emp Code',    key:'employee_code', fmt:v=>v||'—'},
+      {label:'Department',  key:'department', fmt:v=>v||'—'},
+      {label:'Pay Grade',   key:'pay_grade', fmt:v=>v||'—'},
+      {label:'Basic Salary',key:'basic_salary', fmt:v=>v!=null?String(v):'—'},
+      {label:'Eff. Date',   key:'effective_date', fmt:v=>v||'—'},
+    ],
+    onAdd:  () => payrollEspAdd(),
+    onEdit: item => {
+      hrEspFormState = {
+        context: 'edit', sourceView: 'payroll',
+        editSourceIdx: -1, lockedEmpCode: item.employee_code || '', lockedEmpName: item.employee_name || '',
+        bankAccounts: [...(item.bank_accounts || [])],
+        editingBankIdx: -1, existingRecord: item
+      };
+      renderHrEspFormPage(document.getElementById('main-content'));
+    },
+  });
+}
+
+function _loadPayrollEspListingLegacy(container) {
   payrollEspFiltered = [...employeeServiceProfilesData];
   payrollEspPage = 1;
 
@@ -190,46 +228,31 @@ function openPayrollDropdowns() {
 
 // ---- Listing ----
 async function loadPayrollFiListingView(container) {
-  setActiveSidebarItem('sidebar-payroll-fi');
-  openPayrollDropdowns();
-  fiCurrentPage = 1;
-
-  container.innerHTML = `
-    <div class="fi-page">
-      <div class="hr-header-row">
-        <h2 class="hr-title">Financial Institutions</h2>
-        <div class="hr-breadcrumb">Dashboard &rsaquo; Payroll &rsaquo; Financial Institutions &rsaquo; Listing</div>
-      </div>
-      <div class="hr-controls-row">
-        <div class="hr-controls-left">
-          Show <select id="fi-per-page" onchange="changeFiPerPage(this.value)">
-            <option value="10">10</option>
-            <option value="25">25</option>
-            <option value="50">50</option>
-            <option value="100">100</option>
-          </select> entries
-          &nbsp;|&nbsp; Total <span id="fi-total-count">0</span> entries
-        </div>
-        <div class="hr-controls-right">
-          <button class="hr-add-btn" onclick="loadPayrollFiAddView(document.getElementById('main-content'))">+ Add</button>
-        </div>
-      </div>
-      <div class="hr-table-wrap">
-        <div id="fi-table-container"></div>
-      </div>
-      <div id="fi-pagination"></div>
-    </div>
-  `;
-
-  const sel = document.getElementById('fi-per-page');
-  if (sel) sel.value = String(fiPerPage);
-  renderFiTable();
-
-  try {
-    const res = await fetch(`${API_BASE}/payroll/financial-institutions/`, { headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok) { financialInstitutionsData.length = 0; (await res.json()).forEach(r => financialInstitutionsData.push(r)); }
-  } catch (_) {}
-  renderFiTable();
+  await renderSplitView({
+    container,
+    title: 'Financial Institutions',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Payroll',view:'payroll-fi'},
+      {label:'Financial Institutions'}
+    ],
+    apiUrl: `${API_BASE}/payroll/financial-institutions/`,
+    searchFields: ['institution','code'],
+    col1Label: 'Institution', col2Label: 'Code',
+    col1: r => r.institution || '—',
+    col2: r => r.code || '—',
+    rowLabel: r => r.institution || '—',
+    rowSub:   r => r.code || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Code',        key:'code'},
+      {label:'Institution', key:'institution'},
+      {label:'Default',     key:'is_default', fmt:v=>(v||false)?'Yes':'No'},
+      {label:'Status',      key:'is_inactive', fmt:v=>v?'Inactive':'Active'},
+    ],
+    onAdd:  () => loadPayrollFiAddView(document.getElementById('main-content')),
+    onEdit: item => loadPayrollFiEditView(document.getElementById('main-content'), item.id),
+  });
 }
 
 function renderFiTable() {
@@ -479,27 +502,29 @@ let payGradesData = [];
 window._currentEditPayGradeId = null;
 
 async function loadPayGradesView(container) {
-  container.innerHTML = `
-    <div class="payroll-page">
-      <div class="hr-header-row">
-        <h2 class="hr-title">Pay Grades</h2>
-        <div class="hr-breadcrumb">Dashboard &rsaquo; Payroll &rsaquo; Pay Grades &rsaquo; Listing</div>
-      </div>
-      <div class="hr-controls-row">
-        <div class="hr-controls-right">
-          <button class="hr-add-btn" onclick="loadView('payroll-pay-grades-add')">+ Add</button>
-        </div>
-      </div>
-      <div class="hr-table-wrap">
-        <div id="pay-grades-table-container"></div>
-      </div>
-    </div>
-  `;
-  try {
-    const res = await apiFetch(`${API_BASE}/payroll/utilities/pay-grades`);
-    payGradesData = (res && res.ok) ? await res.json() : [];
-  } catch (_) { payGradesData = []; }
-  renderPayGradesTable();
+  await renderSplitView({
+    container,
+    title: 'Pay Grades',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Payroll',view:'payroll-pay-grades'},
+      {label:'Pay Grades'}
+    ],
+    apiUrl: `${API_BASE}/payroll/utilities/pay-grades`,
+    searchFields: ['name'],
+    col1Label: 'Name', col2Label: 'Base Salary',
+    col1: g => g.name || '—',
+    col2: g => g.base_salary != null ? String(g.base_salary) : '—',
+    rowLabel: g => g.name || '—',
+    rowSub:   g => g.base_salary != null ? `Base: ${g.base_salary}` : '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Name',        key:'name'},
+      {label:'Base Salary', key:'base_salary', fmt:v=>v!=null?String(v):'—'},
+    ],
+    onAdd:  () => loadView('payroll-pay-grades-add'),
+    onEdit: item => { window._currentEditPayGradeId = item.id; loadView('payroll-pay-grades-edit'); },
+  });
 }
 
 function renderPayGradesTable() {

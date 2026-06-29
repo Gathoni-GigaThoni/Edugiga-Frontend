@@ -7,8 +7,32 @@ document.addEventListener('click', () => {
   document.querySelectorAll('[id^="ay-dd-"]').forEach(d => d.style.display = 'none');
 });
 
-function loadAcademicYearsView(container) {
-  _renderAyListPage(container);
+async function loadAcademicYearsView(container) {
+  await renderSplitView({
+    container,
+    title: 'Academic Years',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Administration',view:'sa-academic-years'},
+      {label:'Academic Years'}
+    ],
+    apiUrl: `${API_BASE}/academic-years/`,
+    searchFields: ['title'],
+    col1Label: 'Title', col2Label: 'Start → End',
+    col1: y => y.title || '—',
+    col2: y => `${_fmtDDMmmYYYY(y.start_date)} – ${_fmtDDMmmYYYY(y.end_date)}`,
+    rowLabel: y => y.title || '—',
+    rowSub:   y => `${_fmtDDMmmYYYY(y.start_date)} – ${_fmtDDMmmYYYY(y.end_date)}`,
+    idKey: 'id',
+    detailFields: [
+      {label:'Title',      key:'title'},
+      {label:'Start Date', key:'start_date', fmt:v=>_fmtDDMmmYYYY(v)},
+      {label:'End Date',   key:'end_date',   fmt:v=>_fmtDDMmmYYYY(v)},
+      {label:'Status',     key:'is_inactive', fmt:v=>v?'Inactive':'Active'},
+    ],
+    onAdd:  () => renderAyAddPage(document.getElementById('main-content')),
+    onEdit: item => openAyEdit(item.id),
+  });
 }
 
 // ==================== LISTING ====================
@@ -465,36 +489,31 @@ let _alvlPage    = 1;
 let _alvlPerPage = 10;
 
 async function loadAcademicLevelsView(container) {
-  container.innerHTML = `
-    <div class="sa-page">
-      <div class="sa-header-row">
-        <h2 class="sa-title">Academic Levels</h2>
-        <div class="sa-breadcrumb">Dashboard &rsaquo; Administration &rsaquo; Academic Levels &rsaquo; Listing</div>
-      </div>
-      <div class="sa-controls-row">
-        <div class="sa-controls-left">
-          Show <select id="alvl-per-page" onchange="changeAlvlPerPage(this.value)">
-            ${[10,25,50].map(n => `<option value="${n}"${n===_alvlPerPage?' selected':''}>${n}</option>`).join('')}
-          </select> entries
-          &nbsp;|&nbsp; Total <span id="alvl-total">0</span> entries
-        </div>
-        <div class="sa-controls-right">
-          <button class="sa-btn-add" onclick="renderAlvlAddPage(document.getElementById('main-content'))">+ Add</button>
-        </div>
-      </div>
-      <div id="alvl-table-container"><p class="sa-loading">Loading&#8230;</p></div>
-    </div>
-  `;
-
-  const res = await apiFetch(`${API_BASE}/academic-levels/`);
-  if (res && res.ok) {
-    const raw = await res.json();
-    _alvlData = Array.isArray(raw) ? raw : (raw.data || raw.items || raw.results || []);
-  } else {
-    _alvlData = [];
-  }
-  _alvlPage = 1;
-  _renderAlvlTable();
+  await renderSplitView({
+    container,
+    title: 'Academic Levels',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Administration',view:'sa-academic-levels'},
+      {label:'Academic Levels'}
+    ],
+    apiUrl: `${API_BASE}/academic-levels/`,
+    searchFields: ['name','code'],
+    col1Label: 'Name', col2Label: 'Code',
+    col1: l => l.name || '—',
+    col2: l => l.code || '—',
+    rowLabel: l => l.name || '—',
+    rowSub:   l => l.code || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Name',        key:'name'},
+      {label:'Code',        key:'code'},
+      {label:'Description', key:'description', fmt:v=>v||'—'},
+      {label:'Sort Order',  key:'sort_order', fmt:v=>v!=null?String(v):'—'},
+      {label:'Status',      key:'status', fmt:v=>v||'Active'},
+    ],
+    onAdd: () => renderAlvlAddPage(document.getElementById('main-content')),
+  });
 }
 
 function _renderAlvlTable() {

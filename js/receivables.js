@@ -115,13 +115,32 @@ let rcvFeeSchedulesData = [];
 let _rcvFsPage=1, _rcvFsPerPage=25, _rcvFsFilterScope='', _rcvFsFilterItem='', _rcvFsFilterTerm='';
 
 async function loadFeeSchedulesView(container) {
-  _rcvFsPage=1; _rcvFsFilterScope=''; _rcvFsFilterItem=''; _rcvFsFilterTerm='';
-  _rcvRenderFsListPage(container);
   await _rcvLoadLookups({ items:true, terms:true, levels:true, classes:true, routes:true });
-  const res = await apiFetch(`${API_BASE}/receivables/setup/fee-schedules`);
-  if (res && res.ok) { rcvFeeSchedulesData = _toArray(await res.json()); }
-  _rcvRenderFsTable();
-  _rcvRenderFsFilters();
+  await renderSplitView({
+    container,
+    title: 'Fee Schedules',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Finance',view:'fin-fee-schedules'},
+      {label:'Fee Schedules'}
+    ],
+    apiUrl: `${API_BASE}/receivables/setup/fee-schedules`,
+    searchFields: ['scope_type'],
+    col1Label: 'Fee Item', col2Label: 'Scope',
+    col1: s => _rcvFeeItemName(s.fee_item_id) || '—',
+    col2: s => s.scope_type || '—',
+    rowLabel: s => _rcvFeeItemName(s.fee_item_id) || '—',
+    rowSub:   s => s.scope_type || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Fee Item',  key:'fee_item_id', fmt:v=>_rcvFeeItemName(v)},
+      {label:'Scope',     key:'scope_type', fmt:v=>v||'—'},
+      {label:'Term',      key:'term_id', fmt:v=>v?_rcvTermName(v):'All Terms'},
+      {label:'Amount',    key:'amount', fmt:v=>`KES ${_finFmt(v)}`},
+    ],
+    onAdd:  () => openFeeScheduleModal(),
+    onEdit: item => { rcvFeeSchedulesData = [item]; openFeeScheduleModal(item.id); },
+  });
 }
 
 function _rcvRenderFsListPage(container) {

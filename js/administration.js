@@ -1,13 +1,29 @@
 // ==================== ADMINISTRATION ====================
 async function loadAdministrationView(container) {
-  if (currentUser?.clearance_level !== 1) { container.innerHTML = "<p>Access denied.</p>"; return; }
-  container.innerHTML = `
-    <h2>Staff Management</h2>
-    <button onclick="showStaffForm()">Add New Staff</button>
-    <div id="staff-list"></div>
-    <div id="staff-form" style="display:none;"></div>
-  `;
-  loadStaffList();
+  await renderSplitView({
+    container,
+    title: 'Staff Management',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Administration',view:'user-management'},
+      {label:'Staff'}
+    ],
+    apiUrl: `${API_BASE}/team/?skip=0&limit=1000`,
+    searchFields: ['first_name','last_name','email'],
+    col1Label: 'Name', col2Label: 'Role',
+    col1: u => `${u.first_name||''} ${u.last_name||''}`.trim() || '—',
+    col2: u => UM_ROLE_LABELS?.[u.role] || u.role || '—',
+    rowLabel: u => `${u.first_name||''} ${u.last_name||''}`.trim() || '—',
+    rowSub:   u => u.email || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Name',  key:'first_name', fmt:(_,u)=>`${u.first_name||''} ${u.last_name||''}`.trim()},
+      {label:'Email', key:'email'},
+      {label:'Role',  key:'role', fmt:v=>UM_ROLE_LABELS?.[v]||v||'—'},
+    ],
+    onAdd:  () => loadView('user-management'),
+    onEdit: item => loadView('user-management'),
+  });
 }
 
 async function loadStaffList() {

@@ -31,30 +31,36 @@ function loadTrnPlaceholderView(container, title) {
 // ==================== ROUTES LISTING ====================
 
 async function loadTransportRoutesView(container) {
-  container.innerHTML = `
-    <div class="fin-page">
-      <div class="fin-header-row">
-        <h2 class="fin-title">Routes</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Transport Management &rsaquo; Routes &rsaquo; Listing</div>
-      </div>
-      <div class="fin-controls-row">
-        <div class="fin-controls-left">
-          Show <select id="trn-rt-per-page" onchange="changeTrnRoutePerPage(this.value)">
-            ${[10,25,50,100].map(n => `<option value="${n}">${n}</option>`).join('')}
-          </select> entries &nbsp;|&nbsp; Total <span id="trn-rt-total">0</span> entries
-        </div>
-        <div class="fin-controls-right">
-          <button class="fin-export-btn" title="Export PDF">&#128438;</button>
-          <button class="fin-export-btn" title="Export CSV" onclick="exportTrnRoutesCSV()">&#128202;</button>
-          <button class="fin-btn-teal" onclick="loadView('transport-routes-add')">+ Add</button>
-        </div>
-      </div>
-      <div id="trn-rt-table"></div>
-      <div id="trn-rt-pagination"></div>
-    </div>
-  `;
-  renderSkeletonRows('trn-rt-table', 5);
-  await _fetchTrnRoutes();
+  await renderSplitView({
+    container,
+    title: 'Routes',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Transport Management',view:'transport-routes'},
+      {label:'Routes'}
+    ],
+    apiUrl: `${API_BASE}/routes/`,
+    col1Label: 'Route Name', col2Label: 'Code',
+    col1: r => r.name || '—',
+    col2: r => r.route_code || '—',
+    rowLabel: r => r.name || '—',
+    rowSub:   r => r.route_code || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Route Name', key:'name'},
+      {label:'Route Code', key:'route_code'},
+      {label:'Stops',      key:'stops', fmt: v => Array.isArray(v) ? v.length + ' stop(s)' : '—'},
+    ],
+    renderAdd: el => {
+      el.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--grey-600)">
+        <div style="font-size:2rem;margin-bottom:12px">&#128652;</div>
+        <p style="font-weight:600;margin-bottom:8px">Add a New Route</p>
+        <p style="font-size:13px;margin-bottom:20px">Set up route name, stops and pricing.</p>
+        <button class="btn-primary" style="padding:10px 24px" onclick="loadView('transport-routes-add')">+ Add Route</button>
+      </div>`;
+    },
+    onEdit: item => { window._currentEditRouteId = item.id; loadView('transport-routes-edit'); },
+  });
 }
 
 async function _fetchTrnRoutes() {
@@ -423,28 +429,38 @@ window._currentEditBusId = null;
 let _trnBusFormDirty = false;
 
 async function loadBusesView(container) {
-  container.innerHTML = `
-    <div class="fin-page">
-      <div class="fin-header-row">
-        <h2 class="fin-title">Vehicles</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Transport Management &rsaquo; Utilities &rsaquo; Vehicles &rsaquo; Listing</div>
-      </div>
-      <div class="fin-controls-row">
-        <div class="fin-controls-left">
-          Show <select id="trn-bus-per-page" onchange="changeTrnBusPerPage(this.value)">
-            ${[10,25,50,100].map(n => `<option value="${n}">${n}</option>`).join('')}
-          </select> entries &nbsp;|&nbsp; Total <span id="trn-bus-total">0</span> entries
-        </div>
-        <div class="fin-controls-right">
-          <button class="fin-btn-teal" onclick="loadView('transport-vehicles-add')">+ Add</button>
-        </div>
-      </div>
-      <div id="trn-bus-table"></div>
-      <div id="trn-bus-pagination"></div>
-    </div>
-  `;
-  renderSkeletonRows('trn-bus-table', 5);
-  await _fetchTrnBuses();
+  await renderSplitView({
+    container,
+    title: 'Vehicles',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Transport Management',view:'transport-routes'},
+      {label:'Vehicles'}
+    ],
+    apiUrl: `${API_BASE}/buses/`,
+    col1Label: 'Plate / Name', col2Label: 'Driver',
+    col1: b => b.name || b.id || '—',
+    col2: b => b.driver_name || '—',
+    rowLabel: b => b.name || b.id || '—',
+    rowSub:   b => b.driver_name || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Plate / ID',  key:'id'},
+      {label:'Name',        key:'name'},
+      {label:'Capacity',    key:'capacity'},
+      {label:'Driver',      key:'driver_name'},
+      {label:'Bus Minder',  key:'bus_minder_name'},
+    ],
+    renderAdd: el => {
+      el.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--grey-600)">
+        <div style="font-size:2rem;margin-bottom:12px">&#128652;</div>
+        <p style="font-weight:600;margin-bottom:8px">Add a Vehicle</p>
+        <p style="font-size:13px;margin-bottom:20px">Register a new bus or vehicle.</p>
+        <button class="btn-primary" style="padding:10px 24px" onclick="loadView('transport-vehicles-add')">+ Add Vehicle</button>
+      </div>`;
+    },
+    onEdit: item => { window._currentEditBusId = item.id; loadView('transport-vehicles-edit'); },
+  });
 }
 
 async function _fetchTrnBuses() {

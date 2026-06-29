@@ -47,24 +47,66 @@ async function _loadStaffCounts() {
 // ── Roles List ────────────────────────────────────────────────────────────────
 
 async function loadRolesListingView(container) {
-  container.innerHTML = '<div class="role-page"><p style="padding:16px;color:#777;">Loading…</p></div>';
+  await renderSplitView({
+    container,
+    title: 'Roles',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Administration',view:'admin-roles'},
+      {label:'Roles'}
+    ],
+    apiUrl: `${API_BASE}/roles/?page=1&per_page=1000`,
+    searchFields: ['title','description'],
+    col1Label: 'Title', col2Label: 'Description',
+    col1: r => r.title || '—',
+    col2: r => r.description || '—',
+    rowLabel: r => r.title || '—',
+    rowSub:   r => r.description || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Title',       key:'title'},
+      {label:'Description', key:'description', fmt:v=>v||'—'},
+    ],
+    renderAdd: el => {
+      el.innerHTML = `
+        <div style="max-width:420px">
+          <h3 class="split-right-add-title">Create Role</h3>
+          <div class="stu-form-group">
+            <label>Title <span style="color:var(--coral-500)">*</span></label>
+            <input id="create-role-title" style="max-width:none;width:100%" placeholder="Role title">
+          </div>
+          <div class="stu-form-group" style="margin-top:14px">
+            <label>Description</label>
+            <input id="create-role-desc" style="max-width:none;width:100%" placeholder="Optional description">
+          </div>
+          <div id="create-role-status" style="margin-top:8px;font-size:13px;color:var(--coral-500)"></div>
+          <div style="display:flex;gap:12px;margin-top:20px">
+            <button class="btn-primary" style="padding:9px 20px" onclick="_roleSubmitSplit()">Create</button>
+            <button class="btn-cancel" onclick="window._splitGoAdd?.()">Cancel</button>
+          </div>
+        </div>`;
+    },
+    onEdit: item => openRoleEdit(item.id),
+  });
+}
 
-  await Promise.all([
-    _loadStaffCounts(),
-    (async () => {
-      const res = await apiFetch(`${API_BASE}/roles/?page=${rolesPage}&per_page=${rolesPerPage}`);
-      if (res && res.ok) {
-        const data = await res.json().catch(() => ({}));
-        rolesData  = data.items || data.data || (Array.isArray(data) ? data : []);
-        rolesTotal = data.total ?? rolesData.length;
-      } else {
-        showToast('Could not load roles.', 'error');
-        rolesData = []; rolesTotal = 0;
-      }
-    })(),
-  ]);
-
-  renderRoleListPage(container);
+async function _roleSubmitSplit() {
+  const title = (document.getElementById('create-role-title')?.value || '').trim();
+  const desc  = (document.getElementById('create-role-desc')?.value  || '').trim() || null;
+  const statusEl = document.getElementById('create-role-status');
+  if (!title) { if (statusEl) statusEl.textContent = 'Title is required.'; return; }
+  if (statusEl) statusEl.textContent = '';
+  const res = await apiFetch(`${API_BASE}/roles/`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ title, description: desc }),
+  });
+  if (!res) return;
+  if (res.ok) {
+    showToast('Role created!', 'success');
+    loadView('admin-roles');
+  } else {
+    if (statusEl) statusEl.textContent = await parseApiError(res);
+  }
 }
 
 function renderRoleListPage(container) {

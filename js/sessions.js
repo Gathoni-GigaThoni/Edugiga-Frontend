@@ -39,17 +39,34 @@ function _getSessAYName(ayId) {
 // ── Load ──────────────────────────────────────────────────────────────────────
 async function loadTermsView(container) { return loadSessionsView(container); }
 async function loadSessionsView(container) {
-  _sessPage       = 1;
-  _sessFilterAY   = '';
-  _sessFilterType = '';
-  _sessFilterStat = '';
-  _sessSearch     = '';
-  _sessFilterOpen = false;
-
-  // Load academic years and session types in parallel before rendering
   await Promise.all([_fetchSessAYCache(), _fetchSessTypes()]);
-  _renderSessListPage(container);
-  await _fetchSessions();
+  await renderSplitView({
+    container,
+    title: 'Terms',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Student Academics',view:'sa-sessions'},
+      {label:'Terms'}
+    ],
+    apiUrl: `${API_BASE}/terms/`,
+    searchFields: ['title','name'],
+    col1Label: 'Title', col2Label: 'Academic Year',
+    col1: s => s.title || s.name || '—',
+    col2: s => _getSessAYName(s.academic_year_id),
+    rowLabel: s => s.title || s.name || '—',
+    rowSub:   s => _getSessAYName(s.academic_year_id),
+    idKey: 'id',
+    detailFields: [
+      {label:'Title',         key:'title'},
+      {label:'Academic Year', key:'academic_year_id', fmt:v=>_getSessAYName(v)},
+      {label:'Term Type',     key:'session_type_id', fmt:v=>_getSessTypeName(v)},
+      {label:'Start Date',    key:'start_date', fmt:v=>_toDDMMYYYY(v)},
+      {label:'End Date',      key:'end_date', fmt:v=>_toDDMMYYYY(v)},
+      {label:'Status',        key:'is_inactive', fmt:v=>v?'Inactive':'Active'},
+    ],
+    onAdd:  () => renderSessAddPage(document.getElementById('main-content')),
+    onEdit: item => openSessEdit(item.id),
+  });
 }
 
 async function _fetchSessAYCache() {

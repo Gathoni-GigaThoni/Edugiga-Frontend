@@ -19,44 +19,45 @@ document.addEventListener('click', () => {
 });
 
 async function loadHrEmployeeDirectoryView(container) {
+  await renderSplitView({
+    container,
+    title: 'Employees',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Human Resource',view:'hr-employee-directory'},
+      {label:'Employees'}
+    ],
+    apiUrl: `${API_BASE}/employees/`,
+    searchFields: ['first_name','last_name','email','employee_code','designation'],
+    col1Label: 'Name', col2Label: 'Code / Role',
+    col1: e => `${e.first_name||''} ${e.last_name||''}`.trim() || '—',
+    col2: e => [e.employee_code, e.designation].filter(Boolean).join(' · ') || '—',
+    rowLabel: e => `${e.first_name||''} ${e.last_name||''}`.trim() || '—',
+    rowSub:   e => e.email || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Name',        key:'first_name', fmt:(_,e)=>`${e.first_name||''} ${e.last_name||''}`.trim()},
+      {label:'Emp Code',    key:'employee_code', fmt:v=>v||'—'},
+      {label:'Email',       key:'email', fmt:v=>v||'—'},
+      {label:'Phone',       key:'phone', fmt:v=>v||'—'},
+      {label:'Designation', key:'designation', fmt:v=>v||'—'},
+      {label:'Department',  key:'department', fmt:v=>v||'—'},
+    ],
+    onAdd:  () => hrAddEmployee(),
+    onEdit: item => hrEditEmployee(item.id !== undefined ? item.id : item.employee_code),
+  });
+}
+
+function _hrEmployeeDirectoryLegacy(container) {
   hrCurrentPage = 1;
   setActiveSidebarItem('sidebar-hr-employee-directory');
   const hrDropdown = document.getElementById('hr-dropdown');
   if (hrDropdown) hrDropdown.style.display = 'block';
-  try {
-    const res = await fetch(`${API_BASE}/employees/`, { headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok) { employeesData.length = 0; (await res.json()).forEach(e => employeesData.push(e)); }
-  } catch (_) {}
-  hrFiltered = [...employeesData];
 
   container.innerHTML = `
     <div class="hr-page">
-      <div class="hr-header-row">
-        <h2 class="hr-title">Employee</h2>
-        <div class="hr-breadcrumb">Dashboard &rsaquo; Human Resource &rsaquo; Employee &rsaquo; Listing</div>
-      </div>
       <div class="hr-controls-row">
-        <div class="hr-controls-left">
-          Show <select id="hr-per-page" onchange="changeHrPerPage(this.value)">
-            <option value="10">10</option>
-            <option value="25">25</option>
-            <option value="50">50</option>
-            <option value="100">100</option>
-          </select> entries
-          &nbsp;|&nbsp; Total <span id="hr-total-count">0</span> entries
-        </div>
         <div class="hr-controls-right">
-          <button class="hr-icon-btn" title="Browse file to update">Browse file to update</button>
-          <button class="hr-icon-btn" title="Download">&darr;</button>
-          <button class="hr-icon-btn" title="Browse file to upload">Browse file to upload</button>
-          <button class="hr-icon-btn" title="Download">&darr;</button>
-          <button class="hr-icon-btn" title="Export">&uarr;</button>
-          <button class="hr-icon-btn" title="Export">&uarr;</button>
-          <button class="hr-add-btn" onclick="hrAddEmployee()">+ Add</button>
-          <input id="hr-search-input" placeholder="Search..." onkeyup="handleHrSearch()" class="hr-search">
-          <button class="hr-filter-btn" onclick="showHrFilters()">Filters</button>
-        </div>
-      </div>
       <div class="hr-table-wrap">
         <div id="hr-table-container"></div>
       </div>

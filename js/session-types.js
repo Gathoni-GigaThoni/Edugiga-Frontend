@@ -12,8 +12,30 @@ document.addEventListener('click', () => {
 
 async function loadTermTypesView(container) { return loadSessionTypesView(container); }
 async function loadSessionTypesView(container) {
-  _renderStListPage(container);
-  await _fetchSessionTypes();
+  await renderSplitView({
+    container,
+    title: 'Term Types',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Student Academics',view:'sa-session-types'},
+      {label:'Term Types'}
+    ],
+    apiUrl: `${API_BASE}/session-types/`,
+    searchFields: ['title','name'],
+    col1Label: 'Title', col2Label: 'Status',
+    col1: t => t.title || t.name || '—',
+    col2: t => t.is_inactive ? 'Inactive' : 'Active',
+    rowLabel: t => t.title || t.name || '—',
+    rowSub:   t => '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Title',  key:'title'},
+      {label:'Notes',  key:'notes', fmt:v=>v||'—'},
+      {label:'Status', key:'is_inactive', fmt:v=>v?'Inactive':'Active'},
+    ],
+    onAdd:  () => renderStAddPage(document.getElementById('main-content')),
+    onEdit: item => openStEdit(item.id),
+  });
 }
 
 async function _fetchSessionTypes() {

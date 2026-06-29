@@ -21,8 +21,6 @@ document.addEventListener('click', () => {
 // ── List ──────────────────────────────────────────────────────────────────────
 
 async function loadUserManagementView(container) {
-  container.innerHTML = '<div class="um-page"><p style="padding:16px;color:#777;">Loading…</p></div>';
-
   const res = await apiFetch(`${API_BASE}/team/?skip=0&limit=1000`);
   if (res && res.ok) {
     const raw = await res.json().catch(() => []);
@@ -31,9 +29,123 @@ async function loadUserManagementView(container) {
     showToast('Could not load users.', 'error');
     umUsers = [];
   }
-  umPage = 1;
-  _umSearch = '';
-  renderUmListPage(container);
+
+  await renderSplitView({
+    container,
+    title: 'User Management',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Administration',view:'user-management'},
+      {label:'Users'}
+    ],
+    apiUrl: `${API_BASE}/team/?skip=0&limit=1000`,
+    searchFields: ['first_name','last_name','email'],
+    col1Label: 'Name', col2Label: 'Staff Type',
+    col1: u => `${u.first_name||''} ${u.last_name||''}`.trim() || '—',
+    col2: u => UM_ROLE_LABELS[u.role] || u.role || '—',
+    rowLabel: u => `${u.first_name||''} ${u.last_name||''}`.trim() || '—',
+    rowSub:   u => u.email || '',
+    idKey: 'id',
+    detailFields: [
+      {label:'Name',          key:'first_name', fmt:(_,u)=>`${u.first_name||''} ${u.last_name||''}`.trim()},
+      {label:'Email',         key:'email'},
+      {label:'Staff Type',    key:'role', fmt:v=>UM_ROLE_LABELS[v]||v||'—'},
+      {label:'Location',      key:'location'},
+      {label:'Assigned Role', key:'assigned_role_title', fmt:v=>v||'No role assigned'},
+      {label:'Status',        key:'is_active', fmt:v=>v!==false?'Active':'Inactive'},
+    ],
+    renderAdd:  el => _umSplitForm(null, el),
+    renderEdit: (item, el) => _umSplitForm(item, el),
+  });
+}
+
+function _umSplitForm(item, el) {
+  const id = item?.id ?? null;
+  const isEdit = !!item;
+  const roleOptions = ['SUPER_ADMIN','MANAGER','TEACHER','KITCHEN','UTILITY'].map(r =>
+    `<option value="${r}"${item?.role===r?' selected':''}>${UM_ROLE_LABELS[r]||r}</option>`
+  ).join('');
+  el.innerHTML = `
+    <div style="max-width:480px">
+      <h3 class="split-right-add-title">${isEdit?'Edit':'Add'} User</h3>
+      <div class="stu-form-grid" style="grid-template-columns:1fr 1fr;gap:14px 20px">
+        <div class="stu-form-group">
+          <label>First Name <span style="color:var(--coral-500)">*</span></label>
+          <input id="um-f-first" value="${_umEsc(item?.first_name||'')}" style="max-width:none;width:100%">
+        </div>
+        <div class="stu-form-group">
+          <label>Last Name <span style="color:var(--coral-500)">*</span></label>
+          <input id="um-f-last" value="${_umEsc(item?.last_name||'')}" style="max-width:none;width:100%">
+        </div>
+        <div class="stu-form-group" style="grid-column:span 2">
+          <label>Email <span style="color:var(--coral-500)">*</span></label>
+          <input id="um-f-email" type="email" value="${_umEsc(item?.email||'')}" style="max-width:none;width:100%">
+        </div>
+        ${!isEdit?`<div class="stu-form-group" style="grid-column:span 2">
+          <label>Password <span style="color:var(--coral-500)">*</span></label>
+          <input id="um-f-password" type="password" placeholder="Min 8 characters" style="max-width:none;width:100%">
+        </div>`:''}
+        <div class="stu-form-group">
+          <label>Staff Type <span style="color:var(--coral-500)">*</span></label>
+          <select id="um-f-role" style="max-width:none;width:100%">
+            <option value="">-- Select --</option>${roleOptions}
+          </select>
+        </div>
+        <div class="stu-form-group">
+          <label>Location</label>
+          <input id="um-f-location" value="${_umEsc(item?.location||'')}" style="max-width:none;width:100%">
+        </div>
+        ${isEdit?`<div class="stu-form-group" style="grid-column:span 2">
+          <label><input type="checkbox" id="um-f-active" style="width:auto;margin:0 6px 0 0;padding:0"${item?.is_active!==false?' checked':''}> Active</label>
+        </div>`:''}
+      </div>
+      <div id="um-split-status" style="margin-top:10px;font-size:13px;color:var(--coral-500)"></div>
+      <div style="display:flex;gap:12px;margin-top:20px">
+        <button class="btn-primary" style="padding:9px 20px" onclick="_umSaveSplit('${id||''}')">
+          ${isEdit?'Update':'Save'}
+        </button>
+        <button class="btn-cancel" onclick="window._splitGoAdd?.()">Cancel</button>
+      </div>
+    </div>
+  `;
+}
+
+function _umEsc(str) {
+  return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function _umSaveSplit(id) {
+  const statusEl = document.getElementById('um-split-status');
+  const first_name = document.getElementById('um-f-first')?.value.trim();
+  const last_name  = document.getElementById('um-f-last')?.value.trim();
+  const email      = document.getElementById('um-f-email')?.value.trim();
+  const role       = document.getElementById('um-f-role')?.value;
+  const location   = document.getElementById('um-f-location')?.value.trim() || '';
+  const is_active  = id ? (document.getElementById('um-f-active')?.checked ?? true) : true;
+
+  if (!first_name || !last_name || !email || !role) {
+    if (statusEl) statusEl.textContent = 'First name, last name, email, and staff type are required.';
+    return;
+  }
+  let body = { first_name, last_name, email, role, location, is_active };
+  if (!id) {
+    const password = document.getElementById('um-f-password')?.value || '';
+    if (password.length < 8) {
+      if (statusEl) statusEl.textContent = 'Password must be at least 8 characters.';
+      return;
+    }
+    body.password = password;
+  }
+  const res = await apiFetch(
+    id ? `${API_BASE}/team/${id}` : `${API_BASE}/team/`,
+    { method: id ? 'PATCH' : 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) }
+  );
+  if (res && res.ok) {
+    showToast(id ? 'User updated!' : 'User created!', 'success');
+    loadView('user-management');
+  } else {
+    if (statusEl) statusEl.textContent = res ? await parseApiError(res) : 'Save failed.';
+  }
 }
 
 function renderUmListPage(container) {
