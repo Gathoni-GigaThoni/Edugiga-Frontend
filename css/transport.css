@@ -11,7 +11,7 @@
 .trn-form-label {
   font-size: 0.85rem;
   font-weight: 500;
-  color: #333;
+  color: var(--grey-800);
 }
 
 .trn-form-input {
@@ -25,17 +25,18 @@
   box-sizing: border-box;
   min-height: 72px;
   resize: vertical;
-  border: 1px solid #ccc;
-  border-radius: 4px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
   padding: 8px 10px;
   font-size: 0.88rem;
   font-family: inherit;
-  color: #333;
-  transition: border-color 0.15s;
+  color: var(--grey-800);
+  transition: border-color var(--transition);
 }
 .trn-form-textarea:focus {
   outline: none;
-  border-color: #00b5b8;
+  border-color: var(--input-focus-border);
+  box-shadow: 0 0 0 3px var(--input-focus-shadow);
 }
 
 .trn-form-grid {
@@ -51,7 +52,7 @@
 /* ── Stops / Destinations builder ── */
 .trn-stops-hint {
   font-size: 0.8rem;
-  color: #888;
+  color: var(--grey-400);
   margin: 0 0 8px;
   font-style: italic;
 }
@@ -67,39 +68,37 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  background: #f9fafb;
-  border: 1px solid #e0e0e0;
-  border-radius: 5px;
+  background: var(--grey-50);
+  border: 1px solid var(--grey-100);
+  border-radius: var(--radius-sm);
   padding: 6px 8px;
   cursor: default;
   transition: border-color 0.12s, background 0.12s;
 }
 
-.trn-stop-row[draggable="true"] {
-  cursor: grab;
-}
+.trn-stop-row[draggable="true"] { cursor: grab; }
 
 .trn-stop-row:hover {
-  border-color: #00b5b8;
-  background: #f0fbfb;
+  border-color: var(--navy-400);
+  background: var(--navy-50);
 }
 
 .trn-stop-row.trn-stop-dragging {
   opacity: 0.45;
-  border-color: #00b5b8;
+  border-color: var(--navy-400);
   border-style: dashed;
   cursor: grabbing;
 }
 
 .trn-stop-handle {
   font-size: 1rem;
-  color: #bbb;
+  color: var(--grey-200);
   user-select: none;
   flex-shrink: 0;
   cursor: grab;
   padding: 0 2px;
 }
-.trn-stop-handle:hover { color: #00b5b8; }
+.trn-stop-handle:hover { color: var(--navy-700); }
 
 .trn-stop-input {
   flex: 1;
@@ -112,7 +111,7 @@
   background: none;
   border: none;
   cursor: pointer;
-  color: #aaa;
+  color: var(--grey-400);
   font-size: 1rem;
   padding: 2px 4px;
   border-radius: 3px;
@@ -121,15 +120,15 @@
   transition: color 0.12s, background 0.12s;
 }
 .trn-stop-remove:hover {
-  color: #e74c3c;
-  background: #fdecea;
+  color: var(--coral-500);
+  background: var(--coral-100);
 }
 
 .trn-add-stop-btn {
   background: none;
-  border: 1px dashed #00b5b8;
-  color: #00b5b8;
-  border-radius: 4px;
+  border: 1px dashed var(--navy-400);
+  color: var(--navy-700);
+  border-radius: var(--radius-sm);
   padding: 6px 14px;
   font-size: 0.85rem;
   cursor: pointer;
@@ -138,5 +137,5 @@
   align-self: flex-start;
 }
 .trn-add-stop-btn:hover {
-  background: #e0f7f7;
+  background: var(--navy-50);
 }

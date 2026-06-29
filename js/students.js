@@ -83,69 +83,41 @@ document.addEventListener('click', () => {
 // ==================== 1. STUDENTS LISTING ====================
 
 async function loadStudentsListView(container) {
-  container.innerHTML = `
-    <div class="fin-page">
-      <div class="fin-header-row">
-        <h2 class="fin-title">Students</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Students &rsaquo; Listing</div>
-      </div>
-      <div class="fin-controls-row">
-        <div class="fin-controls-left">
-          Show <select id="stu-per-page" onchange="changeStuPerPage(this.value)">
-            ${[10,25,50,100].map(n => `<option value="${n}"${n===_stuListPerPage?' selected':''}>${n}</option>`).join('')}
-          </select> entries
-          &nbsp;|&nbsp; Total <span id="stu-total-count">0</span> entries
-        </div>
-        <div class="fin-controls-right">
-          <button class="fin-export-btn" title="Browse file to update">&#128193; Browse file to update</button>
-          <button class="fin-export-btn" title="Browse file to upload">&#128228; Browse file to upload</button>
-          <button class="fin-export-btn" title="Export PDF">&#128438;</button>
-          <button class="fin-export-btn" title="Export CSV" onclick="exportStudentsCSV()">&#128202;</button>
-          <button class="fin-btn-teal" onclick="loadView('students-add')">+ Add</button>
-          <input type="text" class="fin-search-input" id="stu-search" placeholder="&#128269; Search&#8230;"
-                 value="${_esc(_stuListSearch)}" oninput="onStuSearch(this.value)">
-          <button class="fin-btn-filter" onclick="showStuFilterPanel()">&#9776; Filters</button>
-        </div>
-      </div>
-      <div id="stu-table-container"></div>
-      <div id="stu-pagination"></div>
-    </div>
+  // Pre-fetch terms so detail view can resolve term names
+  try {
+    const termsRes = await apiFetch(`${API_BASE}/terms/`);
+    if (termsRes && termsRes.ok) _stuTermsCache = _toArray(await termsRes.json());
+  } catch (_) {}
 
-    <div id="stu-filter-overlay" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.35);z-index:400;" onclick="closeStuFilterPanel(event)">
-      <div class="hr-filter-panel" onclick="event.stopPropagation()">
-        <div class="hr-filter-panel-header">
-          <span class="hr-filter-panel-title">Filters</span>
-          <button class="hr-filter-close-btn" onclick="closeStuFilterPanel()">&#x2715;</button>
-        </div>
-        <div class="hr-filter-panel-body">
-          <div class="hr-filter-group">
-            <label class="hr-filter-label">Gender</label>
-            <select id="sf-gender" class="hr-filter-select">
-              <option value="">All</option>
-              <option value="Male">Male</option>
-              <option value="Female">Female</option>
-              <option value="Other">Other</option>
-            </select>
-          </div>
-          <div class="hr-filter-group">
-            <label class="hr-filter-label">Status</label>
-            <select id="sf-status" class="hr-filter-select">
-              <option value="">All</option>
-              <option value="true">Active</option>
-              <option value="false">Inactive</option>
-            </select>
-          </div>
-        </div>
-        <div style="padding:14px 20px;display:flex;gap:10px;">
-          <button class="fin-btn-teal" onclick="applyStuFilters()">Apply</button>
-          <button class="fin-btn-outline" onclick="clearStuFilters()">Clear</button>
-        </div>
-      </div>
-    </div>
-  `;
-
-  renderSkeletonRows('stu-table-container', 8);
-  await refreshStudentsListing();
+  await renderSplitView({
+    container,
+    title: 'Students',
+    breadcrumb: ['Dashboard', 'Student Management', 'Students'],
+    apiUrl: `${API_BASE}/students/`,
+    searchFields: ['first_name', 'last_name', 'student_id'],
+    rowLabel: s => `${s.first_name || ''} ${s.last_name || ''}`.trim() || 'Unnamed',
+    rowSub:   s => s.student_id || '',
+    idKey: 'id',
+    detailFields: [
+      { label: 'Student ID',         key: 'student_id' },
+      { label: 'Gender',             key: 'gender' },
+      { label: 'Term',               key: 'term_id',             fmt: v => _stuTermName(v) },
+      { label: 'Level of Academics', key: 'school_class_name',   fmt: (v, item) => v || item.level_of_academics_name || '—' },
+      { label: 'Stream',             key: 'stream' },
+      { label: 'Student Type',       key: 'student_type' },
+      { label: 'Status',             key: 'is_active',           fmt: v => v ? 'Active' : 'Inactive' },
+    ],
+    renderAdd: (el) => {
+      _currentEditStudentId = null;
+      _stuEditActiveTab = 'personal';
+      loadStudentFormView(el);
+    },
+    renderEdit: (item, el) => {
+      _currentEditStudentId = item.id;
+      _stuEditActiveTab = 'personal';
+      loadStudentFormView(el);
+    },
+  });
 }
 
 async function refreshStudentsListing() {

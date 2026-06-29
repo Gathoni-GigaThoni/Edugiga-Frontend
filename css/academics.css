@@ -10,9 +10,9 @@
   align-items: flex-start;
   margin-bottom: 18px;
 }
-.sa-title { margin: 0; font-size: 1.4rem; color: #2c3e50; }
-.sa-breadcrumb { font-size: 0.85rem; color: #777; text-align: right; padding-top: 6px; }
-.sa-bc-link { color: #0070f3; text-decoration: none; }
+.sa-title { margin: 0; font-size: 1.4rem; color: var(--grey-900); }
+.sa-breadcrumb { font-size: 0.85rem; color: var(--grey-600); text-align: right; padding-top: 6px; }
+.sa-bc-link { color: var(--navy-400); text-decoration: none; }
 .sa-bc-link:hover { text-decoration: underline; }
 
 /* Controls row */
@@ -29,7 +29,7 @@
   align-items: center;
   gap: 8px;
   font-size: 0.9rem;
-  color: #444;
+  color: var(--grey-800);
 }
 .sa-controls-left select {
   width: auto !important;
@@ -48,106 +48,111 @@
 
 /* Buttons */
 .sa-btn-add {
-  background: #2db3b3 !important;
-  color: white !important;
+  background: var(--btn-gold-bg) !important;
+  color: var(--btn-gold-text) !important;
   border: none !important;
   padding: 8px 16px !important;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 0.9rem;
   font-weight: 600;
   width: auto !important;
   margin: 0 !important;
   white-space: nowrap;
+  transition: background var(--transition);
 }
-.sa-btn-add:hover { background: #249a9a !important; }
+.sa-btn-add:hover { background: var(--btn-gold-hover) !important; }
 
 .sa-btn-load {
-  background: #2db3b3 !important;
-  color: white !important;
+  background: var(--btn-primary-bg) !important;
+  color: var(--white) !important;
   border: none !important;
   padding: 8px 22px !important;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 0.9rem;
   font-weight: 600;
   width: auto !important;
   margin: 0 !important;
+  transition: background var(--transition);
 }
-.sa-btn-load:hover { background: #249a9a !important; }
+.sa-btn-load:hover { background: var(--btn-primary-hover) !important; }
 
 .sa-btn-clear {
-  background: white !important;
-  color: #2c3e50 !important;
-  border: 1px solid #bbb !important;
+  background: var(--white) !important;
+  color: var(--grey-900) !important;
+  border: 1px solid var(--grey-200) !important;
   padding: 8px 22px !important;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 0.9rem;
   width: auto !important;
   margin: 0 !important;
+  transition: background var(--transition);
 }
-.sa-btn-clear:hover { background: #f0f0f0 !important; }
+.sa-btn-clear:hover { background: var(--grey-50) !important; }
 
 .sa-btn-submit {
-  background: #2db3b3 !important;
-  color: white !important;
+  background: var(--btn-primary-bg) !important;
+  color: var(--white) !important;
   border: none !important;
   padding: 10px 28px !important;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 0.95rem;
   font-weight: 600;
   width: auto !important;
   margin: 0 !important;
+  transition: background var(--transition);
 }
-.sa-btn-submit:hover { background: #249a9a !important; }
+.sa-btn-submit:hover { background: var(--btn-primary-hover) !important; }
 
 .sa-btn-cancel {
-  background: #e0534a !important;
-  color: white !important;
+  background: var(--btn-danger-bg) !important;
+  color: var(--white) !important;
   border: none !important;
   padding: 10px 28px !important;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 0.95rem;
   width: auto !important;
   margin: 0 !important;
+  transition: background var(--transition);
 }
-.sa-btn-cancel:hover { background: #c0392b !important; }
+.sa-btn-cancel:hover { background: var(--btn-danger-hover) !important; }
 
 /* Table */
 .sa-table-wrap { overflow-x: auto; width: 100%; }
 .sa-table {
   width: 100%;
   border-collapse: collapse;
-  background: white;
+  background: var(--white);
   box-shadow: 0 1px 4px rgba(0,0,0,0.05);
   margin-top: 0;
   min-width: 480px;
 }
 .sa-table th {
-  background: #2c3e50;
-  color: white;
+  background: var(--table-header-bg);
+  color: var(--table-header-text);
   padding: 10px 12px;
   text-align: left;
   font-size: 0.82rem;
   font-weight: bold;
   letter-spacing: 0.04em;
-  border-bottom: 2px solid #1a2634;
+  border-bottom: 2px solid var(--navy-900);
   white-space: nowrap;
 }
 .sa-table td {
   padding: 10px 12px;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--table-border);
   font-size: 0.9rem;
-  color: #333;
+  color: var(--grey-800);
 }
-.sa-table tbody tr:nth-child(even) td { background: #f9f9f9; }
-.sa-table tbody tr:hover td { background: #f0f7f7; }
+.sa-table tbody tr:nth-child(even) td { background: var(--table-row-even-bg); }
+.sa-table tbody tr:hover td { background: var(--table-row-hover-bg); }
 .sa-empty {
   text-align: center !important;
-  color: #888;
+  color: var(--grey-400);
   padding: 32px !important;
   font-style: italic;
 }
@@ -156,25 +161,26 @@
 .sa-action-cell { width: 60px; text-align: center; }
 .sa-action-wrap { position: relative; display: inline-block; }
 .sa-action-btn {
-  background: #f0f2f5 !important;
-  color: #333 !important;
-  border: 1px solid #ccc !important;
-  border-radius: 4px;
+  background: var(--grey-50) !important;
+  color: var(--grey-800) !important;
+  border: 1px solid var(--grey-200) !important;
+  border-radius: var(--radius-sm);
   padding: 4px 10px !important;
   cursor: pointer;
   font-size: 1rem;
   width: auto !important;
   margin: 0 !important;
   line-height: 1.2;
+  transition: background var(--transition);
 }
-.sa-action-btn:hover { background: #e0e3e8 !important; }
+.sa-action-btn:hover { background: var(--grey-100) !important; }
 .sa-action-dropdown {
   position: absolute;
   right: 0;
   top: calc(100% + 2px);
-  background: white;
-  border: 1px solid #ddd;
-  border-radius: 4px;
+  background: var(--white);
+  border: 1px solid var(--grey-100);
+  border-radius: var(--radius-sm);
   box-shadow: 0 3px 8px rgba(0,0,0,0.12);
   z-index: 200;
   min-width: 110px;
@@ -182,12 +188,12 @@
 .sa-action-dropdown a {
   display: block;
   padding: 9px 14px;
-  color: #333;
+  color: var(--grey-800);
   text-decoration: none;
   font-size: 0.9rem;
   white-space: nowrap;
 }
-.sa-action-dropdown a:hover { background: #f5f5f5; }
+.sa-action-dropdown a:hover { background: var(--grey-50); }
 
 /* Status pills */
 .sa-pill {
@@ -199,8 +205,8 @@
   font-weight: 600;
   white-space: nowrap;
 }
-.sa-pill-active { background: #2db3b3; color: white; }
-.sa-pill-inactive { background: #f2f2f2; color: #777; }
+.sa-pill-active   { background: var(--gold-100);  color: var(--gold-600); }
+.sa-pill-inactive { background: var(--grey-100);  color: var(--grey-400); }
 
 /* Form */
 .sa-form-wrap { max-width: 560px; }
@@ -210,15 +216,15 @@
   gap: 5px;
   margin-bottom: 16px;
 }
-.sa-form-label { font-size: 0.85rem; font-weight: bold; color: #444; }
-.sa-required { color: #e0534a; margin-left: 2px; }
+.sa-form-label { font-size: 0.85rem; font-weight: bold; color: var(--grey-800); }
+.sa-required { color: var(--color-danger); margin-left: 2px; }
 .sa-form-input {
   width: 100% !important;
   max-width: none !important;
   margin: 0 !important;
   padding: 8px 10px !important;
-  border: 1px solid #ccc;
-  border-radius: 4px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
   font-size: 0.9rem;
   display: block !important;
   box-sizing: border-box;
@@ -228,8 +234,8 @@
   max-width: none !important;
   margin: 0 !important;
   padding: 8px 10px !important;
-  border: 1px solid #ccc;
-  border-radius: 4px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
   font-size: 0.9rem;
   display: block !important;
   box-sizing: border-box;
@@ -240,7 +246,7 @@
   align-items: center;
   gap: 8px;
   font-size: 0.9rem;
-  color: #444;
+  color: var(--grey-800);
   cursor: pointer;
 }
 .sa-form-cb {
@@ -251,18 +257,19 @@
   padding: 0 !important;
   cursor: pointer;
   flex-shrink: 0;
+  accent-color: var(--navy-700);
 }
 .sa-form-actions {
   display: flex;
   gap: 12px;
   margin-top: 24px;
   padding-top: 18px;
-  border-top: 1px solid #eee;
+  border-top: 1px solid var(--grey-100);
 }
 
 /* Inline error text */
 .sa-field-error {
-  color: #e0534a;
+  color: var(--color-danger);
   font-size: 0.82rem;
   margin-top: 2px;
   display: block;
@@ -271,12 +278,12 @@
 
 /* ==================== ATTENDANCE FILTER BAR ==================== */
 .sa-filter-bar {
-  background: white;
-  border: 1px solid #e0e0e0;
-  border-radius: 6px;
+  background: var(--white);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-md);
   padding: 20px;
   margin-bottom: 24px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+  box-shadow: var(--card-shadow);
 }
 .sa-filter-grid {
   display: grid;
@@ -285,14 +292,14 @@
   margin-bottom: 16px;
 }
 .sa-filter-field { display: flex; flex-direction: column; gap: 4px; }
-.sa-filter-label { font-size: 0.83rem; font-weight: bold; color: #444; }
+.sa-filter-label { font-size: 0.83rem; font-weight: bold; color: var(--grey-800); }
 .sa-filter-select {
   width: 100% !important;
   max-width: none !important;
   margin: 0 !important;
   padding: 7px 9px !important;
-  border: 1px solid #ccc;
-  border-radius: 4px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
   font-size: 0.88rem;
   display: block !important;
   box-sizing: border-box;
@@ -302,8 +309,8 @@
   max-width: none !important;
   margin: 0 !important;
   padding: 7px 9px !important;
-  border: 1px solid #ccc;
-  border-radius: 4px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
   font-size: 0.88rem;
   display: block !important;
   box-sizing: border-box;
@@ -316,8 +323,8 @@
   max-width: none !important;
   margin: 0 !important;
   padding: 6px 8px !important;
-  border: 1px solid #ccc;
-  border-radius: 4px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
   font-size: 0.88rem;
   min-width: 130px;
   box-sizing: border-box;
@@ -327,8 +334,8 @@
   max-width: none !important;
   margin: 0 !important;
   padding: 6px 8px !important;
-  border: 1px solid #ccc;
-  border-radius: 4px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
   font-size: 0.88rem;
   min-width: 140px;
   box-sizing: border-box;
@@ -338,45 +345,46 @@
 .sa-mark-attend-row {
   margin-top: 20px;
   padding-top: 16px;
-  border-top: 1px solid #eee;
+  border-top: 1px solid var(--grey-100);
 }
 .sa-btn-mark-attend {
-  background: #2db3b3 !important;
-  color: white !important;
+  background: var(--btn-primary-bg) !important;
+  color: var(--white) !important;
   border: none !important;
   padding: 10px 32px !important;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 0.95rem;
   font-weight: 600;
   width: auto !important;
   margin: 0 !important;
+  transition: background var(--transition);
 }
-.sa-btn-mark-attend:hover { background: #249a9a !important; }
+.sa-btn-mark-attend:hover { background: var(--btn-primary-hover) !important; }
 
 /* Toast notifications */
 .sa-toast {
   padding: 12px 18px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 0.9rem;
   font-weight: 600;
   margin-top: 14px;
   display: inline-block;
 }
-.sa-toast-success { background: #eafaf1; color: #27ae60; border: 1px solid #a9dfbf; }
-.sa-toast-error   { background: #fdecea; color: #c0392b; border: 1px solid #f1948a; }
+.sa-toast-success { background: #eafaf1; color: var(--color-success); border: 1px solid #a9dfbf; }
+.sa-toast-error   { background: var(--coral-100); color: var(--coral-600); border: 1px solid var(--coral-400); }
 
 /* Loading / empty / error inline states */
-.sa-loading    { color: #666; font-style: italic; padding: 20px 0; }
-.sa-empty-msg  { color: #888; font-style: italic; padding: 20px 0; }
-.sa-error-msg  { color: #c0392b; padding: 10px 0; }
+.sa-loading    { color: var(--grey-600); font-style: italic; padding: 20px 0; }
+.sa-empty-msg  { color: var(--grey-400); font-style: italic; padding: 20px 0; }
+.sa-error-msg  { color: var(--color-danger); padding: 10px 0; }
 
 /* ==================== ACADEMIC YEARS — TERMS TABLE ==================== */
 .sa-terms-section { margin-top: 28px; }
 .sa-terms-title {
   font-size: 1rem;
   font-weight: bold;
-  color: #2c3e50;
+  color: var(--grey-900);
   margin-bottom: 12px;
 }
 .sa-terms-input {
@@ -384,27 +392,28 @@
   max-width: none !important;
   margin: 0 !important;
   padding: 6px 8px !important;
-  border: 1px solid #ccc;
-  border-radius: 4px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
   font-size: 0.88rem;
   min-width: 120px;
   box-sizing: border-box;
 }
 .sa-btn-save-term {
-  background: #2db3b3 !important;
-  color: white !important;
+  background: var(--btn-primary-bg) !important;
+  color: var(--white) !important;
   border: none !important;
   padding: 6px 14px !important;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 0.85rem;
   width: auto !important;
   margin: 0 !important;
+  transition: background var(--transition);
 }
-.sa-btn-save-term:hover { background: #249a9a !important; }
+.sa-btn-save-term:hover { background: var(--btn-primary-hover) !important; }
 .sa-term-save-msg {
   font-size: 0.82rem;
-  color: #27ae60;
+  color: var(--color-success);
   margin-top: 4px;
   font-weight: 600;
 }
@@ -423,17 +432,17 @@
   margin-bottom: 24px;
 }
 .sa-stat-card {
-  background: white;
-  border: 1px solid #e0e0e0;
-  border-radius: 6px;
+  background: var(--white);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-md);
   padding: 20px 24px;
   text-align: center;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+  box-shadow: var(--card-shadow);
 }
 .sa-stat-label {
   font-size: 0.75rem;
   font-weight: bold;
-  color: #666;
+  color: var(--grey-600);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   margin-bottom: 10px;
@@ -441,7 +450,7 @@
 .sa-stat-value {
   font-size: 2.2rem;
   font-weight: 700;
-  color: #2c3e50;
+  color: var(--grey-900);
   line-height: 1;
 }
 
@@ -461,19 +470,19 @@
   margin: 0 !important;
   line-height: 1.4;
 }
-.sa-status-btn-active   { background: #d4edda; color: #27ae60; }
+.sa-status-btn-active   { background: #d4edda; color: var(--color-success); }
 .sa-status-btn-active:hover   { background: #c3e6cb !important; }
-.sa-status-btn-deactive { background: #fde8e8; color: #c0392b; }
-.sa-status-btn-deactive:hover { background: #fbd3d3 !important; }
+.sa-status-btn-deactive { background: var(--coral-100); color: var(--coral-600); }
+.sa-status-btn-deactive:hover { background: var(--coral-200) !important; }
 
 /* ==================== COLLAPSIBLE FILTERS PANEL ==================== */
 .sa-filter-panel {
-  background: white;
-  border: 1px solid #e0e0e0;
-  border-radius: 6px;
+  background: var(--white);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-md);
   padding: 16px 20px;
   margin-bottom: 14px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+  box-shadow: var(--card-shadow);
 }
 .sa-filter-panel-grid {
   display: grid;
@@ -493,8 +502,8 @@
   max-width: none !important;
   margin: 0 !important;
   padding: 8px 10px !important;
-  border: 1px solid #ccc;
-  border-radius: 4px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
   font-size: 0.9rem;
   display: block !important;
   box-sizing: border-box;
@@ -504,59 +513,62 @@
 
 /* ==================== TOOLBAR SEARCH + FILTER BUTTON ==================== */
 .sa-search-input {
-  width: 200px !important;
-  max-width: 200px !important;
+  width: 180px !important;
+  max-width: 180px !important;
   display: inline-block !important;
   padding: 7px 10px !important;
   margin: 0 !important;
   font-size: 0.9rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
   box-sizing: border-box;
 }
 .sa-btn-filter {
-  background: #2c3e50 !important;
-  color: white !important;
+  background: var(--btn-primary-bg) !important;
+  color: var(--white) !important;
   border: none !important;
   padding: 8px 16px !important;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 0.9rem;
   width: auto !important;
   margin: 0 !important;
   white-space: nowrap;
+  transition: background var(--transition);
 }
-.sa-btn-filter:hover { background: #34495e !important; }
+.sa-btn-filter:hover { background: var(--btn-primary-hover) !important; }
 
 /* ==================== EXPORT BUTTONS ==================== */
 .sa-export-row { display: flex; gap: 8px; align-items: center; }
 .sa-btn-export {
-  background: white !important;
-  color: #555 !important;
-  border: 1px solid #bbb !important;
+  background: var(--white) !important;
+  color: var(--grey-600) !important;
+  border: 1px solid var(--grey-200) !important;
   padding: 7px 12px !important;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 0.88rem;
   width: auto !important;
   margin: 0 !important;
   white-space: nowrap;
+  transition: background var(--transition);
 }
-.sa-btn-export:hover { background: #f5f5f5 !important; }
+.sa-btn-export:hover { background: var(--grey-50) !important; }
 
 /* Clear button — dark/navy variant (used in report filter bar) */
 .sa-btn-clear-dark {
-  background: #2c3e50 !important;
-  color: white !important;
+  background: var(--btn-primary-bg) !important;
+  color: var(--white) !important;
   border: none !important;
   padding: 8px 22px !important;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 0.9rem;
   width: auto !important;
   margin: 0 !important;
+  transition: background var(--transition);
 }
-.sa-btn-clear-dark:hover { background: #34495e !important; }
+.sa-btn-clear-dark:hover { background: var(--btn-primary-hover) !important; }
 
 /* Report filter row 3 — student + buttons flex row */
 .sa-rpt-actions-row {
@@ -588,7 +600,7 @@
   align-items: center;
   gap: 8px;
   font-size: 0.9rem;
-  color: #444;
+  color: var(--grey-800);
 }
 .sa-rpt-toolbar-left select {
   width: auto !important;
@@ -609,16 +621,17 @@
   align-items: center;
 }
 .sa-pagination button {
-  background: white !important;
-  color: #333 !important;
-  border: 1px solid #ddd !important;
+  background: var(--white) !important;
+  color: var(--grey-800) !important;
+  border: 1px solid var(--grey-100) !important;
   padding: 6px 12px !important;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 0.9rem;
   width: auto !important;
   margin: 0 !important;
+  transition: background var(--transition);
 }
-.sa-pagination button:hover  { background: #f0f0f0 !important; }
+.sa-pagination button:hover    { background: var(--grey-50) !important; }
 .sa-pagination button:disabled { opacity: 0.5; cursor: default; }
-.sa-pg-active { background: #2c3e50 !important; color: white !important; border-color: #2c3e50 !important; }
+.sa-pg-active { background: var(--navy-700) !important; color: var(--white) !important; border-color: var(--navy-700) !important; }

@@ -17,6 +17,13 @@ function showDashboard() {
   document.body.innerHTML = `
     <div class="container">
       <div class="left-rail" id="left-rail">
+        <div class="rail-logo-container">
+          <img src="assets/images/sois-logo-full.jpeg" alt="SOIS" class="rail-logo-crest"
+               onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+          <div class="rail-logo-fallback" style="display:none">
+            <span class="rail-logo-initials">S</span>
+          </div>
+        </div>
         <button class="rail-item" data-module="student-management" title="Student Management" onclick="handleRailClick('student-management')">STU</button>
         <button class="rail-item" data-module="student-academics" title="Student Academics" onclick="handleRailClick('student-academics')">ACAD</button>
         <button class="rail-item" data-module="transport-management" title="Transport Management" onclick="handleRailClick('transport-management')">TRN</button>
@@ -366,6 +373,141 @@ async function doDashStudentSearch() {
   } catch (_) {
     resultsEl.innerHTML = '<p style="color:#c0392b;font-size:0.88rem;">Search failed. Please try again.</p>';
   }
+}
+
+// ==================== SPLIT-VIEW HELPERS ====================
+
+// Normalise API list responses — may be defined again in module files (same logic)
+function _toArray(raw) { return Array.isArray(raw) ? raw : (raw?.data || raw?.items || raw?.results || []); }
+
+function renderBreadcrumb(parts) {
+  const links = parts.map((p, i) =>
+    i < parts.length - 1
+      ? `<span class="bc-link" style="cursor:pointer" onclick="history.back()">${p}</span><span class="bc-sep"> › </span>`
+      : `<span class="bc-current">${p}</span>`
+  ).join('');
+  return `<nav class="view-breadcrumb">${links}</nav>`;
+}
+
+function renderSplitSkeleton() {
+  const rows = [1,2,3,4,5].map(() => '<div class="split-skeleton-row shimmer"></div>').join('');
+  return `<div class="split-layout"><div class="split-left">${rows}</div><div class="split-right">${rows}</div></div>`;
+}
+
+function buildDetailFields(item, fields) {
+  return fields.map(f => {
+    const raw = item[f.key];
+    const val = f.fmt ? f.fmt(raw, item) : (raw ?? '—');
+    return `
+      <div class="detail-field">
+        <span class="detail-field-label">${f.label}</span>
+        <span class="detail-field-value">${val ?? '—'}</span>
+      </div>`;
+  }).join('');
+}
+
+async function renderSplitView(cfg) {
+  const container = cfg.container;
+  const idKey = cfg.idKey || 'id';
+  let allItems = [];
+  let selectedItem = null;
+  let mode = 'add';
+  let searchTerm = '';
+
+  container.innerHTML = renderSplitSkeleton();
+
+  try {
+    const resp = await apiFetch(cfg.apiUrl);
+    if (!resp || !resp.ok) throw new Error('fetch failed');
+    const data = await resp.json();
+    allItems = _toArray(data);
+  } catch (_) {
+    container.innerHTML = `<p style="color:var(--color-danger);padding:20px">Failed to load data.</p>`;
+    return;
+  }
+
+  function getFiltered() {
+    if (!searchTerm) return allItems;
+    const q = searchTerm.toLowerCase();
+    return allItems.filter(item =>
+      (cfg.searchFields || []).some(f => (item[f] || '').toString().toLowerCase().includes(q))
+    );
+  }
+
+  function renderList() {
+    const listEl = document.getElementById('split-list-items');
+    if (!listEl) return;
+    const filtered = getFiltered();
+    listEl.innerHTML = filtered.map(item => {
+      const isSel = selectedItem && String(selectedItem[idKey]) === String(item[idKey]);
+      return `
+        <div class="split-list-row${isSel ? ' active' : ''}"
+             data-id="${item[idKey]}" onclick="window._splitSelectItem(${JSON.stringify(item[idKey])})">
+          <div class="split-row-body">
+            <div class="split-row-name">${cfg.rowLabel(item)}</div>
+            ${cfg.rowSub ? `<div class="split-row-sub">${cfg.rowSub(item)}</div>` : ''}
+          </div>
+        </div>`;
+    }).join('') || `<p style="padding:24px;text-align:center;color:var(--grey-400);font-style:italic">No records found</p>`;
+  }
+
+  function renderRight() {
+    const rightEl = document.getElementById('split-right-panel');
+    if (!rightEl) return;
+    if (mode === 'add') {
+      rightEl.className = 'split-right-add';
+      rightEl.innerHTML = '';
+      if (typeof cfg.renderAdd === 'function') cfg.renderAdd(rightEl);
+    } else if (mode === 'detail' && selectedItem) {
+      rightEl.className = 'split-right-detail';
+      rightEl.innerHTML = `
+        <div class="detail-banner">
+          <div class="detail-banner-initials">${cfg.rowLabel(selectedItem).charAt(0).toUpperCase()}</div>
+          <div>
+            <div class="detail-banner-name">${cfg.rowLabel(selectedItem)}</div>
+            ${cfg.rowSub ? `<div class="detail-banner-sub">${cfg.rowSub(selectedItem)}</div>` : ''}
+          </div>
+          <button class="detail-action-trigger" onclick="window._splitEditItem()">&#9998; Edit</button>
+        </div>
+        <div class="detail-info-card">
+          <div class="detail-fields-grid">${buildDetailFields(selectedItem, cfg.detailFields || [])}</div>
+          <div style="display:flex;gap:10px;margin-top:20px;padding-top:16px;border-top:1px solid var(--grey-100)">
+            <button class="btn" onclick="window._splitGoAdd()">+ Add New</button>
+          </div>
+        </div>`;
+    } else if (mode === 'edit' && selectedItem) {
+      rightEl.className = 'split-edit-fullscreen';
+      rightEl.innerHTML = '';
+      if (typeof cfg.renderEdit === 'function') cfg.renderEdit(selectedItem, rightEl);
+    }
+  }
+
+  container.innerHTML = `
+    ${renderBreadcrumb(cfg.breadcrumb || [cfg.title])}
+    <div class="split-layout">
+      <div class="split-left">
+        <div class="split-left-search">
+          <input type="text" placeholder="Search…" oninput="window._splitSearch(this.value)">
+        </div>
+        <div class="split-list" id="split-list-items"></div>
+      </div>
+      <div class="split-right">
+        <div id="split-right-panel" class="split-right-add"></div>
+      </div>
+    </div>`;
+
+  window._splitSearch = function(term) { searchTerm = term; renderList(); };
+  window._splitSelectItem = function(itemId) {
+    selectedItem = allItems.find(i => String(i[idKey]) === String(itemId)) || null;
+    mode = 'detail';
+    renderList();
+    renderRight();
+  };
+  window._splitEditItem = function() { mode = 'edit'; renderRight(); };
+  window._splitGoAdd = function() { selectedItem = null; mode = 'add'; renderList(); renderRight(); };
+
+  renderList();
+  renderRight();
 }
 
 // ==================== VIEW LOADER ====================

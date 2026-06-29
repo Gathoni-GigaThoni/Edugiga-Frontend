@@ -2,8 +2,8 @@
 
 /* ── Shell & Tab Bar ── */
 .stu-edit-shell {
-  background: #fff;
-  border-radius: 8px;
+  background: var(--white);
+  border-radius: var(--radius-md);
   min-height: 100vh;
   display: flex;
   flex-direction: column;
@@ -13,7 +13,7 @@
   display: flex;
   gap: 4px;
   padding: 12px 28px 0;
-  border-bottom: 2px solid #e0e0e0;
+  border-bottom: 2px solid var(--grey-100);
   flex-wrap: wrap;
 }
 
@@ -23,17 +23,17 @@
   background: transparent;
   cursor: pointer;
   font-size: 0.88rem;
-  color: #555;
+  color: var(--grey-600);
   border-bottom: 3px solid transparent;
   margin-bottom: -2px;
-  border-radius: 4px 4px 0 0;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   white-space: nowrap;
-  transition: color 0.15s;
+  transition: color var(--transition);
 }
-.stu-tab-btn:hover { color: #00b5b8; }
+.stu-tab-btn:hover { color: var(--navy-700); }
 .stu-tab-btn--active {
-  color: #00b5b8;
-  border-bottom-color: #00b5b8;
+  color: var(--gold-600);
+  border-bottom-color: var(--gold-500);
   font-weight: 600;
 }
 
@@ -45,10 +45,10 @@
 
 .stu-edit-footer {
   padding: 16px 28px;
-  border-top: 1px solid #eee;
+  border-top: 1px solid var(--grey-100);
   display: flex;
   gap: 12px;
-  background: #fafafa;
+  background: var(--grey-50);
 }
 
 /* ── Form Grid ── */
@@ -67,7 +67,7 @@
 .stu-form-group label {
   font-size: 0.85rem;
   font-weight: 500;
-  color: #333;
+  color: var(--grey-800);
 }
 
 .stu-checkbox-row {
@@ -83,17 +83,17 @@
   max-width: none !important;
   margin: 0;
   cursor: pointer;
-  accent-color: #00b5b8;
+  accent-color: var(--navy-700);
 }
 
 .stu-form-group input.error,
 .stu-form-group select.error,
 .stu-form-group textarea.error {
-  border-color: #e74c3c !important;
+  border-color: var(--color-danger) !important;
 }
 
 .stu-field-error {
-  color: #e74c3c;
+  color: var(--color-danger);
   font-size: 0.78rem;
   margin-top: 2px;
 }
@@ -103,8 +103,8 @@
   width: 100%;
   min-height: 80px;
   padding: 6px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
   font-size: 0.88rem;
 }
 
@@ -117,25 +117,26 @@
 }
 
 .stu-view-card {
-  background: #fff;
-  border-radius: 8px;
+  background: var(--card-bg);
+  border-radius: var(--radius-md);
   padding: 24px 20px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+  box-shadow: var(--card-shadow);
   text-align: center;
+  border: 1px solid var(--card-border);
 }
 
 .stu-view-avatar {
   width: 80px;
   height: 80px;
   border-radius: 50%;
-  background: #00b5b8;
+  background: var(--color-primary);
   margin: 0 auto 12px;
   overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 2.2rem;
-  color: #fff;
+  color: var(--white);
 }
 
 .stu-view-avatar img {
@@ -147,13 +148,13 @@
 .stu-view-name {
   font-size: 1.05rem;
   font-weight: 700;
-  color: #0d3349;
+  color: var(--navy-900);
   margin-bottom: 2px;
 }
 
 .stu-view-id {
   font-size: 0.82rem;
-  color: #888;
+  color: var(--grey-400);
   margin-bottom: 14px;
 }
 
@@ -166,17 +167,17 @@
   display: flex;
   justify-content: space-between;
   padding: 5px 0;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--grey-50);
   gap: 8px;
 }
 
 .stu-view-card-label {
-  color: #888;
+  color: var(--grey-400);
   flex-shrink: 0;
 }
 
 .stu-view-card-value {
-  color: #2c3e50;
+  color: var(--grey-900);
   font-weight: 500;
   text-align: right;
 }
@@ -184,7 +185,7 @@
 .stu-view-fee-row {
   margin-top: 12px;
   padding: 10px 0 0;
-  border-top: 1px solid #eee;
+  border-top: 1px solid var(--grey-100);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -198,14 +199,15 @@
   font-size: 0.78rem;
   font-weight: 600;
 }
-.stu-status-badge--active   { background: #e8f8f1; color: #27ae60; }
-.stu-status-badge--inactive { background: #fdecea; color: #e74c3c; }
+.stu-status-badge--active   { background: var(--gold-100); color: var(--gold-600); }
+.stu-status-badge--inactive { background: var(--coral-100); color: var(--coral-600); }
 
 .stu-view-panel {
-  background: #fff;
-  border-radius: 8px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+  background: var(--card-bg);
+  border-radius: var(--radius-md);
+  box-shadow: var(--card-shadow);
   overflow: hidden;
+  border: 1px solid var(--card-border);
 }
 
 /* ── Detail grid ── */
@@ -217,7 +219,7 @@
 
 .stu-detail-row {
   padding: 10px 14px;
-  border-bottom: 1px solid #f4f4f4;
+  border-bottom: 1px solid var(--grey-50);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -225,14 +227,14 @@
 
 .stu-detail-label {
   font-size: 0.78rem;
-  color: #999;
+  color: var(--grey-400);
   text-transform: uppercase;
   letter-spacing: 0.02em;
 }
 
 .stu-detail-value {
   font-size: 0.9rem;
-  color: #2c3e50;
+  color: var(--grey-900);
   font-weight: 500;
 }
 
@@ -254,14 +256,14 @@
 }
 
 .stu-card {
-  background: #fff;
-  border-radius: 8px;
+  background: var(--card-bg);
+  border-radius: var(--radius-md);
   padding: 20px 16px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  box-shadow: var(--card-shadow);
   cursor: pointer;
   transition: box-shadow 0.15s, transform 0.1s;
   text-align: center;
-  border: 1px solid #f0f0f0;
+  border: 1px solid var(--card-border);
 }
 .stu-card:hover {
   box-shadow: 0 4px 12px rgba(0,0,0,0.1);
@@ -272,8 +274,8 @@
   width: 56px;
   height: 56px;
   border-radius: 50%;
-  background: #00b5b8;
-  color: #fff;
+  background: var(--color-primary);
+  color: var(--white);
   font-size: 1.6rem;
   display: flex;
   align-items: center;
@@ -291,19 +293,19 @@
 .stu-card-name {
   font-weight: 700;
   font-size: 0.95rem;
-  color: #00b5b8;
+  color: var(--navy-700);
   margin-bottom: 2px;
 }
 
 .stu-card-sub {
   font-size: 0.8rem;
-  color: #888;
+  color: var(--grey-400);
   margin-bottom: 6px;
 }
 
 .stu-card-info {
   font-size: 0.81rem;
-  color: #555;
+  color: var(--grey-600);
   padding: 2px 0;
   text-align: left;
 }
@@ -312,7 +314,7 @@
   display: inline-block;
   margin-top: 8px;
   font-size: 0.78rem;
-  color: #00b5b8;
+  color: var(--color-primary);
   text-decoration: underline;
 }
 
@@ -326,7 +328,7 @@
 
 .stu-sibling-note {
   font-size: 0.8rem;
-  color: #888;
+  color: var(--grey-400);
   margin-top: 4px;
   font-style: italic;
 }
@@ -335,27 +337,27 @@
   font-size: 0.82rem;
   margin-top: 8px;
   padding: 8px 12px;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   line-height: 1.5;
-  background: #e3f7f7;
-  border: 1px solid #80deea;
-  color: #00695c;
+  background: var(--navy-50);
+  border: 1px solid var(--navy-100);
+  color: var(--navy-700);
 }
 
 /* ── Transport selection cascade ── */
 .stu-transport-summary {
   font-size: 0.83rem;
-  color: #2c3e50;
+  color: var(--grey-800);
   margin-top: 6px;
   padding: 8px 10px;
-  background: #f9fafb;
-  border: 1px solid #e0e0e0;
-  border-radius: 4px;
+  background: var(--grey-50);
+  border: 1px solid var(--grey-100);
+  border-radius: var(--radius-sm);
 }
 
 .stu-transport-summary a {
   margin-left: 8px;
-  color: #2db3b3;
+  color: var(--navy-700);
   font-weight: 600;
   text-decoration: none;
 }
@@ -373,17 +375,17 @@
 .stu-transport-modal-subtitle {
   margin: -10px 0 14px;
   font-size: 0.85rem;
-  color: #888;
+  color: var(--grey-400);
 }
 
 .stu-transport-modal-msg {
-  color: #555;
+  color: var(--grey-600);
   font-size: 0.9rem;
 }
 
 /* ── Skeleton loading ── */
 .stu-skeleton-row td {
-  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background: linear-gradient(90deg, var(--grey-100) 25%, var(--grey-50) 50%, var(--grey-100) 75%);
   background-size: 200% 100%;
   animation: stu-shimmer 1.4s infinite;
   color: transparent;
@@ -396,7 +398,7 @@
 
 /* ── Cohort Session Planner — class selection table ── */
 .csp-class-table-wrap {
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--grey-100);
   border-radius: 6px;
   overflow: hidden;
   margin-top: 4px;
@@ -407,38 +409,38 @@
 }
 
 .csp-row-checked td {
-  background: #f0fbfb;
+  background: var(--navy-50);
 }
 
 .csp-cls-cb {
   width: auto !important;
   max-width: none !important;
   cursor: pointer;
-  accent-color: #00b5b8;
+  accent-color: var(--navy-700);
 }
 
 #csp-select-all {
   width: auto !important;
   max-width: none !important;
   cursor: pointer;
-  accent-color: #00b5b8;
+  accent-color: var(--navy-700);
 }
 
-/* ── Close Records per Class ─────────────────────────────────────── */
+/* ── Close Records per Class ── */
 #cr-select-all,
 .cr-stu-cb {
   width: auto !important;
   max-width: none !important;
   cursor: pointer;
-  accent-color: #00b5b8;
+  accent-color: var(--navy-700);
 }
 
 .cr-info-banner {
-  background: #e0f7fa;
-  border: 1px solid #00b5b8;
+  background: var(--navy-50);
+  border: 1px solid var(--navy-100);
   border-radius: 6px;
   padding: 12px 16px;
-  color: #006064;
+  color: var(--navy-700);
   font-size: 0.9rem;
 }
 
@@ -456,17 +458,17 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: #fff8e1;
-  border: 1px solid #ffe082;
+  background: var(--gold-100);
+  border: 1px solid var(--gold-200);
   border-radius: 6px;
   padding: 10px 16px;
   margin-bottom: 16px;
   font-size: 13px;
-  color: #5d4037;
+  color: var(--gold-600);
 }
 .draft-discard-btn {
   border: none; background: none;
-  color: #e65100; cursor: pointer;
+  color: var(--coral-500); cursor: pointer;
   font-weight: 600; font-size: 13px;
   padding: 0; margin-left: 16px;
   text-decoration: underline;
