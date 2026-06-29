@@ -96,7 +96,7 @@ async function loadStudentsListView(container) {
     apiUrl: `${API_BASE}/students/`,
     searchFields: ['first_name', 'last_name', 'student_id'],
     rowLabel: s => `${s.first_name || ''} ${s.last_name || ''}`.trim() || 'Unnamed',
-    rowSub:   s => s.student_id || '',
+    rowSub:   s => [s.student_id, s.school_class_name || s.level_of_academics_name].filter(Boolean).join(' · '),
     idKey: 'id',
     detailFields: [
       { label: 'Student ID',         key: 'student_id' },
@@ -110,11 +110,13 @@ async function loadStudentsListView(container) {
     renderAdd: (el) => {
       _currentEditStudentId = null;
       _stuEditActiveTab = 'personal';
+      clearStudentDraft();
       loadStudentFormView(el);
     },
     renderEdit: (item, el) => {
       _currentEditStudentId = item.id;
       _stuEditActiveTab = 'personal';
+      clearStudentDraft();
       loadStudentFormView(el);
     },
   });

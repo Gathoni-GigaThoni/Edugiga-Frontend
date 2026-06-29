@@ -657,28 +657,31 @@ body.flyout-open #main-content { margin-left: 348px; }
   display: flex;
   align-items: center;
   justify-content: center;
-  border-bottom: 1px solid rgba(201,162,39,0.3);
-  background: var(--navy-950);
-  flex-shrink: 0;
+  background: var(--navy-900);
+  border-bottom: 2px solid var(--gold-400);
   z-index: 10;
 }
 .rail-logo-crest {
-  width: 38px;
-  height: 38px;
+  width: 50px;
+  height: 50px;
   object-fit: contain;
-  filter: brightness(1.8) saturate(1.2);
+  border-radius: 7px;
+  border: 1.5px solid var(--gold-400);
+  display: block;
+  background: var(--white);
 }
 .rail-logo-fallback {
   display: none;
-  width: 38px; height: 38px;
-  background: var(--gold-500);
-  border-radius: 6px;
+  width: 50px; height: 50px;
+  background: var(--navy-700);
+  border-radius: 7px;
+  border: 1.5px solid var(--gold-400);
   align-items: center;
   justify-content: center;
 }
 .rail-logo-initials {
-  color: var(--navy-900);
-  font-size: 18px;
+  color: var(--gold-400);
+  font-size: 22px;
   font-weight: 800;
 }
 
@@ -705,20 +708,23 @@ body.flyout-open #main-content { margin-left: 348px; }
 /* ── Quarter-three-quarter container ── */
 .split-layout {
   display: flex;
-  gap: 14px;
+  gap: 0;
   height: calc(100vh - 110px);
   min-height: 0;
 }
 
-/* ── Left panel (list, 25%) ── */
+/* ── Left panel (list, 25%) — dark navy, gold accent on left + top ── */
 .split-left {
   width: 25%;
   min-width: 240px;
   max-width: 320px;
   flex-shrink: 0;
-  background: var(--card-bg);
-  border: 1px solid var(--card-border);
-  border-radius: var(--card-radius);
+  background: var(--navy-900);
+  border-top:    2px solid var(--gold-400);
+  border-left:   2px solid var(--gold-400);
+  border-bottom: 1px solid var(--navy-800);
+  border-right:  none;
+  border-radius: var(--card-radius) 0 0 var(--card-radius);
   box-shadow: var(--card-shadow);
   display: flex;
   flex-direction: column;
@@ -729,52 +735,55 @@ body.flyout-open #main-content { margin-left: 348px; }
   align-items: center;
   justify-content: space-between;
   padding: 14px 16px 10px;
-  border-bottom: 1px solid var(--card-border);
+  border-bottom: 1px solid var(--navy-800);
   flex-shrink: 0;
 }
 .split-left-title {
   font-size: 15px; font-weight: 700;
-  color: var(--grey-900);
+  color: var(--white);
 }
 .split-left-count {
   font-size: 11px;
-  background: var(--navy-100);
-  color: var(--navy-700);
+  background: var(--navy-800);
+  color: var(--gold-400);
   padding: 2px 8px;
   border-radius: 20px;
   font-weight: 600;
+  border: 1px solid var(--gold-400);
 }
 .split-left-menu-btn {
   background: none; border: none;
-  color: var(--grey-400); font-size: 17px;
+  color: rgba(255,255,255,0.45); font-size: 17px;
   cursor: pointer; padding: 2px 6px;
   border-radius: var(--radius-sm);
   letter-spacing: 1px;
 }
 .split-left-menu-btn:hover {
-  background: var(--grey-100); color: var(--grey-800);
+  background: var(--navy-800); color: var(--white);
 }
 .split-left-search {
   padding: 10px 12px;
-  border-bottom: 1px solid var(--card-border);
+  border-bottom: 1px solid var(--navy-800);
   flex-shrink: 0;
 }
 .split-left-search input {
   width: 100%;
   padding: 7px 10px 7px 30px;
   font-size: 13px;
-  border: 1px solid var(--input-border);
+  border: 1px solid var(--navy-700);
   border-radius: var(--radius-sm);
   max-width: none;
-  background: var(--grey-50)
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='%239AA3B2' stroke-width='2.5'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.3-4.3'/%3E%3C/svg%3E")
+  background: var(--navy-800)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='%234A6FA5' stroke-width='2.5'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.3-4.3'/%3E%3C/svg%3E")
     no-repeat 9px center;
   background-size: 13px;
+  color: var(--white);
   box-sizing: border-box;
 }
+.split-left-search input::placeholder { color: rgba(255,255,255,0.35); }
 .split-left-search input:focus {
-  border-color: var(--input-focus-border);
-  box-shadow: 0 0 0 3px var(--input-focus-shadow);
+  border-color: var(--gold-400);
+  box-shadow: 0 0 0 3px rgba(201,162,39,0.18);
   outline: none;
 }
 .split-list {
@@ -784,51 +793,56 @@ body.flyout-open #main-content { margin-left: 348px; }
 }
 .split-list::-webkit-scrollbar { width: 4px; }
 .split-list::-webkit-scrollbar-thumb {
-  background: var(--grey-200); border-radius: 2px;
+  background: var(--navy-700); border-radius: 2px;
 }
 
-/* List rows */
+/* List rows — dark navy panel */
 .split-list-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 9px 14px;
+  padding: 10px 14px;
   cursor: pointer;
-  border-bottom: 1px solid var(--grey-50);
-  transition: background var(--transition);
+  border-bottom: 1px solid var(--navy-800);
+  border-left: 3px solid transparent;
+  transition: background var(--transition), border-left-color var(--transition);
 }
-.split-list-row:hover { background: var(--navy-50); }
+.split-list-row:hover {
+  background: var(--navy-800);
+  border-left-color: rgba(201,162,39,0.4);
+}
 .split-list-row.active {
-  background: var(--table-row-active-bg);
-  color: var(--table-row-active-text);
+  background: var(--navy-700);
+  border-left-color: var(--gold-400);
 }
 .split-list-row.active .split-row-sub,
 .split-list-row.active .split-row-meta {
-  color: rgba(255,255,255,0.70);
+  color: rgba(255,255,255,0.65);
 }
 .split-row-avatar {
   width: 34px; height: 34px;
   border-radius: 50%; object-fit: cover;
-  flex-shrink: 0; background: var(--navy-100);
+  flex-shrink: 0; background: var(--navy-700);
 }
 .split-row-initials {
   width: 34px; height: 34px; border-radius: 50%;
-  background: var(--navy-700); color: var(--white);
-  font-size: 13px; font-weight: 700;
+  background: var(--navy-700); color: var(--gold-400);
+  font-size: 13px; font-weight: 700; border: 1px solid var(--navy-600);
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0;
 }
 .split-row-body { flex: 1; min-width: 0; }
 .split-row-name {
-  font-size: 13px; font-weight: 600;
+  font-size: 13px; font-weight: 600; color: var(--white);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .split-row-sub {
-  font-size: 11px; color: var(--grey-600);
+  font-size: 11px; color: rgba(255,255,255,0.50);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  margin-top: 2px;
 }
 .split-row-meta {
-  font-size: 11px; color: var(--grey-600);
+  font-size: 11px; color: rgba(255,255,255,0.50);
   white-space: nowrap; flex-shrink: 0;
 }
 
@@ -842,8 +856,11 @@ body.flyout-open #main-content { margin-left: 348px; }
 /* State A: Add form */
 .split-right-add {
   background: var(--card-bg);
-  border: 1px solid var(--card-border);
-  border-radius: var(--card-radius);
+  border-top:    2px solid var(--gold-400);
+  border-right:  2px solid var(--gold-400);
+  border-bottom: 1px solid var(--card-border);
+  border-left:   1px solid var(--card-border);
+  border-radius: 0 var(--card-radius) var(--card-radius) 0;
   box-shadow: var(--card-shadow);
   flex: 1; overflow-y: auto;
   padding: 22px 26px;
@@ -865,6 +882,12 @@ body.flyout-open #main-content { margin-left: 348px; }
 .split-right-detail {
   flex: 1; overflow-y: auto;
   display: flex; flex-direction: column; gap: 12px;
+  border-top:    2px solid var(--gold-400);
+  border-right:  2px solid var(--gold-400);
+  border-bottom: 1px solid transparent;
+  border-left:   1px solid transparent;
+  border-radius: 0 var(--card-radius) var(--card-radius) 0;
+  padding: 0 2px 2px 0;
 }
 .detail-banner {
   background: var(--navy-700);
@@ -963,8 +986,11 @@ body.flyout-open #main-content { margin-left: 348px; }
 /* State C: Full-window edit */
 .split-edit-fullscreen {
   background: var(--card-bg);
-  border: 1px solid var(--card-border);
-  border-radius: var(--card-radius);
+  border-top:    2px solid var(--gold-400);
+  border-right:  2px solid var(--gold-400);
+  border-bottom: 1px solid var(--card-border);
+  border-left:   1px solid var(--card-border);
+  border-radius: 0 var(--card-radius) var(--card-radius) 0;
   box-shadow: var(--card-shadow);
   flex: 1; overflow-y: auto; padding: 26px 30px;
 }
