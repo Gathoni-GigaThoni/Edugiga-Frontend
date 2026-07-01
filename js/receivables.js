@@ -345,6 +345,7 @@ async function openFeeScheduleModal(editId) {
       <div class="fin-form-actions">
         <button class="fin-btn-teal" onclick="submitFeeScheduleForm(${s?s.id:'null'})">${s?'Update':'Submit'}</button>
         <button class="fin-btn-cancel" onclick="_rcvCloseModal()">Cancel</button>
+        ${s ? `<button class="btn-danger" style="margin-left:auto" onclick="deleteFeeSchedule(${s.id})">&#128465; Delete</button>` : ''}
       </div>
     </div>`;
   document.body.appendChild(overlay);
@@ -444,6 +445,7 @@ async function deleteFeeSchedule(id) {
   if (res && (res.ok || res.status === 204)) {
     showToast('Schedule deleted.', 'success');
     rcvFeeSchedulesData = rcvFeeSchedulesData.filter(s=>String(s.id)!==String(id));
+    _rcvCloseModal();
     _rcvRenderFsTable();
   } else if (res) {
     showToast('Error: ' + await parseApiError(res), 'error');

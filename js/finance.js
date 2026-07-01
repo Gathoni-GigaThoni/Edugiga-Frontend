@@ -1612,7 +1612,7 @@ async function fetchDiscountSettings() {
 // student) rather than a paginated table.
 
 let _sgFoundGroup = null;
-let _sgNewPicks = [null, null, null]; // up to 3 {id, student_id, name}
+let _sgNewPicks = [null, null, null]; // up to 3 slots, each {id, sibling_group_id} or null
 
 async function loadSiblingGroupsView(container) {
   _sgFoundGroup = null;
@@ -1778,15 +1778,15 @@ async function sgPickSearch(slot, val) {
   const res = await apiFetch(`${API_BASE}/students/?search=${encodeURIComponent(val)}`);
   const list = (res && res.ok) ? await res.json() : [];
   dd.innerHTML = list.length ? list.slice(0, 10).map(s =>
-    `<a href="#" onclick="sgPickSelect(${slot},${s.id},'${_finEsc(s.student_id||'')} — ${_finEsc(`${s.first_name||''} ${s.last_name||''}`.trim())}');return false;">
-       ${_finEsc(s.student_id||'')} — ${_finEsc(`${s.first_name||''} ${s.last_name||''}`.trim())}
+    `<a href="#" onclick="sgPickSelect(${slot},${s.id},'${_finEsc(s.student_id||'')} — ${_finEsc(`${s.first_name||''} ${s.last_name||''}`.trim())}',${s.sibling_group_id ?? 'null'});return false;">
+       ${_finEsc(s.student_id||'')} — ${_finEsc(`${s.first_name||''} ${s.last_name||''}`.trim())}${s.sibling_group_id ? ' <span style="color:#888;font-size:0.8em;">(already in a sibling group)</span>' : ''}
      </a>`
   ).join('') : '<div style="padding:10px 14px;color:#888;font-size:0.88rem;">No results found</div>';
   dd.style.display = 'block';
 }
 
-function sgPickSelect(slot, studentId, label) {
-  _sgNewPicks[slot] = studentId;
+function sgPickSelect(slot, studentId, label, siblingGroupId) {
+  _sgNewPicks[slot] = { id: studentId, sibling_group_id: siblingGroupId || null };
   const inp = document.getElementById(`sg-add-pick-${slot}`);
   if (inp) inp.value = label;
   const dd = document.getElementById(`sg-add-pick-${slot}-dd`);
@@ -1794,12 +1794,29 @@ function sgPickSelect(slot, studentId, label) {
 }
 
 async function submitSiblingGroupCreate() {
-  const studentIds = _sgNewPicks.filter(id => id != null);
-  if (studentIds.length < 1) { showToast('Select at least one student.', 'error'); return; }
-  if (studentIds.length > 3) { showToast('A sibling group can have at most 3 students.', 'error'); return; }
+  const picks = _sgNewPicks.filter(p => p != null);
+  if (picks.length < 1) { showToast('Select at least one student.', 'error'); return; }
+  if (picks.length > 3) { showToast('A sibling group can have at most 3 students.', 'error'); return; }
+
+  // A student can only belong to one sibling group on the backend — POSTing a
+  // brand-new group that includes someone already grouped 409s. If any pick is
+  // already in a group, route everyone into that existing group via
+  // add-student instead of creating a duplicate one.
+  const targetGroupId = picks.find(p => p.sibling_group_id)?.sibling_group_id;
+
+  if (targetGroupId) {
+    for (const p of picks) {
+      if (String(p.sibling_group_id) === String(targetGroupId)) continue;
+      const res = await apiFetch(`${API_BASE}/receivables/sibling-groups/${targetGroupId}/add-student/${p.id}`, { method: 'POST' });
+      if (!(res && res.ok)) { showToast('Error: ' + (res ? await parseApiError(res) : 'unknown error'), 'error'); return; }
+    }
+    showToast('Student(s) added to the existing sibling group.', 'success');
+    loadView('finance-sibling-groups');
+    return;
+  }
 
   const name = document.getElementById('sg-add-name')?.value.trim();
-  const payload = { student_ids: studentIds };
+  const payload = { student_ids: picks.map(p => p.id) };
   if (name) payload.name = name;
 
   const res = await apiFetch(`${API_BASE}/receivables/sibling-groups/`, {

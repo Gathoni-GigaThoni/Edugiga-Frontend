@@ -987,16 +987,16 @@ async function stuSibPickSearch(val) {
   const filtered = list.filter(s => !taken.has(String(s.id)));
   dd.innerHTML = filtered.length ? filtered.slice(0, 10).map(s => {
     const name = `${s.first_name||''} ${s.last_name||''}`.trim();
-    return `<a href="#" onclick="stuSibPickSelect(${s.id},'${_finEsc(s.student_id||'')}','${_finEsc(name)}','${_finEsc(s.date_of_birth||'')}');return false;">
-       ${_finEsc(s.student_id||'')} — ${_finEsc(name)}
+    return `<a href="#" onclick="stuSibPickSelect(${s.id},'${_finEsc(s.student_id||'')}','${_finEsc(name)}','${_finEsc(s.date_of_birth||'')}',${s.sibling_group_id ?? 'null'});return false;">
+       ${_finEsc(s.student_id||'')} — ${_finEsc(name)}${s.sibling_group_id ? ' <span style="color:#888;font-size:0.8em;">(already in a sibling group)</span>' : ''}
      </a>`;
   }).join('') : '<div style="padding:10px 14px;color:#888;font-size:0.88rem;">No results found</div>';
   dd.style.display = 'block';
 }
 
-function stuSibPickSelect(id, studentId, name, dateOfBirth) {
+function stuSibPickSelect(id, studentId, name, dateOfBirth, siblingGroupId) {
   if (_stuSiblingTotalCount() >= 2) { showToast('A sibling group can have at most 3 students.', 'error'); return; }
-  window._stuSiblingNewPicks.push({ id, student_id: studentId, name, date_of_birth: dateOfBirth || null });
+  window._stuSiblingNewPicks.push({ id, student_id: studentId, name, date_of_birth: dateOfBirth || null, sibling_group_id: siblingGroupId || null });
   const input = document.getElementById('se-sibling-search');
   if (input) input.value = '';
   const dd = document.getElementById('se-sibling-search-dd');
@@ -1819,11 +1819,22 @@ async function _stuSyncSiblingGroup(studentId, d) {
   const newPicks = window._stuSiblingNewPicks || [];
   if (!newPicks.length) return;
 
-  if (d.sibling_group_id) {
-    for (const p of newPicks) {
-      const res = await apiFetch(`${API_BASE}/receivables/sibling-groups/${d.sibling_group_id}/add-student/${p.id}`, { method: 'POST' });
+  // A student can only belong to one sibling group on the backend — POSTing a
+  // brand-new group that includes someone already grouped 409s. So if the
+  // current student OR any pick already has a group, everyone funnels into
+  // that one existing group via add-student instead of creating a new one.
+  const targetGroupId = d.sibling_group_id || newPicks.find(p => p.sibling_group_id)?.sibling_group_id;
+
+  if (targetGroupId) {
+    const toAdd = [
+      ...(String(d.sibling_group_id) === String(targetGroupId) ? [] : [{ id: studentId, name: d.first_name || 'Student' }]),
+      ...newPicks.filter(p => String(p.sibling_group_id) !== String(targetGroupId)),
+    ];
+    for (const p of toAdd) {
+      const res = await apiFetch(`${API_BASE}/receivables/sibling-groups/${targetGroupId}/add-student/${p.id}`, { method: 'POST' });
       if (!(res && res.ok)) showToast(`Saved, but adding ${p.name} to the sibling group failed: ` + (res ? await parseApiError(res) : 'unknown error'), 'error');
     }
+    d.sibling_group_id = targetGroupId;
   } else {
     const studentIds = [studentId, ...newPicks.map(p => p.id)].slice(0, 3);
     const res = await apiFetch(`${API_BASE}/receivables/sibling-groups/`, {
