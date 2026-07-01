@@ -4,10 +4,10 @@ body.login-page {
   background: linear-gradient(
     to bottom,
     #FFFFFF 0%,
-    #FFFFFF 35%,
-    #EBF3FC 68%,
-    #D4E8F7 85%,
-    #C2DCEF 100%
+    #FFFFFF 15%,
+    #D9EAFB 45%,
+    #B7D8F5 72%,
+    #93C1EE 100%
   );
   min-height: 100vh;
   margin: 0;

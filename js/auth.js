@@ -89,7 +89,7 @@ function _loginLogoMarkup() {
   return `
     <div class="login-logo-wrap">
       <img
-        src="assets/images/sois-logo-full.jpeg"
+        src="assets/images/sois-logo-horizontal.jpeg"
         alt="Seven Oaks International School"
         class="login-logo"
         onerror="this.style.display='none';
