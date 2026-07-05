@@ -51,11 +51,12 @@ async function loadAttendanceView(container) {
           </div>
 
           <div class="sa-filter-field">
-            <label class="sa-filter-label">Class</label>
+            <label class="sa-filter-label">Class <span class="sa-required">*</span></label>
             <select id="att-class" class="sa-filter-select">
               <option value="">-- Select Class --</option>
               ${_attClassesData.map(c => `<option value="${c.id}">${c.name}</option>`).join('')}
             </select>
+            <span class="sa-field-error" id="att-class-err"></span>
           </div>
 
           <div class="sa-filter-field">
@@ -70,9 +71,9 @@ async function loadAttendanceView(container) {
           </div>
 
           <div class="sa-filter-field">
-            <label class="sa-filter-label">Stage <span class="sa-required">*</span></label>
+            <label class="sa-filter-label">Level <span class="sa-required">*</span></label>
             <select id="att-stage" class="sa-filter-select">
-              <option value="">-- Select Stage --</option>
+              <option value="">-- Select Level --</option>
               ${_attLevelsData.map(l => `<option value="${l.id}">${l.name}</option>`).join('')}
             </select>
             <span class="sa-field-error" id="att-stage-err"></span>
@@ -102,8 +103,13 @@ async function loadAttendanceView(container) {
         <div class="sa-filter-actions">
           <button class="sa-btn-load" onclick="attLoadClass()">Load Class</button>
           <button class="sa-btn-clear" onclick="attClearFilters()">Clear</button>
+          <button class="sa-btn-export" onclick="_attUploadPickFile()" title="Upload attendance a class recorded in a CSV/Excel sheet, for one day or many">&#128228; Upload Attendance</button>
+          <button class="sa-btn-export" onclick="_attDownloadUploadTemplate()" title="Download the expected CSV template">&#128196; Template</button>
+          <input type="file" id="att-upload-file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="_attUploadAttendanceFile(this)">
         </div>
       </div>
+
+      <div id="att-upload-result"></div>
 
       <!-- Student Table — hidden until Load Class is clicked -->
       <div id="att-table-section" style="display:none;">
@@ -122,6 +128,7 @@ function _attValidateFilters() {
   let valid = true;
   const required = [
     { id: 'att-term',     errId: 'att-term-err'     },
+    { id: 'att-class',    errId: 'att-class-err'    },
     { id: 'att-schedule', errId: 'att-schedule-err' },
     { id: 'att-stage',    errId: 'att-stage-err'    },
   ];
@@ -241,7 +248,7 @@ function attClearFilters() {
   const dateEl = document.getElementById('att-date');
   if (dateEl) dateEl.value = new Date().toISOString().split('T')[0];
 
-  ['att-term-err','att-schedule-err','att-stage-err'].forEach(id => {
+  ['att-term-err','att-class-err','att-schedule-err','att-stage-err'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.textContent = '';
   });
@@ -257,7 +264,7 @@ async function attMarkAttendance() {
   if (!_attLoaded || _attStudents.length === 0) return;
 
   let valid   = true;
-  const entries = [];
+  const records = [];
 
   _attStudents.forEach(s => {
     const statusEl = document.getElementById(`att-status-${s.student_id}`);
@@ -271,34 +278,41 @@ async function attMarkAttendance() {
       if (errEl) errEl.textContent = '';
       // "Half Day" is a UI label — map to "Late" for the API (closest equivalent)
       const apiStatus = statusEl.value === 'Half Day' ? 'Late' : statusEl.value;
-      entries.push({
-        student_id: s.student_id,
-        status: apiStatus,
-        notes: reasonEl ? reasonEl.value : ''
-      });
+      const reason = reasonEl ? reasonEl.value : '';
+      records.push({ student_id: s.student_id, status: apiStatus, reason, notes: reason });
     }
   });
 
   if (!valid) return;
 
   const date   = (document.getElementById('att-date').value || new Date().toISOString().split('T')[0]);
+  const term   = document.getElementById('att-term')?.value;
+  const cls    = document.getElementById('att-class')?.value;
+  const stage  = document.getElementById('att-stage')?.value;
+  const stream = document.getElementById('att-stream')?.value;
   const msgEl  = document.getElementById('att-status-msg');
 
+  // POST /attendance/bulk expects a BulkAttendanceRequest body (term_id,
+  // class_id, date, records[]) — not a bare array with class_date on the
+  // query string, which the backend rejects with a 422.
+  const payload = { term_id: parseInt(term, 10), class_id: parseInt(cls, 10), date, records };
+  if (stage)  payload.attendance_schedule_id = parseInt(stage, 10);
+  if (stream) payload.stream = stream;
+
   try {
-    const res = await fetch(`${API_BASE}/attendance/bulk?class_date=${date}`, {
+    const res = await apiFetch(`${API_BASE}/attendance/bulk`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(entries)
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
     });
 
-    if (res.ok) {
+    if (res && res.ok) {
       if (msgEl) {
         msgEl.innerHTML = '<div class="sa-toast sa-toast-success">Attendance saved successfully!</div>';
         setTimeout(() => { if (msgEl) msgEl.innerHTML = ''; }, 4000);
       }
     } else {
-      const err = await res.json();
-      if (msgEl) msgEl.innerHTML = `<div class="sa-toast sa-toast-error">${await parseApiError(res) || 'Error saving attendance.'}</div>`;
+      if (msgEl) msgEl.innerHTML = `<div class="sa-toast sa-toast-error">${res ? (await parseApiError(res)) : 'Network error.'}</div>`;
     }
   } catch(e) {
     if (msgEl) msgEl.innerHTML = '<div class="sa-toast sa-toast-error">Failed to save attendance. Please try again.</div>';
@@ -346,6 +360,7 @@ async function loadAttendanceRegisterReportView(container) {
         <div class="sa-export-row">
           <button class="sa-btn-export" onclick="_rptPrint()" title="Print / PDF">&#128438; Print</button>
           <button class="sa-btn-export" onclick="_rptExportCSV()" title="Export CSV">&#128202; CSV</button>
+          <button class="sa-btn-export" onclick="_rptExportExcel()" title="Export Excel">&#128202; Excel</button>
         </div>
       </div>
 
@@ -371,9 +386,9 @@ async function loadAttendanceRegisterReportView(container) {
             </select>
           </div>
           <div class="sa-filter-field">
-            <label class="sa-filter-label">Stage <span class="sa-required">*</span></label>
+            <label class="sa-filter-label">Level <span class="sa-required">*</span></label>
             <select id="rpt-stage" class="sa-filter-select">
-              <option value="">-- Select Stage --</option>
+              <option value="">-- Select Level --</option>
               ${_attLevelsData.map(l => `<option value="${l.id}">${_rptEsc(l.name)}</option>`).join('')}
             </select>
             <span class="sa-field-error" id="rpt-stage-err"></span>
@@ -486,43 +501,50 @@ function _rptValidate() {
 async function _rptSubmit() {
   if (!_rptValidate()) return;
 
-  const startDate    = document.getElementById('rpt-start-date').value;
-  const endDate      = document.getElementById('rpt-end-date').value;
-  const stageEl      = document.getElementById('rpt-stage');
-  const stageName    = stageEl.options[stageEl.selectedIndex]?.text || '';
-  const statusFilter = document.getElementById('rpt-status').value;
-  const studentFilter = (document.getElementById('rpt-student').value || '').trim().toLowerCase();
+  const startDate      = document.getElementById('rpt-start-date').value;
+  const endDate        = document.getElementById('rpt-end-date').value;
+  const termId         = document.getElementById('rpt-term').value;
+  const stageId        = document.getElementById('rpt-stage').value;
+  const stageEl        = document.getElementById('rpt-stage');
+  const stageName      = stageEl.options[stageEl.selectedIndex]?.text || '';
+  const statusFilter   = document.getElementById('rpt-status').value;
+  const streamFilter   = document.getElementById('rpt-stream').value;
+  const genderFilter   = document.getElementById('rpt-gender').value;
+  const studentFilter  = (document.getElementById('rpt-student').value || '').trim();
 
   document.getElementById('rpt-table-area').innerHTML = '<p class="sa-loading">Loading&#8230;</p>';
 
   try {
     // TODO: convert to apiFetch (raw fetch bypasses auth retry logic — out of scope for this patch)
-    const params = new URLSearchParams({ start_date: startDate, end_date: endDate });
-    const res  = await fetch(`${API_BASE}/attendance/class-sheet?${params}`, {
+    // GET /attendance/report requires term_id, stage_id, start_date, end_date.
+    // (attendance_schedule_id is also accepted, but the Attendance Schedule
+    // filter here is a daily/weekly/monthly label, not a real schedule id, so
+    // it isn't sent on the wire.)
+    const params = new URLSearchParams({ term_id: termId, stage_id: stageId, start_date: startDate, end_date: endDate });
+    if (streamFilter)  params.set('stream_id', streamFilter);
+    if (statusFilter)  params.set('status', statusFilter === 'Half Day' ? 'Late' : statusFilter);
+    if (genderFilter)  params.set('gender', genderFilter);
+    if (studentFilter) params.set('student_search', studentFilter);
+
+    const res  = await fetch(`${API_BASE}/attendance/report?${params}`, {
       headers: { Authorization: `Bearer ${token}` }
     });
-    const data = await res.json();
     if (!res.ok) {
-      document.getElementById('rpt-table-area').innerHTML = `<p class="sa-error-msg">${data.detail || 'Error loading report.'}</p>`;
+      document.getElementById('rpt-table-area').innerHTML = `<p class="sa-error-msg">${await parseApiError(res) || 'Error loading report.'}</p>`;
       return;
     }
+    const data = await res.json();
 
-    let rows = Array.isArray(data.students) ? data.students : [];
-
-    if (studentFilter) rows = rows.filter(s => (s.student_name || '').toLowerCase().includes(studentFilter));
-    if (statusFilter) {
-      const apiStatus = statusFilter === 'Half Day' ? 'Late' : statusFilter;
-      rows = rows.filter(s => s.current_status === apiStatus);
-    }
+    const rows = Array.isArray(data) ? data : (data.students || data.results || data.data || []);
 
     _rptData = rows.map(s => ({
-      admission_no: '-',
-      name:         s.student_name || '',
-      gender:       '-',
-      stage:        stageName,
-      date:         startDate,
-      status:       s.current_status === 'Late' ? 'Half Day' : (s.current_status || '-'),
-      reason:       '-'
+      admission_no: s.admission_no || s.student_admission_no || '-',
+      name:         s.student_name || s.name || '',
+      gender:       s.gender || '-',
+      stage:        s.stage_name || s.academic_level_name || stageName,
+      date:         s.date || s.date_of || s.attendance_date || startDate,
+      status:       (s.current_status || s.status) === 'Late' ? 'Half Day' : ((s.current_status || s.status) || '-'),
+      reason:       s.notes || s.reason || '-'
     }));
 
     // Update stat cards
@@ -586,7 +608,7 @@ function _rptBuildTableHTML(rows, total) {
     <div class="sa-table-wrap">
       <table class="sa-table" id="rpt-result-table">
         <thead><tr>
-          <th>ADMISSION NO.</th><th>NAME</th><th>GENDER</th><th>STAGE</th>
+          <th>ADMISSION NO.</th><th>NAME</th><th>GENDER</th><th>LEVEL</th>
           <th>DATE</th><th>STATUS</th><th>REASON</th>
         </tr></thead>
         <tbody>${bodyRows}</tbody>
@@ -650,7 +672,7 @@ function _rptPrint() {
 
 function _rptExportCSV() {
   if (_rptData.length === 0) { alert('No data to export.'); return; }
-  const headers = ['Admission No.','Name','Gender','Stage','Date','Status','Reason'];
+  const headers = ['Admission No.','Name','Gender','Level','Date','Status','Reason'];
   const rows    = _rptData.map(r => [r.admission_no, r.name, r.gender, r.stage, r.date, r.status, r.reason]);
   const csv     = [headers, ...rows].map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
   const blob    = new Blob([csv], { type: 'text/csv' });
@@ -658,6 +680,210 @@ function _rptExportCSV() {
   const a       = document.createElement('a');
   a.href = url; a.download = 'attendance-report.csv'; a.click();
   URL.revokeObjectURL(url);
+}
+
+function _rptExportExcel() {
+  if (_rptData.length === 0) { alert('No data to export.'); return; }
+  if (typeof XLSX === 'undefined') { showToast('Excel export library failed to load. Please check your connection and reload.', 'error'); return; }
+  const headers = ['Admission No.','Name','Gender','Level','Date','Status','Reason'];
+  const rows    = _rptData.map(r => [r.admission_no, r.name, r.gender, r.stage, r.date, r.status, r.reason]);
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Attendance Report');
+  XLSX.writeFile(wb, 'attendance-report.xlsx');
+}
+
+// ==================== ATTENDANCE UPLOAD (CSV/Excel) ====================
+// Lets a class that recorded attendance offline in a spreadsheet (one day, or
+// many days in one sheet) bulk-import it. POST /attendance/bulk requires a
+// BulkAttendanceRequest body — term_id, class_id, date, records[] (confirmed
+// live via openapi.json) — so Term/Class/Attendance Schedule/Stream must be
+// selected in the filter bar above (same fields attLoadClass() uses) before
+// uploading; the sheet itself only needs Student ID, Date, Status, Reason
+// since one file can cover many dates for that one class.
+
+const _ATT_UPLOAD_HEADERS = ['Student ID', 'Date', 'Status', 'Reason'];
+
+function _attUploadPickFile() {
+  if (!_attValidateFilters()) {
+    showToast('Select Term, Class, Attendance Schedule and Level first — the upload applies to that one class.', 'error');
+    return;
+  }
+  document.getElementById('att-upload-file').click();
+}
+
+function _attDownloadUploadTemplate() {
+  const sample = [
+    _ATT_UPLOAD_HEADERS,
+    ['101', new Date().toISOString().split('T')[0], 'Present', ''],
+    ['102', new Date().toISOString().split('T')[0], 'Absent', 'Sick'],
+  ];
+  const csv  = sample.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = 'attendance-upload-template.csv'; a.click();
+  URL.revokeObjectURL(url);
+}
+
+// Reads a .csv/.xlsx/.xls File and resolves to an array of row objects
+// (raw header text as keys, e.g. { 'Student ID': '101', 'Date': '2026-07-03', ... }).
+function _attParseSheetFile(file) {
+  return new Promise((resolve, reject) => {
+    const isCsv = /\.csv$/i.test(file.name);
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Could not read the file.'));
+    reader.onload = (e) => {
+      try {
+        if (isCsv) {
+          resolve(_attParseCSV(String(e.target.result)));
+        } else {
+          if (typeof XLSX === 'undefined') { reject(new Error('Excel parser failed to load. Please check your connection and reload.')); return; }
+          const wb    = XLSX.read(e.target.result, { type: 'array', cellDates: true });
+          const sheet = wb.Sheets[wb.SheetNames[0]];
+          resolve(XLSX.utils.sheet_to_json(sheet, { defval: '' }));
+        }
+      } catch (err) { reject(err); }
+    };
+    if (isCsv) reader.readAsText(file);
+    else       reader.readAsArrayBuffer(file);
+  });
+}
+
+function _attParseCSV(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim() !== '');
+  if (lines.length === 0) return [];
+  const splitLine = line => {
+    const cells = [];
+    let cur = '', inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (inQuotes) {
+        if (ch === '"' && line[i+1] === '"') { cur += '"'; i++; }
+        else if (ch === '"') { inQuotes = false; }
+        else { cur += ch; }
+      } else {
+        if (ch === '"') inQuotes = true;
+        else if (ch === ',') { cells.push(cur); cur = ''; }
+        else cur += ch;
+      }
+    }
+    cells.push(cur);
+    return cells;
+  };
+  const headers = splitLine(lines[0]).map(h => h.trim());
+  return lines.slice(1).map(line => {
+    const cells = splitLine(line);
+    const row = {};
+    headers.forEach((h, i) => { row[h] = (cells[i] ?? '').trim(); });
+    return row;
+  });
+}
+
+// Maps a raw parsed row (arbitrary header spelling) to { student_id, date, status, notes }.
+function _attNormalizeUploadRow(row) {
+  const getRaw = (...keys) => {
+    for (const k of Object.keys(row)) {
+      if (keys.includes(k.trim().toLowerCase().replace(/[\s_]+/g, ' '))) return row[k];
+    }
+    return '';
+  };
+  const studentId = String(getRaw('student id', 'studentid', 'id') ?? '').trim();
+  const statusRaw = String(getRaw('status') ?? '').trim();
+  const notes     = String(getRaw('reason', 'notes', 'comment') ?? '').trim();
+
+  // Date cells come through as JS Date objects (cellDates:true) for real Excel
+  // dates, raw serial numbers for some numeric-formatted cells, or plain text
+  // for CSV files — handle all three.
+  const dateRaw = getRaw('date', 'class date', 'attendance date');
+  let date = '';
+  if (dateRaw instanceof Date && !isNaN(dateRaw)) {
+    date = dateRaw.toISOString().split('T')[0];
+  } else {
+    const dateStr = String(dateRaw ?? '').trim();
+    if (/^\d+(\.\d+)?$/.test(dateStr) && typeof XLSX !== 'undefined' && XLSX.SSF) {
+      const parsed = XLSX.SSF.parse_date_code(Number(dateStr));
+      date = parsed ? `${parsed.y}-${String(parsed.m).padStart(2,'0')}-${String(parsed.d).padStart(2,'0')}` : dateStr;
+    } else {
+      date = dateStr;
+    }
+  }
+
+  let status = '';
+  const s = statusRaw.trim().toLowerCase();
+  if (['present','p'].includes(s)) status = 'Present';
+  else if (['absent','a'].includes(s)) status = 'Absent';
+  else if (['half day','halfday','late','h'].includes(s)) status = 'Late';
+  else if (statusRaw) status = statusRaw.trim();
+
+  return { student_id: studentId, date, status, notes };
+}
+
+async function _attUploadAttendanceFile(inputEl) {
+  const file = inputEl.files[0];
+  if (!file) return;
+  const resultEl = document.getElementById('att-upload-result');
+  if (resultEl) resultEl.innerHTML = '<p class="sa-loading">Reading file&#8230;</p>';
+
+  let rawRows;
+  try {
+    rawRows = await _attParseSheetFile(file);
+  } catch (err) {
+    if (resultEl) resultEl.innerHTML = `<p class="sa-error-msg">${err.message || 'Failed to read file.'}</p>`;
+    inputEl.value = '';
+    return;
+  }
+  inputEl.value = '';
+
+  const normalized = rawRows.map(_attNormalizeUploadRow);
+  const invalid = normalized.filter(r => !r.student_id || !r.date || !r.status);
+  const valid   = normalized.filter(r => r.student_id && r.date && r.status);
+
+  if (valid.length === 0) {
+    if (resultEl) resultEl.innerHTML = `<p class="sa-error-msg">No valid rows found. Each row needs Student ID, Date and Status — see the Template.</p>`;
+    return;
+  }
+
+  if (resultEl) resultEl.innerHTML = `<p class="sa-loading">Uploading ${valid.length} record(s)&#8230;</p>`;
+
+  // One class per upload (the filters above), one /attendance/bulk call per
+  // distinct date in the sheet.
+  const term   = document.getElementById('att-term')?.value;
+  const cls    = document.getElementById('att-class')?.value;
+  const stage  = document.getElementById('att-stage')?.value;
+  const stream = document.getElementById('att-stream')?.value;
+
+  const byDate = {};
+  valid.forEach(r => {
+    (byDate[r.date] = byDate[r.date] || []).push({ student_id: parseInt(r.student_id, 10), status: r.status, reason: r.notes, notes: r.notes });
+  });
+
+  let importedCount = 0;
+  const errors = [];
+  for (const date of Object.keys(byDate)) {
+    const payload = { term_id: parseInt(term, 10), class_id: parseInt(cls, 10), date, records: byDate[date] };
+    if (stage)  payload.attendance_schedule_id = parseInt(stage, 10);
+    if (stream) payload.stream = stream;
+    try {
+      const res = await apiFetch(`${API_BASE}/attendance/bulk`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (res && res.ok) importedCount += byDate[date].length;
+      else errors.push(`${date}: ${res ? await parseApiError(res) : 'network error'}`);
+    } catch (e) {
+      errors.push(`${date}: network error`);
+    }
+  }
+
+  if (resultEl) {
+    const parts = [`Imported ${importedCount} record(s) across ${Object.keys(byDate).length} date(s).`];
+    if (invalid.length) parts.push(`Skipped ${invalid.length} row(s) missing Student ID/Date/Status.`);
+    let html = `<div class="sa-toast ${errors.length ? 'sa-toast-error' : 'sa-toast-success'}">${_rptEsc(parts.join(' '))}</div>`;
+    if (errors.length) html += `<ul class="fin-bulk-error-list">${errors.map(e => `<li>${_rptEsc(e)}</li>`).join('')}</ul>`;
+    resultEl.innerHTML = html;
+  }
 }
 
 function _rptEsc(str) {

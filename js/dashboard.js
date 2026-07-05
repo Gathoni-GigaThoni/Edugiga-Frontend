@@ -522,6 +522,7 @@ async function renderSplitView(cfg) {
           <span>${col2Label}</span>
         </div>
         ${hasSearch ? `<div class="split-left-search"><input type="text" placeholder="Search…" oninput="window._splitSearch(this.value)"></div>` : ''}
+        ${cfg.bulkUpload ? renderBulkUploadBar(cfg.bulkUpload.module, '_splitReload') : ''}
         <div class="split-list" id="split-list-items"></div>
       </div>
       <div class="split-right">

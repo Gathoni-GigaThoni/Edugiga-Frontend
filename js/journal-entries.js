@@ -41,6 +41,7 @@ async function loadJournalEntriesView(container) {
     ],
     onAdd: () => loadView('journal-entries-add'),
     onEdit: item => { window._jeEditId = item.id; loadView('journal-entries-edit'); },
+    bulkUpload: { module: 'journal-entries' },
   });
 }
 

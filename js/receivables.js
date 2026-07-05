@@ -852,6 +852,7 @@ async function loadFeeInvoicesView(container) {
         <h2 class="fin-title">Fee Invoices</h2>
         <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Fee Invoices &rsaquo; Listing</div>
       </div>
+      ${renderBulkUploadBar('fee-invoices', 'rcvInvLoad')}
       <div class="fin-filter-section">
         <div class="fin-filter-grid">
           <div class="fin-filter-field">

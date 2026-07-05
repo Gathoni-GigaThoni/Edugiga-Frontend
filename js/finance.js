@@ -3101,6 +3101,7 @@ async function loadChartOfAccountsView(container) {
     ],
     onAdd:  () => renderCoaAddPage(document.getElementById('main-content')),
     onEdit: item => openCoaEdit(item.id),
+    bulkUpload: { module: 'chart-of-accounts' },
   });
 }
 
