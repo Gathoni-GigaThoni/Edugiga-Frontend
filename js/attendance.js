@@ -3,6 +3,7 @@
 let _attClassesData  = [];
 let _attLevelsData   = [];
 let _attTermsData = [];
+let _attSchedulesData = [];
 let _attStudents     = [];
 let _attLoaded       = false;
 
@@ -10,22 +11,24 @@ async function loadAttendanceView(container) {
   _attLoaded = false;
   _attStudents = [];
 
-  // Fetch dropdown data in parallel before rendering
+  // Fetch dropdown data in parallel before rendering. Academic Level isn't a
+  // register filter (load-class/class-sheet don't accept it) so it isn't
+  // fetched here — see the Report view below for that.
   try {
-    const [clsRes, lvlRes, sessRes] = await Promise.all([
-      fetch(`${API_BASE}/classes/`,         { headers: { Authorization: `Bearer ${token}` } }),
-      fetch(`${API_BASE}/academic-levels/`, { headers: { Authorization: `Bearer ${token}` } }),
-      fetch(`${API_BASE}/terms/`,           { headers: { Authorization: `Bearer ${token}` } })
+    const [clsRes, sessRes, schedRes] = await Promise.all([
+      fetch(`${API_BASE}/classes/`,               { headers: { Authorization: `Bearer ${token}` } }),
+      fetch(`${API_BASE}/terms/`,                 { headers: { Authorization: `Bearer ${token}` } }),
+      fetch(`${API_BASE}/attendance-schedules`,   { headers: { Authorization: `Bearer ${token}` } }),
     ]);
     _attClassesData  = clsRes.ok  ? await clsRes.json()  : [];
-    _attLevelsData   = lvlRes.ok  ? await lvlRes.json()  : [];
     const rawSess  = sessRes.ok ? await sessRes.json() : [];
     _attTermsData  = (Array.isArray(rawSess) ? rawSess : (rawSess.data || rawSess.results || []))
       .filter(t => t.is_active !== false);
+    _attSchedulesData = schedRes.ok ? await schedRes.json() : [];
   } catch(_) {
     _attClassesData  = [];
-    _attLevelsData   = [];
     _attTermsData    = [];
+    _attSchedulesData = [];
   }
 
   const today = new Date().toISOString().split('T')[0];
@@ -60,23 +63,11 @@ async function loadAttendanceView(container) {
           </div>
 
           <div class="sa-filter-field">
-            <label class="sa-filter-label">Attendance Schedule <span class="sa-required">*</span></label>
+            <label class="sa-filter-label">Attendance Schedule</label>
             <select id="att-schedule" class="sa-filter-select">
-              <option value="">-- Select Schedule --</option>
-              <option value="daily">Daily</option>
-              <option value="weekly">Weekly</option>
-              <option value="monthly">Monthly</option>
+              <option value="">-- Not set --</option>
+              ${_attSchedulesData.map(s => `<option value="${s.id}">${s.name}</option>`).join('')}
             </select>
-            <span class="sa-field-error" id="att-schedule-err"></span>
-          </div>
-
-          <div class="sa-filter-field">
-            <label class="sa-filter-label">Level <span class="sa-required">*</span></label>
-            <select id="att-stage" class="sa-filter-select">
-              <option value="">-- Select Level --</option>
-              ${_attLevelsData.map(l => `<option value="${l.id}">${l.name}</option>`).join('')}
-            </select>
-            <span class="sa-field-error" id="att-stage-err"></span>
           </div>
 
           <div class="sa-filter-field">
@@ -129,8 +120,6 @@ function _attValidateFilters() {
   const required = [
     { id: 'att-term',     errId: 'att-term-err'     },
     { id: 'att-class',    errId: 'att-class-err'    },
-    { id: 'att-schedule', errId: 'att-schedule-err' },
-    { id: 'att-stage',    errId: 'att-stage-err'    },
   ];
   required.forEach(f => {
     const el  = document.getElementById(f.id);
@@ -158,16 +147,14 @@ async function attLoadClass() {
 
   try {
     const params = new URLSearchParams({ date_of: date });
-    const term    = document.getElementById('att-term')?.value;
-    const cls     = document.getElementById('att-class')?.value;
-    const stage   = document.getElementById('att-stage')?.value;
-    const stream  = document.getElementById('att-stream')?.value;
-    if (term)    params.set('term_id', term);
-    if (cls)     params.set('class_id',   cls);
-    // Real backend param is attendance_schedule_id, not stage_id — kept named
-    // "stage" in the UI/DOM since that's the existing label, just fixed on the wire.
-    if (stage)   params.set('attendance_schedule_id', stage);
-    if (stream)  params.set('stream',     stream);
+    const term     = document.getElementById('att-term')?.value;
+    const cls      = document.getElementById('att-class')?.value;
+    const schedule = document.getElementById('att-schedule')?.value;
+    const stream   = document.getElementById('att-stream')?.value;
+    if (term)     params.set('term_id', term);
+    if (cls)      params.set('class_id',   cls);
+    if (schedule) params.set('attendance_schedule_id', schedule);
+    if (stream)   params.set('stream',     stream);
 
     const res  = await fetch(`${API_BASE}/attendance/class-sheet?${params}`, {
       headers: { Authorization: `Bearer ${token}` }
@@ -241,14 +228,14 @@ function _attRenderTable(container, students) {
 }
 
 function attClearFilters() {
-  ['att-term','att-class','att-schedule','att-stage','att-stream','att-student'].forEach(id => {
+  ['att-term','att-class','att-schedule','att-stream','att-student'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
   const dateEl = document.getElementById('att-date');
   if (dateEl) dateEl.value = new Date().toISOString().split('T')[0];
 
-  ['att-term-err','att-class-err','att-schedule-err','att-stage-err'].forEach(id => {
+  ['att-term-err','att-class-err'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.textContent = '';
   });
@@ -285,19 +272,19 @@ async function attMarkAttendance() {
 
   if (!valid) return;
 
-  const date   = (document.getElementById('att-date').value || new Date().toISOString().split('T')[0]);
-  const term   = document.getElementById('att-term')?.value;
-  const cls    = document.getElementById('att-class')?.value;
-  const stage  = document.getElementById('att-stage')?.value;
-  const stream = document.getElementById('att-stream')?.value;
-  const msgEl  = document.getElementById('att-status-msg');
+  const date     = (document.getElementById('att-date').value || new Date().toISOString().split('T')[0]);
+  const term     = document.getElementById('att-term')?.value;
+  const cls      = document.getElementById('att-class')?.value;
+  const schedule = document.getElementById('att-schedule')?.value;
+  const stream   = document.getElementById('att-stream')?.value;
+  const msgEl    = document.getElementById('att-status-msg');
 
   // POST /attendance/bulk expects a BulkAttendanceRequest body (term_id,
   // class_id, date, records[]) — not a bare array with class_date on the
   // query string, which the backend rejects with a 422.
   const payload = { term_id: parseInt(term, 10), class_id: parseInt(cls, 10), date, records };
-  if (stage)  payload.attendance_schedule_id = parseInt(stage, 10);
-  if (stream) payload.stream = stream;
+  if (schedule) payload.attendance_schedule_id = parseInt(schedule, 10);
+  if (stream)   payload.stream = stream;
 
   try {
     const res = await apiFetch(`${API_BASE}/attendance/bulk`, {
@@ -333,16 +320,16 @@ async function loadAttendanceRegisterReportView(container) {
 
   // Populate dropdowns in parallel
   try {
-    const [clsRes, lvlRes, sessRes] = await Promise.all([
-      fetch(`${API_BASE}/classes/`,         { headers: { Authorization: `Bearer ${token}` } }),
-      fetch(`${API_BASE}/academic-levels/`, { headers: { Authorization: `Bearer ${token}` } }),
-      fetch(`${API_BASE}/terms/`,           { headers: { Authorization: `Bearer ${token}` } })
+    const [clsRes, sessRes, schedRes] = await Promise.all([
+      fetch(`${API_BASE}/classes/`,               { headers: { Authorization: `Bearer ${token}` } }),
+      fetch(`${API_BASE}/terms/`,                 { headers: { Authorization: `Bearer ${token}` } }),
+      fetch(`${API_BASE}/attendance-schedules`,   { headers: { Authorization: `Bearer ${token}` } }),
     ]);
     _attClassesData  = clsRes.ok  ? await clsRes.json()  : [];
-    _attLevelsData   = lvlRes.ok  ? await lvlRes.json()  : [];
     const rawSess  = sessRes.ok ? await sessRes.json() : [];
     _attTermsData  = (Array.isArray(rawSess) ? rawSess : (rawSess.data || rawSess.results || []))
       .filter(t => t.is_active !== false);
+    _attSchedulesData = schedRes.ok ? await schedRes.json() : [];
   } catch(_) {}
 
   const today = new Date().toISOString().split('T')[0];
@@ -379,19 +366,17 @@ async function loadAttendanceRegisterReportView(container) {
           <div class="sa-filter-field">
             <label class="sa-filter-label">Attendance Schedule</label>
             <select id="rpt-schedule" class="sa-filter-select">
-              <option value="">-- Select Schedule --</option>
-              <option value="daily">Daily</option>
-              <option value="weekly">Weekly</option>
-              <option value="monthly">Monthly</option>
+              <option value="">-- Not set --</option>
+              ${_attSchedulesData.map(s => `<option value="${s.id}">${_rptEsc(s.name)}</option>`).join('')}
             </select>
           </div>
           <div class="sa-filter-field">
-            <label class="sa-filter-label">Level <span class="sa-required">*</span></label>
-            <select id="rpt-stage" class="sa-filter-select">
-              <option value="">-- Select Level --</option>
-              ${_attLevelsData.map(l => `<option value="${l.id}">${_rptEsc(l.name)}</option>`).join('')}
+            <label class="sa-filter-label">Class <span class="sa-required">*</span></label>
+            <select id="rpt-class" class="sa-filter-select">
+              <option value="">-- Select Class --</option>
+              ${_attClassesData.map(c => `<option value="${c.id}">${_rptEsc(c.name)}</option>`).join('')}
             </select>
-            <span class="sa-field-error" id="rpt-stage-err"></span>
+            <span class="sa-field-error" id="rpt-class-err"></span>
           </div>
           <div class="sa-filter-field">
             <label class="sa-filter-label">Status</label>
@@ -476,7 +461,7 @@ function _rptValidate() {
   let ok = true;
   [
     { id: 'rpt-term',       err: 'rpt-term-err'     },
-    { id: 'rpt-stage',      err: 'rpt-stage-err'    },
+    { id: 'rpt-class',      err: 'rpt-class-err'    },
     { id: 'rpt-start-date', err: 'rpt-start-err'    },
     { id: 'rpt-end-date',   err: 'rpt-end-err'      },
   ].forEach(f => {
@@ -504,9 +489,10 @@ async function _rptSubmit() {
   const startDate      = document.getElementById('rpt-start-date').value;
   const endDate        = document.getElementById('rpt-end-date').value;
   const termId         = document.getElementById('rpt-term').value;
-  const stageId        = document.getElementById('rpt-stage').value;
-  const stageEl        = document.getElementById('rpt-stage');
-  const stageName      = stageEl.options[stageEl.selectedIndex]?.text || '';
+  const classId        = document.getElementById('rpt-class').value;
+  const classEl        = document.getElementById('rpt-class');
+  const className      = classEl.options[classEl.selectedIndex]?.text || '';
+  const scheduleId     = document.getElementById('rpt-schedule').value;
   const statusFilter   = document.getElementById('rpt-status').value;
   const streamFilter   = document.getElementById('rpt-stream').value;
   const genderFilter   = document.getElementById('rpt-gender').value;
@@ -516,11 +502,10 @@ async function _rptSubmit() {
 
   try {
     // TODO: convert to apiFetch (raw fetch bypasses auth retry logic — out of scope for this patch)
-    // GET /attendance/report requires term_id, stage_id, start_date, end_date.
-    // (attendance_schedule_id is also accepted, but the Attendance Schedule
-    // filter here is a daily/weekly/monthly label, not a real schedule id, so
-    // it isn't sent on the wire.)
-    const params = new URLSearchParams({ term_id: termId, stage_id: stageId, start_date: startDate, end_date: endDate });
+    // GET /attendance/report requires term_id, class_id, start_date, end_date.
+    // attendance_schedule_id is optional.
+    const params = new URLSearchParams({ term_id: termId, class_id: classId, start_date: startDate, end_date: endDate });
+    if (scheduleId)    params.set('attendance_schedule_id', scheduleId);
     if (streamFilter)  params.set('stream_id', streamFilter);
     if (statusFilter)  params.set('status', statusFilter === 'Half Day' ? 'Late' : statusFilter);
     if (genderFilter)  params.set('gender', genderFilter);
@@ -541,7 +526,7 @@ async function _rptSubmit() {
       admission_no: s.admission_no || s.student_admission_no || '-',
       name:         s.student_name || s.name || '',
       gender:       s.gender || '-',
-      stage:        s.stage_name || s.academic_level_name || stageName,
+      class_name:   s.class_name || s.school_class_name || className,
       date:         s.date || s.date_of || s.attendance_date || startDate,
       status:       (s.current_status || s.status) === 'Late' ? 'Half Day' : ((s.current_status || s.status) || '-'),
       reason:       s.notes || s.reason || '-'
@@ -579,7 +564,7 @@ function _rptBuildTableHTML(rows, total) {
         <td>${_rptEsc(r.admission_no)}</td>
         <td>${_rptEsc(r.name)}</td>
         <td>${_rptEsc(r.gender)}</td>
-        <td>${_rptEsc(r.stage)}</td>
+        <td>${_rptEsc(r.class_name)}</td>
         <td>${_rptEsc(r.date)}</td>
         <td>${_rptEsc(r.status)}</td>
         <td>${_rptEsc(r.reason)}</td>
@@ -608,7 +593,7 @@ function _rptBuildTableHTML(rows, total) {
     <div class="sa-table-wrap">
       <table class="sa-table" id="rpt-result-table">
         <thead><tr>
-          <th>ADMISSION NO.</th><th>NAME</th><th>GENDER</th><th>LEVEL</th>
+          <th>ADMISSION NO.</th><th>NAME</th><th>GENDER</th><th>CLASS</th>
           <th>DATE</th><th>STATUS</th><th>REASON</th>
         </tr></thead>
         <tbody>${bodyRows}</tbody>
@@ -645,7 +630,7 @@ function _rptChangePerPage(val) {
 }
 
 function _rptClear() {
-  ['rpt-term','rpt-schedule','rpt-stage','rpt-status','rpt-stream','rpt-gender','rpt-student'].forEach(id => {
+  ['rpt-term','rpt-schedule','rpt-class','rpt-status','rpt-stream','rpt-gender','rpt-student'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
@@ -654,7 +639,7 @@ function _rptClear() {
     const el = document.getElementById(id);
     if (el) el.value = today;
   });
-  ['rpt-term-err','rpt-stage-err','rpt-start-err','rpt-end-err'].forEach(id => {
+  ['rpt-term-err','rpt-class-err','rpt-start-err','rpt-end-err'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.textContent = '';
   });
@@ -672,8 +657,8 @@ function _rptPrint() {
 
 function _rptExportCSV() {
   if (_rptData.length === 0) { alert('No data to export.'); return; }
-  const headers = ['Admission No.','Name','Gender','Level','Date','Status','Reason'];
-  const rows    = _rptData.map(r => [r.admission_no, r.name, r.gender, r.stage, r.date, r.status, r.reason]);
+  const headers = ['Admission No.','Name','Gender','Class','Date','Status','Reason'];
+  const rows    = _rptData.map(r => [r.admission_no, r.name, r.gender, r.class_name, r.date, r.status, r.reason]);
   const csv     = [headers, ...rows].map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
   const blob    = new Blob([csv], { type: 'text/csv' });
   const url     = URL.createObjectURL(blob);
@@ -685,8 +670,8 @@ function _rptExportCSV() {
 function _rptExportExcel() {
   if (_rptData.length === 0) { alert('No data to export.'); return; }
   if (typeof XLSX === 'undefined') { showToast('Excel export library failed to load. Please check your connection and reload.', 'error'); return; }
-  const headers = ['Admission No.','Name','Gender','Level','Date','Status','Reason'];
-  const rows    = _rptData.map(r => [r.admission_no, r.name, r.gender, r.stage, r.date, r.status, r.reason]);
+  const headers = ['Admission No.','Name','Gender','Class','Date','Status','Reason'];
+  const rows    = _rptData.map(r => [r.admission_no, r.name, r.gender, r.class_name, r.date, r.status, r.reason]);
   const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Attendance Report');
@@ -848,10 +833,10 @@ async function _attUploadAttendanceFile(inputEl) {
 
   // One class per upload (the filters above), one /attendance/bulk call per
   // distinct date in the sheet.
-  const term   = document.getElementById('att-term')?.value;
-  const cls    = document.getElementById('att-class')?.value;
-  const stage  = document.getElementById('att-stage')?.value;
-  const stream = document.getElementById('att-stream')?.value;
+  const term     = document.getElementById('att-term')?.value;
+  const cls      = document.getElementById('att-class')?.value;
+  const schedule = document.getElementById('att-schedule')?.value;
+  const stream   = document.getElementById('att-stream')?.value;
 
   const byDate = {};
   valid.forEach(r => {
@@ -862,8 +847,8 @@ async function _attUploadAttendanceFile(inputEl) {
   const errors = [];
   for (const date of Object.keys(byDate)) {
     const payload = { term_id: parseInt(term, 10), class_id: parseInt(cls, 10), date, records: byDate[date] };
-    if (stage)  payload.attendance_schedule_id = parseInt(stage, 10);
-    if (stream) payload.stream = stream;
+    if (schedule) payload.attendance_schedule_id = parseInt(schedule, 10);
+    if (stream)   payload.stream = stream;
     try {
       const res = await apiFetch(`${API_BASE}/attendance/bulk`, {
         method: 'POST',

@@ -128,6 +128,108 @@ async function loadStudentsListView(container) {
       loadStudentFormView(el);
     },
   });
+
+  const countEl = container.querySelector('.split-left-count');
+  if (countEl && !document.getElementById('stu-import-btn')) {
+    const btn = document.createElement('button');
+    btn.id = 'stu-import-btn';
+    btn.textContent = 'Import';
+    btn.className = 'fin-btn-outline';
+    btn.style.cssText = 'margin-left:8px;padding:2px 10px;font-size:0.72rem;';
+    btn.onclick = _stuOpenImportWizard;
+    countEl.insertAdjacentElement('afterend', btn);
+  }
+}
+
+// ── Bulk Student Import wizard (2 steps: preview → confirm) ────────────────
+// Distinct from the generic /bulk/{module}/upload widget in ui-helpers.js —
+// students use their own dry-run preview endpoint that validates rows without
+// writing anything, then a separate confirm step that commits each row
+// independently (one bad row doesn't block the rest).
+let _stuImportPreview = null;
+
+function _stuOpenImportWizard() {
+  const wrap = document.createElement('div');
+  wrap.id = 'stu-import-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;overflow:auto;padding:24px;';
+  wrap.innerHTML = `
+    <div style="background:white;border-radius:8px;padding:24px;width:720px;max-width:100%;max-height:85vh;overflow:auto;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 14px;font-size:1.05rem;color:#2c3e50;">Import Students</h3>
+      <div id="stu-import-body"></div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="document.getElementById('stu-import-modal-overlay').remove()">Close</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  _stuImportPreview = null;
+  _stuRenderImportStep1();
+}
+
+function _stuRenderImportStep1() {
+  const body = document.getElementById('stu-import-body');
+  if (!body) return;
+  body.innerHTML = `
+    <p style="color:#666;font-size:0.9rem;">Upload a CSV or Excel file of students. Nothing is saved until you confirm on the next step.</p>
+    <input type="file" id="stu-import-file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="_stuUploadImportFile(this)">
+    <button class="fin-btn-teal" onclick="document.getElementById('stu-import-file').click()">Choose File &amp; Upload</button>
+    <span id="stu-import-status" style="margin-left:10px;color:#888;font-size:0.85rem;"></span>`;
+}
+
+async function _stuUploadImportFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const statusEl = document.getElementById('stu-import-status');
+  if (statusEl) statusEl.textContent = 'Uploading…';
+  const fd = new FormData();
+  fd.append('file', file);
+  const res = await apiFetch(`${API_BASE}/students/import`, { method: 'POST', body: fd });
+  if (!res || !res.ok) {
+    if (statusEl) statusEl.textContent = '';
+    showToast('Upload failed: ' + (res ? await parseApiError(res) : 'network error'), 'error');
+    return;
+  }
+  _stuImportPreview = await res.json();
+  _stuRenderImportStep2();
+}
+
+function _stuRenderImportStep2() {
+  const body = document.getElementById('stu-import-body');
+  if (!body) return;
+  const p = _stuImportPreview || {};
+  const valid = p.valid || [];
+  const invalid = p.invalid || [];
+  body.innerHTML = `
+    <div class="fin-controls-row">
+      <div class="fin-controls-left">${p.total_rows ?? (valid.length + invalid.length)} rows &middot; ${p.valid_count ?? valid.length} valid &middot; ${p.invalid_count ?? invalid.length} invalid</div>
+    </div>
+    ${invalid.length ? `
+      <details open style="margin-top:10px;">
+        <summary style="cursor:pointer;font-weight:600;color:#c0392b;">Invalid rows (${invalid.length})</summary>
+        <div class="fin-table-wrap"><table class="fin-table">
+          <thead><tr><th>Row</th><th>Errors</th></tr></thead>
+          <tbody>${invalid.map(r => `<tr><td>${_finEsc(r.row ?? r.row_number ?? '')}</td><td>${_finEsc((r.errors || []).join('; '))}</td></tr>`).join('')}</tbody>
+        </table></div>
+      </details>` : ''}
+    <div style="margin-top:14px;color:#666;font-size:0.9rem;">${valid.length} row(s) will be created. Each row is committed independently.</div>
+    <div class="fin-form-actions">
+      <button class="fin-btn-cancel" onclick="_stuOpenImportWizard()">Start Over</button>
+      <button class="fin-btn-teal" ${valid.length ? '' : 'disabled'} onclick="_stuConfirmImport()">Confirm Import (${valid.length})</button>
+    </div>`;
+}
+
+async function _stuConfirmImport() {
+  const valid = (_stuImportPreview && _stuImportPreview.valid) || [];
+  const rows = valid.map(v => v.data || v);
+  const res = await apiFetch(`${API_BASE}/students/import/confirm`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows }),
+  });
+  if (!res || !res.ok) { showToast('Error: ' + (res ? await parseApiError(res) : 'network error'), 'error'); return; }
+  const result = await res.json();
+  const created = result.created ?? 0;
+  const errorsCount = result.errors_count ?? (result.errors || []).length;
+  showToast(`Imported ${created} student(s)${errorsCount ? `, ${errorsCount} error(s)` : ''}.`, errorsCount ? 'error' : 'success');
+  document.getElementById('stu-import-modal-overlay')?.remove();
+  loadView('students-list');
 }
 
 async function refreshStudentsListing() {
@@ -1555,6 +1657,25 @@ function _stuValidatePersonal() {
       if (errEl) errEl.textContent = '';
     }
   });
+  // Business rule (not enforced server-side): students must be between 2 and
+  // 10 years old at registration. Only checked on new registrations — editing
+  // an existing (already-enrolled, possibly older) student must not re-trigger it.
+  const dobEl = document.getElementById('se-dob');
+  const dobErrEl = document.getElementById('err-se-dob');
+  if (!_currentEditStudentId && dobEl && dobEl.value) {
+    const birth = new Date(dobEl.value);
+    if (!isNaN(birth.getTime())) {
+      const now = new Date();
+      let ageYears = now.getFullYear() - birth.getFullYear();
+      const monthDiff = now.getMonth() - birth.getMonth();
+      if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < birth.getDate())) ageYears--;
+      if (ageYears < 2 || ageYears > 10) {
+        dobEl.classList.add('error');
+        if (dobErrEl) dobErrEl.textContent = 'Student must be between 2 and 10 years old.';
+        valid = false;
+      }
+    }
+  }
   // Block if term/class auto-derivation is in an error state
   const fd = window._stuFormData || {};
   if (fd._derivation_error) valid = false;
@@ -1786,6 +1907,27 @@ function _stuFlatPayload(d) {
   };
 }
 
+// Resolves the route's pricing-row id for the chosen direction so it can be
+// sent as transport_pricing_id on registration (StudentRegisterRequest —
+// triggers the backend's auto transport-fee assignment when a term_id is
+// also set). Direction already uniquely picks the row, since the cascade
+// modal only lets the parent choose one journey_type/time_of_day combo, so
+// there's nothing left for the user to disambiguate.
+async function _stuResolveTransportPricingId(d) {
+  const sel = d.transport_selection;
+  if (!d.uses_school_transport || !sel || !sel.route_id || !sel.journey_type) return null;
+  const direction = sel.journey_type === 'two_way' ? 'two_way' : (sel.time_of_day === 'evening' ? 'one_way_evening' : 'one_way_morning');
+  try {
+    const res = await apiFetch(`${API_BASE}/routes/${sel.route_id}/pricing/`);
+    if (res && res.ok) {
+      const rows = _toArray(await res.json());
+      const match = rows.find(r => r.direction === direction);
+      if (match) return match.id;
+    }
+  } catch (_) {}
+  return null;
+}
+
 // Best-effort — a failure here doesn't roll back the record save that already
 // succeeded, it just surfaces a separate toast so transport isn't silently lost.
 async function _stuSyncTransport(studentId, d) {
@@ -1882,6 +2024,7 @@ async function _persistStudentRecord(showSuccessToast) {
   if (!isEdit) {
     const payload = {
       ..._stuFlatPayload(d),
+      transport_pricing_id: await _stuResolveTransportPricingId(d),
       previous_education: d.previous_education || null,
       medical_info:        d.medical_info || null,
       parents:              d.parents || [],
@@ -1917,7 +2060,11 @@ async function _persistStudentRecord(showSuccessToast) {
 
   switch (_stuEditActiveTab) {
     case 'personal':
-      await call(`${API_BASE}/students/${id}`, 'PATCH', _stuFlatPayload(d));
+      // extra_curriculum_term_id re-triggers the backend's ECA enrollment +
+      // fee-assignment sync for this student's current term — the Personal
+      // tab is where the Extra Curriculum multiselect lives, so any save here
+      // should re-sync it.
+      await call(`${API_BASE}/students/${id}`, 'PATCH', { ..._stuFlatPayload(d), extra_curriculum_term_id: d.term_id || null });
       await _stuSyncTransport(id, d);
       await _stuSyncSiblingGroup(id, d);
       break;
@@ -2118,6 +2265,10 @@ async function openStudentFeeStatement(studentId) {
 
   const total   = charges.reduce((s,c)=>s+(parseFloat(c.amount)||0), 0);
   const balance = charges.reduce((s,c)=>s+(parseFloat(c.balance_due)||0), 0);
+  // Overpayments are now held as a prepayment credit (GL 20-01-000) rather than
+  // assumed impossible — a negative summed balance means credit/prepaid, not arrears.
+  const arrearsLabel   = balance > 0 ? 'FEES ARREARS' : (balance < 0 ? 'PREPAID / CREDIT BALANCE' : 'FEES ARREARS / PREPAID');
+  const arrearsDisplay = Math.abs(balance).toLocaleString();
 
   const rows = charges.length
     ? charges.map((c,i)=>`<tr style="background:${i%2?'#f4f1ea':'#fff'}">
@@ -2178,7 +2329,7 @@ async function openStudentFeeStatement(studentId) {
         <tr><td class="info-cell"><span class="info-label">Printed On</span>${_esc(printedOn)}</td><td class="info-cell"></td></tr>
       </table>
 
-      <div class="arrears"><span>FEES ARREARS / PREPAID</span><span>0</span></div>
+      <div class="arrears"><span>${_esc(arrearsLabel)}</span><span>${arrearsDisplay}</span></div>
 
       <table class="panel" style="margin-bottom:0;">
         <thead><tr class="acct-head"><th>Account</th><th>Amount (KES)</th></tr></thead>

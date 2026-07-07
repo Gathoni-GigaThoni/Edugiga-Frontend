@@ -78,6 +78,14 @@ const REPORT_DEFS = {
   'reports-statement-of-changes-in-net-assets': { title: 'Statement of Changes in Net Assets', api: 'statement-of-changes-in-net-assets', dateMode: 'range', layout: 'statement', statementType: 'sce' },
   'reports-bank-reconciliation': { title: 'Bank Reconciliation Report', api: 'bank-reconciliation', dateMode: 'asof', layout: 'statement', statementType: 'bank',
     extra: [{ key: 'bank_account_id', label: 'Bank Account', type: 'account', required: true }] },
+
+  'reports-tendepay-wallet-balances': { title: 'Tendepay Wallet Balances', api: 'tendepay-wallet-balances', dateMode: 'asof',
+    columns: [['wallet_name','WALLET'],['account_name','ACCOUNT'],['balance','BALANCE']] },
+  'reports-tendepay-transaction-history': { title: 'Tendepay Transaction History', api: 'tendepay-transaction-history', dateMode: 'range',
+    extra: [{ key: 'wallet_account_id', label: 'Wallet Account', type: 'tendepaywallet' }],
+    columns: [['transaction_date','DATE'],['tendepay_reference','REFERENCE'],['wallet_name','WALLET'],['payee_name','PAYEE'],['amount','AMOUNT'],['tendepay_status','STATUS']] },
+  'reports-unmatched-tendepay-transactions': { title: 'Unmatched Tendepay Transactions', api: 'unmatched-tendepay-transactions',
+    columns: [['transaction_date','DATE'],['tendepay_reference','REFERENCE'],['wallet_name','WALLET'],['payee_name','PAYEE'],['amount','AMOUNT']] },
 };
 
 async function loadFinanceReportView(container, routeKey) {
@@ -101,6 +109,7 @@ async function loadFinanceReportView(container, routeKey) {
     if (f.type === 'account') return `<div class="fin-filter-field"><label class="fin-filter-label">${f.label}${f.required ? ' *' : ''}</label><select id="rep-x-${f.key}" class="fin-filter-select"><option value="">${f.required ? 'Please Select' : 'All'}</option>${_pvAccountOptions()}</select></div>`;
     if (f.type === 'ledger') return `<div class="fin-filter-field"><label class="fin-filter-label">${f.label}</label><select id="rep-x-${f.key}" class="fin-filter-select"><option value="">All</option>${_pvLedgerOptions()}</select></div>`;
     if (f.type === 'supplier') return `<div class="fin-filter-field"><label class="fin-filter-label">${f.label}${f.required ? ' *' : ''}</label><select id="rep-x-${f.key}" class="fin-filter-select"><option value="">Please Select</option>${_pvSupplierOptions()}</select></div>`;
+    if (f.type === 'tendepaywallet') return `<div class="fin-filter-field"><label class="fin-filter-label">${f.label}</label><select id="rep-x-${f.key}" class="fin-filter-select"><option value="">All</option>${_pvTendepayWalletOptions()}</select></div>`;
     if (f.type === 'taxtype') return `<div class="fin-filter-field"><label class="fin-filter-label">${f.label}</label><select id="rep-x-${f.key}" class="fin-filter-select"><option value="">All</option>${_PV_TAX_TYPES.map(t=>`<option value="${t}">${t}</option>`).join('')}</select></div>`;
     if (f.type === 'jestatus') return `<div class="fin-filter-field"><label class="fin-filter-label">${f.label}</label><select id="rep-x-${f.key}" class="fin-filter-select"><option value="">All</option><option value="draft">Draft</option><option value="posted">Posted</option><option value="reversed">Reversed</option></select></div>`;
     if (f.type === 'number') return `<div class="fin-filter-field"><label class="fin-filter-label">${f.label}</label><input type="number" id="rep-x-${f.key}" class="fin-filter-input" value="${f.default ?? ''}"></div>`;

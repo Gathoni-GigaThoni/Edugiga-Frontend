@@ -39,6 +39,7 @@ function _pvLedgerOptions(sel)     { return _pvOptions(_pvLedgers, 'id', l => l.
 function _pvCostCenterOptions(sel) { return _pvOptions(_pvCostCenters, 'id', c => c.name, sel); }
 function _pvDepartmentOptions(sel) { return _pvOptions(_pvDepartments, 'id', d => d.name, sel); }
 function _pvAccountOptions(sel)    { return _pvOptions(_pvAccounts, 'id', a => `${a.number ? a.number + ' - ' : ''}${a.account_name}`, sel); }
+function _pvTendepayWalletOptions(sel) { return _pvOptions(_pvAccounts.filter(a => (a.account_name || '').toLowerCase().startsWith('tendepay')), 'id', a => a.account_name, sel); }
 function _pvSupplierOptions(sel)   { return _pvOptions(_pvSuppliers, 'id', s => s.name, sel); }
 function _pvEmployeeOptions(sel)   { return _pvOptions(_pvEmployees, 'id', e => `${e.first_name} ${e.last_name}`, sel); }
 
@@ -61,13 +62,14 @@ function _pvDate(v) {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 const _PV_STATUS_BADGE = {
-  draft: 'grey', submitted: 'amber', approved: 'blue', paid: 'green', rejected: 'red', cancelled: 'grey',
+  draft: 'grey', submitted: 'amber', approved: 'blue', awaiting_tendepay: 'gold', paid: 'green', rejected: 'red', cancelled: 'grey',
   pending: 'amber', active: 'blue', surrendered: 'green', overdue: 'red', disbursed: 'green', disputed: 'red',
+  pending_review: 'amber', confirmed: 'green',
 };
 function _pvBadge(status) {
   const color = _PV_STATUS_BADGE[status] || 'grey';
-  const colors = { grey: '#888;background:#eee', amber: '#9a7d0a;background:#fdf3d0', blue: '#1a5fb4;background:#dce8fb', green: '#1e7e34;background:#dcf3e2', red: '#c0392b;background:#fde0de' };
-  return `<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:0.78rem;font-weight:600;color:${colors[color].split(';')[0]};background:${colors[color].split(';')[1].replace('background:','')};">${_finEsc(status || '')}</span>`;
+  const colors = { grey: '#888;background:#eee', amber: '#9a7d0a;background:#fdf3d0', blue: '#1a5fb4;background:#dce8fb', gold: '#8a6d00;background:#f5e6a8', green: '#1e7e34;background:#dcf3e2', red: '#c0392b;background:#fde0de' };
+  return `<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:0.78rem;font-weight:600;color:${colors[color].split(';')[0]};background:${colors[color].split(';')[1].replace('background:','')};">${_finEsc((status || '').replace(/_/g,' '))}</span>`;
 }
 
 // ── A.3 Document number preview ─────────────────────────────────────────────
@@ -169,124 +171,93 @@ async function loadPayablesPaymentVouchersView(container) {
     rowSub:   v => v.payee_type || '',
     idKey: 'id',
     detailFields: [
-      {label:'Voucher No',  key:'voucher_no', fmt:v=>v||'—'},
-      {label:'Ledger',      key:'ledger_id', fmt:v=>_pvLedgerName(v)},
-      {label:'Payee Type',  key:'payee_type', fmt:v=>v||'—'},
-      {label:'Amount',      key:'amount', fmt:v=>_pvMoney(v)},
-      {label:'Status',      key:'status', fmt:v=>v||'—'},
-      {label:'Date',        key:'created_at', fmt:v=>_pvDate(v)},
+      {label:'Voucher No',       key:'voucher_no', fmt:v=>v||'—'},
+      {label:'Ledger',           key:'ledger_id', fmt:v=>_pvLedgerName(v)},
+      {label:'Payee Type',       key:'payee_type', fmt:v=>v||'—'},
+      {label:'Amount',           key:'amount', fmt:v=>_pvMoney(v)},
+      {label:'Debit Account',    key:'debit_account_id', fmt:v=>v?_pvAccountName(v):'—'},
+      {label:'Tendepay Wallet',  key:'tendepay_wallet_account_id', fmt:v=>v?_pvAccountName(v):'—'},
+      {label:'Status',           key:'status', fmt:v=>_pvBadge(v)},
+      {label:'Date',             key:'created_at', fmt:v=>_pvDate(v)},
     ],
     onAdd:  () => loadView('payables-payment-vouchers-add'),
     onEdit: item => { window._pvEditPvId = item.id; loadView('payables-payment-vouchers-edit'); },
+    detailActions: _pvPvDetailActions,
   });
 }
 
-async function _pvRefreshPvData() {
-  renderSkeletonRows('pv-pv-table-container', 7);
-  try {
-    const res = await apiFetch(_PV_PV_API);
-    if (res && res.ok) { _pvPvData = _toArray(await res.json()); }
-    else { showToast(`Could not load payment vouchers: HTTP ${res ? res.status : ''} ${res ? await parseApiError(res) : ''}`, 'error'); _pvPvData = []; }
-  } catch (e) { showToast('Network error loading payment vouchers.', 'error'); _pvPvData = []; }
-  _pvRenderPvTable();
-}
-
-function _pvRenderPvListPage(container) {
-  container.innerHTML = `
-    <div class="fin-page">
-      <div class="fin-header-row">
-        <h2 class="fin-title">Payment Vouchers</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Payment Vouchers &rsaquo; Listing</div>
-      </div>
-      <div class="fin-controls-row">
-        <div class="fin-controls-left">Total <span id="pv-pv-total">0</span> entries</div>
-        <div class="fin-controls-right">
-          <button class="fin-export-btn" title="Export PDF">&#128438;</button>
-          <button class="fin-export-btn" title="Export CSV">&#128202;</button>
-          <button class="fin-btn-teal" onclick="loadView('payables-payment-vouchers-add')">+ Add</button>
-        </div>
-      </div>
-      <div id="pv-pv-table-container"></div>
-      <div id="pv-pv-pagination"></div>
-    </div>`;
-}
-
-function _pvRenderPvTable() {
-  const start = (_pvPvPage - 1) * _pvPvPerPage;
-  const paged = _pvPvData.slice(start, start + _pvPvPerPage);
-  const totalEl = document.getElementById('pv-pv-total');
-  if (totalEl) totalEl.textContent = _pvPvData.length;
-
-  const rows = paged.length === 0
-    ? `<tr><td colspan="7" class="fin-empty">No records found.</td></tr>`
-    : paged.map(v => `<tr>
-        <td>${_finEsc(v.voucher_no)}</td>
-        <td>${_finEsc(_pvLedgerName(v.ledger_id))}</td>
-        <td>${_finEsc(v.payee_type)}</td>
-        <td>${_pvMoney(v.amount)}</td>
-        <td>${_pvBadge(v.status)}</td>
-        <td>${_pvDate(v.created_at)}</td>
-        <td class="fin-action-cell">
-          <div class="fin-action-wrap">
-            <button class="fin-action-btn" onclick="_pvToggleDropdown(event,'pv-pv','${v.id}')">&#8230;</button>
-            <div id="pv-pv-dd-${v.id}" class="fin-action-dropdown" style="display:none;">
-              ${_pvPvActionsHtml(v)}
-            </div>
-          </div>
-        </td>
-      </tr>`).join('');
-
-  const el = document.getElementById('pv-pv-table-container');
-  if (el) el.innerHTML = `
-    <div class="fin-table-wrap"><table class="fin-table">
-      <thead><tr><th>VOUCHER NO.</th><th>LEDGER</th><th>PAYEE TYPE</th><th>AMOUNT</th><th>STATUS</th><th>CREATED AT</th><th>ACTION</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table></div>`;
-
-  const pages = Math.max(1, Math.ceil(_pvPvData.length / _pvPvPerPage));
-  let pg = ''; for (let i = 1; i <= pages; i++) pg += `<button class="${i === _pvPvPage ? 'fin-pg-active' : ''}" onclick="_pvPvGoPage(${i})">${i}</button>`;
-  const pgEl = document.getElementById('pv-pv-pagination');
-  if (pgEl) pgEl.innerHTML = `<div class="fin-pagination">${pg}</div>`;
-}
-function _pvPvGoPage(p) { _pvPvPage = p; _pvRenderPvTable(); }
-
-function _pvPvActionsHtml(v) {
+// ── Detail-pane lifecycle actions (draft → submitted → approved → awaiting_tendepay → paid) ──
+function _pvPvDetailActions(v) {
   const isCreator = currentUser && v.personnel_id && String(currentUser.id) === String(v.personnel_id);
-  let actions = '';
+  let html = '';
   if (v.status === 'draft') {
-    actions += `<a href="#" onclick="window._pvEditPvId='${v.id}';loadView('payables-payment-vouchers-edit');return false;">&#9998; Edit</a>`;
-    actions += `<a href="#" onclick="_pvPvSubmitForApproval(${v.id});return false;">&#10148; Submit for Approval</a>`;
+    html += `<button class="btn" onclick="_pvPvSubmitForApproval(${v.id})">Submit for Approval</button>`;
   } else if (v.status === 'submitted') {
-    if (!isCreator) actions += `<a href="#" onclick="_pvPvApprove(${v.id});return false;">&#10003; Approve</a>`;
-    actions += `<a href="#" onclick="_pvPvReject(${v.id});return false;">&#10005; Reject</a>`;
+    if (!isCreator) html += `<button class="btn" onclick="_pvPvApprove(${v.id})">Approve</button>`;
+    html += `<button class="fin-btn-cancel" onclick="_pvPvReject(${v.id})">Reject</button>`;
   } else if (v.status === 'approved') {
-    actions += `<a href="#" onclick="_pvPvMarkPaid(${v.id});return false;">&#128181; Mark Paid</a>`;
+    html += `<button class="btn" onclick="_pvPvQueueForTendepay(${v.id}, ${v.debit_account_id || 'null'}, ${v.tendepay_wallet_account_id || 'null'})">Queue for Tendepay</button>`;
+    if (!v.debit_account_id || !v.tendepay_wallet_account_id) {
+      html += `<div style="width:100%;margin-top:8px;color:var(--color-danger);font-size:0.85rem;">Set the Debit Account and Tendepay Wallet before queueing this voucher for payment.</div>`;
+    }
+  } else if (v.status === 'awaiting_tendepay') {
+    html += `<div style="color:var(--grey-500,#666);font-size:0.9rem;">Queued for Tendepay. Payment will post automatically on the next Tendepay import.</div>`;
   }
-  actions += `<a href="#" onclick="_pvPvPrint(${v.id});return false;">&#128438; View / Print</a>`;
-  return actions;
+  html += `<button class="fin-btn-outline" onclick="_pvPvPrint(${v.id})">View / Print</button>`;
+  return `<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">${html}</div>`;
 }
 
 async function _pvPvSubmitForApproval(id) {
   const res = await apiFetch(`${_PV_PV_API}${id}/submit-for-approval`, { method: 'POST' });
-  if (res && res.ok) { showToast('Submitted for approval.', 'success'); await _pvRefreshPvData(); }
+  if (res && res.ok) { showToast('Submitted for approval.', 'success'); await window._splitRefreshSelected?.(); }
   else if (res) showToast('Error: ' + await parseApiError(res), 'error');
 }
 async function _pvPvApprove(id) {
   const res = await apiFetch(`${_PV_PV_API}${id}/approve`, { method: 'POST' });
-  if (res && res.ok) { showToast('Payment voucher approved.', 'success'); await _pvRefreshPvData(); }
+  if (res && res.ok) { showToast('Payment voucher approved.', 'success'); await window._splitRefreshSelected?.(); }
   else if (res) showToast('Error: ' + await parseApiError(res), 'error');
 }
 function _pvPvReject(id) {
   _pvShowReasonModal('Reject Payment Voucher', async (reason) => {
     const res = await apiFetch(`${_PV_PV_API}${id}/reject`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }) });
-    if (res && res.ok) { showToast('Payment voucher rejected.', 'success'); await _pvRefreshPvData(); }
+    if (res && res.ok) { showToast('Payment voucher rejected.', 'success'); await window._splitRefreshSelected?.(); }
     else if (res) showToast('Error: ' + await parseApiError(res), 'error');
   });
 }
-async function _pvPvMarkPaid(id) {
-  const res = await apiFetch(`${_PV_PV_API}${id}/mark-paid`, { method: 'POST' });
-  if (res && res.ok) { showToast('Payment voucher marked as paid.', 'success'); await _pvRefreshPvData(); }
-  else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+// Small modal for an optional notes field (used by Queue for Tendepay) — like
+// _pvShowReasonModal but the text is not required to confirm.
+function _pvShowNotesModal(title, onConfirm) {
+  const wrap = document.createElement('div');
+  wrap.id = 'pv-notes-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:white;border-radius:8px;padding:24px;width:420px;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 14px;font-size:1.05rem;color:#2c3e50;">${_finEsc(title)}</h3>
+      <textarea id="pv-notes-text" class="fin-form-textarea" rows="4" placeholder="Notes (optional)..."></textarea>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="document.getElementById('pv-notes-modal-overlay').remove()">Cancel</button>
+        <button class="fin-btn-teal" id="pv-notes-confirm-btn">Confirm</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  document.getElementById('pv-notes-confirm-btn').onclick = () => {
+    const notes = document.getElementById('pv-notes-text').value.trim();
+    wrap.remove();
+    onConfirm(notes || null);
+  };
+}
+// Replaces the deleted /mark-paid action — vouchers now settle exclusively
+// through a Tendepay statement import (see js/finance.js Tendepay module).
+async function _pvPvQueueForTendepay(id, debitAccountId, tendepayWalletAccountId) {
+  if (!debitAccountId || !tendepayWalletAccountId) {
+    showToast('Set the Debit Account and Tendepay Wallet before queueing this voucher for payment.', 'error');
+    return;
+  }
+  _pvShowNotesModal('Queue for Tendepay', async (notes) => {
+    const res = await apiFetch(`${_PV_PV_API}${id}/mark-awaiting-tendepay`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes }) });
+    if (res && res.ok) { showToast('Voucher queued. Payment will post on the next Tendepay import.', 'success'); await window._splitRefreshSelected?.(); }
+    else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+  });
 }
 async function _pvPvPrint(id) {
   const res = await apiFetch(`${_PV_PV_API}${id}/print`);
@@ -318,6 +289,18 @@ function _pvPvFormHtml(v) {
           <option value="">Please Select</option>${_pvCostCenterOptions(v?.cost_center_id)}
         </select>
         <span class="fin-field-error" id="pv-f-cc-err"></span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Debit Account</label>
+        <select id="pv-f-debit-account" class="fin-form-select">
+          <option value="">Please Select</option>${_pvAccountOptions(v?.debit_account_id)}
+        </select>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Tendepay Wallet</label>
+        <select id="pv-f-tendepay-wallet" class="fin-form-select">
+          <option value="">Please Select</option>${_pvTendepayWalletOptions(v?.tendepay_wallet_account_id)}
+        </select>
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Department <span class="fin-required">*</span></label>
@@ -428,6 +411,8 @@ function _pvPvPayload() {
     amount: parseFloat(document.getElementById('pv-f-amount').value),
     description: document.getElementById('pv-f-description').value.trim(),
     notes: document.getElementById('pv-f-notes').value.trim() || null,
+    debit_account_id: document.getElementById('pv-f-debit-account').value ? parseInt(document.getElementById('pv-f-debit-account').value, 10) : null,
+    tendepay_wallet_account_id: document.getElementById('pv-f-tendepay-wallet').value ? parseInt(document.getElementById('pv-f-tendepay-wallet').value, 10) : null,
   };
 }
 
@@ -512,121 +497,38 @@ async function loadPayablesTaxVouchersView(container) {
       {label:'Tax Type',   key:'tax_type', fmt:v=>v||'—'},
       {label:'Ledger',     key:'ledger_id', fmt:(_,tv)=>_pvLedgerName(_pvTvField(tv,'ledger_id'))},
       {label:'Amount',     key:'amount', fmt:(_,tv)=>_pvMoney(_pvTvField(tv,'amount'))},
-      {label:'Status',     key:'status', fmt:(_,tv)=>_pvTvField(tv,'status')||'—'},
+      {label:'Status',     key:'status', fmt:(_,tv)=>_pvBadge(_pvTvField(tv,'status'))},
       {label:'Date',       key:'created_at', fmt:(_,tv)=>_pvDate(_pvTvField(tv,'created_at'))},
     ],
     onAdd: () => loadView('payables-tax-vouchers-add'),
+    detailActions: _pvTvDetailActions,
   });
 }
 
-async function _pvRefreshTvData() {
-  renderSkeletonRows('pv-tv-table-container', 7);
-  try {
-    const res = await apiFetch(_PV_TV_API);
-    if (res && res.ok) { _pvTvData = _toArray(await res.json()); }
-    else { showToast(`Could not load tax vouchers: HTTP ${res ? res.status : ''} ${res ? await parseApiError(res) : ''}`, 'error'); _pvTvData = []; }
-  } catch (e) { showToast('Network error loading tax vouchers.', 'error'); _pvTvData = []; }
-  _pvRenderTvTable();
-}
-
-function _pvRenderTvListPage(container) {
-  container.innerHTML = `
-    <div class="fin-page">
-      <div class="fin-header-row">
-        <h2 class="fin-title">Tax Vouchers</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Tax Vouchers &rsaquo; Listing</div>
-      </div>
-      <div class="fin-controls-row">
-        <div class="fin-controls-left">Total <span id="pv-tv-total">0</span> entries</div>
-        <div class="fin-controls-right">
-          <button class="fin-export-btn" title="Export PDF">&#128438;</button>
-          <button class="fin-export-btn" title="Export CSV">&#128202;</button>
-          <button class="fin-btn-outline" onclick="loadView('payables-tax-vouchers-upcoming')">Upcoming Deadlines</button>
-          <button class="fin-btn-teal" onclick="loadView('payables-tax-vouchers-add')">+ Add</button>
-        </div>
-      </div>
-      <div id="pv-tv-table-container"></div>
-      <div id="pv-tv-pagination"></div>
-    </div>`;
-}
-
-function _pvRenderTvTable() {
-  const start = (_pvTvPage - 1) * _pvTvPerPage;
-  const paged = _pvTvData.slice(start, start + _pvTvPerPage);
-  const totalEl = document.getElementById('pv-tv-total');
-  if (totalEl) totalEl.textContent = _pvTvData.length;
-
-  const rows = paged.length === 0
-    ? `<tr><td colspan="7" class="fin-empty">No records found.</td></tr>`
-    : paged.map(tv => `<tr>
-        <td>${_finEsc(_pvTvField(tv, 'voucher_no') || '-')}</td>
-        <td>${_finEsc(_pvLedgerName(_pvTvField(tv, 'ledger_id')))}</td>
-        <td>${_finEsc(tv.tax_type || '-')}</td>
-        <td>${_pvMoney(_pvTvField(tv, 'amount'))}</td>
-        <td>${_pvBadge(_pvTvField(tv, 'status'))}</td>
-        <td>${_pvDate(_pvTvField(tv, 'created_at'))}</td>
-        <td class="fin-action-cell">
-          <div class="fin-action-wrap">
-            <button class="fin-action-btn" onclick="_pvToggleDropdown(event,'pv-tv','${tv.id}')">&#8230;</button>
-            <div id="pv-tv-dd-${tv.id}" class="fin-action-dropdown" style="display:none;">
-              ${_pvTvActionsHtml(tv)}
-            </div>
-          </div>
-        </td>
-      </tr>`).join('');
-
-  const el = document.getElementById('pv-tv-table-container');
-  if (el) el.innerHTML = `
-    <div class="fin-table-wrap"><table class="fin-table">
-      <thead><tr><th>VOUCHER NO.</th><th>LEDGER</th><th>TAX TYPE</th><th>AMOUNT</th><th>STATUS</th><th>CREATED AT</th><th>ACTION</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table></div>`;
-
-  const pages = Math.max(1, Math.ceil(_pvTvData.length / _pvTvPerPage));
-  let pg = ''; for (let i = 1; i <= pages; i++) pg += `<button class="${i === _pvTvPage ? 'fin-pg-active' : ''}" onclick="_pvTvGoPage(${i})">${i}</button>`;
-  const pgEl = document.getElementById('pv-tv-pagination');
-  if (pgEl) pgEl.innerHTML = `<div class="fin-pagination">${pg}</div>`;
-}
-function _pvTvGoPage(p) { _pvTvPage = p; _pvRenderTvTable(); }
-
-function _pvTvActionsHtml(tv) {
+// Tax Vouchers have no lifecycle routes of their own — approve/reject/queue
+// all act on the backing Payment Voucher (_pvTvPvId), then refresh this split view.
+function _pvTvDetailActions(tv) {
   const status = _pvTvField(tv, 'status');
   const pvId = _pvTvPvId(tv);
   const isCreator = currentUser && _pvTvField(tv, 'personnel_id') && String(currentUser.id) === String(_pvTvField(tv, 'personnel_id'));
-  let actions = '';
+  let html = '';
   if (status === 'draft') {
-    actions += `<a href="#" onclick="_pvPvSubmitForApprovalFor(${pvId},'_pvRefreshTvData');return false;">&#10148; Submit for Approval</a>`;
+    html += `<button class="btn" onclick="_pvPvSubmitForApproval(${pvId})">Submit for Approval</button>`;
   } else if (status === 'submitted') {
-    if (!isCreator) actions += `<a href="#" onclick="_pvPvApproveFor(${pvId},'_pvRefreshTvData');return false;">&#10003; Approve</a>`;
-    actions += `<a href="#" onclick="_pvPvRejectFor(${pvId},'_pvRefreshTvData');return false;">&#10005; Reject</a>`;
+    if (!isCreator) html += `<button class="btn" onclick="_pvPvApprove(${pvId})">Approve</button>`;
+    html += `<button class="fin-btn-cancel" onclick="_pvPvReject(${pvId})">Reject</button>`;
   } else if (status === 'approved') {
-    actions += `<a href="#" onclick="_pvPvMarkPaidFor(${pvId},'_pvRefreshTvData');return false;">&#128181; Mark Paid</a>`;
+    const debitId = _pvTvField(tv, 'debit_account_id');
+    const walletId = _pvTvField(tv, 'tendepay_wallet_account_id');
+    html += `<button class="btn" onclick="_pvPvQueueForTendepay(${pvId}, ${debitId || 'null'}, ${walletId || 'null'})">Queue for Tendepay</button>`;
+    if (!debitId || !walletId) {
+      html += `<div style="width:100%;margin-top:8px;color:var(--color-danger);font-size:0.85rem;">Set the Debit Account and Tendepay Wallet before queueing this voucher for payment.</div>`;
+    }
+  } else if (status === 'awaiting_tendepay') {
+    html += `<div style="color:var(--grey-500,#666);font-size:0.9rem;">Queued for Tendepay. Payment will post automatically on the next Tendepay import.</div>`;
   }
-  actions += `<a href="#" onclick="_pvPvPrint(${pvId});return false;">&#128438; View / Print</a>`;
-  return actions;
-}
-// Generic variants of the Payment Voucher actions that refresh a named module's data afterwards
-async function _pvPvSubmitForApprovalFor(id, refreshFnName) {
-  const res = await apiFetch(`${_PV_PV_API}${id}/submit-for-approval`, { method: 'POST' });
-  if (res && res.ok) { showToast('Submitted for approval.', 'success'); window[refreshFnName](); }
-  else if (res) showToast('Error: ' + await parseApiError(res), 'error');
-}
-async function _pvPvApproveFor(id, refreshFnName) {
-  const res = await apiFetch(`${_PV_PV_API}${id}/approve`, { method: 'POST' });
-  if (res && res.ok) { showToast('Approved.', 'success'); window[refreshFnName](); }
-  else if (res) showToast('Error: ' + await parseApiError(res), 'error');
-}
-function _pvPvRejectFor(id, refreshFnName) {
-  _pvShowReasonModal('Reject', async (reason) => {
-    const res = await apiFetch(`${_PV_PV_API}${id}/reject`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }) });
-    if (res && res.ok) { showToast('Rejected.', 'success'); window[refreshFnName](); }
-    else if (res) showToast('Error: ' + await parseApiError(res), 'error');
-  });
-}
-async function _pvPvMarkPaidFor(id, refreshFnName) {
-  const res = await apiFetch(`${_PV_PV_API}${id}/mark-paid`, { method: 'POST' });
-  if (res && res.ok) { showToast('Marked as paid.', 'success'); window[refreshFnName](); }
-  else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+  html += `<button class="fin-btn-outline" onclick="_pvPvPrint(${pvId})">View / Print</button>`;
+  return `<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">${html}</div>`;
 }
 
 const _PV_MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -809,8 +711,101 @@ async function loadPayablesSupplierInvoicesView(container) {
     ],
     onAdd:  () => loadView('payables-supplier-invoices-add'),
     onEdit: item => { window._pvEditSiId = item.id; loadView('payables-supplier-invoices-edit'); },
+    detailActions: _pvSiDetailActions,
   });
 }
+
+function _pvSiDetailActions(inv) {
+  if (inv.payment_voucher_id) {
+    return `<div style="color:var(--grey-500,#666);font-size:0.9rem;">Linked to Payment Voucher #${inv.payment_voucher_id}.</div>`;
+  }
+  window._pvSiPendingInvoice = inv;
+  return `<button class="btn" onclick="_pvSiOpenCreateVoucherModal(${inv.id})">Create Payment Voucher</button>`;
+}
+
+function _pvSiOpenCreateVoucherModal(invoiceId) {
+  const invoice = (window._pvSiPendingInvoice && String(window._pvSiPendingInvoice.id) === String(invoiceId)) ? window._pvSiPendingInvoice : {};
+  const wrap = document.createElement('div');
+  wrap.id = 'pv-si-pv-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;overflow:auto;padding:24px;';
+  wrap.innerHTML = `
+    <div style="background:white;border-radius:8px;padding:24px;width:640px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 14px;font-size:1.05rem;color:#2c3e50;">Create Payment Voucher</h3>
+      <div class="fin-form-grid-2">
+        <div class="fin-form-group">
+          <label class="fin-form-label">Ledger <span class="fin-required">*</span></label>
+          <select id="si-pv-ledger" class="fin-form-select"><option value="">Please Select</option>${_pvLedgerOptions(null)}</select>
+        </div>
+        <div class="fin-form-group">
+          <label class="fin-form-label">Cost Center <span class="fin-required">*</span></label>
+          <select id="si-pv-cost-center" class="fin-form-select"><option value="">Please Select</option>${_pvCostCenterOptions(null)}</select>
+        </div>
+        <div class="fin-form-group">
+          <label class="fin-form-label">Department <span class="fin-required">*</span></label>
+          <select id="si-pv-department" class="fin-form-select"><option value="">Please Select</option>${_pvDepartmentOptions(null)}</select>
+        </div>
+        <div class="fin-form-group">
+          <label class="fin-form-label">Debit Account</label>
+          <select id="si-pv-debit-account" class="fin-form-select"><option value="">Please Select</option>${_pvAccountOptions(null)}</select>
+        </div>
+        <div class="fin-form-group">
+          <label class="fin-form-label">Tendepay Wallet</label>
+          <select id="si-pv-tendepay-wallet" class="fin-form-select"><option value="">Please Select</option>${_pvTendepayWalletOptions(null)}</select>
+        </div>
+        <div class="fin-form-group">
+          <label class="fin-form-label">Amount (KES) <span class="fin-required">*</span></label>
+          <input type="number" id="si-pv-amount" class="fin-form-input" step="0.01" min="0.01" value="${invoice.amount || ''}">
+        </div>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Description <span class="fin-required">*</span></label>
+        <textarea id="si-pv-description" class="fin-form-textarea" rows="3">${_finEsc(`Payment for supplier invoice ${invoice.invoice_number || ''}`.trim())}</textarea>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="document.getElementById('pv-si-pv-modal-overlay').remove()">Cancel</button>
+        <button class="fin-btn-teal" onclick="_pvSiSubmitCreateVoucher(${invoiceId}, ${invoice.supplier_id || 'null'})">Create</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+
+async function _pvSiSubmitCreateVoucher(invoiceId, supplierId) {
+  const ledgerId = parseInt(document.getElementById('si-pv-ledger').value, 10);
+  const costCenterId = parseInt(document.getElementById('si-pv-cost-center').value, 10);
+  const departmentId = parseInt(document.getElementById('si-pv-department').value, 10);
+  const amount = parseFloat(document.getElementById('si-pv-amount').value);
+  const description = document.getElementById('si-pv-description').value.trim();
+  if (!ledgerId || !costCenterId || !departmentId || !(amount > 0) || !description) {
+    showToast('Ledger, Cost Center, Department, Amount and Description are all required.', 'error');
+    return;
+  }
+  const debitAccountEl = document.getElementById('si-pv-debit-account');
+  const walletEl = document.getElementById('si-pv-tendepay-wallet');
+  const payload = {
+    ledger_id: ledgerId,
+    cost_center_id: costCenterId,
+    payee_type: 'Supplier',
+    payee_id: supplierId || null,
+    payee_name_freetext: null,
+    department_id: departmentId,
+    amount,
+    description,
+    notes: null,
+    debit_account_id: debitAccountEl.value ? parseInt(debitAccountEl.value, 10) : null,
+    tendepay_wallet_account_id: walletEl.value ? parseInt(walletEl.value, 10) : null,
+  };
+  const res = await apiFetch(`${_PV_SI_API}/${invoiceId}/create-payment-voucher`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  if (res && res.ok) {
+    document.getElementById('pv-si-pv-modal-overlay')?.remove();
+    showToast('Payment voucher created.', 'success');
+    await window._splitRefreshSelected?.();
+  } else if (res && res.status === 409) {
+    showToast('This invoice already has a payment voucher.', 'error');
+  } else if (res) {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
+}
+
 async function loadPayablesSupplierInvoicesMissingEtimsView(container) {
   await _pvLoadLookups();
   await renderSplitView({

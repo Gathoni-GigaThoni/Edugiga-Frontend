@@ -236,7 +236,7 @@ async function loadPayrollFiListingView(container) {
       {label:'Payroll',view:'payroll-fi'},
       {label:'Financial Institutions'}
     ],
-    apiUrl: `${API_BASE}/payroll/financial-institutions/`,
+    apiUrl: `${API_BASE}/payroll/utilities/financial-institutions/`,
     searchFields: ['institution','code'],
     col1Label: 'Institution', col2Label: 'Code',
     col1: r => r.institution || '—',
@@ -336,24 +336,17 @@ async function toggleFiStatus(id) {
   rec.is_inactive = !(rec.is_inactive || rec.isInactive);
   rec.isInactive  = rec.is_inactive;   // keep legacy field in sync for any display that still reads it
   renderFiTable();
-  try {
-    await fetch(`${API_BASE}/payroll/financial-institutions/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(rec)
-    });
-  } catch (_) {}
+  await apiFetch(`${API_BASE}/payroll/utilities/financial-institutions/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(rec)
+  });
 }
 
 async function deleteFi(id) {
   if (!confirm('Delete this financial institution?')) return;
-  try {
-    const res = await fetch(`${API_BASE}/payroll/financial-institutions/${id}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    if (!res.ok) { showToast('Could not delete record.', 'error'); return; }
-  } catch (_) { showToast('Network error.', 'error'); return; }
+  const res = await apiFetch(`${API_BASE}/payroll/utilities/financial-institutions/${id}`, { method: 'DELETE' });
+  if (!(res && res.ok)) { showToast('Could not delete record.', 'error'); return; }
   const idx = financialInstitutionsData.findIndex(r => r.id === id);
   if (idx !== -1) financialInstitutionsData.splice(idx, 1);
   renderFiTable();
@@ -436,19 +429,17 @@ async function submitFiAdd() {
   const vals = readFiFormValues();
   if (!vals.code)        { showToast('Code is required.', 'error'); return; }
   if (!vals.institution) { showToast('Institution is required.', 'error'); return; }
-  try {
-    const res = await fetch(`${API_BASE}/payroll/financial-institutions/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(vals)
-    });
-    if (res.ok) {
-      showToast('Financial institution added!', 'success');
-      loadPayrollFiListingView(document.getElementById('main-content'));
-    } else {
-      showToast(await parseApiError(res), 'error');
-    }
-  } catch (_) { showToast('Network error. Please try again.', 'error'); }
+  const res = await apiFetch(`${API_BASE}/payroll/utilities/financial-institutions/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(vals)
+  });
+  if (res && res.ok) {
+    showToast('Financial institution added!', 'success');
+    loadPayrollFiListingView(document.getElementById('main-content'));
+  } else if (res) {
+    showToast(await parseApiError(res), 'error');
+  }
 }
 
 // ---- Edit ----
@@ -482,19 +473,17 @@ async function submitFiEdit(id) {
   const vals = readFiFormValues();
   if (!vals.code)        { showToast('Code is required.', 'error'); return; }
   if (!vals.institution) { showToast('Institution is required.', 'error'); return; }
-  try {
-    const res = await fetch(`${API_BASE}/payroll/financial-institutions/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(vals)
-    });
-    if (res.ok) {
-      showToast('Financial institution updated!', 'success');
-      loadPayrollFiListingView(document.getElementById('main-content'));
-    } else {
-      showToast(await parseApiError(res), 'error');
-    }
-  } catch (_) { showToast('Network error. Please try again.', 'error'); }
+  const res = await apiFetch(`${API_BASE}/payroll/utilities/financial-institutions/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(vals)
+  });
+  if (res && res.ok) {
+    showToast('Financial institution updated!', 'success');
+    loadPayrollFiListingView(document.getElementById('main-content'));
+  } else if (res) {
+    showToast(await parseApiError(res), 'error');
+  }
 }
 
 // ==================== PAY GRADES ====================
@@ -632,4 +621,366 @@ async function submitPayGradeForm(gradeId) {
       showToast(await parseApiError(res), 'error');
     }
   } catch (_) { showToast('Network error.', 'error'); }
+}
+
+// ==================== PAYROLL RUNS ====================
+// New run-based payroll lifecycle: draft → calculated → approved →
+// awaiting_payment → paid → payslips_generated. Payment happens exclusively
+// through the Tendepay import (js/finance.js) once a voucher is created here.
+let _prRuns = [];
+let _prSelectedRunId = null;
+let _prPollTimer = null;
+let _prPollInFlight = false;
+
+const _PR_MONTHS = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const _PR_STATUS_COLORS = {
+  draft: '#888;background:#eee',
+  calculated: '#1B3057;background:#dde3ec',
+  approved: '#8a6d00;background:#f5e6a8',
+  awaiting_payment: '#9a7d0a;background:#fdf3d0',
+  paid: '#1e7e34;background:#dcf3e2',
+  payslips_generated: '#0f766e;background:#d3f3ef',
+};
+function _prBadge(status) {
+  const c = _PR_STATUS_COLORS[status] || '#888;background:#eee';
+  const [color, bg] = c.split(';background:');
+  return `<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:0.78rem;font-weight:600;color:${color};background:${bg};">${_finEsc((status || '').replace(/_/g, ' '))}</span>`;
+}
+
+async function loadPayrollRunsView(container) {
+  await _pvLoadLookups();
+  _prStopPolling();
+  await _prLoadRuns();
+  _prRenderShell(container);
+}
+
+async function _prLoadRuns() {
+  const res = await apiFetch(`${API_BASE}/payroll/runs/`);
+  _prRuns = res && res.ok ? _toArray(await res.json()) : [];
+}
+
+function _prRenderShell(container) {
+  container.innerHTML = `
+    ${renderBreadcrumb([{label:'Dashboard',view:null},{label:'Payroll',view:'payroll-runs'},{label:'Payroll Runs'}])}
+    <div class="split-layout">
+      <div class="split-left">
+        <div class="split-left-header">
+          <span class="split-left-title">Payroll Runs</span>
+          <span class="split-left-count">${_prRuns.length}</span>
+        </div>
+        <div class="split-left-col-headers"><span>Run</span><span>Status</span></div>
+        <div class="split-list" id="pr-list-items"></div>
+      </div>
+      <div class="split-right" id="pr-right-panel"></div>
+    </div>`;
+  _prRenderList();
+  if (_prSelectedRunId && _prRuns.some(r => String(r.id) === String(_prSelectedRunId))) _prSelectRun(_prSelectedRunId);
+  else _prRenderAddForm();
+}
+
+function _prRenderList() {
+  const el = document.getElementById('pr-list-items');
+  if (!el) return;
+  el.innerHTML = _prRuns.map(r => `
+    <div class="split-list-row${String(_prSelectedRunId) === String(r.id) ? ' active' : ''}" onclick="_prSelectRun(${r.id})">
+      <div class="split-col1">${_finEsc(r.run_number)}</div>
+      <div class="split-col2">${_prBadge(r.status)}</div>
+    </div>`).join('') || `<p style="padding:24px;text-align:center;color:var(--grey-400);font-style:italic;font-size:13px">No records found</p>`;
+}
+
+function _prRenderAddForm() {
+  _prSelectedRunId = null;
+  _prStopPolling();
+  _prRenderList();
+  const right = document.getElementById('pr-right-panel');
+  right.className = 'split-right-add';
+  right.innerHTML = `
+    <div class="fin-form-wrap">
+      <h3 class="fin-title" style="font-size:1.1rem;">Add Payroll Run</h3>
+      <div class="fin-form-grid-2">
+        <div class="fin-form-group">
+          <label class="fin-form-label">Period Month <span class="fin-required">*</span></label>
+          <select id="pr-add-month" class="fin-form-select">
+            <option value="">Please Select</option>
+            ${_PR_MONTHS.slice(1).map((m, i) => `<option value="${i + 1}">${m}</option>`).join('')}
+          </select>
+        </div>
+        <div class="fin-form-group">
+          <label class="fin-form-label">Period Year <span class="fin-required">*</span></label>
+          <input type="number" id="pr-add-year" class="fin-form-input" value="${new Date().getFullYear()}" min="2020" max="2100">
+        </div>
+      </div>
+      <div class="fin-form-actions">
+        <button class="fin-btn-teal" onclick="_prCreateRun()">Create Run</button>
+      </div>
+    </div>`;
+}
+
+async function _prCreateRun() {
+  const month = parseInt(document.getElementById('pr-add-month').value, 10);
+  const year = parseInt(document.getElementById('pr-add-year').value, 10);
+  if (!month || !year) { showToast('Period Month and Period Year are required.', 'error'); return; }
+  const res = await apiFetch(`${API_BASE}/payroll/runs/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ period_month: month, period_year: year }) });
+  if (res && res.ok) {
+    const run = await res.json();
+    showToast('Payroll run created.', 'success');
+    await _prLoadRuns();
+    await _prSelectRun(run.id);
+  } else if (res && res.status === 409) {
+    showToast('A payroll run already exists for that period.', 'error');
+  } else if (res) {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
+}
+
+async function _prSelectRun(runId) {
+  _prSelectedRunId = runId;
+  _prStopPolling();
+  _prRenderList();
+  const right = document.getElementById('pr-right-panel');
+  right.className = 'split-right-detail';
+  right.innerHTML = '<p class="sa-loading">Loading&#8230;</p>';
+  const res = await apiFetch(`${API_BASE}/payroll/runs/${runId}`);
+  if (!res || !res.ok) { right.innerHTML = `<p class="fin-error-msg">Could not load payroll run.</p>`; return; }
+  const run = await res.json();
+  _prRenderDetail(right, run);
+}
+
+function _prRenderDetail(right, run) {
+  const lines = run.lines || [];
+  right.innerHTML = `
+    <div style="background:var(--navy-700,#1B3057);color:#fff;border-radius:8px;padding:18px 22px;margin-bottom:16px;display:flex;flex-wrap:wrap;gap:24px;align-items:center;">
+      <div>
+        <div style="font-size:1.15rem;font-weight:700;">${_finEsc(run.run_number)}</div>
+        <div style="opacity:0.85;font-size:0.85rem;">${_PR_MONTHS[run.period_month] || ''} ${run.period_year} &middot; ${_prBadge(run.status)}</div>
+      </div>
+      <div style="margin-left:auto;display:flex;gap:24px;">
+        <div><div style="opacity:0.7;font-size:0.75rem;">GROSS</div><div style="font-weight:700;">${_pvMoney(run.total_gross)}</div></div>
+        <div><div style="opacity:0.7;font-size:0.75rem;">DEDUCTIONS</div><div style="font-weight:700;">${_pvMoney(run.total_deductions)}</div></div>
+        <div><div style="opacity:0.7;font-size:0.75rem;">NET</div><div style="font-weight:700;">${_pvMoney(run.total_net)}</div></div>
+      </div>
+    </div>
+    <div id="pr-action-row" style="margin-bottom:16px;"></div>
+    <div class="fin-table-wrap"><table class="fin-table">
+      <thead><tr><th>Employee Code</th><th>Basic Salary</th><th>Gross Pay</th><th>NSSF</th><th>SHIF</th><th>PAYE</th><th>Housing Levy</th><th>Total Deductions</th><th>Net Pay</th></tr></thead>
+      <tbody>
+        ${lines.length ? lines.map(l => `<tr>
+          <td>${_finEsc(l.employee_code)}</td>
+          <td>${_pvMoney(l.basic_salary)}</td>
+          <td>${_pvMoney(l.gross_pay)}</td>
+          <td>${_pvMoney(l.nssf_employee)}</td>
+          <td>${_pvMoney(l.shif_employee)}</td>
+          <td>${_pvMoney(l.paye)}</td>
+          <td>${_pvMoney(l.housing_levy_employee)}</td>
+          <td>${_pvMoney(l.total_deductions)}</td>
+          <td>${_pvMoney(l.net_pay)}</td>
+        </tr>`).join('') : `<tr><td colspan="9" class="fin-empty">No lines yet &mdash; run Calculate first.</td></tr>`}
+      </tbody>
+    </table></div>
+    <div id="pr-payslips-panel" style="margin-top:20px;"></div>`;
+  document.getElementById('pr-action-row').innerHTML = _prActionsHtml(run);
+  if (run.status === 'paid' || run.status === 'payslips_generated') {
+    _prRenderPayslipsPanel(document.getElementById('pr-payslips-panel'), run);
+  }
+}
+
+function _prActionsHtml(run) {
+  let html = '';
+  if (run.status === 'draft') {
+    html += `<button class="btn" onclick="_prCalculate(${run.id})">Calculate</button>`;
+  } else if (run.status === 'calculated') {
+    html += `<button class="btn" onclick="_prApprove(${run.id})">Approve</button>`;
+  } else if (run.status === 'approved') {
+    html += `<button class="btn" onclick="_prOpenCreateVoucherModal(${run.id})">Create Payment Voucher</button>`;
+  } else if (run.status === 'awaiting_payment') {
+    html += `<div style="color:#666;font-size:0.9rem;">Awaiting Tendepay settlement. The run will move to Paid automatically once the payroll voucher is confirmed in a Tendepay import.</div>`;
+  }
+  return `<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">${html}</div>`;
+}
+
+async function _prCalculate(runId) {
+  const res = await apiFetch(`${API_BASE}/payroll/runs/${runId}/calculate`, { method: 'POST' });
+  if (res && res.ok) { showToast('Statutory deductions calculated.', 'success'); await _prLoadRuns(); await _prSelectRun(runId); }
+  else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+}
+async function _prApprove(runId) {
+  const res = await apiFetch(`${API_BASE}/payroll/runs/${runId}/approve`, { method: 'POST' });
+  if (res && res.ok) { showToast('Payroll run approved.', 'success'); await _prLoadRuns(); await _prSelectRun(runId); }
+  else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+}
+
+function _prOpenCreateVoucherModal(runId) {
+  const wrap = document.createElement('div');
+  wrap.id = 'pr-cv-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;overflow:auto;padding:24px;';
+  wrap.innerHTML = `
+    <div style="background:white;border-radius:8px;padding:24px;width:600px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 14px;font-size:1.05rem;color:#2c3e50;">Create Payment Voucher</h3>
+      <div class="fin-form-grid-2">
+        <div class="fin-form-group"><label class="fin-form-label">Ledger <span class="fin-required">*</span></label>
+          <select id="pr-cv-ledger" class="fin-form-select"><option value="">Please Select</option>${_pvLedgerOptions(null)}</select></div>
+        <div class="fin-form-group"><label class="fin-form-label">Cost Center <span class="fin-required">*</span></label>
+          <select id="pr-cv-cost-center" class="fin-form-select"><option value="">Please Select</option>${_pvCostCenterOptions(null)}</select></div>
+        <div class="fin-form-group"><label class="fin-form-label">Department <span class="fin-required">*</span></label>
+          <select id="pr-cv-department" class="fin-form-select"><option value="">Please Select</option>${_pvDepartmentOptions(null)}</select></div>
+        <div class="fin-form-group"><label class="fin-form-label">Debit Account <span class="fin-required">*</span></label>
+          <select id="pr-cv-debit" class="fin-form-select"><option value="">Please Select</option>${_pvAccountOptions(null)}</select></div>
+        <div class="fin-form-group"><label class="fin-form-label">Tendepay Wallet <span class="fin-required">*</span></label>
+          <select id="pr-cv-wallet" class="fin-form-select"><option value="">Please Select</option>${_pvTendepayWalletOptions(null)}</select></div>
+      </div>
+      <div class="fin-form-group"><label class="fin-form-label">Description</label><textarea id="pr-cv-description" class="fin-form-textarea" rows="2"></textarea></div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="document.getElementById('pr-cv-modal-overlay').remove()">Cancel</button>
+        <button class="fin-btn-teal" onclick="_prSubmitCreateVoucher(${runId})">Create</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+
+async function _prSubmitCreateVoucher(runId) {
+  const ledgerId = parseInt(document.getElementById('pr-cv-ledger').value, 10);
+  const costCenterId = parseInt(document.getElementById('pr-cv-cost-center').value, 10);
+  const departmentId = parseInt(document.getElementById('pr-cv-department').value, 10);
+  const debitAccountId = parseInt(document.getElementById('pr-cv-debit').value, 10);
+  const walletId = parseInt(document.getElementById('pr-cv-wallet').value, 10);
+  const description = document.getElementById('pr-cv-description').value.trim() || null;
+  if (!ledgerId || !costCenterId || !departmentId || !debitAccountId || !walletId) {
+    showToast('Ledger, Cost Center, Department, Debit Account and Tendepay Wallet are all required.', 'error');
+    return;
+  }
+  const res = await apiFetch(`${API_BASE}/payroll/runs/${runId}/create-voucher`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ledger_id: ledgerId, cost_center_id: costCenterId, department_id: departmentId, tendepay_wallet_account_id: walletId, debit_account_id: debitAccountId, description }),
+  });
+  if (res && res.ok) {
+    document.getElementById('pr-cv-modal-overlay')?.remove();
+    showToast('Payment voucher created. Settle it via Tendepay Import to complete payroll.', 'success');
+    await _prLoadRuns();
+    await _prSelectRun(runId);
+  } else if (res && res.status === 409) {
+    showToast('A payment voucher already exists for this run.', 'error');
+  } else if (res) {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
+}
+
+// ── Payslips (run-based) ─────────────────────────────────────────────────────
+const _PR_PAYSLIP_COLORS = {
+  pending_generation: '#9a7d0a;background:#fdf3d0',
+  generated: '#1a5fb4;background:#dce8fb',
+  queued: '#9a7d0a;background:#fdf3d0',
+  sent: '#1e7e34;background:#dcf3e2',
+  send_failed: '#c0392b;background:#fde0de',
+  email_missing: '#c0392b;background:#fde0de',
+};
+function _prPayslipBadge(status) {
+  const c = _PR_PAYSLIP_COLORS[status] || '#888;background:#eee';
+  const [color, bg] = c.split(';background:');
+  const label = status === 'pending_generation' ? 'Generating…' : (status || '').replace(/_/g, ' ');
+  return `<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:0.78rem;font-weight:600;color:${color};background:${bg};">${_finEsc(label)}</span>`;
+}
+
+function _prRenderPayslipsPanel(el, run) {
+  el.innerHTML = `
+    <div class="fin-section-label">Payslips</div>
+    <div style="display:flex;gap:10px;margin-bottom:12px;">
+      <button class="btn" onclick="_prGeneratePayslips(${run.id})">Generate Payslips</button>
+      <button class="btn" id="pr-bulk-send-btn" disabled onclick="_prBulkSend(${run.id})">Send Bulk</button>
+    </div>
+    <div id="pr-payslips-table"></div>`;
+  _prRefreshDeliveryReport(run.id);
+}
+
+async function _prGeneratePayslips(runId) {
+  const res = await apiFetch(`${API_BASE}/payroll/payslips/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ payroll_run_id: runId }) });
+  if (res && res.ok) {
+    showToast('Payslip generation started.', 'success');
+    _prStartPolling(runId);
+    await _prRefreshDeliveryReport(runId);
+  } else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+}
+
+// Idempotency-aware polling: a single named interval, guarded by an in-flight
+// flag so overlapping delivery-report requests never stack, and stopped as
+// soon as every payslip reaches a terminal state (or the user navigates away).
+function _prStartPolling(runId) {
+  _prStopPolling();
+  _prPollTimer = setInterval(() => _prRefreshDeliveryReport(runId), 3000);
+}
+function _prStopPolling() {
+  if (_prPollTimer) { clearInterval(_prPollTimer); _prPollTimer = null; }
+  _prPollInFlight = false;
+}
+
+async function _prRefreshDeliveryReport(runId) {
+  if (_prPollInFlight) return;
+  _prPollInFlight = true;
+  try {
+    const res = await apiFetch(`${API_BASE}/payroll/payslips/delivery-report?run_id=${runId}`);
+    if (!res || !res.ok) return;
+    const data = await res.json();
+    const rows = Array.isArray(data) ? data : (data.items || data.data || data.results || []);
+    _prRenderPayslipsTable(rows, runId);
+    const allTerminal = rows.length > 0 && rows.every(r => r.status !== 'pending_generation');
+    const bulkBtn = document.getElementById('pr-bulk-send-btn');
+    if (bulkBtn) bulkBtn.disabled = !allTerminal;
+    if (allTerminal) _prStopPolling();
+    else if (!_prPollTimer) _prStartPolling(runId);
+  } finally {
+    _prPollInFlight = false;
+  }
+}
+
+function _prRenderPayslipsTable(rows, runId) {
+  const el = document.getElementById('pr-payslips-table');
+  if (!el) return;
+  el.innerHTML = `
+    <div class="fin-table-wrap"><table class="fin-table">
+      <thead><tr><th>Payslip #</th><th>Employee Code</th><th>Status</th><th>Recipient Email</th><th>Attempts</th><th>Last Error</th><th>Action</th></tr></thead>
+      <tbody>
+        ${rows.length ? rows.map(r => `<tr>
+          <td>${_finEsc(r.payslip_number || '')}</td>
+          <td>${_finEsc(r.employee_code || '')}</td>
+          <td>${_prPayslipBadge(r.status)}</td>
+          <td>${_finEsc(r.recipient_email || (r.status === 'email_missing' ? 'No email on file' : '—'))}</td>
+          <td>${r.send_attempts ?? 0}</td>
+          <td>${_finEsc(r.last_error || '—')}</td>
+          <td>${r.id ? `
+            <button class="fin-btn-outline" onclick="_prDownloadPayslip(${r.id})">Download</button>
+            <button class="fin-btn-outline" onclick="_prResendPayslip(${r.id}, ${runId})">Resend</button>` : ''}
+          </td>
+        </tr>`).join('') : `<tr><td colspan="7" class="fin-empty">No payslips yet.</td></tr>`}
+      </tbody>
+    </table></div>`;
+}
+
+// Never link pdf_path directly (server filesystem path) — always fetch the
+// PDF through the authenticated /download endpoint and open it as a blob.
+async function _prDownloadPayslip(payslipId) {
+  const res = await apiFetch(`${API_BASE}/payroll/payslips/${payslipId}/download`);
+  if (res && res.ok) {
+    const blob = await res.blob();
+    window.open(URL.createObjectURL(blob), '_blank');
+  } else if (res) showToast('Could not download payslip: ' + await parseApiError(res), 'error');
+}
+
+async function _prResendPayslip(payslipId, runId) {
+  const res = await apiFetch(`${API_BASE}/payroll/payslips/${payslipId}/send`, { method: 'POST' });
+  if (res && res.ok) { showToast('Payslip resent.', 'success'); await _prRefreshDeliveryReport(runId); }
+  else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+}
+
+async function _prBulkSend(runId) {
+  const res = await apiFetch(`${API_BASE}/payroll/payslips/send-bulk`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ payroll_run_id: runId, resend: false }) });
+  if (res && res.ok) {
+    const data = await res.json();
+    showToast(`Queued ${data.queued}, sent ${data.sent}, failed ${data.failed}.`, data.failed > 0 ? 'error' : 'success');
+    if (data.email_missing && data.email_missing.length) {
+      showToast(`${data.email_missing.length} employees have no email on file — update in HR, then use Resend.`, 'error');
+    }
+    if (data.errors && data.errors.length) {
+      showToast(`${data.errors.length} send error(s) occurred — see delivery report for details.`, 'error');
+    }
+    await _prRefreshDeliveryReport(runId);
+  } else if (res) showToast('Error: ' + await parseApiError(res), 'error');
 }

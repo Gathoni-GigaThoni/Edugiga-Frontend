@@ -145,6 +145,16 @@ function showDashboard() {
               </li>
               <li onclick="loadView('cash-bank-management')">Cash and Bank Management</li>
               <li class="dropdown">
+                ${flyoutGroupHeader('Tendepay', 'fin-tendepay-dropdown')}
+                <ul id="fin-tendepay-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('fin-tendepay-dropdown')}">
+                  <li id="sidebar-fin-tp-import"   class="sidebar-sub-sub" onclick="loadView('tendepay-import')">Import Statement</li>
+                  <li id="sidebar-fin-tp-history"  class="sidebar-sub-sub" onclick="loadView('tendepay-import-history')">Import History</li>
+                  <li id="sidebar-fin-tp-suspense" class="sidebar-sub-sub" onclick="loadView('tendepay-suspense')">Suspense</li>
+                  <li id="sidebar-fin-tp-funds"    class="sidebar-sub-sub" onclick="loadView('tendepay-fund-loads')">Fund Loads</li>
+                  <li id="sidebar-fin-tp-recon"    class="sidebar-sub-sub" onclick="loadView('tendepay-reconciliation')">Reconciliation</li>
+                </ul>
+              </li>
+              <li class="dropdown">
                 ${flyoutGroupHeader('Payables', 'fin-payables-dropdown')}
                 <ul id="fin-payables-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('fin-payables-dropdown')}">
                   <li id="sidebar-fin-pv"  class="sidebar-sub-sub" onclick="loadView('payables-payment-vouchers')">Payment Vouchers</li>
@@ -220,6 +230,9 @@ function showDashboard() {
                   <li class="sidebar-sub-sub" onclick="loadView('reports-budget-vs-actual')">Statement of Budget vs Actual Comparison</li>
                   <li class="sidebar-sub-sub" onclick="loadView('reports-statement-of-changes-in-net-assets')">Statement of Changes in Net Assets</li>
                   <li class="sidebar-sub-sub" onclick="loadView('reports-journal-entry')">Journal Entry Report</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-tendepay-wallet-balances')">Tendepay Wallet Balances</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-tendepay-transaction-history')">Tendepay Transaction History</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-unmatched-tendepay-transactions')">Unmatched Tendepay Transactions</li>
                 </ul>
               </li>
             </ul>
@@ -236,6 +249,7 @@ function showDashboard() {
           <div class="flyout-module-body" id="flyout-body-payroll" data-label="Payroll" hidden>
             <ul id="payroll-dropdown" class="dropdown-menu">
               <li id="sidebar-payroll-esp" onclick="loadView('payroll-esp')">Employee Service Profile</li>
+              <li id="sidebar-payroll-runs" onclick="loadView('payroll-runs')">Payroll Runs</li>
               <li class="dropdown">
                 ${flyoutGroupHeader('Utilities', 'payroll-utilities-dropdown')}
                 <ul id="payroll-utilities-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('payroll-utilities-dropdown')}">
@@ -497,6 +511,7 @@ async function renderSplitView(cfg) {
         </div>
         <div class="detail-info-card">
           <div class="detail-fields-grid">${buildDetailFields(selectedItem, cfg.detailFields || [])}</div>
+          ${typeof cfg.detailActions === 'function' ? `<div class="detail-actions-row" style="margin-top:16px;padding-top:16px;border-top:1px solid var(--grey-100)">${cfg.detailActions(selectedItem) || ''}</div>` : ''}
           <div style="display:flex;gap:10px;margin-top:20px;padding-top:16px;border-top:1px solid var(--grey-100)">
             <button class="btn" onclick="window._splitGoAdd()">+ Add New</button>
           </div>
@@ -553,6 +568,20 @@ async function renderSplitView(cfg) {
     selectedItem = null; mode = 'add';
     renderList(); renderRight();
   };
+  // Re-fetch the list and re-select the current item in place (used after a
+  // detail-pane lifecycle action — e.g. approve/queue — so the banner and
+  // fields reflect the new status without losing the user's place).
+  window._splitRefreshSelected = async function() {
+    try {
+      const resp = await apiFetch(cfg.apiUrl);
+      if (resp && resp.ok) { allItems = _toArray(await resp.json()); }
+    } catch(_) {}
+    if (selectedItem) {
+      selectedItem = allItems.find(i => String(i[idKey]) === String(selectedItem[idKey])) || null;
+      mode = selectedItem ? 'detail' : 'add';
+    }
+    renderList(); renderRight();
+  };
 
   renderList();
   renderRight();
@@ -583,8 +612,10 @@ const FORM_VIEWS = new Set([
   'payables-petty-cash-applications-add', 'payables-petty-cash-disbursements-add',
   'payables-imprest-warrants-add', 'payables-imprest-disbursements-add', 'payables-imprest-surrenders-add',
   'journal-entries-add', 'journal-entries-edit',
+  // Tendepay
+  'tendepay-import', 'tendepay-fund-loads',
   // HR / Payroll
-  'hr-employee-directory', 'payroll-esp', 'payroll-fi',
+  'hr-employee-directory', 'payroll-esp', 'payroll-fi', 'payroll-runs',
   'payroll-pay-grades-add', 'payroll-pay-grades-edit',
   // Procurement
   'procurement-suppliers-add', 'procurement-suppliers-edit',
@@ -810,7 +841,7 @@ async function loadView(view) {
       await loadReceivePaymentsView(main); break;
     case 'fin-transactions':
       setActiveSidebarItem('sidebar-fin-txns'); openFinReceivablesDropdown();
-      loadFinPlaceholderView(main, 'Transactions'); break;
+      await loadFinTransactionsView(main); break;
     case 'fin-deposit-slip':
       setActiveSidebarItem('sidebar-fin-deposit'); openFinReceivablesDropdown();
       loadFinPlaceholderView(main, 'Deposit Slip'); break;
@@ -843,6 +874,22 @@ async function loadView(view) {
       setActiveSidebarItem('sidebar-fin-pay-modes'); openFinUtilitiesDropdown();
       loadFinPlaceholderView(main, 'Payment Modes'); break;
     case 'cash-bank-management': showPlaceholder(main, 'Cash and Bank Management'); break;
+    // Tendepay sub-modules
+    case 'tendepay-import':
+      setActiveSidebarItem('sidebar-fin-tp-import'); openFinTendepayDropdown();
+      await loadTendepayImportView(main); break;
+    case 'tendepay-import-history':
+      setActiveSidebarItem('sidebar-fin-tp-history'); openFinTendepayDropdown();
+      await loadTendepayImportHistoryView(main); break;
+    case 'tendepay-suspense':
+      setActiveSidebarItem('sidebar-fin-tp-suspense'); openFinTendepayDropdown();
+      await loadTendepaySuspenseView(main); break;
+    case 'tendepay-fund-loads':
+      setActiveSidebarItem('sidebar-fin-tp-funds'); openFinTendepayDropdown();
+      await loadTendepayFundLoadsView(main); break;
+    case 'tendepay-reconciliation':
+      setActiveSidebarItem('sidebar-fin-tp-recon'); openFinTendepayDropdown();
+      await loadTendepayReconciliationView(main); break;
     // Payables sub-modules
     case 'payables-payment-vouchers':
       setActiveSidebarItem('sidebar-fin-pv'); openFinPayablesDropdown();
@@ -955,12 +1002,18 @@ async function loadView(view) {
     case 'reports-budget-vs-actual':
     case 'reports-statement-of-changes-in-net-assets':
     case 'reports-journal-entry':
+    case 'reports-tendepay-wallet-balances':
+    case 'reports-tendepay-transaction-history':
+    case 'reports-unmatched-tendepay-transactions':
       openFinReportsDropdown();
       await loadFinanceReportView(main, view); break;
     // Reports (hidden from sidebar but kept)
     case 'reports': await loadReportsView(main); break;
     // Payroll
     case 'payroll-esp': loadPayrollEspListingView(main); break;
+    case 'payroll-runs':
+      setActiveSidebarItem('sidebar-payroll-runs');
+      await loadPayrollRunsView(main); break;
     case 'payroll-fi':  loadPayrollFiListingView(main); break;
     case 'payroll-pay-accounts':
       setActiveSidebarItem('sidebar-payroll-pay-accounts'); openPayrollDropdowns();

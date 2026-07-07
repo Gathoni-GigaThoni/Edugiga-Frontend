@@ -244,6 +244,22 @@ function _renderTrnRouteForm(container, route, routeCode, isEdit) {
       </div>
     </div>
 
+    <div class="trn-form-group">
+      <label class="trn-form-label">Transport Pricing (per direction)</label>
+      ${isEdit
+        ? `<div id="trn-pricing-list" class="trn-stops-list"></div>
+           <div style="display:flex;gap:8px;margin-top:8px;">
+             <select id="trn-pricing-direction" class="fin-search-input" style="flex:1;">
+               <option value="two_way">Two-way</option>
+               <option value="one_way_morning">One-way (Morning)</option>
+               <option value="one_way_evening">One-way (Evening)</option>
+             </select>
+             <input type="number" id="trn-pricing-price" class="fin-search-input" style="flex:1;" min="0" step="0.01" placeholder="Price">
+             <button type="button" class="trn-add-stop-btn" onclick="trnAddPricing('${r.id}')">+ Add</button>
+           </div>`
+        : `<p class="trn-stops-hint">Save the route first, then manage per-direction pricing from its Edit page.</p>`}
+    </div>
+
     <div style="display:flex;gap:12px;margin-top:24px;">
       <button class="fin-btn-teal" id="trn-rt-submit-btn" onclick="submitTrnRouteForm(${isEdit ? (route?.id ? `'${route.id}'` : 'null') : 'null'})">
         ${isEdit ? 'Update' : 'Save'}
@@ -255,6 +271,7 @@ function _renderTrnRouteForm(container, route, routeCode, isEdit) {
   // Populate stop rows
   window._trnStops = stops.map(s => s.name || '');
   _renderTrnStopRows();
+  if (isEdit && r.id) _loadTrnRoutePricing(r.id);
 
   // Mark dirty on any change
   body.querySelectorAll('input,textarea,select').forEach(el => {
@@ -411,6 +428,55 @@ async function submitTrnRouteForm(routeId) {
     if (res) { try { const e = await res.json(); msg = e.detail || JSON.stringify(e); } catch (_) {} }
     showToast('Error: ' + msg, 'error');
   }
+}
+
+// ── Transport Pricing (per-route sub-resource) ───────────────────────────────
+// Distinct from the flat two_way_price/one_way_morning_price/etc fields on
+// Route itself — this is the newer /routes/{id}/pricing/ sub-resource that
+// student registration's transport_pricing_id references (js/students.js).
+let _trnPricingData = [];
+const _TRN_DIRECTION_LABELS = { two_way: 'Two-way', one_way_morning: 'One-way (Morning)', one_way_evening: 'One-way (Evening)' };
+
+async function _loadTrnRoutePricing(routeId) {
+  const list = document.getElementById('trn-pricing-list');
+  if (list) list.innerHTML = '<p class="fin-loading">Loading pricing&#8230;</p>';
+  const res = await apiFetch(`${API_BASE}/routes/${routeId}/pricing/`);
+  _trnPricingData = (res && res.ok) ? _toArray(await res.json()) : [];
+  _renderTrnPricingList(routeId);
+}
+
+function _renderTrnPricingList(routeId) {
+  const list = document.getElementById('trn-pricing-list');
+  if (!list) return;
+  if (!_trnPricingData.length) { list.innerHTML = '<p style="color:#888;font-size:0.85rem;">No pricing rows yet.</p>'; return; }
+  list.innerHTML = _trnPricingData.map(p => `
+    <div class="trn-stop-row">
+      <input type="text" class="fin-search-input trn-stop-input" value="${_TRN_DIRECTION_LABELS[p.direction] || p.direction} — KES ${parseFloat(p.price).toLocaleString('en-KE',{minimumFractionDigits:2})}" disabled>
+      <button type="button" class="trn-stop-remove" onclick="trnDeletePricing('${routeId}',${p.id})" title="Delete">&#x2715;</button>
+    </div>
+  `).join('');
+}
+
+async function trnAddPricing(routeId) {
+  const direction = document.getElementById('trn-pricing-direction')?.value;
+  const priceVal = document.getElementById('trn-pricing-price')?.value;
+  const price = parseFloat(priceVal);
+  if (!direction || !(price >= 0)) { showToast('Direction and a non-negative price are required.', 'error'); return; }
+  const res = await apiFetch(`${API_BASE}/routes/${routeId}/pricing/`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ direction, price }),
+  });
+  if (res && res.ok) {
+    const priceInput = document.getElementById('trn-pricing-price');
+    if (priceInput) priceInput.value = '';
+    await _loadTrnRoutePricing(routeId);
+  } else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+}
+
+async function trnDeletePricing(routeId, pricingId) {
+  if (!confirm('Delete this pricing row?')) return;
+  const res = await apiFetch(`${API_BASE}/routes/${routeId}/pricing/${pricingId}`, { method: 'DELETE' });
+  if (res && res.ok) await _loadTrnRoutePricing(routeId);
+  else if (res) showToast('Error: ' + await parseApiError(res), 'error');
 }
 
 function cancelTrnRouteForm() {
