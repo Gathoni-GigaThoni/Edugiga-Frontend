@@ -984,3 +984,58 @@ async function _prBulkSend(runId) {
     await _prRefreshDeliveryReport(runId);
   } else if (res) showToast('Error: ' + await parseApiError(res), 'error');
 }
+
+// ── Payslips (standalone, cross-run) ─────────────────────────────────────────
+// Payroll Runs' own detail page only shows payslips for that one run — this
+// view is the "look up an individual's already-generated payslips" module
+// requested separately, backed by the bare GET /payroll/payslips (not scoped
+// to a run, unlike delivery-report). Payslip rows only exist once a run has
+// reached paid/payslips_generated, so an empty result here just means no
+// payrun has completed yet, not a bug.
+async function loadPayrollPayslipsView(container) {
+  await renderSplitView({
+    container,
+    title: 'Payslips',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Payroll',view:'payroll-payslips'},
+      {label:'Payslips'}
+    ],
+    apiUrl: `${API_BASE}/payroll/payslips`,
+    searchFields: ['employee_code','payslip_number'],
+    col1Label: 'Payslip #', col2Label: 'Employee',
+    col1: p => p.payslip_number || `#${p.id}`,
+    col2: p => `${p.employee_code || '—'} · ${_prMonthName(p.period_month)} ${p.period_year || ''}`,
+    rowLabel: p => p.payslip_number || `#${p.id}`,
+    rowSub:   p => `${p.employee_code || '—'} · ${_prMonthName(p.period_month)} ${p.period_year || ''}`,
+    idKey: 'id',
+    detailFields: [
+      {label:'Payslip #',      key:'payslip_number', fmt:v=>v||'—'},
+      {label:'Employee Code',  key:'employee_code', fmt:v=>v||'—'},
+      {label:'Period',         key:'period_month', fmt:(v,p)=>`${_prMonthName(v)} ${p.period_year||''}`},
+      {label:'Status',         key:'status', fmt:v=>_prPayslipBadge(v)},
+      {label:'Recipient Email',key:'recipient_email', fmt:(v,p)=>v||(p.status==='email_missing'?'No email on file':'—')},
+      {label:'Send Attempts',  key:'send_attempts', fmt:v=>v??0},
+      {label:'Last Error',     key:'last_error', fmt:v=>v||'—'},
+      {label:'Payroll Run',    key:'payroll_run_id', fmt:v=>v?`#${v}`:'—'},
+    ],
+    detailActions: item => `
+      <button class="btn" onclick="_prDownloadPayslip(${item.id})">Download</button>
+      <button class="btn" onclick="_prpResendPayslip(${item.id})">Resend</button>`,
+    onAdd: () => {
+      showToast('Payslips are generated from a Payroll Run once it is paid — open Payroll Runs to generate them.', 'info');
+      loadView('payroll-runs');
+    },
+  });
+}
+
+function _prMonthName(m) {
+  const names = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return names[m] || (m || '');
+}
+
+async function _prpResendPayslip(payslipId) {
+  const res = await apiFetch(`${API_BASE}/payroll/payslips/${payslipId}/send`, { method: 'POST' });
+  if (res && res.ok) { showToast('Payslip resent.', 'success'); window._splitRefreshSelected && window._splitRefreshSelected(); }
+  else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+}

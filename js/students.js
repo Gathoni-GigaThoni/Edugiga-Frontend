@@ -1096,9 +1096,21 @@ async function stuSibPickSearch(val) {
   dd.style.display = 'block';
 }
 
-function stuSibPickSelect(id, studentId, name, dateOfBirth, siblingGroupId) {
+async function stuSibPickSelect(id, studentId, name, dateOfBirth, siblingGroupId) {
   if (_stuSiblingTotalCount() >= 2) { showToast('A sibling group can have at most 3 students.', 'error'); return; }
-  window._stuSiblingNewPicks.push({ id, student_id: studentId, name, date_of_birth: dateOfBirth || null, sibling_group_id: siblingGroupId || null });
+  // /students/?search= (where this pick came from) never carries
+  // sibling_group_id — it's not on StudentRead, which FastAPI's response_model
+  // strictly filters to. full-profile has no declared schema (raw dict), so
+  // it's the only endpoint with a chance of actually carrying the field.
+  // Otherwise picking an already-grouped sibling would silently try to create
+  // a brand-new group and 409 against the backend's one-group-per-student rule.
+  let groupId = siblingGroupId || null;
+  if (!groupId) {
+    const res = await apiFetch(`${API_BASE}/students/${id}/full-profile`);
+    const stu = (res && res.ok) ? await res.json().catch(() => null) : null;
+    groupId = stu?.sibling_group_id || null;
+  }
+  window._stuSiblingNewPicks.push({ id, student_id: studentId, name, date_of_birth: dateOfBirth || null, sibling_group_id: groupId });
   const input = document.getElementById('se-sibling-search');
   if (input) input.value = '';
   const dd = document.getElementById('se-sibling-search-dd');
@@ -1991,6 +2003,11 @@ async function _stuSyncSiblingGroup(studentId, d) {
   }
   window._stuSiblingExisting = (window._stuSiblingExisting || []).concat(newPicks);
   window._stuSiblingNewPicks = [];
+  // Lets Finance > Set-up > Sibling Groups auto-open this group on next visit
+  // instead of requiring the user to already know its numeric id.
+  if (d.sibling_group_id) {
+    try { sessionStorage.setItem('_edugiga_last_sibling_group_id', String(d.sibling_group_id)); } catch (_) {}
+  }
 }
 
 // Uploads every cached file (Personal Data's Photo + the Document Uploads tab's
@@ -2017,7 +2034,7 @@ async function _stuUploadCachedFiles(studentId) {
   window._stuFormFiles = {};
 }
 
-async function _persistStudentRecord(showSuccessToast) {
+async function _persistStudentRecord(showSuccessToast, allTabs) {
   const d = window._stuFormData || {};
   const isEdit = !!_currentEditStudentId;
 
@@ -2058,35 +2075,47 @@ async function _persistStudentRecord(showSuccessToast) {
     return res;
   }
 
-  switch (_stuEditActiveTab) {
-    case 'personal':
-      // extra_curriculum_term_id re-triggers the backend's ECA enrollment +
-      // fee-assignment sync for this student's current term — the Personal
-      // tab is where the Extra Curriculum multiselect lives, so any save here
-      // should re-sync it.
-      await call(`${API_BASE}/students/${id}`, 'PATCH', { ..._stuFlatPayload(d), extra_curriculum_term_id: d.term_id || null });
-      await _stuSyncTransport(id, d);
-      await _stuSyncSiblingGroup(id, d);
-      break;
-    case 'prev-edu':
-      await call(`${API_BASE}/students/${id}/previous-education`, 'PUT', d.previous_education || {});
-      break;
-    case 'medical':
-      await call(`${API_BASE}/students/${id}/medical`, 'PUT', d.medical_info || {});
-      break;
-    case 'guardian':
-      for (const p of (d.parents || [])) {
-        if (p.id) {
-          await call(`${API_BASE}/students/${id}/guardians/${p.id}`, 'PATCH', p);
-        } else {
-          const res = await call(`${API_BASE}/students/${id}/guardians`, 'POST', p);
-          if (res && res.ok) p.id = (await res.json()).id;
+  // The final "Update" button (submitStudentForm) always calls this with
+  // allTabs:true — it force-switches to the Personal tab first (validation
+  // needs those fields live in the DOM), but the user may have edited any of
+  // the other tabs before reaching Update without ever hitting that tab's own
+  // "Save & Continue". Persisting only the now-active 'personal' case would
+  // silently drop those other edits, which is why Update previously looked
+  // like it "did nothing" — so a full submit pushes every tab's data,
+  // regardless of which one is active. "Save & Continue" (mid-form, not the
+  // final submit) still only pushes the tab the user is actually leaving.
+  const tabsToSave = allTabs ? ['personal', 'prev-edu', 'medical', 'guardian', 'documents'] : [_stuEditActiveTab];
+  for (const tab of tabsToSave) {
+    switch (tab) {
+      case 'personal':
+        // extra_curriculum_term_id re-triggers the backend's ECA enrollment +
+        // fee-assignment sync for this student's current term — the Personal
+        // tab is where the Extra Curriculum multiselect lives, so any save here
+        // should re-sync it.
+        await call(`${API_BASE}/students/${id}`, 'PATCH', { ..._stuFlatPayload(d), extra_curriculum_term_id: d.term_id || null });
+        await _stuSyncTransport(id, d);
+        await _stuSyncSiblingGroup(id, d);
+        break;
+      case 'prev-edu':
+        if (d.previous_education) await call(`${API_BASE}/students/${id}/previous-education`, 'PUT', d.previous_education);
+        break;
+      case 'medical':
+        if (d.medical_info) await call(`${API_BASE}/students/${id}/medical`, 'PUT', d.medical_info);
+        break;
+      case 'guardian':
+        for (const p of (d.parents || [])) {
+          if (p.id) {
+            await call(`${API_BASE}/students/${id}/guardians/${p.id}`, 'PATCH', p);
+          } else {
+            const res = await call(`${API_BASE}/students/${id}/guardians`, 'POST', p);
+            if (res && res.ok) p.id = (await res.json()).id;
+          }
         }
-      }
-      break;
-    case 'documents':
-      await _stuUploadCachedFiles(id);
-      break;
+        break;
+      case 'documents':
+        await _stuUploadCachedFiles(id);
+        break;
+    }
   }
 
   if (ok) {
@@ -2166,7 +2195,7 @@ async function submitStudentForm() {
   const btn    = document.getElementById('stu-form-submit-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
 
-  const ok = await _persistStudentRecord(false);
+  const ok = await _persistStudentRecord(false, true);
 
   if (btn) { btn.disabled = false; btn.textContent = isEdit ? 'Update' : 'Save'; }
 
@@ -2241,11 +2270,23 @@ async function loadStudentViewPage(container) {
 // _fs* lookups/helpers are defined in finance.js but loaded globally on this page.
 async function openStudentFeeStatement(studentId) {
   if (!studentId) { showToast('No student selected.', 'error'); return; }
+  // Open the tab synchronously, before any await — browsers only treat
+  // window.open as a direct result of the user's click (exempt from the
+  // popup blocker) while still inside that synchronous call stack. Opening
+  // it after the fetches below resolve made it get silently blocked, which
+  // is why the statement appeared to never leave the current tab.
+  const win = window.open('', '_blank');
+  if (!win) { showToast('Please allow pop-ups to view the statement.', 'error'); return; }
+  win.document.write('<p style="font-family:Arial,sans-serif;padding:24px;color:#888;">Loading fee statement&#8230;</p>');
   // Fetch fresh rather than reading window._stuViewData/_stuFormData — those are set
   // by other pages' own async loads and may still be stale (or from a different
   // student) if this is clicked before that page's fetch resolves.
   const studentRes = await apiFetch(`${API_BASE}/students/${studentId}`);
-  if (!studentRes || !studentRes.ok) { showToast('Could not load student.', 'error'); return; }
+  if (!studentRes || !studentRes.ok) {
+    win.document.body.innerHTML = '<p style="font-family:Arial,sans-serif;padding:24px;color:#c0392b;">Could not load student.</p>';
+    showToast('Could not load student.', 'error');
+    return;
+  }
   const d = await studentRes.json();
   if (typeof _fsLoadLookups === 'function') await _fsLoadLookups();
 
@@ -2281,8 +2322,7 @@ async function openStudentFeeStatement(studentId) {
   const studentName  = `${d.first_name||''} ${d.last_name||''}`.trim() || '-';
   const printedOn      = new Date().toLocaleString('en-GB', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' });
 
-  const win = window.open('', '_blank');
-  if (!win) { showToast('Please allow pop-ups to view the statement.', 'error'); return; }
+  win.document.open();
   win.document.write(`
     <html><head><title>Fee Statement - ${_esc(studentName)}</title>
     <style>

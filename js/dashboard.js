@@ -48,7 +48,6 @@ function showDashboard() {
           <div class="flyout-module-body" id="flyout-body-student-management" data-label="Student Management" hidden>
             <ul id="student-management-dropdown" class="dropdown-menu">
               <li id="sidebar-stu-list"          onclick="loadView('students-list')">Students</li>
-              <li id="sidebar-stu-reporting"     onclick="loadView('student-reporting')">Student Reporting</li>
               <li id="sidebar-stu-cohort"        onclick="loadView('cohort-term-planner')">Cohort Term Planner</li>
               <li id="sidebar-stu-classes"       onclick="loadView('student-classes')">Classes</li>
               <li id="sidebar-stu-close-records" onclick="loadView('close-records-per-class')">Close Records Per Class</li>
@@ -250,6 +249,7 @@ function showDashboard() {
             <ul id="payroll-dropdown" class="dropdown-menu">
               <li id="sidebar-payroll-esp" onclick="loadView('payroll-esp')">Employee Service Profile</li>
               <li id="sidebar-payroll-runs" onclick="loadView('payroll-runs')">Payroll Runs</li>
+              <li id="sidebar-payroll-payslips" onclick="loadView('payroll-payslips')">Payslips</li>
               <li class="dropdown">
                 ${flyoutGroupHeader('Utilities', 'payroll-utilities-dropdown')}
                 <ul id="payroll-utilities-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('payroll-utilities-dropdown')}">
@@ -615,7 +615,7 @@ const FORM_VIEWS = new Set([
   // Tendepay
   'tendepay-import', 'tendepay-fund-loads',
   // HR / Payroll
-  'hr-employee-directory', 'payroll-esp', 'payroll-fi', 'payroll-runs',
+  'hr-employee-directory', 'payroll-esp', 'payroll-fi', 'payroll-runs', 'payroll-payslips',
   'payroll-pay-grades-add', 'payroll-pay-grades-edit',
   // Procurement
   'procurement-suppliers-add', 'procurement-suppliers-edit',
@@ -1014,6 +1014,9 @@ async function loadView(view) {
     case 'payroll-runs':
       setActiveSidebarItem('sidebar-payroll-runs');
       await loadPayrollRunsView(main); break;
+    case 'payroll-payslips':
+      setActiveSidebarItem('sidebar-payroll-payslips');
+      await loadPayrollPayslipsView(main); break;
     case 'payroll-fi':  loadPayrollFiListingView(main); break;
     case 'payroll-pay-accounts':
       setActiveSidebarItem('sidebar-payroll-pay-accounts'); openPayrollDropdowns();

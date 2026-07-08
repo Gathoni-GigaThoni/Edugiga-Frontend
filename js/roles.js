@@ -542,27 +542,33 @@ async function savePermissions(roleId) {
     if (!cb.disabled) moduleMap[key][`can_${cb.dataset.action}`] = cb.checked;
   });
 
-  const payload = Object.entries(moduleMap).map(([module_key, flags]) => ({
+  const entries = Object.entries(moduleMap).map(([module_key, flags]) => ({
     module_key, ...flags,
   }));
 
-  if (!payload.length) {
+  if (!entries.length) {
     if (statusEl) statusEl.innerHTML = '<span class="role-status-error">No permissions found in form.</span>';
     return;
   }
 
-  const res = await apiFetch(`${API_BASE}/roles/${roleId}/permissions`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
+  // Backend's PUT /roles/{id}/permissions takes one PermissionUpsert object
+  // per call, not a bulk array — send one request per module.
+  let firstErr = null;
+  for (const entry of entries) {
+    const res = await apiFetch(`${API_BASE}/roles/${roleId}/permissions`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(entry),
+    });
+    if (!res) return;
+    if (!res.ok && !firstErr) firstErr = await parseApiError(res);
+  }
 
-  if (!res) return;
-  if (res.ok) {
+  if (!firstErr) {
     showToast('Permissions saved!', 'success');
     if (statusEl) statusEl.innerHTML = '<span class="role-status-success">Saved!</span>';
   } else {
-    const msg = await parseApiError(res);
+    const msg = firstErr;
     showToast(msg, 'error');
     if (statusEl) statusEl.innerHTML = `<span class="role-status-error">${msg}</span>`;
   }

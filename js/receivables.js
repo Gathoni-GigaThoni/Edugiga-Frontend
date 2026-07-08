@@ -573,7 +573,7 @@ async function rcvFscBackfill(scheduleId, classId, termId) {
   if (!students.length) { showToast('No students found in this class.', 'info'); return; }
   let created=0, existed=0, errors=0;
   await Promise.all(students.map(async st => {
-    const r = await apiFetch(`${API_BASE}/receivables/student-fee-assignments`, {
+    const r = await apiFetch(`${API_BASE}/receivables/student-fee-assignments/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ student_id: st.id, term_id: parseInt(termId,10), fee_schedule_id: scheduleId }),
@@ -651,7 +651,7 @@ async function rcvAsnLoad() {
   if (!termId) return;
   _rcvAsnTerm    = termId;
   _rcvAsnStudent = studentId;
-  const url = `${API_BASE}/receivables/student-fee-assignments?term_id=${termId}${studentId?`&student_id=${studentId}`:''}`;
+  const url = `${API_BASE}/receivables/student-fee-assignments/?term_id=${termId}${studentId?`&student_id=${studentId}`:''}`;
   const res = await apiFetch(url);
   _rcvAsnData = (res && res.ok) ? _toArray(await res.json()) : [];
   _rcvRenderAsnTable();
@@ -734,7 +734,7 @@ async function rcvAsnOverrideSave(id) {
   if (isNaN(overrideVal)) { showToast('Enter a valid amount.', 'error'); return; }
   const delRes = await apiFetch(`${API_BASE}/receivables/student-fee-assignments/${id}`, { method: 'DELETE' });
   if (!delRes || (!delRes.ok && delRes.status !== 204)) { showToast('Failed to update assignment.', 'error'); return; }
-  const postRes = await apiFetch(`${API_BASE}/receivables/student-fee-assignments`, {
+  const postRes = await apiFetch(`${API_BASE}/receivables/student-fee-assignments/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ student_id: a.student_id, term_id: a.term_id, fee_schedule_id: a.fee_schedule_id, override_amount: overrideVal }),
@@ -831,7 +831,7 @@ async function submitAddAssignment() {
     student_id: parseInt(studentId,10), term_id: parseInt(termId,10), fee_schedule_id: parseInt(scheduleId,10),
     override_amount: overrideRaw ? parseFloat(overrideRaw) : null,
   };
-  const res = await apiFetch(`${API_BASE}/receivables/student-fee-assignments`, {
+  const res = await apiFetch(`${API_BASE}/receivables/student-fee-assignments/`, {
     method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload),
   });
   if (res && res.status === 409) { showToast('This fee is already assigned to the student.','error'); return; }
@@ -1036,7 +1036,7 @@ async function rcvGenReviewAssignments() {
   }
   preview.innerHTML='<p style="color:#888;">Loading&#8230;</p>';
   await _rcvLoadLookups({ items:true });
-  const res = await apiFetch(`${API_BASE}/receivables/student-fee-assignments?student_id=${studentId}&term_id=${termId}`);
+  const res = await apiFetch(`${API_BASE}/receivables/student-fee-assignments/?student_id=${studentId}&term_id=${termId}`);
   const assignments = (res&&res.ok) ? _toArray(await res.json()) : [];
   if (!assignments.length) {
     preview.innerHTML=`<p style="color:#b45309;font-size:0.9rem;">&#9888; No fee assignments found for this student in the selected term. Go to <a href="#" onclick="loadView('fin-fee-assignments');return false;">Fee Assignments</a> to configure them first.</p>`;
@@ -1260,7 +1260,7 @@ async function submitRecordPayment(invoiceId, incomeAccountId) {
   if (!amount||isNaN(amount)||!method||!date||!debitId) { showToast('Amount, Method, Date, and Debit Account are required.','error'); return; }
   localStorage.setItem('rcv_last_debit_account_id', String(debitId));
   const payload = {
-    invoice_id: invoiceId,
+    fee_invoice_id: invoiceId,
     amount, payment_method: method,
     payment_date: date + 'T00:00:00',
     reference: ref || null,
@@ -1363,7 +1363,7 @@ async function rcvBulkPreFlight() {
 
   const [existingRes, assignRes] = await Promise.all([
     apiFetch(`${API_BASE}/receivables/fee-invoices?term_id=${termId}&status=issued`),
-    apiFetch(`${API_BASE}/receivables/student-fee-assignments?term_id=${termId}`),
+    apiFetch(`${API_BASE}/receivables/student-fee-assignments/?term_id=${termId}`),
   ]);
   const existing   = (existingRes&&existingRes.ok)  ? _toArray(await existingRes.json()) : [];
   const allAssigns = (assignRes&&assignRes.ok)       ? _toArray(await assignRes.json())  : [];

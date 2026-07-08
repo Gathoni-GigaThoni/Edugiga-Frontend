@@ -19,6 +19,14 @@ document.addEventListener('click', () => {
 });
 
 async function loadHrEmployeeDirectoryView(container) {
+  // hrEditEmployee/hr-esp-form.js/payroll.js all look employees up by id or
+  // employee_code from this global cache — renderSplitView keeps its own
+  // internal list, so without this the cache stays permanently empty and
+  // "Edit" on any employee reports "Employee not found".
+  const empRes = await apiFetch(`${API_BASE}/hr/employees`);
+  const empList = (empRes && empRes.ok) ? _toArray(await empRes.json().catch(() => [])) : [];
+  employeesData.splice(0, employeesData.length, ...empList);
+
   await renderSplitView({
     container,
     title: 'Employees',
@@ -27,7 +35,7 @@ async function loadHrEmployeeDirectoryView(container) {
       {label:'Human Resource',view:'hr-employee-directory'},
       {label:'Employees'}
     ],
-    apiUrl: `${API_BASE}/employees/`,
+    apiUrl: `${API_BASE}/hr/employees`,
     searchFields: ['first_name','last_name','email','employee_code','designation'],
     col1Label: 'Name', col2Label: 'Code / Role',
     col1: e => `${e.first_name||''} ${e.last_name||''}`.trim() || '—',
@@ -39,7 +47,7 @@ async function loadHrEmployeeDirectoryView(container) {
       {label:'Name',        key:'first_name', fmt:(_,e)=>`${e.first_name||''} ${e.last_name||''}`.trim()},
       {label:'Emp Code',    key:'employee_code', fmt:v=>v||'—'},
       {label:'Email',       key:'email', fmt:v=>v||'—'},
-      {label:'Phone',       key:'phone', fmt:v=>v||'—'},
+      {label:'Phone',       key:'phone_number', fmt:(v,e)=>v?`${e.phone_country_code||''} ${v}`.trim():'—'},
       {label:'Designation', key:'designation', fmt:v=>v||'—'},
       {label:'Department',  key:'department', fmt:v=>v||'—'},
     ],

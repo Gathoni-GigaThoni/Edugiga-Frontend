@@ -1620,6 +1620,7 @@ let _sgNewPicks = [null, null, null]; // up to 3 slots, each {id, sibling_group_
 
 async function loadSiblingGroupsView(container) {
   _sgFoundGroup = null;
+  await _invLoadLookups();
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -1645,6 +1646,16 @@ async function loadSiblingGroupsView(container) {
         </div>
       </div>
     </div>`;
+
+  // A group just created/joined from the Add/Edit Student sibling picker
+  // (_stuSyncSiblingGroup in students.js) leaves its id here so it shows up
+  // immediately on this module without the user having to know the Group ID.
+  const pendingId = sessionStorage.getItem('_edugiga_last_sibling_group_id');
+  if (pendingId) {
+    sessionStorage.removeItem('_edugiga_last_sibling_group_id');
+    document.getElementById('sg-lookup-id').value = pendingId;
+    sgLookupById();
+  }
 }
 
 async function sgLookupStudentSearch(val) {
@@ -1666,17 +1677,29 @@ async function sgLookupStudentSearch(val) {
   dd.style.display = 'block';
 }
 
-function sgLookupStudentSelect(studentId, siblingGroupId, label) {
+async function sgLookupStudentSelect(studentId, siblingGroupId, label) {
   const inp = document.getElementById('sg-lookup-student');
   if (inp) inp.value = label;
   const dd = document.getElementById('sg-lookup-student-dd');
   if (dd) dd.style.display = 'none';
-  if (!siblingGroupId) {
-    document.getElementById('sg-lookup-result').innerHTML =
+  const resultEl = document.getElementById('sg-lookup-result');
+  // GET /students/?search= (where this student came from) never carries
+  // sibling_group_id — it's not on StudentRead, which FastAPI's response_model
+  // strictly filters to. full-profile has no declared schema (raw dict), so
+  // it's the only endpoint with a chance of actually carrying the field.
+  let groupId = siblingGroupId;
+  if (!groupId) {
+    resultEl.innerHTML = '<p style="color:#888;">Loading&#8230;</p>';
+    const res = await apiFetch(`${API_BASE}/students/${studentId}/full-profile`);
+    const stu = (res && res.ok) ? await res.json().catch(() => null) : null;
+    groupId = stu?.sibling_group_id || null;
+  }
+  if (!groupId) {
+    resultEl.innerHTML =
       '<p style="color:#c0392b;font-size:0.88rem;">This student is not in a sibling group yet.</p>';
     return;
   }
-  document.getElementById('sg-lookup-id').value = siblingGroupId;
+  document.getElementById('sg-lookup-id').value = groupId;
   sgLookupById();
 }
 
@@ -1695,10 +1718,11 @@ async function sgLookupById() {
   _sgFoundGroup = group;
   if (!group) { resultEl.innerHTML = '<p style="color:#c0392b;font-size:0.88rem;">Group not found.</p>'; return; }
 
+  const memberNames = (group.student_ids || []).map(id => `${_invStudentName(id)} (#${id})`);
   resultEl.innerHTML = `
     <div style="background:#f9fafb;border:1px solid #e0e0e0;border-radius:6px;padding:16px;">
       <p><strong>Group #${group.id}</strong> — ${_finEsc(group.name || '')}</p>
-      <p>Member student IDs: ${(group.student_ids || []).join(', ') || '—'}</p>
+      <p>Members: ${memberNames.length ? memberNames.map(n=>_finEsc(n)).join(', ') : '—'}</p>
       <div style="display:flex;gap:10px;align-items:flex-start;margin-top:10px;">
         <div style="position:relative;flex:1;max-width:360px;">
           <input id="sg-add-student" class="fin-search-input" style="width:100%!important" placeholder="Add a student to this group&#8230;" oninput="sgAddStudentSearch(this.value)" autocomplete="off">
@@ -2767,6 +2791,7 @@ async function submitFeeSetupAdd() {
 let _rcvPayPerPage = 10, _rcvPayPage = 1, _rcvPaySearch = '';
 
 async function loadReceivePaymentsView(container) {
+  await _invLoadLookups();
   await renderSplitView({
     container,
     title: 'Receive Payments',
@@ -2775,304 +2800,31 @@ async function loadReceivePaymentsView(container) {
       {label:'Finance',view:'fin-receive-payments'},
       {label:'Receive Payments'}
     ],
-    apiUrl: `${API_BASE}/finance/receive-payments`,
-    searchFields: ['receiptNo','name','receiveFrom'],
-    col1Label: 'Receipt No', col2Label: 'Name',
-    col1: p => p.receiptNo || '—',
-    col2: p => p.name || p.receiveFrom || '—',
-    rowLabel: p => p.receiptNo || '—',
-    rowSub:   p => p.name || '',
+    apiUrl: `${API_BASE}/receivables/receipts`,
+    searchFields: ['receipt_number','reference'],
+    col1Label: 'Receipt No', col2Label: 'Student',
+    col1: p => p.receipt_number || `#${p.id}`,
+    col2: p => _invStudentName(p.student_id) || '—',
+    rowLabel: p => p.receipt_number || `#${p.id}`,
+    rowSub:   p => _invStudentName(p.student_id) || '',
     idKey: 'id',
     detailFields: [
-      {label:'Receipt No',    key:'receiptNo', fmt:v=>v||'—'},
-      {label:'Name',          key:'name', fmt:v=>v||'—'},
-      {label:'Receive From',  key:'receiveFrom', fmt:v=>v||'—'},
-      {label:'Payment Mode',  key:'paymentMode', fmt:v=>v||'—'},
-      {label:'Mode No',       key:'modeNo', fmt:v=>v||'—'},
-      {label:'Date',          key:'docDate', fmt:v=>v||'—'},
+      {label:'Receipt No',    key:'receipt_number', fmt:v=>v||'—'},
+      {label:'Student',       key:'student_id', fmt:v=>_invStudentName(v)},
+      {label:'Invoice',       key:'fee_invoice_id', fmt:v=>v?`#${v}`:'—'},
+      {label:'Payment Method',key:'payment_method', fmt:v=>v||'—'},
+      {label:'Reference',     key:'reference', fmt:v=>v||'—'},
+      {label:'Date',          key:'payment_date', fmt:v=>v?v.split('T')[0]:'—'},
       {label:'Amount',        key:'amount', fmt:v=>_finFmt(parseFloat(v)||0)},
-      {label:'Cost Center',   key:'costCenter', fmt:v=>v||'—'},
+      {label:'Voided',        key:'voided', fmt:v=>v?'Yes':'No'},
     ],
-    onAdd:  () => renderRcvPayAddPage(document.getElementById('main-content')),
-    onEdit: item => openRcvPayDetail(item.id),
+    onAdd: () => {
+      showToast('Payments are recorded from a Student Invoice — open the invoice and click Record Payment.', 'info');
+      loadView('fin-student-invoices');
+    },
   });
 }
 
-function _renderRcvPayListPage(container) {
-  container.innerHTML = `
-    <div class="fin-page">
-      <div class="fin-header-row">
-        <h2 class="fin-title">Receive Payment</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Receive Payment &rsaquo; Listing</div>
-      </div>
-      <div class="fin-controls-row">
-        <div class="fin-controls-left">
-          Show <select id="rcv-per-page" onchange="changeRcvPerPage(this.value)">
-            ${[10,25,50,100].map(n=>`<option value="${n}" ${n===_rcvPayPerPage?'selected':''}>${n}</option>`).join('')}
-          </select> entries
-          &nbsp;|&nbsp; Total <span id="rcv-total">0</span> entries
-        </div>
-        <div class="fin-controls-right">
-          <button class="fin-export-btn" title="Export PDF">&#128438;</button>
-          <button class="fin-export-btn" title="Export CSV">&#128202;</button>
-          <button class="fin-btn-teal" onclick="renderRcvPayAddPage(document.getElementById('main-content'))">+ Add</button>
-          <input type="text" class="fin-search-input" placeholder="&#128269; Search&#8230;" oninput="onRcvSearch(this.value)">
-          <button class="fin-btn-filter">&#9776; Filters</button>
-        </div>
-      </div>
-      <div id="rcv-table-container"></div>
-      <div id="rcv-pagination"></div>
-    </div>`;
-  _renderRcvPayTable();
-}
-
-function _rcvFiltered() {
-  if (!_rcvPaySearch) return receivePaymentsData;
-  const q = _rcvPaySearch;
-  return receivePaymentsData.filter(p =>
-    (p.receiptNo||'').toLowerCase().includes(q) ||
-    (p.name||'').toLowerCase().includes(q) ||
-    (p.receiveFrom||'').toLowerCase().includes(q));
-}
-
-function _renderRcvPayTable() {
-  const filtered = _rcvFiltered();
-  const totalEl  = document.getElementById('rcv-total');
-  if (totalEl) totalEl.textContent = filtered.length;
-  const start = (_rcvPayPage-1)*_rcvPayPerPage;
-  const paged = filtered.slice(start, start+_rcvPayPerPage);
-  const pages = Math.max(1, Math.ceil(filtered.length/_rcvPayPerPage));
-
-  let rows = paged.length===0
-    ? `<tr><td colspan="9" class="fin-empty">No records found.</td></tr>`
-    : paged.map(p=>`<tr>
-        <td>${_finEsc(p.receiptNo||'')}</td>
-        <td>${_finEsc(p.costCenter||'-')}</td>
-        <td>${_finEsc(p.receiveFrom||'-')}</td>
-        <td>${_finEsc(p.name||'-')}</td>
-        <td>${_finEsc(p.paymentMode||'-')}</td>
-        <td>${_finEsc(p.modeNo||'-')}</td>
-        <td>${_finEsc(p.docDate||'-')}</td>
-        <td>${_finFmt(p.amount||0)}</td>
-        <td class="fin-action-cell">
-          <div class="fin-action-wrap">
-            <button class="fin-action-btn" onclick="toggleFinRcvDropdown(event,'${p.id}')">&#8230;</button>
-            <div id="fin-rcv-dd-${p.id}" class="fin-action-dropdown" style="display:none;">
-              <a href="#" onclick="openRcvPayDetail('${p.id}');return false;">&#128065; View Detail</a>
-              <a href="#" onclick="alert('Change Date — coming soon.');return false;">&#128197; Change Date</a>
-              <a href="#" onclick="window.print();return false;">&#128438; Print</a>
-            </div>
-          </div>
-        </td>
-      </tr>`).join('');
-
-  const el = document.getElementById('rcv-table-container');
-  if (el) el.innerHTML = `
-    <div class="fin-table-wrap"><table class="fin-table">
-      <thead><tr>
-        <th>RECEIPT NO</th><th>COST CENTER</th><th>RECEIVE FROM</th><th>NAME</th>
-        <th>PAYMENT MODE</th><th>MODE NO</th><th>DOC DATE</th><th>AMOUNT</th><th>ACTION</th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
-    </table></div>`;
-
-  let pg=''; for(let i=1;i<=pages;i++) pg+=`<button class="${i===_rcvPayPage?'fin-pg-active':''}" onclick="rcvGoPage(${i})">${i}</button>`;
-  const pgEl=document.getElementById('rcv-pagination');
-  if(pgEl) pgEl.innerHTML=`<div class="fin-pagination">${pg}</div>`;
-}
-
-function toggleFinRcvDropdown(e,id) {
-  e.stopPropagation();
-  document.querySelectorAll('[id^="fin-rcv-dd-"]').forEach(d=>{ if(d.id!==`fin-rcv-dd-${id}`) d.style.display='none'; });
-  const dd=document.getElementById(`fin-rcv-dd-${id}`);
-  if(dd) dd.style.display=dd.style.display==='none'?'block':'none';
-}
-function changeRcvPerPage(v){ _rcvPayPerPage=parseInt(v); _rcvPayPage=1; _renderRcvPayTable(); }
-function onRcvSearch(v)     { _rcvPaySearch=v.trim().toLowerCase(); _rcvPayPage=1; _renderRcvPayTable(); }
-function rcvGoPage(p)       { _rcvPayPage=p; _renderRcvPayTable(); }
-
-function openRcvPayDetail(id) {
-  document.querySelectorAll('[id^="fin-rcv-dd-"]').forEach(d=>d.style.display='none');
-  const pmt = receivePaymentsData.find(p=>p.id===id);
-  if (!pmt) return;
-  _renderRcvPayDetailPage(document.getElementById('main-content'), pmt);
-}
-
-function _renderRcvPayDetailPage(container, pmt) {
-  container.innerHTML = `
-    <div class="fin-page">
-      <div class="fin-header-row">
-        <h2 class="fin-title">Receive Payment</h2>
-        <div class="fin-breadcrumb">
-          Dashboard &rsaquo; Finance &rsaquo;
-          <a href="#" class="fin-bc-link" onclick="loadView('fin-receive-payments');return false;">Receive Payment</a>
-          &rsaquo; Show
-        </div>
-      </div>
-      <div class="fin-send-row">
-        <button class="fin-btn-teal" onclick="alert('Send to Parent — coming soon.')">Send to Parent</button>
-        <button class="fin-btn-teal" onclick="window.print()">Print Receipt</button>
-      </div>
-      <div class="fin-info-grid">
-        <div class="fin-info-item"><span class="fin-info-label">Receipt Number</span><span class="fin-info-value">${_finEsc(pmt.receiptNo||'-')}</span></div>
-        <div class="fin-info-item"><span class="fin-info-label">Student Number</span><span class="fin-info-value">${_finEsc(pmt.studentLabel||'-')}</span></div>
-        <div class="fin-info-item"><span class="fin-info-label">Ledger</span><span class="fin-info-value">${_finEsc(pmt.ledger||'-')}</span></div>
-        <div class="fin-info-item"><span class="fin-info-label">Payment Mode</span><span class="fin-info-value">${_finEsc(pmt.paymentMode||'-')}</span></div>
-        <div class="fin-info-item"><span class="fin-info-label">Mode No.</span><span class="fin-info-value">${_finEsc(pmt.modeNo||'-')}</span></div>
-        <div class="fin-info-item"><span class="fin-info-label">Doc Date</span><span class="fin-info-value">${_finEsc(pmt.docDate||'-')}</span></div>
-        <div class="fin-info-item"><span class="fin-info-label">Amount (KSH)</span><span class="fin-info-value">${_finFmt(pmt.amount||0)}</span></div>
-      </div>
-      <div class="fin-section-label">Student Information</div>
-      <div class="fin-info-grid">
-        <div class="fin-info-item"><span class="fin-info-label">Name</span><span class="fin-info-value">${_finEsc(pmt.name||'-')}</span></div>
-        <div class="fin-info-item"><span class="fin-info-label">Class</span><span class="fin-info-value">${_finEsc(pmt.class||'-')}</span></div>
-        <div class="fin-info-item"><span class="fin-info-label">Cohort</span><span class="fin-info-value">${_finEsc(pmt.cohort||'-')}</span></div>
-        <div class="fin-info-item"><span class="fin-info-label">Balance</span><span class="fin-info-value">${_finEsc(pmt.balance||'-')}</span></div>
-      </div>
-      <div class="fin-form-actions" style="margin-top:20px;">
-        <button class="fin-btn-cancel" onclick="loadView('fin-receive-payments')">Back</button>
-      </div>
-    </div>`;
-}
-
-async function renderRcvPayAddPage(container) {
-  container.innerHTML = '<p class="fin-loading">Loading&#8230;</p>';
-  let studentOpts = '<option value="">-- Search Student --</option>';
-  try {
-    const res = await fetch(`${API_BASE}/students/`, { headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok) {
-      const students = await res.json();
-      studentOpts += students.map(s =>
-        `<option value="${s.id}" data-name="${_finEsc((s.first_name||'')+' '+(s.last_name||''))}" data-class="${_finEsc(s.school_class_name||'-')}" data-adm="${_finEsc(s.student_id||'-')}">
-          ${_finEsc((s.first_name||'')+' '+(s.last_name||''))} (${_finEsc(s.student_id||'-')} / ${_finEsc(s.school_class_name||'-')})
-        </option>`).join('');
-    }
-  } catch(_) {}
-
-  const ledgerOpts = chartOfAccountsData.map(a =>
-    `<option value="${a.id}">${_finEsc(a.account_name||a.accountName||'')}</option>`).join('');
-
-  container.innerHTML = `
-    <div class="fin-page">
-      <div class="fin-header-row">
-        <h2 class="fin-title">Add Receive Payment</h2>
-        <div class="fin-breadcrumb">
-          Dashboard &rsaquo; Finance &rsaquo;
-          <a href="#" class="fin-bc-link" onclick="loadView('fin-receive-payments');return false;">Receive Payment</a>
-          &rsaquo; Add
-        </div>
-      </div>
-      <div class="fin-form-wrap" style="max-width:680px;">
-        <div class="fin-form-grid-2">
-          <div class="fin-form-group">
-            <label class="fin-form-label">Receipt Number</label>
-            <input type="text" class="fin-form-input" value="${_finEsc(_finGenRefNo('RCP-', receivePaymentsData))}" disabled>
-          </div>
-          <div class="fin-form-group">
-            <label class="fin-form-label">Receive From <span class="fin-required">*</span></label>
-            <select id="rcv-add-from" class="fin-form-select">
-              <option value="">Please Select</option>
-              <option value="Student">Student</option>
-              <option value="Parent">Parent</option>
-              <option value="Sponsor">Sponsor</option>
-              <option value="Other">Other</option>
-            </select>
-            <span class="fin-field-error" id="rcv-from-err"></span>
-          </div>
-          <div class="fin-form-group">
-            <label class="fin-form-label">Student Number <span class="fin-required">*</span></label>
-            <select id="rcv-add-student" class="fin-form-select">${studentOpts}</select>
-            <span class="fin-field-error" id="rcv-student-err"></span>
-          </div>
-          <div class="fin-form-group">
-            <label class="fin-form-label">Ledger <span class="fin-required">*</span></label>
-            <select id="rcv-add-ledger" class="fin-form-select">
-              <option value="">Please Select</option>${ledgerOpts}
-            </select>
-            <span class="fin-field-error" id="rcv-ledger-err"></span>
-          </div>
-          <div class="fin-form-group">
-            <label class="fin-form-label">Payment Mode <span class="fin-required">*</span></label>
-            <select id="rcv-add-mode" class="fin-form-select">
-              <option value="">Please Select</option>
-              <option value="bank_transfer">Bank Transfer</option>
-              <option value="mpesa">M-Pesa</option>
-            </select>
-            <span class="fin-field-error" id="rcv-mode-err"></span>
-          </div>
-          <div class="fin-form-group">
-            <label class="fin-form-label">Mode No. <span class="fin-required">*</span></label>
-            <input type="text" id="rcv-add-mode-no" class="fin-form-input">
-            <span class="fin-field-error" id="rcv-modeno-err"></span>
-          </div>
-          <div class="fin-form-group">
-            <label class="fin-form-label">Doc Date <span class="fin-required">*</span></label>
-            <input type="date" id="rcv-add-date" class="fin-form-input">
-            <span class="fin-field-error" id="rcv-date-err"></span>
-          </div>
-          <div class="fin-form-group">
-            <label class="fin-form-label">Actual Amount (KSH) <span class="fin-required">*</span></label>
-            <input type="number" id="rcv-add-amount" class="fin-form-input" step="0.01" min="0">
-            <span class="fin-field-error" id="rcv-amount-err"></span>
-          </div>
-        </div>
-        <div class="fin-form-group">
-          <label class="fin-form-label">Attachment</label>
-          <input type="file" id="rcv-add-file" class="fin-form-input" style="padding:6px 10px;">
-        </div>
-        <div class="fin-form-actions">
-          <button class="fin-btn-teal" onclick="submitRcvPayAdd()">Submit</button>
-          <button class="fin-btn-cancel" onclick="loadView('fin-receive-payments')">Cancel</button>
-        </div>
-        <div id="rcv-add-status"></div>
-      </div>
-    </div>`;
-}
-
-async function submitRcvPayAdd() {
-  const from   = document.getElementById('rcv-add-from').value;
-  const stuEl  = document.getElementById('rcv-add-student');
-  const stu    = stuEl.value;
-  const ledger = document.getElementById('rcv-add-ledger').value;
-  const mode   = document.getElementById('rcv-add-mode').value;
-  const modeNo = (document.getElementById('rcv-add-mode-no').value||'').trim();
-  const date   = document.getElementById('rcv-add-date').value;
-  const amount = parseFloat(document.getElementById('rcv-add-amount').value)||0;
-  let valid=true;
-
-  const v=(id,errId,val,msg)=>{ document.getElementById(errId).textContent=val?'':msg; if(!val) valid=false; };
-  v('','rcv-from-err',   from,   'This field is required.');
-  v('','rcv-student-err',stu,    'This field is required.');
-  v('','rcv-ledger-err', ledger, 'This field is required.');
-  v('','rcv-mode-err',   mode,   'This field is required.');
-  v('','rcv-modeno-err', modeNo, 'This field is required.');
-  v('','rcv-date-err',   date,   'This field is required.');
-  if (!amount) { document.getElementById('rcv-amount-err').textContent='Amount must be > 0.'; valid=false; }
-  else          { document.getElementById('rcv-amount-err').textContent=''; }
-  if (!valid) return;
-
-  const selOpt = stuEl.options[stuEl.selectedIndex];
-  const stuName  = selOpt?.dataset?.name  || '-';
-  const stuClass = selOpt?.dataset?.class || '-';
-  const stuAdm   = selOpt?.dataset?.adm   || '-';
-
-  const ledgerRec = chartOfAccountsData.find(a=>String(a.id)===String(ledger));
-
-  const payload = {
-    receive_from: from, student_id: stu, ledger_id: ledger,
-    payment_mode: mode, mode_no: modeNo, doc_date: date, amount
-  };
-  try {
-    const res = await apiFetch(`${API_BASE}/finance/receive-payments`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    if (res && res.ok) { showToast('Payment received!', 'success'); }
-    else if (res) { showToast('Error: ' + await parseApiError(res), 'error'); }
-  } catch (_) { showToast('Network error.', 'error'); }
-  loadView('fin-receive-payments');
-}
 
 // ==================== CHANGE 7: CHART OF ACCOUNTS ====================
 
