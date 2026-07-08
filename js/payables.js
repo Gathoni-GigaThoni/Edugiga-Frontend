@@ -150,7 +150,7 @@ function _pvReadPayee(idPrefix, payeeType) {
 
 // ==================== A.4 PAYMENT VOUCHERS ====================
 let _pvPvPage = 1, _pvPvPerPage = 10, _pvPvData = [];
-const _PV_PV_API = `${API_BASE}/api/payables/payment-vouchers/`;
+const _PV_PV_API = `${API_BASE}/payables/payment-vouchers/`;
 
 async function loadPayablesPaymentVouchersView(container) {
   await _pvLoadLookups();
@@ -469,7 +469,7 @@ async function _pvPvSubmitEdit(id) {
 // /api/payables/tax-vouchers/{id} itself — those actions exist only on the
 // backing Payment Voucher, so we call them against payment_voucher_id.
 let _pvTvPage = 1, _pvTvPerPage = 10, _pvTvData = [];
-const _PV_TV_API = `${API_BASE}/api/payables/tax-vouchers/`;
+const _PV_TV_API = `${API_BASE}/payables/tax-vouchers/`;
 
 function _pvTvField(tv, key) { return tv[key] ?? tv.payment_voucher?.[key] ?? null; }
 function _pvTvPvId(tv) { return tv.payment_voucher_id ?? tv.payment_voucher?.id ?? tv.id; }
@@ -661,7 +661,7 @@ async function loadPayablesTaxVouchersUpcomingView(container) {
       {label:'Finance',view:'payables-tax-vouchers'},
       {label:'Upcoming Deadlines'}
     ],
-    apiUrl: `${API_BASE}/api/payables/tax-vouchers/upcoming-deadlines`,
+    apiUrl: `${API_BASE}/payables/tax-vouchers/upcoming-deadlines`,
     searchFields: ['tax_type','status'],
     col1Label: 'Tax Type', col2Label: 'Due Date',
     col1: tv => tv.tax_type || '—',
@@ -681,7 +681,7 @@ async function loadPayablesTaxVouchersUpcomingView(container) {
 
 // ==================== A.7 SUPPLIER INVOICES ====================
 let _pvSiPage = 1, _pvSiPerPage = 10, _pvSiData = [];
-const _PV_SI_API = `${API_BASE}/api/payables/supplier-invoices`;
+const _PV_SI_API = `${API_BASE}/payables/supplier-invoices`;
 
 async function loadPayablesSupplierInvoicesView(container) {
   await _pvLoadLookups();
@@ -1030,7 +1030,7 @@ async function _pvSiSubmitEdit(id) {
 
 // ==================== A.8 SUPPLIER WHT VAT CERTIFICATE ====================
 let _pvWhtData = [];
-const _PV_WHT_API = `${API_BASE}/api/payables/wht-vat-certificates`;
+const _PV_WHT_API = `${API_BASE}/payables/wht-vat-certificates`;
 
 async function loadPayablesWhtVatCertificatesView(container) {
   await _pvLoadLookups();
@@ -1102,7 +1102,7 @@ async function _pvWhtRegenerate(id) {
 
 // ==================== A.9.1 EXPENSE CLAIMS ====================
 let _pvEcData = [];
-const _PV_EC_API = `${API_BASE}/api/payables/expense-claims`;
+const _PV_EC_API = `${API_BASE}/payables/expense-claims`;
 
 async function loadPayablesExpenseClaimsView(container) {
   await _pvLoadLookups();
@@ -1240,7 +1240,7 @@ async function _pvEcSubmitAdd() {
 
 // ==================== A.9.2 EXPENSE CLAIM DISBURSEMENTS ====================
 let _pvEcdData = [], _pvEcdApprovedClaims = [];
-const _PV_ECD_API = `${API_BASE}/api/payables/expense-claim-disbursements`;
+const _PV_ECD_API = `${API_BASE}/payables/expense-claim-disbursements`;
 
 async function loadPayablesExpenseClaimDisbursementsView(container) {
   await _pvLoadLookups();
@@ -1347,7 +1347,7 @@ async function _pvEcdSubmitAdd() {
 
 // ==================== A.10.1 PETTY CASH APPLICATIONS ====================
 let _pvPcaData = [];
-const _PV_PCA_API = `${API_BASE}/api/payables/petty-cash-applications`;
+const _PV_PCA_API = `${API_BASE}/payables/petty-cash-applications`;
 
 async function loadPayablesPettyCashApplicationsView(container) {
   await _pvLoadLookups();
@@ -1441,7 +1441,7 @@ async function _pvPcaSubmitAdd() {
 
 // ==================== A.10.2 PETTY CASH DISBURSEMENTS ====================
 let _pvPcdData = [], _pvPcdApprovedApps = [];
-const _PV_PCD_API = `${API_BASE}/api/payables/petty-cash-disbursements`;
+const _PV_PCD_API = `${API_BASE}/payables/petty-cash-disbursements`;
 
 async function loadPayablesPettyCashDisbursementsView(container) {
   await _pvLoadLookups();
@@ -1545,7 +1545,7 @@ async function _pvPcdSubmitAdd() {
 
 // ==================== A.11.1 IMPREST WARRANT ====================
 let _pvIwData = [];
-const _PV_IW_API = `${API_BASE}/api/payables/imprest-warrants`;
+const _PV_IW_API = `${API_BASE}/payables/imprest-warrants`;
 
 async function loadPayablesImprestWarrantsView(container) {
   await _pvLoadLookups();
@@ -1727,7 +1727,7 @@ async function _pvIwSubmitAdd() {
 
 // ==================== A.11.2 IMPREST DISBURSEMENTS ====================
 let _pvIdData = [], _pvIdApprovedWarrants = [];
-const _PV_ID_API = `${API_BASE}/api/payables/imprest-disbursements`;
+const _PV_ID_API = `${API_BASE}/payables/imprest-disbursements`;
 
 async function loadPayablesImprestDisbursementsView(container) {
   await _pvLoadLookups();
@@ -1834,7 +1834,7 @@ async function _pvIdSubmitAdd() {
 // the listing below shows only what's been recorded in this session, with a note
 // explaining there's no API to fetch historical surrenders yet.
 let _pvIsApprovedWarrants = [], _pvIsSessionRecords = [];
-const _PV_IS_API = `${API_BASE}/api/payables/imprest-surrenders`;
+const _PV_IS_API = `${API_BASE}/payables/imprest-surrenders`;
 
 async function loadPayablesImprestSurrendersView(container) {
   await _pvLoadLookups();

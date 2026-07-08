@@ -67,6 +67,7 @@ async function loadRolesListingView(container) {
       {label:'Title',       key:'title'},
       {label:'Description', key:'description', fmt:v=>v||'—'},
     ],
+    detailActions: item => `<button class="btn" onclick="openRolePermissions(${JSON.stringify(item.id)}, ${JSON.stringify(item.title || '')})">&#128274; Permissions</button>`,
     renderAdd: el => {
       el.innerHTML = `
         <div style="max-width:420px">
@@ -86,7 +87,7 @@ async function loadRolesListingView(container) {
           </div>
         </div>`;
     },
-    onEdit: item => openRoleEdit(item.id),
+    onEdit: item => openRoleEdit(item),
   });
 }
 
@@ -303,12 +304,28 @@ async function deleteRole(roleId) {
 
 // ── Role Edit Page (two-panel) ────────────────────────────────────────────────
 
-function openRoleEdit(roleId) {
+function openRoleEdit(roleOrId) {
   document.querySelectorAll('[id^="role-dd-"]').forEach(d => d.style.display = 'none');
-  const role = _findRoleById(roleId);
+  // Callers pass either the full role object (split-view detail panel, which
+  // already has the row data in hand) or a bare id (legacy dropdown row action).
+  // rolesData is not populated by the split-view list, so falling back to
+  // _findRoleById for a bare id only helps the legacy path — the object path
+  // never depended on that stale cache.
+  const role = (roleOrId && typeof roleOrId === 'object') ? roleOrId : _findRoleById(roleOrId);
   if (!role) { showToast('Role not found. Refresh the list.', 'error'); return; }
-  sessionStorage.setItem('edit-role-id', roleId);
+  sessionStorage.setItem('edit-role-id', role.id);
   sessionStorage.setItem('edit-role-title', role.title || '');
+  loadView('admin-role-edit');
+}
+
+// Row-level "Permissions" shortcut — lands on the same edit page as openRoleEdit
+// (title/description + permission matrix are one merged page), but takes the
+// id/title straight from the clicked row instead of looking anything up, so it
+// has no dependency on rolesData.
+function openRolePermissions(roleId, roleTitle) {
+  document.querySelectorAll('[id^="role-dd-"]').forEach(d => d.style.display = 'none');
+  sessionStorage.setItem('edit-role-id', roleId);
+  sessionStorage.setItem('edit-role-title', roleTitle || '');
   loadView('admin-role-edit');
 }
 

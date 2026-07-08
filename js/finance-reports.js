@@ -7,7 +7,7 @@
 // to auto-generating columns from whatever keys the API actually returned,
 // so the page never just shows a blank table when the guess is wrong.
 
-const _REP_BASE = `${API_BASE}/api/reports`;
+const _REP_BASE = `${API_BASE}/reports`;
 
 function _repHumanize(key) {
   return String(key).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
