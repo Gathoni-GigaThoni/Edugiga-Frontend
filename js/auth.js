@@ -85,20 +85,33 @@ if (token) _scheduleTokenRefresh();
 
 // ==================== LOGIN PAGE (RENDERING) ====================
 
-function _loginLogoMarkup() {
+// Navy header shared by every auth screen (login, forgot-password, set-new-
+// password) — the enlarged logo sits on an ambient gold medallion (two
+// concentric rings), the same "circle within a circle" motif used behind the
+// initials avatar on every module's detail banner (see .detail-banner::after/
+// ::before in core.css), scaled up into this page's signature element instead
+// of inventing a new one.
+function _loginHeaderMarkup(eyebrow) {
   return `
-    <div class="login-logo-wrap">
-      <img
-        src="assets/images/sois-logo-horizontal.jpeg"
-        alt="Seven Oaks International School"
-        class="login-logo"
-        onerror="this.style.display='none';
-                 this.nextElementSibling.style.display='flex';"
-      >
-      <div class="login-logo-fallback" style="display:none;">
-        <span class="login-logo-fallback-name">Seven Oaks</span>
-        <span class="login-logo-fallback-sub">INTERNATIONAL SCHOOL</span>
+    <div class="login-card-header">
+      <div class="login-header-rings" aria-hidden="true">
+        <span class="login-ring login-ring-outer"></span>
+        <span class="login-ring login-ring-inner"></span>
       </div>
+      <div class="login-logo-wrap">
+        <img
+          src="assets/images/sois-logo-horizontal.jpeg"
+          alt="Seven Oaks International School"
+          class="login-logo"
+          onerror="this.style.display='none';
+                   this.nextElementSibling.style.display='flex';"
+        >
+        <div class="login-logo-fallback" style="display:none;">
+          <span class="login-logo-fallback-name">Seven Oaks</span>
+          <span class="login-logo-fallback-sub">INTERNATIONAL SCHOOL</span>
+        </div>
+      </div>
+      ${eyebrow ? `<p class="login-eyebrow">${eyebrow}</p>` : ''}
     </div>
   `;
 }
@@ -109,44 +122,48 @@ function renderLoginPage() {
   container.innerHTML = `
     <div class="login-container">
       <div class="login-form-inner">
-        ${_loginLogoMarkup()}
-        <h1 class="login-welcome">Welcome to Seven Oaks International School</h1>
+        ${_loginHeaderMarkup('School Management System')}
+        <div class="login-card-body">
+          <h1 class="login-welcome">Welcome back</h1>
+          <p class="login-subtitle">Sign in to manage students, finance and school operations.</p>
 
-        <form class="login-form" id="login-form" novalidate>
-          <div class="login-field-group">
-            <label class="login-label" for="login-username">Username or email</label>
-            <input
-              type="text"
-              id="login-username"
-              class="login-input"
-              autocomplete="username"
-              spellcheck="false"
-            >
-          </div>
-
-          <div class="login-field-group" style="margin-top: 32px;">
-            <label class="login-label" for="login-password">Password</label>
-            <input
-              type="password"
-              id="login-password"
-              class="login-input"
-              autocomplete="current-password"
-            >
-            <div class="login-field-footer">
-              <span></span>
-              <a href="#" class="login-forgot-link" id="login-forgot-btn">
-                Forgot password?
-              </a>
+          <form class="login-form" id="login-form" novalidate>
+            <div class="login-field-group">
+              <label class="login-label" for="login-username">Username or email</label>
+              <input
+                type="text"
+                id="login-username"
+                class="login-input"
+                autocomplete="username"
+                spellcheck="false"
+              >
             </div>
-          </div>
 
-          <p class="login-error-msg" id="login-error" role="alert" hidden></p>
+            <div class="login-field-group" style="margin-top: 28px;">
+              <label class="login-label" for="login-password">Password</label>
+              <input
+                type="password"
+                id="login-password"
+                class="login-input"
+                autocomplete="current-password"
+              >
+              <div class="login-field-footer">
+                <span></span>
+                <a href="#" class="login-forgot-link" id="login-forgot-btn">
+                  Forgot password?
+                </a>
+              </div>
+            </div>
 
-          <button type="submit" class="login-submit-btn" id="login-submit-btn">
-            Sign In
-          </button>
-        </form>
+            <p class="login-error-msg" id="login-error" role="alert" hidden></p>
+
+            <button type="submit" class="login-submit-btn" id="login-submit-btn">
+              Sign In
+            </button>
+          </form>
+        </div>
       </div>
+      <p class="login-footer-note">&copy; ${new Date().getFullYear()} Seven Oaks International School &middot; Secure staff portal</p>
     </div>
   `;
 
@@ -195,30 +212,32 @@ function renderLoginPage() {
 function showForgotPasswordView() {
   const inner = document.querySelector('.login-form-inner');
   inner.innerHTML = `
-    ${_loginLogoMarkup()}
-    <h1 class="login-welcome">Reset your password</h1>
-    <p class="login-reset-hint">
-      Enter the email address linked to your account and we'll send
-      you a link to reset your password.
-    </p>
+    ${_loginHeaderMarkup('Password Reset')}
+    <div class="login-card-body">
+      <h1 class="login-welcome">Reset your password</h1>
+      <p class="login-reset-hint">
+        Enter the email address linked to your account and we'll send
+        you a link to reset your password.
+      </p>
 
-    <form id="forgot-form" novalidate>
-      <div class="login-field-group">
-        <label class="login-label" for="reset-email">Email address</label>
-        <input type="email" id="reset-email" class="login-input"
-               autocomplete="email" spellcheck="false">
+      <form id="forgot-form" novalidate>
+        <div class="login-field-group">
+          <label class="login-label" for="reset-email">Email address</label>
+          <input type="email" id="reset-email" class="login-input"
+                 autocomplete="email" spellcheck="false">
+        </div>
+        <p class="login-error-msg" id="reset-error" role="alert" hidden></p>
+        <p class="login-success-msg" id="reset-success" hidden></p>
+        <button type="submit" class="login-submit-btn" id="reset-submit-btn">
+          Send Reset Link
+        </button>
+      </form>
+
+      <div style="text-align:center; margin-top:28px;">
+        <a href="#" class="login-back-link" id="back-to-login-btn">
+          &larr; Back to Sign In
+        </a>
       </div>
-      <p class="login-error-msg" id="reset-error" role="alert" hidden></p>
-      <p class="login-success-msg" id="reset-success" hidden></p>
-      <button type="submit" class="login-submit-btn" id="reset-submit-btn">
-        Send Reset Link
-      </button>
-    </form>
-
-    <div style="text-align:center; margin-top:28px;">
-      <a href="#" class="login-back-link" id="back-to-login-btn">
-        ← Back to Sign In
-      </a>
     </div>
   `;
 
@@ -289,37 +308,40 @@ function renderSetNewPasswordView(resetToken) {
   container.innerHTML = `
     <div class="login-container">
       <div class="login-form-inner">
-        ${_loginLogoMarkup()}
-        <h1 class="login-welcome">Set a new password</h1>
-        <p class="login-reset-hint">
-          Choose a strong password that you haven't used before.
-        </p>
-        <form id="new-password-form" novalidate>
-          <div class="login-field-group">
-            <label class="login-label" for="new-password">New password</label>
-            <input type="password" id="new-password" class="login-input"
-                   autocomplete="new-password">
-          </div>
-          <div class="login-field-group" style="margin-top:28px;">
-            <label class="login-label" for="confirm-password">
-              Confirm new password
-            </label>
-            <input type="password" id="confirm-password" class="login-input"
-                   autocomplete="new-password">
-          </div>
-          <div class="password-strength-bar" id="pwd-strength-bar"
-               style="margin-top:10px;height:3px;border-radius:2px;
-                      background:var(--grey-100,#eee);overflow:hidden;">
-            <div id="pwd-strength-fill"
-                 style="height:100%;width:0;transition:width 0.3s,background 0.3s;"></div>
-          </div>
-          <p class="login-error-msg"   id="new-pwd-error"   role="alert" hidden></p>
-          <p class="login-success-msg" id="new-pwd-success" hidden></p>
-          <button type="submit" class="login-submit-btn" id="new-pwd-submit">
-            Set New Password
-          </button>
-        </form>
+        ${_loginHeaderMarkup('Password Reset')}
+        <div class="login-card-body">
+          <h1 class="login-welcome">Set a new password</h1>
+          <p class="login-reset-hint">
+            Choose a strong password that you haven't used before.
+          </p>
+          <form id="new-password-form" novalidate>
+            <div class="login-field-group">
+              <label class="login-label" for="new-password">New password</label>
+              <input type="password" id="new-password" class="login-input"
+                     autocomplete="new-password">
+            </div>
+            <div class="login-field-group" style="margin-top:28px;">
+              <label class="login-label" for="confirm-password">
+                Confirm new password
+              </label>
+              <input type="password" id="confirm-password" class="login-input"
+                     autocomplete="new-password">
+            </div>
+            <div class="password-strength-bar" id="pwd-strength-bar"
+                 style="margin-top:10px;height:3px;border-radius:2px;
+                        background:var(--grey-100,#eee);overflow:hidden;">
+              <div id="pwd-strength-fill"
+                   style="height:100%;width:0;transition:width 0.3s,background 0.3s;"></div>
+            </div>
+            <p class="login-error-msg"   id="new-pwd-error"   role="alert" hidden></p>
+            <p class="login-success-msg" id="new-pwd-success" hidden></p>
+            <button type="submit" class="login-submit-btn" id="new-pwd-submit">
+              Set New Password
+            </button>
+          </form>
+        </div>
       </div>
+      <p class="login-footer-note">&copy; ${new Date().getFullYear()} Seven Oaks International School &middot; Secure staff portal</p>
     </div>
   `;
 
