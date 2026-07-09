@@ -24,6 +24,7 @@ function showDashboard() {
             <span class="rail-logo-initials">S</span>
           </div>
         </div>
+        <button class="rail-item active" data-module="dashboard-home" title="Dashboard" onclick="goToDashboardHome()"><span class="rail-label-full">Dashboard</span><span class="rail-label-short">HOME</span></button>
         <button class="rail-item" data-module="student-management" title="Student Management" onclick="handleRailClick('student-management')"><span class="rail-label-full">Student Management</span><span class="rail-label-short">STU</span></button>
         <button class="rail-item" data-module="student-academics" title="Student Academics" onclick="handleRailClick('student-academics')"><span class="rail-label-full">Student Academics</span><span class="rail-label-short">ACA</span></button>
         <button class="rail-item" data-module="transport-management" title="Transport Management" onclick="handleRailClick('transport-management')"><span class="rail-label-full">Transport</span><span class="rail-label-short">TRN</span></button>
@@ -284,27 +285,47 @@ function showDashboard() {
         </div>
       </div>
 
-      <main id="main-content">
-        <h2>Welcome to EduGiga - Seven Oaks International School</h2>
-        <p>Select a module from the sidebar.</p>
-        <div style="margin-top:28px;background:#fff;border:1px solid #e3e8ee;border-radius:8px;padding:24px 28px;max-width:520px;box-shadow:0 1px 4px rgba(0,0,0,0.06);">
-          <div style="font-weight:600;font-size:1rem;margin-bottom:14px;color:#2c3e50;">Quick Student Search</div>
-          <div style="display:flex;gap:10px;align-items:center;">
-            <input id="dash-stu-search-input" type="text" placeholder="Search by name or admission no…"
-              style="flex:1;padding:8px 12px;border:1px solid #ccc;border-radius:5px;font-size:0.9rem;"
-              onkeydown="if(event.key==='Enter')doDashStudentSearch()">
-            <button onclick="doDashStudentSearch()"
-              style="padding:8px 18px;background:#1abc9c;color:#fff;border:none;border-radius:5px;font-size:0.9rem;cursor:pointer;white-space:nowrap;">Search</button>
-          </div>
-          <div id="dash-stu-search-results" style="margin-top:14px;"></div>
-        </div>
-      </main>
+      <main id="main-content"></main>
     </div>
   `;
+  renderDashboardHome(document.getElementById('main-content'));
 
   document.getElementById('main-content').addEventListener('click', () => {
     if (activeModule !== null) closeFlyout();
   });
+}
+
+// Home view content — shown on initial login and whenever the user clicks the
+// "Dashboard" rail item (see goToDashboardHome / loadView case 'dashboard'),
+// so it needs to be re-renderable into any already-mounted #main-content, not
+// just built once into the page shell.
+function renderDashboardHome(container) {
+  if (!container) return;
+  container.innerHTML = `
+    <h2>Welcome to EduGiga - Seven Oaks International School</h2>
+    <p>Select a module from the sidebar.</p>
+    <div style="margin-top:28px;background:#fff;border:1px solid #e3e8ee;border-radius:8px;padding:24px 28px;max-width:520px;box-shadow:0 1px 4px rgba(0,0,0,0.06);">
+      <div style="font-weight:600;font-size:1rem;margin-bottom:14px;color:#2c3e50;">Quick Student Search</div>
+      <div style="display:flex;gap:10px;align-items:center;">
+        <input id="dash-stu-search-input" type="text" placeholder="Search by name or admission no…"
+          style="flex:1;padding:8px 12px;border:1px solid #ccc;border-radius:5px;font-size:0.9rem;"
+          onkeydown="if(event.key==='Enter')doDashStudentSearch()">
+        <button onclick="doDashStudentSearch()"
+          style="padding:8px 18px;background:#1abc9c;color:#fff;border:none;border-radius:5px;font-size:0.9rem;cursor:pointer;white-space:nowrap;">Search</button>
+      </div>
+      <div id="dash-stu-search-results" style="margin-top:14px;"></div>
+    </div>
+  `;
+}
+
+// Rail item for returning to the dashboard home view — has no flyout panel of its
+// own (handleRailClick/openFlyout require a matching flyout-body-* element), so it
+// gets a dedicated handler that closes any open flyout and marks itself active.
+function goToDashboardHome() {
+  closeFlyout();
+  document.querySelectorAll('.rail-item').forEach(btn => btn.classList.remove('active'));
+  document.querySelector('[data-module="dashboard-home"]')?.classList.add('active');
+  loadView('dashboard');
 }
 
 // ==================== LEFT RAIL / FLYOUT PANEL ====================
@@ -377,7 +398,7 @@ async function doDashStudentSearch() {
             <td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;">${(s.first_name||'')} ${(s.last_name||'')}</td>
             <td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;">${s.class_name || '-'}</td>
             <td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;">
-              <a href="#" style="color:#1abc9c;font-weight:500;" onclick="loadView('students-view');window._viewStudentId=${s.id};return false;">View</a>
+              <a href="#" style="color:#1abc9c;font-weight:500;" onclick="_currentEditStudentId=${s.id};loadView('students-view');return false;">View</a>
             </td>
           </tr>`).join('')}
         </tbody>
@@ -640,6 +661,8 @@ async function loadView(view) {
   // Restart it if the new view is form-oriented
   if (FORM_VIEWS.has(view)) startKeepAlive();
   switch(view) {
+    case 'dashboard':
+      renderDashboardHome(main); break;
     // Student Management – main views
     case 'students-list':
       setActiveSidebarItem('sidebar-stu-list'); openStuMgmtDropdowns();

@@ -445,6 +445,25 @@ async function submitRoleDetailsUpdate(roleId) {
 
 const _PERM_ACTIONS = ['view', 'add', 'edit', 'delete'];
 
+// Backend module_key format for nested modules is `${topLevelKey}.${leafKey}`
+// (confirmed live: Payroll Runs/Payslips permission is literally `payroll.payslips`,
+// see be-fe-contract memory) — NOT the bare leaf key. Some groups (e.g.
+// payroll > Utilities > Pay Grades) nest a third level deep purely for UI
+// grouping; this walks through any depth of pure-grouping nodes (def.children,
+// no def.actions of their own) and still flattens to the 2-segment
+// `topLevelKey.leafKey` module_key, dropping the intermediate group label.
+function _permFlattenLeaves(children, topKey, depth) {
+  let out = [];
+  for (const [key, def] of Object.entries(children)) {
+    if (def.children) {
+      out = out.concat(_permFlattenLeaves(def.children, topKey, depth + 1));
+    } else if (def.actions) {
+      out.push({ moduleKey: `${topKey}.${key}`, def, depth });
+    }
+  }
+  return out;
+}
+
 function renderPermMatrix(container, matrix, currentPerms) {
   if (!container) return;
   if (!matrix || !Object.keys(matrix).length) {
@@ -466,22 +485,23 @@ function renderPermMatrix(container, matrix, currentPerms) {
         </td>
       </tr>`;
 
-      for (const [childKey, childDef] of Object.entries(def.children)) {
-        const p = currentPerms[childKey] || {};
-        const supported = new Set(childDef.actions || _PERM_ACTIONS);
+      const leaves = _permFlattenLeaves(def.children, key, 1);
+      leaves.forEach(leaf => {
+        const p = currentPerms[leaf.moduleKey] || {};
+        const supported = new Set(leaf.def.actions || _PERM_ACTIONS);
         rows += `<tr class="perm-row perm-depth-1 perm-child-row" data-parent-key="${key}" style="display:none">
           <td class="perm-module-cell">
-            <span class="perm-module-name perm-depth-1" style="margin-left:40px">${childDef.label}</span>
+            <span class="perm-module-name perm-depth-1" style="margin-left:${40 + (leaf.depth - 1) * 20}px">${leaf.def.label}</span>
           </td>`;
         _PERM_ACTIONS.forEach(action => {
           const ok = supported.has(action);
           rows += `<td class="perm-cb-cell"><input type="checkbox" class="perm-action-cb"
-            data-module="${childKey}" data-action="${action}"
+            data-module="${leaf.moduleKey}" data-action="${action}"
             ${ok && p[`can_${action}`] ? 'checked' : ''}
             ${!ok ? 'disabled' : ''}></td>`;
         });
         rows += '</tr>';
-      }
+      });
     } else if (def.actions) {
       const p = currentPerms[key] || {};
       const supported = new Set(def.actions);

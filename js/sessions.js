@@ -64,6 +64,14 @@ async function loadSessionsView(container) {
       {label:'End Date',      key:'end_date', fmt:v=>_toDDMMYYYY(v)},
       {label:'Status',        key:'is_inactive', fmt:v=>v?'Inactive':'Active'},
     ],
+    renderAdd: el => {
+      el.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--grey-600)">
+        <div style="font-size:2rem;margin-bottom:12px">&#128197;</div>
+        <p style="font-weight:600;margin-bottom:8px">Add a New Term</p>
+        <p style="font-size:13px;margin-bottom:20px">Set up a term's title, academic year, type and dates.</p>
+        <button class="btn-primary" style="padding:10px 24px" onclick="renderSessAddPage(document.getElementById('main-content'))">+ Add Term</button>
+      </div>`;
+    },
     onAdd:  () => renderSessAddPage(document.getElementById('main-content')),
     onEdit: item => openSessEdit(item.id),
   });

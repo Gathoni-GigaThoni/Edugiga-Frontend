@@ -494,7 +494,7 @@ async function loadAcademicLevelsView(container) {
     title: 'Academic Levels',
     breadcrumb: [
       {label:'Dashboard',view:null},
-      {label:'Administration',view:'sa-academic-levels'},
+      {label:'Student Academics',view:'sa-academic-levels'},
       {label:'Academic Levels'}
     ],
     apiUrl: `${API_BASE}/academic-levels/`,
@@ -513,6 +513,12 @@ async function loadAcademicLevelsView(container) {
       {label:'Status',      key:'status', fmt:v=>v||'Active'},
     ],
     onAdd: () => renderAlvlAddPage(document.getElementById('main-content')),
+    // NOTE: backend has no update endpoint for Academic Levels yet — live
+    // openapi.json only lists GET/POST on /academic-levels/, no {id} route at
+    // all (unlike /academic-years/{year_id} which does support PUT). This UI
+    // is wired to PUT /academic-levels/{id} ahead of the backend so it's ready
+    // the moment that route ships; until then Save here will 404/405.
+    onEdit: item => renderAlvlEditPage(item, document.getElementById('main-content')),
   });
 }
 
@@ -565,7 +571,7 @@ function renderAlvlAddPage(container) {
       <div class="sa-header-row">
         <h2 class="sa-title">Add Academic Level</h2>
         <div class="sa-breadcrumb">
-          Dashboard &rsaquo; Administration &rsaquo;
+          Dashboard &rsaquo; Student Academics &rsaquo;
           <a href="#" class="sa-bc-link" onclick="loadView('sa-academic-levels');return false;">Academic Levels</a>
           &rsaquo; Add
         </div>
@@ -599,6 +605,91 @@ function renderAlvlAddPage(container) {
       </div>
     </div>
   `;
+}
+
+function renderAlvlEditPage(item, container) {
+  container.innerHTML = `
+    <div class="sa-page">
+      <div class="sa-header-row">
+        <h2 class="sa-title">Edit Academic Level</h2>
+        <div class="sa-breadcrumb">
+          Dashboard &rsaquo; Student Academics &rsaquo;
+          <a href="#" class="sa-bc-link" onclick="loadView('sa-academic-levels');return false;">Academic Levels</a>
+          &rsaquo; Edit
+        </div>
+      </div>
+      <div class="sa-form-wrap" style="max-width:640px;">
+        <div class="sa-form-grid-2">
+          <div class="sa-form-group">
+            <label class="sa-form-label">Name <span class="sa-required">*</span></label>
+            <input type="text" id="alvl-name" class="sa-form-input" value="${_ayEsc(item.name || '')}" placeholder="e.g. Grade 1">
+            <span class="sa-field-error" id="alvl-name-err"></span>
+          </div>
+          <div class="sa-form-group">
+            <label class="sa-form-label">Code <span class="sa-required">*</span> <small style="font-weight:400;color:#888;">(max 2 chars)</small></label>
+            <input type="text" id="alvl-code" class="sa-form-input" value="${_ayEsc(item.code || '')}" placeholder="e.g. G1" maxlength="2">
+            <span class="sa-field-error" id="alvl-code-err"></span>
+          </div>
+        </div>
+        <div class="sa-form-group">
+          <label class="sa-form-label">Description</label>
+          <textarea id="alvl-desc" class="sa-form-textarea" rows="2" placeholder="Optional">${_ayEsc(item.description || '')}</textarea>
+        </div>
+        <div class="sa-form-group">
+          <label class="sa-form-label">Sort Order <small style="font-weight:400;color:#888;">(controls display order in dropdowns)</small></label>
+          <input type="number" id="alvl-sort" class="sa-form-input" value="${item.sort_order ?? 0}" min="0" style="max-width:120px;">
+        </div>
+        <div class="sa-form-group">
+          <label class="sa-form-label">Status</label>
+          <select id="alvl-status-field" class="sa-form-input" style="max-width:180px;">
+            <option value="Active"${(item.status || 'Active') === 'Active' ? ' selected' : ''}>Active</option>
+            <option value="Inactive"${item.status === 'Inactive' ? ' selected' : ''}>Inactive</option>
+          </select>
+        </div>
+        <div class="sa-form-actions">
+          <button id="alvl-save-btn" class="sa-btn-submit" onclick="updateAcademicLevel(${JSON.stringify(item.id)})">Save</button>
+          <button class="sa-btn-cancel" onclick="loadView('sa-academic-levels')">Cancel</button>
+        </div>
+        <div id="alvl-status"></div>
+      </div>
+    </div>
+  `;
+}
+
+async function updateAcademicLevel(id) {
+  const name = (document.getElementById('alvl-name')?.value || '').trim();
+  const code = (document.getElementById('alvl-code')?.value || '').trim();
+
+  document.getElementById('alvl-name-err').textContent = name ? '' : 'Name is required.';
+  document.getElementById('alvl-code-err').textContent = code ? '' : 'Code is required (max 2 characters).';
+  if (!name || !code) return;
+
+  const btn = document.getElementById('alvl-save-btn');
+  const statusEl = document.getElementById('alvl-status');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+  const res = await apiFetch(`${API_BASE}/academic-levels/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name,
+      code,
+      description: document.getElementById('alvl-desc')?.value.trim() || null,
+      sort_order:  parseInt(document.getElementById('alvl-sort')?.value || '0') || 0,
+      status:      document.getElementById('alvl-status-field')?.value || 'Active',
+    }),
+  });
+
+  if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+
+  if (res && res.ok) {
+    showToast('Academic level updated!', 'success');
+    loadView('sa-academic-levels');
+  } else {
+    const msg = res ? await parseApiError(res) : 'Could not save. Please try again.';
+    if (statusEl) statusEl.innerHTML = `<div class="sa-toast sa-toast-error">${_ayEsc(msg)}</div>`;
+    showToast(msg, 'error');
+  }
 }
 
 async function saveAcademicLevel() {
