@@ -67,7 +67,13 @@ async function loadRolesListingView(container) {
       {label:'Title',       key:'title'},
       {label:'Description', key:'description', fmt:v=>v||'—'},
     ],
-    detailActions: item => `<button class="btn" onclick="openRolePermissions(${JSON.stringify(item.id)}, ${JSON.stringify(item.title || '')})">&#128274; Permissions</button>`,
+    // JSON.stringify(item.title) yields a double-quoted JS string literal, which
+    // can't be embedded raw inside this onclick attribute (also double-quoted) —
+    // any title containing a `"` truncates the attribute at that quote, leaving
+    // a broken/incomplete inline handler that throws "Unexpected end of input"
+    // the moment it's clicked. _finEsc HTML-entity-escapes the quotes so the
+    // browser reconstructs the original JS string correctly after unescaping.
+    detailActions: item => `<button class="btn" onclick="openRolePermissions(${JSON.stringify(item.id)}, ${_finEsc(JSON.stringify(item.title || ''))})">&#128274; Permissions</button>`,
     renderAdd: el => {
       el.innerHTML = `
         <div style="max-width:420px">
@@ -342,7 +348,7 @@ async function renderRoleEditPage(container) {
         <div class="role-breadcrumb">
           Dashboard &rsaquo; Administration &rsaquo;
           <a href="#" class="role-bc-link" onclick="loadView('admin-roles')">Roles</a>
-          &rsaquo; ${roleName}
+          &rsaquo; ${_finEsc(roleName)}
         </div>
       </div>
       <div class="role-edit-panels">
@@ -350,7 +356,7 @@ async function renderRoleEditPage(container) {
           <div class="role-form-wrap" style="max-width:100%">
             <div class="role-form-group">
               <label class="role-form-label">Title <span class="role-required">*</span></label>
-              <input type="text" id="role-edit-title" value="${roleName}">
+              <input type="text" id="role-edit-title" value="${_finEsc(roleName)}">
             </div>
             <div class="role-form-group">
               <label class="role-form-label">Description</label>

@@ -519,6 +519,22 @@ async function loadStudentFormView(container) {
   if (data.school_class_id   != null && data.class_id == null) data.class_id = data.school_class_id;
   window._stuFormData = data;
   _stuEditDirty = false;
+  // Tracks which tabs the user actually edited this session, via a single
+  // delegated listener on the container (survives re-renders since only its
+  // innerHTML is replaced on tab switch, not the container itself). Used by
+  // submitStudentForm's allTabs save so Update only resends sub-resources the
+  // user actually touched — e.g. editing Transport (which lives on the
+  // Personal tab) no longer also resends Guardians/Previous
+  // Education/Medical untouched, which matters because some of those
+  // sub-resource endpoints are flaky server-side and previously got hit on
+  // every single Update regardless of what was actually changed.
+  window._stuDirtyTabs = new Set();
+  const tabContentEl = document.getElementById('stu-edit-tab-content');
+  if (tabContentEl) {
+    const markDirty = () => window._stuDirtyTabs.add(_stuEditActiveTab);
+    tabContentEl.addEventListener('input', markDirty);
+    tabContentEl.addEventListener('change', markDirty);
+  }
   _renderStuEditTabContent(_stuEditActiveTab);
   _updateStuFormFooter();
 }
@@ -2081,10 +2097,21 @@ async function _persistStudentRecord(showSuccessToast, allTabs) {
   // the other tabs before reaching Update without ever hitting that tab's own
   // "Save & Continue". Persisting only the now-active 'personal' case would
   // silently drop those other edits, which is why Update previously looked
-  // like it "did nothing" — so a full submit pushes every tab's data,
-  // regardless of which one is active. "Save & Continue" (mid-form, not the
-  // final submit) still only pushes the tab the user is actually leaving.
-  const tabsToSave = allTabs ? ['personal', 'prev-edu', 'medical', 'guardian', 'documents'] : [_stuEditActiveTab];
+  // like it "did nothing" — so a full submit pushes every tab's data.
+  // "Personal" (which is also where Transport and Sibling Group live) is
+  // always pushed since it's always validated/force-switched-to anyway; the
+  // other sub-resource tabs are only re-sent if the user actually edited them
+  // this session (window._stuDirtyTabs, set by an input/change listener) —
+  // otherwise every Update resends every sub-resource unconditionally,
+  // including ones the user never touched, which needlessly hits sub-resource
+  // endpoints that may be flaky/broken server-side (e.g. guardians PATCH has
+  // been observed CORS-failing) for data that never changed.
+  // "Save & Continue" (mid-form, not the final submit) still only pushes the
+  // tab the user is actually leaving.
+  const dirtyTabs = window._stuDirtyTabs || new Set();
+  const tabsToSave = allTabs
+    ? ['personal', ...['prev-edu', 'medical', 'guardian', 'documents'].filter(t => dirtyTabs.has(t))]
+    : [_stuEditActiveTab];
   for (const tab of tabsToSave) {
     switch (tab) {
       case 'personal':
