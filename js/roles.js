@@ -445,20 +445,20 @@ async function submitRoleDetailsUpdate(roleId) {
 
 const _PERM_ACTIONS = ['view', 'add', 'edit', 'delete'];
 
-// Backend module_key format for nested modules is `${topLevelKey}.${leafKey}`
-// (confirmed live: Payroll Runs/Payslips permission is literally `payroll.payslips`,
-// see be-fe-contract memory) — NOT the bare leaf key. Some groups (e.g.
-// payroll > Utilities > Pay Grades) nest a third level deep purely for UI
-// grouping; this walks through any depth of pure-grouping nodes (def.children,
-// no def.actions of their own) and still flattens to the 2-segment
-// `topLevelKey.leafKey` module_key, dropping the intermediate group label.
-function _permFlattenLeaves(children, topKey, depth) {
+// Backend module_key format for nested modules is the FULL dotted path from
+// root to leaf (confirmed live: `payroll.payslips` for a 2-level module, and
+// `payroll.utilities.financial_institutions` for a 3-level one where
+// "utilities" is itself a real path segment, not just a UI grouping label to
+// drop — an earlier version of this function capped the key at 2 segments
+// and 400'd with "Unknown module key: payroll.financial_institutions").
+function _permFlattenLeaves(children, pathPrefix, depth) {
   let out = [];
   for (const [key, def] of Object.entries(children)) {
+    const path = `${pathPrefix}.${key}`;
     if (def.children) {
-      out = out.concat(_permFlattenLeaves(def.children, topKey, depth + 1));
+      out = out.concat(_permFlattenLeaves(def.children, path, depth + 1));
     } else if (def.actions) {
-      out.push({ moduleKey: `${topKey}.${key}`, def, depth });
+      out.push({ moduleKey: path, def, depth });
     }
   }
   return out;
