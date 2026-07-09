@@ -138,6 +138,14 @@ async function loadFeeSchedulesView(container) {
       {label:'Term',      key:'term_id', fmt:v=>v?_rcvTermName(v):'All Terms'},
       {label:'Amount',    key:'amount', fmt:v=>`KES ${_finFmt(v)}`},
     ],
+    renderAdd: el => {
+      el.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--grey-600)">
+        <div style="font-size:2rem;margin-bottom:12px">&#128196;</div>
+        <p style="font-weight:600;margin-bottom:8px">Add a New Fee Schedule</p>
+        <p style="font-size:13px;margin-bottom:20px">Set a fee item's amount for a class, level or route.</p>
+        <button class="btn-primary" style="padding:10px 24px" onclick="openFeeScheduleModal()">+ Add Fee Schedule</button>
+      </div>`;
+    },
     onAdd:  () => openFeeScheduleModal(),
     onEdit: item => { rcvFeeSchedulesData = [item]; openFeeScheduleModal(item.id); },
   });

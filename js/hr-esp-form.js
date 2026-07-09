@@ -375,8 +375,8 @@ async function submitHrEspForm() {
   const isEdit  = hrEspFormState.context === 'edit';
   const espId   = hrEspFormState.existingRecord?.id;
   const url     = isEdit && espId
-    ? `${API_BASE}/employee-service-profiles/${espId}/`
-    : `${API_BASE}/employee-service-profiles/`;
+    ? `${API_BASE}/payroll/employee-service-profiles/${espId}`
+    : `${API_BASE}/payroll/employee-service-profiles/`;
   const method  = isEdit && espId ? 'PUT' : 'POST';
 
   const res = await apiFetch(url, {

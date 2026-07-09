@@ -23,6 +23,32 @@ function _finFmt(num) {
   return isNaN(n) ? '' : n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+// renderSplitView shows nothing in the right panel until an item is selected
+// unless cfg.renderAdd is provided (see [[frontend-gotchas]]) — several configs
+// in this file had onAdd wired but no renderAdd, so there was no visible way to
+// reach Add without first selecting an existing record. Two flavors: a real
+// "+ Add X" trigger, or an informational redirect for resources that aren't
+// directly creatable (e.g. Receive Payments, which only exist via an invoice).
+function _finAddPlaceholder(label, action, hint) {
+  return el => {
+    el.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--grey-600)">
+      <div style="font-size:2rem;margin-bottom:12px">&#128196;</div>
+      <p style="font-weight:600;margin-bottom:8px">Add a New ${label}</p>
+      <p style="font-size:13px;margin-bottom:20px">${hint || ''}</p>
+      <button class="btn-primary" style="padding:10px 24px" onclick="${action}">+ Add ${label}</button>
+    </div>`;
+  };
+}
+function _finInfoPlaceholder(message, action, actionLabel) {
+  return el => {
+    el.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--grey-600)">
+      <div style="font-size:2rem;margin-bottom:12px">&#8505;</div>
+      <p style="font-size:13px;margin-bottom:20px">${message}</p>
+      <button class="btn-primary" style="padding:10px 24px" onclick="${action}">${actionLabel}</button>
+    </div>`;
+  };
+}
+
 function _finGenInvNo() {
   return 'INV-' + String(studentInvoicesData.length + 1).padStart(4, '0');
 }
@@ -586,6 +612,7 @@ async function loadStudentInvoicesView(container) {
       {label:'Amount',     key:'total_amount', fmt:v=>_finFmt(parseFloat(v)||0)},
       {label:'Status',     key:'status'},
     ],
+    renderAdd: _finAddPlaceholder('Student Invoice', "loadView('fin-student-invoices-add')", 'Create a new legacy student invoice.'),
     onAdd:  () => loadView('fin-student-invoices-add'),
     onEdit: item => openInvoiceEdit(item.id),
   });
@@ -1901,6 +1928,7 @@ async function loadInvoiceAdjustmentsView(container) {
       {label:'Cost Center',    key:'costCenter', fmt:v=>v||'—'},
       {label:'Reason',         key:'reason', fmt:v=>v||'—'},
     ],
+    renderAdd: _finAddPlaceholder('Invoice Adjustment', "renderInvAdjAddPage(document.getElementById('main-content'))", 'Record an adjustment against a student invoice.'),
     onAdd:  () => renderInvAdjAddPage(document.getElementById('main-content')),
     onEdit: item => openInvAdjDetail(item.id),
   });
@@ -2200,6 +2228,7 @@ async function loadSponsorshipAllocationsView(container) {
       {label:'Cost Center',  key:'costCenter', fmt:v=>v||'—'},
       {label:'Amount',       key:'amount', fmt:v=>_finFmt(parseFloat(v)||0)},
     ],
+    renderAdd: _finAddPlaceholder('Sponsorship Allocation', "renderSponAllocAddPage(document.getElementById('main-content'))", 'Allocate a sponsorship to a student.'),
     onAdd: () => renderSponAllocAddPage(document.getElementById('main-content')),
   });
 }
@@ -2466,6 +2495,7 @@ async function loadFeeSetupPerClassView(container) {
       {label:'Fee Item',       key:'fee_item_id', fmt:v=>_fsFeeItemName(v)},
       {label:'Amount',         key:'amount', fmt:v=>_finFmt(parseFloat(v)||0)},
     ],
+    renderAdd: _finAddPlaceholder('Class Fee Setup', "renderFeeSetupAddPage(document.getElementById('main-content'))", 'Set up per-class fee line items.'),
     onAdd:  () => renderFeeSetupAddPage(document.getElementById('main-content')),
     onEdit: item => openFeeSetupDetail(item.id),
   });
@@ -2818,6 +2848,7 @@ async function loadReceivePaymentsView(container) {
       {label:'Amount',        key:'amount', fmt:v=>_finFmt(parseFloat(v)||0)},
       {label:'Voided',        key:'voided', fmt:v=>v?'Yes':'No'},
     ],
+    renderAdd: _finInfoPlaceholder('Payments are recorded from a Student Invoice — open the invoice and click Record Payment.', "loadView('fin-student-invoices')", 'Go to Student Invoices'),
     onAdd: () => {
       showToast('Payments are recorded from a Student Invoice — open the invoice and click Record Payment.', 'info');
       loadView('fin-student-invoices');
@@ -2830,7 +2861,21 @@ async function loadReceivePaymentsView(container) {
 
 let _coaPerPage = 10, _coaPage = 1, _coaSearch = '';
 
+// chartOfAccountsData (global, config.js) backs the Parent Account dropdown and
+// openCoaEdit's lookup-by-id in _coaFormHtml/openCoaEdit/_coaParentName — it was
+// declared but never populated anywhere, so Edit silently no-op'd (acct always
+// undefined) and the Parent dropdown was always empty. Always load the full
+// unfiltered account list here regardless of entry point (Chart of Accounts or
+// the is_student_fees_related-filtered Fee Accounts view), since a fee account's
+// parent can be a non-fee account.
+async function _coaLoadCache() {
+  const res = await apiFetch(`${API_BASE}/accounts/`);
+  chartOfAccountsData.length = 0;
+  if (res && res.ok) _toArray(await res.json()).forEach(a => chartOfAccountsData.push(a));
+}
+
 async function loadChartOfAccountsView(container) {
+  await _coaLoadCache();
   await renderSplitView({
     container,
     title: 'Chart of Accounts',
@@ -2855,6 +2900,7 @@ async function loadChartOfAccountsView(container) {
       {label:'Cash Flow Grp',key:'cash_flow_group', fmt:v=>v||'—'},
       {label:'Status',       key:'is_active', fmt:v=>v===false?'Inactive':'Active'},
     ],
+    renderAdd: _finAddPlaceholder('Account', "renderCoaAddPage(document.getElementById('main-content'))", 'Add a new Chart of Accounts entry.'),
     onAdd:  () => renderCoaAddPage(document.getElementById('main-content')),
     onEdit: item => openCoaEdit(item.id),
     bulkUpload: { module: 'chart-of-accounts' },
@@ -2964,11 +3010,16 @@ const _COA_CASH_FLOW_GROUPS = [
   'Cashflow from Financing Activities',
 ];
 
-function _coaFormHtml(acct) {
+function _coaFormHtml(acct, opts = {}) {
   const parentId = acct?.parent_id;
   const parentOpts = chartOfAccountsData
     .filter(a=> !acct || a.id!==acct.id)
     .map(a=>`<option value="${a.id}" ${String(parentId)===String(a.id)?'selected':''}>${_finEsc(a.account_name||'')}</option>`).join('');
+  // Fee Accounts is not a separate backend resource — it's Chart of Accounts
+  // filtered to is_student_fees_related:true (confirmed live, GET /accounts/
+  // takes that as a query param) — see loadFeeAccountsView. Adding from that
+  // screen pre-checks the box via opts.defaultFeesRelated.
+  const feesRelated = acct ? !!acct.is_student_fees_related : !!opts.defaultFeesRelated;
   return `
     <div class="fin-form-grid-2">
       <div class="fin-form-group">
@@ -3011,7 +3062,7 @@ function _coaFormHtml(acct) {
     </div>
     <div class="fin-form-group">
       <label class="fin-form-check-label" style="display:flex;align-items:center;gap:8px;font-size:0.9rem;cursor:pointer;">
-        <input type="checkbox" id="coa-f-fees-related" class="fin-cb" ${acct?.is_student_fees_related?'checked':''}> Student/Fees Related
+        <input type="checkbox" id="coa-f-fees-related" class="fin-cb" ${feesRelated?'checked':''}> Student/Fees Related
       </label>
     </div>
     <div class="fin-form-group">
@@ -3033,28 +3084,30 @@ async function onCoaParentChange(parentId) {
   }
 }
 
-function renderCoaAddPage(container) {
+function renderCoaAddPage(container, opts = {}) {
+  const returnView = opts.returnView || 'fin-chart-of-accounts';
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
-        <h2 class="fin-title">Add Account</h2>
+        <h2 class="fin-title">${opts.title || 'Add Account'}</h2>
         <div class="fin-breadcrumb">
           Dashboard &rsaquo; Finance &rsaquo;
-          <a href="#" class="fin-bc-link" onclick="loadView('fin-chart-of-accounts');return false;">Account</a>
+          <a href="#" class="fin-bc-link" onclick="loadView('${returnView}');return false;">${opts.crumbLabel || 'Account'}</a>
           &rsaquo; Add
         </div>
       </div>
       <div class="fin-form-wrap" style="max-width:680px;">
-        ${_coaFormHtml(null)}
+        ${_coaFormHtml(null, opts)}
         <div class="fin-form-actions">
-          <button class="fin-btn-teal" onclick="submitCoaAdd()">Submit</button>
-          <button class="fin-btn-cancel" onclick="loadView('fin-chart-of-accounts')">Cancel</button>
+          <button class="fin-btn-teal" onclick="submitCoaAdd('${returnView}')">Submit</button>
+          <button class="fin-btn-cancel" onclick="loadView('${returnView}')">Cancel</button>
         </div>
       </div>
     </div>`;
 }
 
-async function submitCoaAdd() {
+async function submitCoaAdd(returnView) {
+  returnView = returnView || 'fin-chart-of-accounts';
   const num  = (document.getElementById('coa-f-number').value||'').trim();
   const name = (document.getElementById('coa-f-name').value||'').trim();
   const type = document.getElementById('coa-f-type').value;
@@ -3074,69 +3127,47 @@ async function submitCoaAdd() {
     is_student_fees_related: document.getElementById('coa-f-fees-related').checked,
     is_budget_item:        document.getElementById('coa-f-budget-item').checked
   };
-  try {
-    const res = await fetch(`${API_BASE}/accounts/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(payload)
-    });
-    if (res.ok) {
-      showToast('Account added!', 'success');
-      if (payload.is_student_fees_related) {
-        const faPayload = {
-          number:                  num || null,
-          account_name:            name,
-          item_name:               name,
-          item_code:               num || name,
-          account_type:            type,
-          payment_ordering:        ordering ? parseInt(ordering) : null,
-          child_of:                parentId ? parseInt(parentId) : null,
-          group:                   '',
-          sub_group:               '',
-          department:              '',
-          is_student_fees_related: true,
-          is_discount_account:     false,
-          is_budget_item:          payload.is_budget_item,
-          is_deactivated:          false,
-        };
-        const faRes = await fetch(`${API_BASE}/finance/fee-accounts/`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify(faPayload)
-        });
-        if (!faRes.ok) showToast('Account saved but Fee Account sync failed: ' + await parseApiError(faRes), 'error');
-      }
-    } else { showToast('Error: ' + await parseApiError(res), 'error'); }
-  } catch (_) { showToast('Network error.', 'error'); }
-  loadView('fin-chart-of-accounts');
+  // NOTE: no separate "Fee Account" resource to sync to — is_student_fees_related
+  // on this single POST is the entire mechanism (confirmed live: GET /accounts/
+  // takes is_student_fees_related as a filter). An older version of this function
+  // double-POSTed to /finance/fee-accounts/, which doesn't exist on the backend
+  // and always failed.
+  const res = await apiFetch(`${API_BASE}/accounts/`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+  });
+  if (res && res.ok) { showToast('Account added!', 'success'); }
+  else if (res) { showToast('Error: ' + await parseApiError(res), 'error'); }
+  loadView(returnView);
 }
 
-function openCoaEdit(id) {
+function openCoaEdit(id, opts = {}) {
   document.querySelectorAll('[id^="fin-coa-dd-"]').forEach(d=>d.style.display='none');
   const acct = chartOfAccountsData.find(a=>String(a.id)===String(id));
   if (!acct) return;
+  const returnView = opts.returnView || 'fin-chart-of-accounts';
   const container = document.getElementById('main-content');
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
-        <h2 class="fin-title">Edit Account</h2>
+        <h2 class="fin-title">${opts.title || 'Edit Account'}</h2>
         <div class="fin-breadcrumb">
           Dashboard &rsaquo; Finance &rsaquo;
-          <a href="#" class="fin-bc-link" onclick="loadView('fin-chart-of-accounts');return false;">Account</a>
+          <a href="#" class="fin-bc-link" onclick="loadView('${returnView}');return false;">${opts.crumbLabel || 'Account'}</a>
           &rsaquo; Edit
         </div>
       </div>
       <div class="fin-form-wrap" style="max-width:680px;">
         ${_coaFormHtml(acct)}
         <div class="fin-form-actions">
-          <button class="fin-btn-teal" onclick="submitCoaEdit('${acct.id}')">Update</button>
-          <button class="fin-btn-cancel" onclick="loadView('fin-chart-of-accounts')">Cancel</button>
+          <button class="fin-btn-teal" onclick="submitCoaEdit(${JSON.stringify(acct.id)},'${returnView}')">Update</button>
+          <button class="fin-btn-cancel" onclick="loadView('${returnView}')">Cancel</button>
         </div>
       </div>
     </div>`;
 }
 
-async function submitCoaEdit(id) {
+async function submitCoaEdit(id, returnView) {
+  returnView = returnView || 'fin-chart-of-accounts';
   const idx  = chartOfAccountsData.findIndex(a=>String(a.id)===String(id));
   if (idx===-1) return;
   const name = (document.getElementById('coa-f-name').value||'').trim();
@@ -3155,23 +3186,25 @@ async function submitCoaEdit(id) {
     is_student_fees_related: document.getElementById('coa-f-fees-related').checked,
     is_budget_item:         document.getElementById('coa-f-budget-item').checked
   };
-  try {
-    const res = await fetch(`${API_BASE}/accounts/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(payload)
-    });
-    if (res.ok) { showToast('Account updated!', 'success'); }
-    else { showToast('Error: ' + await parseApiError(res), 'error'); }
-  } catch (_) { showToast('Network error.', 'error'); }
-  loadView('fin-chart-of-accounts');
+  const res = await apiFetch(`${API_BASE}/accounts/${id}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+  });
+  if (res && res.ok) { showToast('Account updated!', 'success'); }
+  else if (res) { showToast('Error: ' + await parseApiError(res), 'error'); }
+  loadView(returnView);
 }
 
-// ==================== CHANGE 8: FEE ACCOUNTS ====================
-
-let _feeAcctPerPage = 10, _feeAcctPage = 1, _feeAcctSearch = '';
+// ==================== FEE ACCOUNTS ====================
+// Not a separate backend resource — Chart of Accounts filtered to
+// is_student_fees_related:true (GET /accounts/?is_student_fees_related=true,
+// confirmed live). The old /finance/fee-accounts/ endpoint this used to call
+// doesn't exist on the backend at all (0 matches in openapi.json), which is
+// why the list always showed "Failed to load data." Add/Edit reuse the same
+// Chart of Accounts form/submit functions with fee-accounts-specific options
+// (default-checked box, return to this view instead of Chart of Accounts).
 
 async function loadFeeAccountsView(container) {
+  await _coaLoadCache();
   await renderSplitView({
     container,
     title: 'Fee Accounts',
@@ -3180,355 +3213,30 @@ async function loadFeeAccountsView(container) {
       {label:'Finance',view:'fin-fee-accounts'},
       {label:'Fee Accounts'}
     ],
-    apiUrl: `${API_BASE}/finance/fee-accounts/`,
-    searchFields: ['account_name','number','item_name'],
-    col1Label: 'Account Name', col2Label: 'Item',
+    apiUrl: `${API_BASE}/accounts/?is_student_fees_related=true`,
+    searchFields: ['account_name','number','account_type'],
+    col1Label: 'Account Name', col2Label: 'Type',
     col1: a => a.account_name || '—',
-    col2: a => a.item_name || '—',
+    col2: a => a.account_type || '—',
     rowLabel: a => a.account_name || '—',
-    rowSub:   a => `#${a.number||''} · ${a.item_name||''}`.trim(),
+    rowSub:   a => `#${a.number||''}`,
     idKey: 'id',
     detailFields: [
       {label:'Number',       key:'number'},
       {label:'Account Name', key:'account_name'},
       {label:'Account Type', key:'account_type'},
-      {label:'Fee Item',     key:'item_name'},
-      {label:'Item Code',    key:'item_code'},
-      {label:'Group',        key:'group', fmt:v=>v||'—'},
-      {label:'Sub Group',    key:'sub_group', fmt:v=>v||'—'},
-      {label:'Status',       key:'is_deactivated', fmt:v=>v?'Inactive':'Active'},
+      {label:'Parent',       key:'parent_id', fmt:(_,a)=>_coaParentName(a)},
+      {label:'Cash Flow Grp',key:'cash_flow_group', fmt:v=>v||'—'},
+      {label:'Status',       key:'is_active', fmt:v=>v===false?'Inactive':'Active'},
     ],
-    onAdd:  () => renderFeeAcctAddPage(document.getElementById('main-content')),
-    onEdit: item => openFeeAcctEdit(item.id),
+    renderAdd: _finAddPlaceholder('Fee Account', "renderCoaAddPage(document.getElementById('main-content'), {returnView: 'fin-fee-accounts', title: 'Add Fee Account', crumbLabel: 'Fee Accounts', defaultFeesRelated: true})", 'Add a Chart of Accounts entry flagged Student/Fees Related.'),
+    onAdd: () => renderCoaAddPage(document.getElementById('main-content'), {
+      returnView: 'fin-fee-accounts', title: 'Add Fee Account', crumbLabel: 'Fee Accounts', defaultFeesRelated: true,
+    }),
+    onEdit: item => openCoaEdit(item.id, {
+      returnView: 'fin-fee-accounts', title: 'Edit Fee Account', crumbLabel: 'Fee Accounts',
+    }),
   });
-}
-
-function _renderFeeAcctListPage(container) {
-  container.innerHTML = `
-    <div class="fin-page">
-      <div class="fin-header-row">
-        <h2 class="fin-title">Fee Account</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Fee Account &rsaquo; Listing</div>
-      </div>
-      <div class="fin-controls-row">
-        <div class="fin-controls-left">
-          Show <select id="fa-per-page" onchange="changeFaPerPage(this.value)">
-            ${[10,25,50,100].map(n=>`<option value="${n}" ${n===_feeAcctPerPage?'selected':''}>${n}</option>`).join('')}
-          </select> entries
-          &nbsp;|&nbsp; Total <span id="fa-total">0</span> entries
-        </div>
-        <div class="fin-controls-right">
-          <input type="text" class="fin-search-input" placeholder="&#128269; Search&#8230;" oninput="onFaSearch(this.value)">
-          <button class="fin-btn-filter">&#9776; Filters</button>
-          <button class="fin-btn-teal" onclick="renderFeeAcctAddPage(document.getElementById('main-content'))">Add Account</button>
-        </div>
-      </div>
-      <div id="fa-table-container"></div>
-      <div id="fa-pagination"></div>
-    </div>`;
-  _renderFeeAcctTable();
-}
-
-function _faFiltered() {
-  if (!_feeAcctSearch) return feeAccountsData;
-  const q = _feeAcctSearch;
-  return feeAccountsData.filter(a =>
-    (a.number||'').toLowerCase().includes(q) ||
-    (a.account_name||a.accountName||'').toLowerCase().includes(q) ||
-    (a.item_name||a.itemName||'').toLowerCase().includes(q));
-}
-
-// Fee Account records reference their parent (in Chart of Accounts) by id (child_of).
-function _faParentName(a) {
-  if (!a.child_of) return '-';
-  const parent = chartOfAccountsData.find(p => String(p.id) === String(a.child_of));
-  return parent ? (parent.account_name || parent.accountName || '-') : '-';
-}
-
-function _renderFeeAcctTable() {
-  const filtered = _faFiltered();
-  const totalEl  = document.getElementById('fa-total');
-  if (totalEl) totalEl.textContent = filtered.length;
-  const start = (_feeAcctPage-1)*_feeAcctPerPage;
-  const paged = filtered.slice(start, start+_feeAcctPerPage);
-  const pages = Math.max(1, Math.ceil(filtered.length/_feeAcctPerPage));
-
-  let rows = paged.length===0
-    ? `<tr><td colspan="11" class="fin-empty">No records found.</td></tr>`
-    : paged.map(a=>`<tr>
-        <td>${_finEsc(a.number||'')}</td>
-        <td>${_finEsc(a.account_name||a.accountName||'')}</td>
-        <td>${_finEsc(a.account_type||a.accountType||'-')}</td>
-        <td>${_finEsc(_faParentName(a))}</td>
-        <td>${_finEsc(a.group||'-')}</td>
-        <td>${_finEsc(a.sub_group||a.subGroup||'-')}</td>
-        <td>${_finEsc(a.item_name||a.itemName||'-')}</td>
-        <td>${_finEsc(a.item_code||a.itemCode||'-')}</td>
-        <td>${_finEsc(a.is_deactivated ? 'Inactive' : (a.status||'Active'))}</td>
-        <td>${_finEsc(a.personnel||'-')}</td>
-        <td class="fin-action-cell">
-          <div class="fin-action-wrap">
-            <button class="fin-action-btn" onclick="toggleFinFeeAcctDropdown(event,'${a.id}')">&#8230;</button>
-            <div id="fin-fee-acct-dd-${a.id}" class="fin-action-dropdown" style="display:none;">
-              <a href="#" onclick="openFeeAcctEdit('${a.id}');return false;">&#9998; Edit</a>
-            </div>
-          </div>
-        </td>
-      </tr>`).join('');
-
-  const el = document.getElementById('fa-table-container');
-  if (el) el.innerHTML = `
-    <div class="fin-table-wrap"><table class="fin-table" style="min-width:1000px;">
-      <thead><tr>
-        <th>NUMBER</th><th>ACCOUNT NAME</th><th>ACCOUNT TYPE</th><th>PARENT ACCOUNT</th>
-        <th>GROUP</th><th>SUB GROUP</th><th>ITEM NAME</th><th>ITEM CODE</th>
-        <th>STATUS</th><th>PER</th><th>ACTION</th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
-    </table></div>`;
-
-  let pg=''; for(let i=1;i<=pages;i++) pg+=`<button class="${i===_feeAcctPage?'fin-pg-active':''}" onclick="faGoPage(${i})">${i}</button>`;
-  const pgEl=document.getElementById('fa-pagination');
-  if(pgEl) pgEl.innerHTML=`<div class="fin-pagination">${pg}</div>`;
-}
-
-function onFaItemSelect(name) {
-  const item = feeItemsData.find(f => f.name === name);
-  document.getElementById('fa-f-item-code').value = item ? (item.code || '') : '';
-}
-
-function toggleFinFeeAcctDropdown(e,id) {
-  e.stopPropagation();
-  document.querySelectorAll('[id^="fin-fee-acct-dd-"]').forEach(d=>{ if(d.id!==`fin-fee-acct-dd-${id}`) d.style.display='none'; });
-  const dd=document.getElementById(`fin-fee-acct-dd-${id}`);
-  if(dd) dd.style.display=dd.style.display==='none'?'block':'none';
-}
-function changeFaPerPage(v){ _feeAcctPerPage=parseInt(v); _feeAcctPage=1; _renderFeeAcctTable(); }
-function onFaSearch(v)     { _feeAcctSearch=v.trim().toLowerCase(); _feeAcctPage=1; _renderFeeAcctTable(); }
-function faGoPage(p)       { _feeAcctPage=p; _renderFeeAcctTable(); }
-
-function _faFormHtml(acct) {
-  const childOf = acct?.child_of ?? acct?.childOf;
-  const parentOpts = chartOfAccountsData.map(a=>
-    `<option value="${a.id}" ${String(childOf)===String(a.id)?'selected':''}>${_finEsc(a.account_name||a.accountName||'')}</option>`).join('');
-  const typeOpts = ['Asset','Liability','Equity','Revenue','Expense'].map(t=>
-    `<option value="${t}" ${(acct?.account_type||acct?.accountType)===t?'selected':''}>${t}</option>`).join('');
-  return `
-    <div class="fin-form-grid-2">
-      <div class="fin-form-group">
-        <label class="fin-form-label">Number <span class="fin-required">*</span></label>
-        <input type="text" id="fa-f-number" class="fin-form-input" value="${_finEsc(acct?.number||'')}" ${acct?'disabled':''}>
-        <span class="fin-field-error" id="fa-f-num-err"></span>
-      </div>
-      <div class="fin-form-group">
-        <label class="fin-form-label">Account Name <span class="fin-required">*</span></label>
-        <input type="text" id="fa-f-name" class="fin-form-input" value="${_finEsc(acct?.account_name||acct?.accountName||'')}" ${acct?'disabled':''}>
-        <span class="fin-field-error" id="fa-f-name-err"></span>
-      </div>
-      <div class="fin-form-group">
-        <label class="fin-form-label">Fee Item <span class="fin-required">*</span></label>
-        <select id="fa-f-item-name" class="fin-form-select" onchange="onFaItemSelect(this.value)" ${acct?'disabled':''}>
-          <option value="">Please Select</option>
-          ${feeItemsData.map(f=>`<option value="${_finEsc(f.name)}" ${(acct?.item_name||acct?.itemName)===f.name?'selected':''}>${_finEsc(f.name)}</option>`).join('')}
-        </select>
-        <span class="fin-field-error" id="fa-f-iname-err"></span>
-      </div>
-      <div class="fin-form-group">
-        <label class="fin-form-label">Fee Code</label>
-        <input type="text" id="fa-f-item-code" class="fin-form-input" value="${_finEsc(acct?.item_code||acct?.itemCode||'')}" readonly style="background:#f5f5f5;color:#555;cursor:default;">
-        <span class="fin-field-error" id="fa-f-icode-err"></span>
-      </div>
-      <div class="fin-form-group">
-        <label class="fin-form-label">Account Type <span class="fin-required">*</span></label>
-        <select id="fa-f-type" class="fin-form-select">
-          <option value="">Please Select</option>${typeOpts}
-        </select>
-        <span class="fin-field-error" id="fa-f-type-err"></span>
-      </div>
-      <div class="fin-form-group">
-        <label class="fin-form-label">Payment Ordering</label>
-        <input type="number" id="fa-f-ordering" class="fin-form-input" value="${acct?.payment_ordering ?? acct?.paymentOrdering ?? ''}">
-      </div>
-      <div class="fin-form-group">
-        <label class="fin-form-label">Child of</label>
-        <select id="fa-f-child-of" class="fin-form-select">
-          <option value="">Please Select</option>${parentOpts}
-        </select>
-      </div>
-      <div class="fin-form-group">
-        <label class="fin-form-label">Group</label>
-        <select id="fa-f-group" class="fin-form-select">
-          <option value="">Please Select</option>
-          ${['Operating','Investing','Financing'].map(g=>`<option value="${g}" ${acct?.group===g?'selected':''}>${g}</option>`).join('')}
-        </select>
-      </div>
-      <div class="fin-form-group">
-        <label class="fin-form-label">Sub Group</label>
-        <select id="fa-f-subgroup" class="fin-form-select">
-          <option value="">Please Select</option>
-          ${['Revenue','Expenses','Assets','Liabilities'].map(s=>`<option value="${s}" ${(acct?.sub_group||acct?.subGroup)===s?'selected':''}>${s}</option>`).join('')}
-        </select>
-      </div>
-      <div class="fin-form-group">
-        <label class="fin-form-label">Department</label>
-        <select id="fa-f-dept" class="fin-form-select">
-          <option value="">Please Select</option>
-          <option value="Admin">Admin</option>
-          <option value="Academic">Academic</option>
-          <option value="Finance">Finance</option>
-        </select>
-      </div>
-    </div>
-    <div class="fin-form-group">
-      <label style="display:flex;align-items:center;gap:8px;font-size:0.9rem;cursor:pointer;">
-        <input type="checkbox" id="fa-f-fees" class="fin-cb" ${(acct?.is_student_fees_related ?? acct?.isStudentFeesRelated)?'checked':''}> Student/Fees Related
-      </label>
-    </div>
-    <div class="fin-form-group">
-      <label style="display:flex;align-items:center;gap:8px;font-size:0.9rem;cursor:pointer;">
-        <input type="checkbox" id="fa-f-discount" class="fin-cb" ${(acct?.is_discount_account ?? acct?.isDiscountAccount)?'checked':''}> Discount Account
-      </label>
-    </div>
-    <div class="fin-form-group">
-      <label style="display:flex;align-items:center;gap:8px;font-size:0.9rem;cursor:pointer;">
-        <input type="checkbox" id="fa-f-budget" class="fin-cb" ${(acct?.is_budget_item ?? acct?.isBudgetItem)?'checked':''}> Budget Item
-      </label>
-    </div>
-    <div class="fin-form-group">
-      <label style="display:flex;align-items:center;gap:8px;font-size:0.9rem;cursor:pointer;">
-        <input type="checkbox" id="fa-f-deactivate" class="fin-cb" ${(acct?.is_deactivated ?? acct?.isDeactivated)?'checked':''}> Deactivate/Activate
-      </label>
-    </div>`;
-}
-
-async function renderFeeAcctAddPage(container) {
-  if (!feeItemsData.length) {
-    try {
-      const r = await apiFetch(`${API_BASE}/finance/fee-items`);
-      if (r && r.ok) { feeItemsData.length = 0; _toArray(await r.json()).forEach(x => feeItemsData.push(x)); }
-    } catch (_) {}
-  }
-  container.innerHTML = `
-    <div class="fin-page">
-      <div class="fin-header-row">
-        <h2 class="fin-title">Add Account</h2>
-        <div class="fin-breadcrumb">
-          Dashboard &rsaquo; Finance &rsaquo;
-          <a href="#" class="fin-bc-link" onclick="loadView('fin-fee-accounts');return false;">Fee Account</a>
-          &rsaquo; Add
-        </div>
-      </div>
-      <div class="fin-form-wrap" style="max-width:680px;">
-        ${_faFormHtml(null)}
-        <div class="fin-form-actions">
-          <button class="fin-btn-teal" onclick="submitFeeAcctAdd()">Submit</button>
-          <button class="fin-btn-cancel" onclick="loadView('fin-fee-accounts')">Cancel</button>
-        </div>
-      </div>
-    </div>`;
-}
-
-async function submitFeeAcctAdd() {
-  const num   = (document.getElementById('fa-f-number').value||'').trim();
-  const name  = (document.getElementById('fa-f-name').value||'').trim();
-  const iname = (document.getElementById('fa-f-item-name').value||'').trim();
-  const icode = (document.getElementById('fa-f-item-code').value||'').trim();
-  const type  = document.getElementById('fa-f-type').value;
-  let valid=true;
-  document.getElementById('fa-f-num-err').textContent   = num   ? '' : 'This field is required.'; if(!num)   valid=false;
-  document.getElementById('fa-f-name-err').textContent  = name  ? '' : 'This field is required.'; if(!name)  valid=false;
-  document.getElementById('fa-f-iname-err').textContent = iname ? '' : 'Please select a Fee Item.'; if(!iname) valid=false;
-  document.getElementById('fa-f-type-err').textContent  = type  ? '' : 'This field is required.'; if(!type)  valid=false;
-  if (!valid) return;
-  const childOfId = document.getElementById('fa-f-child-of').value;
-  const payload = {
-    number: num, account_name: name, item_name: iname, item_code: icode, account_type: type,
-    payment_ordering:       document.getElementById('fa-f-ordering').value||'',
-    child_of:               childOfId,
-    group:                  document.getElementById('fa-f-group').value||'',
-    sub_group:              document.getElementById('fa-f-subgroup').value||'',
-    department:             document.getElementById('fa-f-dept').value||'',
-    is_student_fees_related: document.getElementById('fa-f-fees').checked,
-    is_discount_account:    document.getElementById('fa-f-discount').checked,
-    is_budget_item:         document.getElementById('fa-f-budget').checked,
-    is_deactivated:         document.getElementById('fa-f-deactivate').checked
-  };
-  try {
-    const res = await fetch(`${API_BASE}/finance/fee-accounts/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(payload)
-    });
-    if (res.ok) { showToast('Fee account added!', 'success'); }
-    else { showToast('Error: ' + await parseApiError(res), 'error'); }
-  } catch (_) { showToast('Network error.', 'error'); }
-  loadView('fin-fee-accounts');
-}
-
-async function openFeeAcctEdit(id) {
-  document.querySelectorAll('[id^="fin-fee-acct-dd-"]').forEach(d=>d.style.display='none');
-  const acct = feeAccountsData.find(a=>String(a.id)===String(id));
-  if (!acct) return;
-  if (!feeItemsData.length) {
-    try {
-      const r = await apiFetch(`${API_BASE}/finance/fee-items`);
-      if (r && r.ok) { feeItemsData.length = 0; _toArray(await r.json()).forEach(x => feeItemsData.push(x)); }
-    } catch (_) {}
-  }
-  const container = document.getElementById('main-content');
-  container.innerHTML = `
-    <div class="fin-page">
-      <div class="fin-header-row">
-        <h2 class="fin-title">Edit Fee Account</h2>
-        <div class="fin-breadcrumb">
-          Dashboard &rsaquo; Finance &rsaquo;
-          <a href="#" class="fin-bc-link" onclick="loadView('fin-fee-accounts');return false;">Fee Account</a>
-          &rsaquo; Edit
-        </div>
-      </div>
-      <div class="fin-form-wrap" style="max-width:680px;">
-        ${_faFormHtml(acct)}
-        <div class="fin-form-actions">
-          <button class="fin-btn-teal" onclick="submitFeeAcctEdit('${acct.id}')">Update</button>
-          <button class="fin-btn-cancel" onclick="loadView('fin-fee-accounts')">Cancel</button>
-        </div>
-      </div>
-    </div>`;
-}
-
-async function submitFeeAcctEdit(id) {
-  const idx   = feeAccountsData.findIndex(a=>String(a.id)===String(id));
-  if (idx===-1) return;
-  const iname = (document.getElementById('fa-f-item-name').value||'').trim();
-  const icode = (document.getElementById('fa-f-item-code').value||'').trim();
-  const type  = document.getElementById('fa-f-type').value;
-  document.getElementById('fa-f-iname-err').textContent = iname ? '' : 'This field is required.';
-  document.getElementById('fa-f-icode-err').textContent = icode ? '' : 'This field is required.';
-  document.getElementById('fa-f-type-err').textContent  = type  ? '' : 'This field is required.';
-  if (!iname||!icode||!type) return;
-  const childOfId = document.getElementById('fa-f-child-of').value;
-  const payload = {
-    item_name: iname, item_code: icode, account_type: type,
-    payment_ordering:       document.getElementById('fa-f-ordering').value||'',
-    child_of:               childOfId,
-    group:                  document.getElementById('fa-f-group').value||'',
-    sub_group:              document.getElementById('fa-f-subgroup').value||'',
-    department:             document.getElementById('fa-f-dept').value||'',
-    is_student_fees_related: document.getElementById('fa-f-fees').checked,
-    is_discount_account:    document.getElementById('fa-f-discount').checked,
-    is_budget_item:         document.getElementById('fa-f-budget').checked,
-    is_deactivated:         document.getElementById('fa-f-deactivate').checked
-  };
-  try {
-    const res = await fetch(`${API_BASE}/finance/fee-accounts/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(payload)
-    });
-    if (res.ok) { showToast('Fee account updated!', 'success'); }
-    else { showToast('Error: ' + await parseApiError(res), 'error'); }
-  } catch (_) { showToast('Network error.', 'error'); }
-  loadView('fin-fee-accounts');
 }
 
 let _feeItemPerPage = 10, _feeItemPage = 1, _feeItemSearch = '';
@@ -3582,6 +3290,7 @@ async function loadFeeItemsView(container) {
       {label:'ECA',            key:'is_extra_curricular', fmt:v=>v?'Yes':'No'},
       {label:'Status',         key:'is_active', fmt:v=>v===false?'Inactive':'Active'},
     ],
+    renderAdd: _finAddPlaceholder('Fee Item', "renderFeeItemAddPage(document.getElementById('main-content'))", 'Add a new billable fee item.'),
     onAdd:  () => renderFeeItemAddPage(document.getElementById('main-content')),
     onEdit: item => renderFeeItemAddPage(document.getElementById('main-content'), item.id),
   });
@@ -3884,6 +3593,7 @@ async function loadGeneralItemsView(container) {
       {label:'Default Amount', key:'default_amount', fmt:v=>_finFmt(parseFloat(v)||0)},
       {label:'Status',         key:'is_active', fmt:v=>v===false?'Inactive':'Active'},
     ],
+    renderAdd: _finAddPlaceholder('General Item', "renderGeneralItemForm(document.getElementById('main-content'))", 'Add a new general (non-fee) item.'),
     onAdd:  () => renderGeneralItemForm(document.getElementById('main-content')),
     onEdit: item => renderGeneralItemForm(document.getElementById('main-content'), item.id),
   });

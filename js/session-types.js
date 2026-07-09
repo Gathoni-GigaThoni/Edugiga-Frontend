@@ -33,6 +33,14 @@ async function loadSessionTypesView(container) {
       {label:'Notes',  key:'notes', fmt:v=>v||'—'},
       {label:'Status', key:'is_inactive', fmt:v=>v?'Inactive':'Active'},
     ],
+    renderAdd: el => {
+      el.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--grey-600)">
+        <div style="font-size:2rem;margin-bottom:12px">&#128197;</div>
+        <p style="font-weight:600;margin-bottom:8px">Add a New Term Type</p>
+        <p style="font-size:13px;margin-bottom:20px">Set up a term type's title and notes.</p>
+        <button class="btn-primary" style="padding:10px 24px" onclick="renderStAddPage(document.getElementById('main-content'))">+ Add Term Type</button>
+      </div>`;
+    },
     onAdd:  () => renderStAddPage(document.getElementById('main-content')),
     onEdit: item => openStEdit(item.id),
   });

@@ -21,6 +21,14 @@ async function loadAdministrationView(container) {
       {label:'Email', key:'email'},
       {label:'Role',  key:'role', fmt:v=>UM_ROLE_LABELS?.[v]||v||'—'},
     ],
+    renderAdd: el => {
+      el.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--grey-600)">
+        <div style="font-size:2rem;margin-bottom:12px">&#128100;</div>
+        <p style="font-weight:600;margin-bottom:8px">Add Staff</p>
+        <p style="font-size:13px;margin-bottom:20px">Manage staff accounts from User Management.</p>
+        <button class="btn-primary" style="padding:10px 24px" onclick="loadView('user-management')">Go to User Management</button>
+      </div>`;
+    },
     onAdd:  () => loadView('user-management'),
     onEdit: item => loadView('user-management'),
   });

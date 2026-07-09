@@ -7,6 +7,30 @@ document.addEventListener('click', () => {
   document.querySelectorAll('[id^="payroll-esp-dd-"],[id^="fi-dd-"]').forEach(d => d.style.display = 'none');
 });
 
+// renderSplitView shows nothing in the right panel until an item is selected
+// unless cfg.renderAdd is provided (see [[frontend-gotchas]]) — every config
+// in this file had onAdd wired but no renderAdd, so there was no visible way
+// to reach Add without first selecting an existing record.
+function _prAddPlaceholder(label, action, hint) {
+  return el => {
+    el.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--grey-600)">
+      <div style="font-size:2rem;margin-bottom:12px">&#128196;</div>
+      <p style="font-weight:600;margin-bottom:8px">Add a New ${label}</p>
+      <p style="font-size:13px;margin-bottom:20px">${hint || ''}</p>
+      <button class="btn-primary" style="padding:10px 24px" onclick="${action}">+ Add ${label}</button>
+    </div>`;
+  };
+}
+function _prInfoPlaceholder(message, action, actionLabel) {
+  return el => {
+    el.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--grey-600)">
+      <div style="font-size:2rem;margin-bottom:12px">&#8505;</div>
+      <p style="font-size:13px;margin-bottom:20px">${message}</p>
+      <button class="btn-primary" style="padding:10px 24px" onclick="${action}">${actionLabel}</button>
+    </div>`;
+  };
+}
+
 async function loadPayrollEspListingView(container) {
   await renderSplitView({
     container,
@@ -16,7 +40,7 @@ async function loadPayrollEspListingView(container) {
       {label:'Payroll',view:'payroll-esp'},
       {label:'Service Profiles'}
     ],
-    apiUrl: `${API_BASE}/employee-service-profiles/`,
+    apiUrl: `${API_BASE}/payroll/employee-service-profiles/`,
     searchFields: ['employee_name','employee_code','department'],
     col1Label: 'Employee', col2Label: 'Department',
     col1: sp => sp.employee_name || '—',
@@ -32,6 +56,7 @@ async function loadPayrollEspListingView(container) {
       {label:'Basic Salary',key:'basic_salary', fmt:v=>v!=null?String(v):'—'},
       {label:'Eff. Date',   key:'effective_date', fmt:v=>v||'—'},
     ],
+    renderAdd: _prAddPlaceholder('Service Profile', 'payrollEspAdd()', 'Set up a new employee service profile.'),
     onAdd:  () => payrollEspAdd(),
     onEdit: item => {
       hrEspFormState = {
@@ -250,6 +275,7 @@ async function loadPayrollFiListingView(container) {
       {label:'Default',     key:'is_default', fmt:v=>(v||false)?'Yes':'No'},
       {label:'Status',      key:'is_inactive', fmt:v=>v?'Inactive':'Active'},
     ],
+    renderAdd: _prAddPlaceholder('Financial Institution', "loadPayrollFiAddView(document.getElementById('main-content'))", 'Add a bank or financial institution for salary disbursement.'),
     onAdd:  () => loadPayrollFiAddView(document.getElementById('main-content')),
     onEdit: item => loadPayrollFiEditView(document.getElementById('main-content'), item.id),
   });
@@ -511,6 +537,7 @@ async function loadPayGradesView(container) {
       {label:'Name',        key:'name'},
       {label:'Base Salary', key:'base_salary', fmt:v=>v!=null?String(v):'—'},
     ],
+    renderAdd: _prAddPlaceholder('Pay Grade', "loadView('payroll-pay-grades-add')", 'Add a new pay grade.'),
     onAdd:  () => loadView('payroll-pay-grades-add'),
     onEdit: item => { window._currentEditPayGradeId = item.id; loadView('payroll-pay-grades-edit'); },
   });
@@ -1022,6 +1049,7 @@ async function loadPayrollPayslipsView(container) {
     detailActions: item => `
       <button class="btn" onclick="_prDownloadPayslip(${item.id})">Download</button>
       <button class="btn" onclick="_prpResendPayslip(${item.id})">Resend</button>`,
+    renderAdd: _prInfoPlaceholder('Payslips are generated from a Payroll Run once it is paid — open Payroll Runs to generate them.', "loadView('payroll-runs')", 'Go to Payroll Runs'),
     onAdd: () => {
       showToast('Payslips are generated from a Payroll Run once it is paid — open Payroll Runs to generate them.', 'info');
       loadView('payroll-runs');

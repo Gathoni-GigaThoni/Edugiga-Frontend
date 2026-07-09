@@ -28,7 +28,6 @@ let sponsorshipAllocationsData     = [];
 let feeSetupPerClassData           = [];
 let receivePaymentsData            = [];
 let chartOfAccountsData            = [];
-let feeAccountsData                = [];
 let feeItemsData                   = [];
 
 // ── Global fetch wrapper ──────────────────────────────────────────────────────

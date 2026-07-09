@@ -525,21 +525,16 @@ async function submitHrAddEmployee() {
     fetchHeaders = { 'Content-Type': 'application/json' };
   }
 
-  // TODO: This raw fetch should be converted to apiFetch in a future cleanup pass
-  try {
-    const res = await fetch(`${API_BASE}/employees/`, {
-      method: 'POST',
-      headers: { ...fetchHeaders, Authorization: `Bearer ${token}` },
-      body: fetchBody
-    });
-    if (res.ok) {
-      showToast('Employee added successfully!', 'success');
-      loadHrEmployeeDirectoryView(document.getElementById('main-content'));
-    } else {
-      showToast(await parseApiError(res), 'error');
-    }
-  } catch (_) {
-    showToast('Network error. Please try again.', 'error');
+  const res = await apiFetch(`${API_BASE}/hr/employees`, {
+    method: 'POST',
+    headers: fetchHeaders,
+    body: fetchBody
+  });
+  if (res && res.ok) {
+    showToast('Employee added successfully!', 'success');
+    loadHrEmployeeDirectoryView(document.getElementById('main-content'));
+  } else if (res) {
+    showToast(await parseApiError(res), 'error');
   }
 }
 

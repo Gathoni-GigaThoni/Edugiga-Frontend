@@ -20,7 +20,7 @@ async function _pvLoadLookups(force = false) {
     apiFetch(`${API_BASE}/departments/`),
     apiFetch(`${API_BASE}/finance/accounts/?is_active=true`),
     apiFetch(`${API_BASE}/suppliers/`),
-    apiFetch(`${API_BASE}/employees/`),
+    apiFetch(`${API_BASE}/hr/employees`),
   ]);
   _pvLedgers      = (ledgersRes && ledgersRes.ok)     ? _toArray(await ledgersRes.json())     : [];
   _pvCostCenters  = (costCentersRes && costCentersRes.ok) ? _toArray(await costCentersRes.json()) : [];
@@ -30,6 +30,22 @@ async function _pvLoadLookups(force = false) {
   const empRaw    = (empRes && empRes.ok) ? await empRes.json() : null;
   _pvEmployees    = empRaw ? (empRaw.items || _toArray(empRaw)) : [];
   _pvLookupsLoaded = true;
+}
+
+// renderSplitView shows nothing in the right panel until an item is selected
+// unless cfg.renderAdd is provided — every Payables sub-module here had onAdd
+// wired but no renderAdd, so there was no visible way to reach Add without
+// first clicking an existing record (see [[frontend-gotchas]]). One shared
+// placeholder factory instead of repeating the same block 9 times.
+function _pvAddPlaceholder(label, view, hint) {
+  return el => {
+    el.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--grey-600)">
+      <div style="font-size:2rem;margin-bottom:12px">&#128179;</div>
+      <p style="font-weight:600;margin-bottom:8px">Add a New ${label}</p>
+      <p style="font-size:13px;margin-bottom:20px">${hint || ''}</p>
+      <button class="btn-primary" style="padding:10px 24px" onclick="loadView('${view}')">+ Add ${label}</button>
+    </div>`;
+  };
 }
 
 function _pvOptions(list, valueKey, labelFn, selected) {
@@ -180,6 +196,7 @@ async function loadPayablesPaymentVouchersView(container) {
       {label:'Status',           key:'status', fmt:v=>_pvBadge(v)},
       {label:'Date',             key:'created_at', fmt:v=>_pvDate(v)},
     ],
+    renderAdd: _pvAddPlaceholder('Payment Voucher', 'payables-payment-vouchers-add', 'Set up the payee, ledger, cost center and amount.'),
     onAdd:  () => loadView('payables-payment-vouchers-add'),
     onEdit: item => { window._pvEditPvId = item.id; loadView('payables-payment-vouchers-edit'); },
     detailActions: _pvPvDetailActions,
@@ -500,6 +517,7 @@ async function loadPayablesTaxVouchersView(container) {
       {label:'Status',     key:'status', fmt:(_,tv)=>_pvBadge(_pvTvField(tv,'status'))},
       {label:'Date',       key:'created_at', fmt:(_,tv)=>_pvDate(_pvTvField(tv,'created_at'))},
     ],
+    renderAdd: _pvAddPlaceholder('Tax Voucher', 'payables-tax-vouchers-add', 'Record a statutory tax payment voucher.'),
     onAdd: () => loadView('payables-tax-vouchers-add'),
     detailActions: _pvTvDetailActions,
   });
@@ -709,6 +727,7 @@ async function loadPayablesSupplierInvoicesView(container) {
       {label:'Amount',       key:'amount', fmt:v=>_pvMoney(v)},
       {label:'Status',       key:'status', fmt:v=>v||'—'},
     ],
+    renderAdd: _pvAddPlaceholder('Supplier Invoice', 'payables-supplier-invoices-add', 'Record an invoice received from a supplier.'),
     onAdd:  () => loadView('payables-supplier-invoices-add'),
     onEdit: item => { window._pvEditSiId = item.id; loadView('payables-supplier-invoices-edit'); },
     detailActions: _pvSiDetailActions,
@@ -1129,6 +1148,7 @@ async function loadPayablesExpenseClaimsView(container) {
       {label:'Amount',       key:'amount', fmt:v=>_pvMoney(v)},
       {label:'Status',       key:'status', fmt:v=>v||'—'},
     ],
+    renderAdd: _pvAddPlaceholder('Expense Claim', 'payables-expense-claims-add', 'Submit a new staff expense claim.'),
     onAdd: () => loadView('payables-expense-claims-add'),
   });
 }
@@ -1265,6 +1285,7 @@ async function loadPayablesExpenseClaimDisbursementsView(container) {
       {label:'Disbursement Date', key:'disbursement_date', fmt:v=>_pvDate(v)},
       {label:'Journal Entry',     key:'journal_entry_id', fmt:v=>v?`JV #${v}`:'—'},
     ],
+    renderAdd: _pvAddPlaceholder('Expense Claim Disbursement', 'payables-expense-claim-disbursements-add', 'Disburse an approved expense claim.'),
     onAdd: () => loadView('payables-expense-claim-disbursements-add'),
   });
 }
@@ -1373,6 +1394,7 @@ async function loadPayablesPettyCashApplicationsView(container) {
       {label:'Amount',    key:'requested_amount', fmt:v=>_pvMoney(v)},
       {label:'Status',    key:'status', fmt:v=>v||'—'},
     ],
+    renderAdd: _pvAddPlaceholder('Petty Cash Application', 'payables-petty-cash-applications-add', 'Apply for a petty cash float.'),
     onAdd: () => loadView('payables-petty-cash-applications-add'),
   });
 }
@@ -1465,6 +1487,7 @@ async function loadPayablesPettyCashDisbursementsView(container) {
       {label:'Amount Disbursed',  key:'disbursed_amount', fmt:v=>_pvMoney(v)},
       {label:'Disbursement Date', key:'disbursement_date', fmt:v=>_pvDate(v)},
     ],
+    renderAdd: _pvAddPlaceholder('Petty Cash Disbursement', 'payables-petty-cash-disbursements-add', 'Disburse an approved petty cash application.'),
     onAdd: () => loadView('payables-petty-cash-disbursements-add'),
   });
 }
@@ -1572,6 +1595,7 @@ async function loadPayablesImprestWarrantsView(container) {
       {label:'Period',   key:'period_start', fmt:(_,w)=>`${_pvDate(w.period_start)} – ${_pvDate(w.period_end)}`},
       {label:'Status',   key:'status', fmt:v=>v||'—'},
     ],
+    renderAdd: _pvAddPlaceholder('Imprest Warrant', 'payables-imprest-warrants-add', 'Issue a new imprest warrant.'),
     onAdd: () => loadView('payables-imprest-warrants-add'),
   });
 }
@@ -1751,6 +1775,7 @@ async function loadPayablesImprestDisbursementsView(container) {
       {label:'Amount Disbursed',  key:'disbursed_amount', fmt:v=>_pvMoney(v)},
       {label:'Disbursement Date', key:'disbursement_date', fmt:v=>_pvDate(v)},
     ],
+    renderAdd: _pvAddPlaceholder('Imprest Disbursement', 'payables-imprest-disbursements-add', 'Disburse against an approved imprest warrant.'),
     onAdd: () => loadView('payables-imprest-disbursements-add'),
   });
 }

@@ -30,6 +30,14 @@ async function loadAcademicYearsView(container) {
       {label:'End Date',   key:'end_date',   fmt:v=>_fmtDDMmmYYYY(v)},
       {label:'Status',     key:'is_inactive', fmt:v=>v?'Inactive':'Active'},
     ],
+    renderAdd: el => {
+      el.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--grey-600)">
+        <div style="font-size:2rem;margin-bottom:12px">&#128197;</div>
+        <p style="font-weight:600;margin-bottom:8px">Add a New Academic Year</p>
+        <p style="font-size:13px;margin-bottom:20px">Set up a year's title and start/end dates.</p>
+        <button class="btn-primary" style="padding:10px 24px" onclick="renderAyAddPage(document.getElementById('main-content'))">+ Add Academic Year</button>
+      </div>`;
+    },
     onAdd:  () => renderAyAddPage(document.getElementById('main-content')),
     onEdit: item => openAyEdit(item.id),
   });
@@ -512,6 +520,14 @@ async function loadAcademicLevelsView(container) {
       {label:'Sort Order',  key:'sort_order', fmt:v=>v!=null?String(v):'—'},
       {label:'Status',      key:'status', fmt:v=>v||'Active'},
     ],
+    renderAdd: el => {
+      el.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--grey-600)">
+        <div style="font-size:2rem;margin-bottom:12px">&#127891;</div>
+        <p style="font-weight:600;margin-bottom:8px">Add a New Academic Level</p>
+        <p style="font-size:13px;margin-bottom:20px">Set up a level's name, code and sort order.</p>
+        <button class="btn-primary" style="padding:10px 24px" onclick="renderAlvlAddPage(document.getElementById('main-content'))">+ Add Academic Level</button>
+      </div>`;
+    },
     onAdd: () => renderAlvlAddPage(document.getElementById('main-content')),
     // NOTE: backend has no update endpoint for Academic Levels yet — live
     // openapi.json only lists GET/POST on /academic-levels/, no {id} route at

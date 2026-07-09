@@ -39,6 +39,14 @@ async function loadJournalEntriesView(container) {
       }},
       {label:'Status',     key:'status', fmt:v=>v||'—'},
     ],
+    renderAdd: el => {
+      el.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--grey-600)">
+        <div style="font-size:2rem;margin-bottom:12px">&#128196;</div>
+        <p style="font-weight:600;margin-bottom:8px">Add a New Journal Entry</p>
+        <p style="font-size:13px;margin-bottom:20px">Post a manual debit/credit journal entry.</p>
+        <button class="btn-primary" style="padding:10px 24px" onclick="loadView('journal-entries-add')">+ Add Journal Entry</button>
+      </div>`;
+    },
     onAdd: () => loadView('journal-entries-add'),
     onEdit: item => { window._jeEditId = item.id; loadView('journal-entries-edit'); },
     bulkUpload: { module: 'journal-entries' },

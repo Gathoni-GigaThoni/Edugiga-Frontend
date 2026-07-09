@@ -51,6 +51,14 @@ async function loadHrEmployeeDirectoryView(container) {
       {label:'Designation', key:'designation', fmt:v=>v||'—'},
       {label:'Department',  key:'department', fmt:v=>v||'—'},
     ],
+    renderAdd: el => {
+      el.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--grey-600)">
+        <div style="font-size:2rem;margin-bottom:12px">&#128100;</div>
+        <p style="font-weight:600;margin-bottom:8px">Add a New Employee</p>
+        <p style="font-size:13px;margin-bottom:20px">Register a new employee record.</p>
+        <button class="btn-primary" style="padding:10px 24px" onclick="hrAddEmployee()">+ Add Employee</button>
+      </div>`;
+    },
     onAdd:  () => hrAddEmployee(),
     onEdit: item => hrEditEmployee(item.id !== undefined ? item.id : item.employee_code),
   });
