@@ -775,34 +775,63 @@ function _stuTabPersonal(d) {
   `;
 }
 
+// Age in whole months between a birth date and a reference date (defaults to
+// today). Matches the year/month-borrow math calculateAge() uses for its
+// display string, just returned as a single month count for range checks.
+function _ageInMonthsAt(birthDateStr, atDateStr) {
+  const birth = new Date(birthDateStr);
+  const at    = atDateStr ? new Date(atDateStr) : new Date();
+  let months  = (at.getFullYear() - birth.getFullYear()) * 12 + (at.getMonth() - birth.getMonth());
+  if (at.getDate() < birth.getDate()) months--;
+  return months;
+}
+function _fmtAgeMonths(totalMonths) {
+  return `${Math.floor(totalMonths / 12)}y ${totalMonths % 12}m`;
+}
+
+// Suggests a Level of Academics per the strict Acorn/Maple/Willow/Oak age
+// windows in ACADEMIC_LEVEL_RULES (config.js), based on age at Joining Date
+// (placement is about which class the student starts in, not their age
+// today) — falls back to today if no Joining Date has been entered yet.
+// Also flags when the student will already be too old for the appropriate
+// class by the next academic year (~12 months on), so registrars catch a
+// leaver/progression edge case at enrolment time instead of a year later.
 function _suggestLevelFromAge(dobValue) {
   if (!dobValue) return;
-  const today = new Date();
-  const birth = new Date(dobValue);
-  const age   = today.getFullYear() - birth.getFullYear()
-    - (today < new Date(today.getFullYear(), birth.getMonth(), birth.getDate()) ? 1 : 0);
-  const levelSel  = document.getElementById('se-level');
-  const hintEl    = document.getElementById('se-level-age-hint');
+  const levelSel = document.getElementById('se-level');
+  const hintEl   = document.getElementById('se-level-age-hint');
   if (!levelSel) return;
   // Only suggest if user hasn't already picked a level
   if (levelSel.value) { if (hintEl) hintEl.textContent = ''; return; }
-  let match = null;
-  Array.from(levelSel.options).forEach(opt => {
-    if (!opt.value) return;
-    const desc = opt.dataset.description || '';
-    const m = desc.match(/(\d+)\s*[-–to]+\s*(\d+)/);
-    if (m) {
-      const min = parseInt(m[1], 10), max = parseInt(m[2], 10);
-      if (age >= min && age <= max) match = opt;
-    }
-  });
-  if (match) {
-    levelSel.value = match.value;
-    levelSel.dispatchEvent(new Event('change'));
-    if (hintEl) hintEl.textContent = `Suggested based on age ${age}: ${match.textContent}. You may change this.`;
-  } else {
-    if (hintEl) hintEl.textContent = `Age ${age} — no level description matched; please select manually.`;
+
+  const joiningVal = document.getElementById('se-joining-date')?.value || null;
+  const ageMonths  = _ageInMonthsAt(dobValue, joiningVal);
+
+  const idx  = ACADEMIC_LEVEL_RULES.findIndex(r => ageMonths >= r.minMonths && ageMonths <= r.maxMonths);
+  const rule = idx === -1 ? null : ACADEMIC_LEVEL_RULES[idx];
+  const opt  = rule && Array.from(levelSel.options).find(o => o.dataset.levelKey === rule.key);
+
+  if (!opt) {
+    hintEl && (hintEl.textContent =
+      `Age ${_fmtAgeMonths(ageMonths)}${joiningVal ? ' at joining' : ''} doesn't strictly match any level's age range; please select manually.`);
+    return;
   }
+
+  levelSel.value = opt.value;
+  levelSel.dispatchEvent(new Event('change'));
+
+  let msg = `Suggested based on age ${_fmtAgeMonths(ageMonths)}${joiningVal ? ' at joining' : ' (today — no joining date set yet)'}: ${opt.textContent}. You may change this.`;
+
+  const nextYearMonths = ageMonths + 12;
+  if (nextYearMonths > rule.maxMonths) {
+    const nextRule = ACADEMIC_LEVEL_RULES[idx + 1];
+    if (!nextRule) {
+      msg += ` Note: this student will be too old for Oak by next academic year (age will be ~${_fmtAgeMonths(nextYearMonths)}) — confirm progression plan.`;
+    } else if (!(nextYearMonths >= nextRule.minMonths && nextYearMonths <= nextRule.maxMonths)) {
+      msg += ` Note: by next academic year (age ~${_fmtAgeMonths(nextYearMonths)}) this student won't cleanly fit ${nextRule.label.split('(')[0]} either — please verify next year's placement.`;
+    }
+  }
+  if (hintEl) hintEl.textContent = msg;
 }
 
 function _wireStuPersonalTab() {
@@ -821,6 +850,7 @@ function _wireStuPersonalTab() {
     joiningDate.addEventListener('change', async () => {
       if (joiningDate.value) {
         await _deriveStuTermAndClass();
+        if (dob?.value) _suggestLevelFromAge(dob.value);
       } else {
         const fd = window._stuFormData || {};
         fd.term_id = null; fd.class_id = null; fd.academic_year_id = null;
@@ -1980,6 +2010,50 @@ async function _stuSyncTransport(studentId, d) {
 }
 
 // Best-effort — a failure here doesn't roll back the record save that already
+// succeeded. Syncs the selected Extra Curriculum activities (the legacy
+// ExtraCurriculumActivity catalog behind the Personal tab's multiselect —
+// unrelated to the Fee-Items/ECA-Assignment grid in eca-assignment.js) against
+// the real StudentExtraCurriculum rows via POST/DELETE, then PATCHes
+// extra_curriculum_term_id to trigger the backend's own enrollment +
+// fee-assignment sync for this term. Previously the selections were captured
+// in the form (d.extra_curriculum_ids) but never sent anywhere, so that
+// trigger — sent unconditionally on every Personal-tab save — had nothing to
+// act on. Row sync must happen before the trigger PATCH, which is why this
+// runs as its own step rather than bundling extra_curriculum_term_id into the
+// main flat-fields PATCH.
+async function _stuSyncEca(studentId, d) {
+  const selectedIds = (d.extra_curriculum_ids || []).map(String);
+
+  let existing = [];
+  try {
+    const res = await apiFetch(`${API_BASE}/students/${studentId}/extra-curriculum/`);
+    if (res && res.ok) existing = _toArray(await res.json());
+  } catch (_) {}
+  const existingByActivity = new Map(existing.map(e => [String(e.extra_curriculum_id), e]));
+
+  for (const actId of selectedIds) {
+    if (existingByActivity.has(actId)) continue;
+    const res = await apiFetch(`${API_BASE}/students/${studentId}/extra-curriculum/`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ student_id: studentId, extra_curriculum_id: parseInt(actId, 10) }),
+    });
+    if (!(res && res.ok)) showToast('Saved, but enrolling in an Extra Curriculum activity failed: ' + (res ? await parseApiError(res) : 'unknown error'), 'error');
+  }
+  for (const e of existing) {
+    if (!selectedIds.includes(String(e.extra_curriculum_id))) {
+      const res = await apiFetch(`${API_BASE}/students/${studentId}/extra-curriculum/${e.id}`, { method: 'DELETE' });
+      if (!(res && res.ok)) showToast('Saved, but removing an Extra Curriculum activity failed: ' + (res ? await parseApiError(res) : 'unknown error'), 'error');
+    }
+  }
+
+  const patchRes = await apiFetch(`${API_BASE}/students/${studentId}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ extra_curriculum_term_id: d.term_id || null }),
+  });
+  if (!(patchRes && patchRes.ok)) showToast('Saved, but syncing Extra Curriculum fees failed: ' + (patchRes ? await parseApiError(patchRes) : 'unknown error'), 'error');
+}
+
+// Best-effort — a failure here doesn't roll back the record save that already
 // succeeded. New sibling picks made this session are only committed to the real
 // Sibling Groups resource once this student has a numeric id: either added to
 // the existing group (POST .../add-student/{id}) or used to create a brand new
@@ -2078,6 +2152,7 @@ async function _persistStudentRecord(showSuccessToast, allTabs) {
     clearStudentDraft();
     await _stuSyncTransport(saved.id, d);
     await _stuSyncSiblingGroup(saved.id, window._stuFormData);
+    await _stuSyncEca(saved.id, d);
     await _stuUploadCachedFiles(saved.id);
     if (showSuccessToast) showToast('Student added successfully!', 'success');
     return true;
@@ -2115,13 +2190,13 @@ async function _persistStudentRecord(showSuccessToast, allTabs) {
   for (const tab of tabsToSave) {
     switch (tab) {
       case 'personal':
-        // extra_curriculum_term_id re-triggers the backend's ECA enrollment +
-        // fee-assignment sync for this student's current term — the Personal
-        // tab is where the Extra Curriculum multiselect lives, so any save here
-        // should re-sync it.
-        await call(`${API_BASE}/students/${id}`, 'PATCH', { ..._stuFlatPayload(d), extra_curriculum_term_id: d.term_id || null });
+        await call(`${API_BASE}/students/${id}`, 'PATCH', _stuFlatPayload(d));
         await _stuSyncTransport(id, d);
         await _stuSyncSiblingGroup(id, d);
+        // Row sync must happen before the extra_curriculum_term_id trigger —
+        // see _stuSyncEca's own comment for why this can't be bundled into
+        // the flat PATCH above.
+        await _stuSyncEca(id, d);
         break;
       case 'prev-edu':
         if (d.previous_education) await call(`${API_BASE}/students/${id}/previous-education`, 'PUT', d.previous_education);

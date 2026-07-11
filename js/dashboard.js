@@ -12,19 +12,36 @@ function flyoutGroupUlStyle(ulId) {
   return `display:${flyoutGroupOpenState(ulId) ? 'block' : 'none'};`;
 }
 
-// Rail labels that carry a module-level permission gate. Must match each
-// button's title/flyout data-label text exactly — that's what's matched
-// against the live permissions matrix in hasModuleAccess() (config.js).
-const _RAIL_GATED_LABELS = [
-  'Student Management', 'Student Academics', 'Transport Management',
-  'Finance', 'Document Approvals', 'Inventory Management', 'Procurement',
-  'Human Resource', 'Payroll', 'Asset Management', 'Communication',
-  'Administration',
-];
+// Rail label -> live permissions-matrix label. Usually identical, but the
+// matrix is the backend's own naming and isn't guaranteed to match this
+// app's rail/flyout copy verbatim — confirmed live 2026-07-12 (GET
+// /roles/permissions/matrix) that "Document Approvals" here is actually
+// labelled "Document Approval System" on the backend. That one mismatch
+// meant hasModuleAccess() never found a matching key for it, so it silently
+// failed open (see the "fail open when no matrix entry" comment in
+// config.js) — the module was visible to every role regardless of their
+// saved permissions. Keeping this as an explicit map (not just an array of
+// rail labels) means any future naming drift between the two sides fails
+// loudly as a wrong lookup, not as a silently-ungated module.
+const _RAIL_TO_MATRIX_LABEL = {
+  'Student Management':   'Student Management',
+  'Student Academics':    'Student Academics',
+  'Transport Management': 'Transport Management',
+  'Finance':              'Finance',
+  'Document Approvals':   'Document Approval System',
+  'Inventory Management': 'Inventory Management',
+  'Procurement':          'Procurement',
+  'Human Resource':       'Human Resource',
+  'Payroll':              'Payroll',
+  'Asset Management':     'Asset Management',
+  'Communication':        'Communication',
+  'Administration':       'Administration',
+};
 
 async function _computeRailAccess() {
   const entries = await Promise.all(
-    _RAIL_GATED_LABELS.map(async label => [label, await hasModuleAccess(label)])
+    Object.keys(_RAIL_TO_MATRIX_LABEL).map(async label =>
+      [label, await hasModuleAccess(_RAIL_TO_MATRIX_LABEL[label])])
   );
   return Object.fromEntries(entries);
 }
@@ -449,7 +466,8 @@ function handleRailClick(moduleKey) {
 async function openFlyout(moduleKey) {
   const body = document.getElementById('flyout-body-' + moduleKey);
   if (!body) return;
-  if (!(await hasModuleAccess(body.dataset.label || ''))) {
+  const matrixLabel = _RAIL_TO_MATRIX_LABEL[body.dataset.label] || body.dataset.label || '';
+  if (!(await hasModuleAccess(matrixLabel))) {
     showToast("You don't have access to this module.", 'error');
     return;
   }

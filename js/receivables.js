@@ -276,7 +276,7 @@ async function openFeeScheduleModal(editId) {
       <h3 style="margin-top:0;">${s ? 'Edit' : 'Add'} Fee Schedule</h3>
       <div class="fin-form-group">
         <label class="fin-form-label">Scope Type <span class="fin-required">*</span></label>
-        <select id="rcv-fs-scope-type" class="fin-form-select" onchange="_rcvScopeTypeChange(this.value)" ${s?'disabled':''}>
+        <select id="rcv-fs-scope-type" class="fin-form-select" onchange="_rcvScopeTypeChange(this.value)">
           <option value="">Please Select</option>
           <option value="academic_level" ${s?.scope_type==='academic_level'?'selected':''}>Academic Level</option>
           <option value="class"          ${s?.scope_type==='class'?'selected':''}>Class</option>
@@ -349,7 +349,6 @@ async function openFeeScheduleModal(editId) {
         <label class="fin-form-label">Student ID <span class="fin-required">*</span></label>
         <input type="number" id="rcv-fs-student-id" class="fin-form-input" placeholder="Student ID" value="${s?.student_id||s?.scope_id||''}">
       </div>
-      ${s ? `<p style="font-size:0.83rem;color:#888;margin-top:4px;"><em>Scope type cannot be changed. Delete and recreate if you need a different scope.</em></p>` : ''}
       <div class="fin-form-actions">
         <button class="fin-btn-teal" onclick="submitFeeScheduleForm(${s?s.id:'null'})">${s?'Update':'Submit'}</button>
         <button class="fin-btn-cancel" onclick="_rcvCloseModal()">Cancel</button>
