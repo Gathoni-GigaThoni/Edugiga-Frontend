@@ -29,6 +29,7 @@ function showDashboard() {
         <button class="rail-item" data-module="student-academics" title="Student Academics" onclick="handleRailClick('student-academics')"><span class="rail-label-full">Student Academics</span><span class="rail-label-short">ACA</span></button>
         <button class="rail-item" data-module="transport-management" title="Transport Management" onclick="handleRailClick('transport-management')"><span class="rail-label-full">Transport</span><span class="rail-label-short">TRN</span></button>
         <button class="rail-item" data-module="finance" title="Finance" onclick="handleRailClick('finance')"><span class="rail-label-full">Finance</span><span class="rail-label-short">FIN</span></button>
+        <button class="rail-item" data-module="document-approvals" title="Document Approvals" onclick="handleRailClick('document-approvals')"><span class="rail-label-full">Document Approvals</span><span class="rail-label-short">DAS</span></button>
         <button class="rail-item" title="Inventory Management" onclick="loadView('inventory-management')"><span class="rail-label-full">Inventory</span><span class="rail-label-short">INV</span></button>
         <button class="rail-item" data-module="procurement" title="Procurement" onclick="handleRailClick('procurement')"><span class="rail-label-full">Procurement</span><span class="rail-label-short">PRC</span></button>
         <button class="rail-item" data-module="human-resource" title="Human Resource" onclick="handleRailClick('human-resource')"><span class="rail-label-full">Human Resource</span><span class="rail-label-short">HR</span></button>
@@ -53,6 +54,7 @@ function showDashboard() {
               <li id="sidebar-stu-classes"       onclick="loadView('student-classes')">Classes</li>
               <li id="sidebar-stu-close-records" onclick="loadView('close-records-per-class')">Close Records Per Class</li>
               <li id="sidebar-stu-eca-assignment" onclick="loadView('eca-assignment')">ECA Assignment</li>
+              <li id="sidebar-stu-parent-portal" onclick="loadView('student-parent-portal')">Parent Portal Access</li>
               <li class="dropdown">
                 ${flyoutGroupHeader('Utilities', 'stu-utilities-dropdown')}
                 <ul id="stu-utilities-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('stu-utilities-dropdown')}">
@@ -235,6 +237,14 @@ function showDashboard() {
                   <li class="sidebar-sub-sub" onclick="loadView('reports-unmatched-tendepay-transactions')">Unmatched Tendepay Transactions</li>
                 </ul>
               </li>
+            </ul>
+          </div>
+
+          <div class="flyout-module-body" id="flyout-body-document-approvals" data-label="Document Approvals" hidden>
+            <ul id="document-approvals-dropdown" class="dropdown-menu">
+              <li id="sidebar-da-queue" onclick="loadView('document-approvals-queue')">Approval Queue</li>
+              <li id="sidebar-da-all" onclick="loadView('document-approvals-all')">All Approvals</li>
+              <li id="sidebar-da-surcharge" onclick="loadView('document-approvals-surcharge-policy')">Surcharge Policy</li>
             </ul>
           </div>
 
@@ -714,6 +724,9 @@ async function loadView(view) {
     case 'eca-assignment':
       setActiveSidebarItem('sidebar-stu-eca-assignment'); openStuMgmtDropdowns();
       await loadEcaAssignmentView(main); break;
+    case 'student-parent-portal':
+      setActiveSidebarItem('sidebar-stu-parent-portal'); openStuMgmtDropdowns();
+      await loadParentPortalAccessView(main); break;
     // Student Management – Utilities
     case 'utilities-student-sources':
       setActiveSidebarItem('sidebar-stu-sources'); openStuUtilitiesDropdown();
@@ -897,6 +910,13 @@ async function loadView(view) {
       setActiveSidebarItem('sidebar-fin-pay-modes'); openFinUtilitiesDropdown();
       loadFinPlaceholderView(main, 'Payment Modes'); break;
     case 'cash-bank-management': showPlaceholder(main, 'Cash and Bank Management'); break;
+    // Document Approvals
+    case 'document-approvals-queue':
+      setActiveSidebarItem('sidebar-da-queue'); await loadDaQueueView(main); break;
+    case 'document-approvals-all':
+      setActiveSidebarItem('sidebar-da-all'); await loadDaAllView(main); break;
+    case 'document-approvals-surcharge-policy':
+      setActiveSidebarItem('sidebar-da-surcharge'); await loadDaSurchargePolicyView(main); break;
     // Tendepay sub-modules
     case 'tendepay-import':
       setActiveSidebarItem('sidebar-fin-tp-import'); openFinTendepayDropdown();
