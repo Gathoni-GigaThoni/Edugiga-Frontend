@@ -11,6 +11,8 @@
 
 /* ── Topbar ── */
 .pp-topbar {
+  position: relative;
+  overflow: hidden;
   background: linear-gradient(160deg, var(--navy-950) 0%, var(--navy-800) 60%, var(--navy-700) 100%);
   padding: 16px 28px;
   display: flex;
@@ -18,7 +20,20 @@
   justify-content: space-between;
   box-shadow: 0 4px 14px rgba(11,25,41,0.18);
 }
+/* Same faint gold ring/wave motif as the staff app's rail/flyout/dashboard —
+   keeps the parent-facing portal visually in the same family. */
+.pp-topbar::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: var(--brand-motif-url-compact);
+  background-repeat: no-repeat;
+  background-position: right -14px top -34px;
+  background-size: 170px 106px;
+  pointer-events: none;
+}
 .pp-topbar-brand {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -49,6 +64,7 @@
   text-transform: uppercase;
 }
 .pp-topbar-right {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 18px;

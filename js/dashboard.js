@@ -18,10 +18,19 @@ function showDashboard() {
     <div class="container">
       <div class="left-rail" id="left-rail">
         <div class="rail-logo-container">
-          <img src="assets/images/sois-logo-full.jpeg" alt="SOIS" class="rail-logo-crest"
-               onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
-          <div class="rail-logo-fallback" style="display:none">
-            <span class="rail-logo-initials">S</span>
+          <div class="rail-logo-horizontal-wrap">
+            <img src="assets/images/sois-logo-horizontal.jpeg" alt="Seven Oaks International School" class="rail-logo-horizontal"
+                 onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+            <div class="rail-logo-fallback" style="display:none">
+              <span class="rail-logo-initials">S</span>
+            </div>
+          </div>
+          <div class="rail-logo-crest-wrap">
+            <img src="assets/images/sois-logo-full.jpeg" alt="SOIS" class="rail-logo-crest-only"
+                 onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+            <div class="rail-logo-fallback" style="display:none">
+              <span class="rail-logo-initials">S</span>
+            </div>
           </div>
         </div>
         <button class="rail-item active" data-module="dashboard-home" title="Dashboard" onclick="goToDashboardHome()"><span class="rail-label-full">Dashboard</span><span class="rail-label-short">HOME</span></button>
@@ -309,23 +318,96 @@ function showDashboard() {
 // "Dashboard" rail item (see goToDashboardHome / loadView case 'dashboard'),
 // so it needs to be re-renderable into any already-mounted #main-content, not
 // just built once into the page shell.
+function _dashEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// Cache of the full student roster for this dashboard visit — populated once
+// by _dashLoadStudentsAndStats() and reused by doDashStudentSearch() so the
+// stats tiles and the search widget don't each fetch the whole roster.
+let _dashStudentsCache = null;
+
 function renderDashboardHome(container) {
   if (!container) return;
+  _dashStudentsCache = null; // re-fetch fresh counts every time the dashboard home is (re)shown
+  const name  = (typeof _cspGetCurrentUserName === 'function' ? _cspGetCurrentUserName() : '') || '';
+  const today = new Date().toLocaleDateString('en-GB', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   container.innerHTML = `
-    <h2>Welcome to EduGiga - Seven Oaks International School</h2>
-    <p>Select a module from the sidebar.</p>
-    <div style="margin-top:28px;background:#fff;border:1px solid #e3e8ee;border-radius:8px;padding:24px 28px;max-width:520px;box-shadow:0 1px 4px rgba(0,0,0,0.06);">
-      <div style="font-weight:600;font-size:1rem;margin-bottom:14px;color:#2c3e50;">Quick Student Search</div>
-      <div style="display:flex;gap:10px;align-items:center;">
-        <input id="dash-stu-search-input" type="text" placeholder="Search by name or admission no…"
-          style="flex:1;padding:8px 12px;border:1px solid #ccc;border-radius:5px;font-size:0.9rem;"
-          onkeydown="if(event.key==='Enter')doDashStudentSearch()">
-        <button onclick="doDashStudentSearch()"
-          style="padding:8px 18px;background:#1abc9c;color:#fff;border:none;border-radius:5px;font-size:0.9rem;cursor:pointer;white-space:nowrap;">Search</button>
+    <div id="dash-home-root">
+      <div class="dash-hero">
+        <div class="dash-hero-inner">
+          <p class="dash-hero-eyebrow">Dashboard</p>
+          <h2 class="dash-hero-title">Welcome back${name ? ', ' + _dashEsc(name) : ''}</h2>
+          <p class="dash-hero-subtitle">Seven Oaks International School &middot; ${today}</p>
+        </div>
       </div>
-      <div id="dash-stu-search-results" style="margin-top:14px;"></div>
+
+      <div class="dash-body">
+        <div class="dash-stats-grid">
+          <div class="dash-stat-tile">
+            <div class="dash-stat-label">Total Enrolled</div>
+            <div class="dash-stat-value" id="dash-stat-total">&hellip;</div>
+          </div>
+          <div class="dash-stat-tile">
+            <div class="dash-stat-label">Boys &amp; Girls Enrolled</div>
+            <div class="dash-split-bar">
+              <div class="dash-split-seg dash-split-seg--a" id="dash-split-a" style="width:50%"></div>
+              <div class="dash-split-seg dash-split-seg--b" id="dash-split-b" style="width:50%"></div>
+            </div>
+            <div class="dash-split-legend">
+              <span class="dash-split-legend-item"><span class="dash-split-swatch dash-split-swatch--a"></span>Boys <span class="dash-split-legend-count" id="dash-split-boys-count">&hellip;</span></span>
+              <span class="dash-split-legend-item"><span class="dash-split-swatch dash-split-swatch--b"></span>Girls <span class="dash-split-legend-count" id="dash-split-girls-count">&hellip;</span></span>
+            </div>
+          </div>
+          <div class="dash-stat-placeholder"><div class="dash-stat-placeholder-icon">+</div>More stats coming soon</div>
+          <div class="dash-stat-placeholder"><div class="dash-stat-placeholder-icon">+</div>More stats coming soon</div>
+        </div>
+
+        <div class="dash-search-card">
+          <div class="dash-search-card-head"><span class="dash-search-card-title">Quick Student Search</span></div>
+          <div class="dash-search-card-body">
+            <div class="dash-search-input-row">
+              <input id="dash-stu-search-input" type="text" class="dash-search-input" placeholder="Search by name or admission no…"
+                onkeydown="if(event.key==='Enter')doDashStudentSearch()">
+              <button class="dash-search-btn" onclick="doDashStudentSearch()">Search</button>
+            </div>
+            <div id="dash-stu-search-results" class="dash-search-results"></div>
+          </div>
+        </div>
+      </div>
     </div>
   `;
+  _dashLoadStudentsAndStats();
+}
+
+async function _dashLoadStudentsAndStats() {
+  const totalEl = document.getElementById('dash-stat-total');
+  try {
+    const res = await apiFetch(`${API_BASE}/students/`);
+    if (!res || !res.ok) throw new Error('failed to load students');
+    const raw = await res.json();
+    const students = Array.isArray(raw) ? raw : (raw.data || raw.results || []);
+    _dashStudentsCache = students;
+
+    if (totalEl) totalEl.textContent = students.length.toLocaleString();
+
+    const boys  = students.filter(s => (s.gender || '').trim().toLowerCase().startsWith('m')).length;
+    const girls = students.filter(s => (s.gender || '').trim().toLowerCase().startsWith('f')).length;
+    const known = boys + girls;
+    const boysPct  = known ? Math.round((boys / known) * 100) : 0;
+    const girlsPct = known ? 100 - boysPct : 0;
+
+    const segA = document.getElementById('dash-split-a');
+    const segB = document.getElementById('dash-split-b');
+    if (segA) segA.style.width = boysPct + '%';
+    if (segB) segB.style.width = girlsPct + '%';
+    const boysCountEl  = document.getElementById('dash-split-boys-count');
+    const girlsCountEl = document.getElementById('dash-split-girls-count');
+    if (boysCountEl)  boysCountEl.textContent  = `${boys} (${boysPct}%)`;
+    if (girlsCountEl) girlsCountEl.textContent = `${girls} (${girlsPct}%)`;
+  } catch (_) {
+    if (totalEl) totalEl.textContent = '—';
+  }
 }
 
 // Rail item for returning to the dashboard home view — has no flyout panel of its
@@ -381,42 +463,38 @@ async function doDashStudentSearch() {
   const q = (document.getElementById('dash-stu-search-input')?.value || '').trim().toLowerCase();
   const resultsEl = document.getElementById('dash-stu-search-results');
   if (!resultsEl) return;
-  if (!q) { resultsEl.innerHTML = '<p style="color:#888;font-size:0.88rem;">Enter a name or admission number to search.</p>'; return; }
+  if (!q) { resultsEl.innerHTML = '<p class="dash-search-msg">Enter a name or admission number to search.</p>'; return; }
 
-  resultsEl.innerHTML = '<p style="color:#888;font-size:0.88rem;">Searching&#8230;</p>';
+  resultsEl.innerHTML = '<p class="dash-search-msg">Searching&#8230;</p>';
   try {
-    const res = await apiFetch(`${API_BASE}/students/`);
-    if (!res || !res.ok) { resultsEl.innerHTML = '<p style="color:#c0392b;font-size:0.88rem;">Could not load students.</p>'; return; }
-    const raw = await res.json();
-    const students = Array.isArray(raw) ? raw : (raw.data || raw.results || []);
+    let students = _dashStudentsCache;
+    if (!students) {
+      const res = await apiFetch(`${API_BASE}/students/`);
+      if (!res || !res.ok) { resultsEl.innerHTML = '<p class="dash-search-msg" style="color:var(--color-danger)">Could not load students.</p>'; return; }
+      const raw = await res.json();
+      students = Array.isArray(raw) ? raw : (raw.data || raw.results || []);
+      _dashStudentsCache = students;
+    }
     const matched = students.filter(s =>
       (`${s.first_name||''} ${s.last_name||''}`).toLowerCase().includes(q) ||
       (s.student_id || '').toLowerCase().includes(q)
     );
-    if (!matched.length) { resultsEl.innerHTML = '<p style="color:#888;font-size:0.88rem;">No students found.</p>'; return; }
-    resultsEl.innerHTML = `
-      <table style="width:100%;border-collapse:collapse;font-size:0.88rem;">
-        <thead><tr style="background:#f4f6f8;">
-          <th style="padding:6px 10px;text-align:left;border-bottom:1px solid #e3e8ee;">Adm. No.</th>
-          <th style="padding:6px 10px;text-align:left;border-bottom:1px solid #e3e8ee;">Name</th>
-          <th style="padding:6px 10px;text-align:left;border-bottom:1px solid #e3e8ee;">Class</th>
-          <th style="padding:6px 10px;text-align:left;border-bottom:1px solid #e3e8ee;"></th>
-        </tr></thead>
-        <tbody>
-          ${matched.slice(0, 10).map(s => `<tr>
-            <td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;">${s.student_id || '-'}</td>
-            <td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;">${(s.first_name||'')} ${(s.last_name||'')}</td>
-            <td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;">${s.class_name || '-'}</td>
-            <td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;">
-              <a href="#" style="color:#1abc9c;font-weight:500;" onclick="_currentEditStudentId=${s.id};loadView('students-view');return false;">View</a>
-            </td>
-          </tr>`).join('')}
-        </tbody>
-      </table>
-      ${matched.length > 10 ? `<p style="color:#888;font-size:0.82rem;margin-top:6px;">${matched.length - 10} more result(s) — refine your search.</p>` : ''}
-    `;
+    if (!matched.length) { resultsEl.innerHTML = '<p class="dash-search-msg">No students found.</p>'; return; }
+    resultsEl.innerHTML = matched.slice(0, 10).map(s => {
+      const fullName  = `${s.first_name || ''} ${s.last_name || ''}`.trim() || '—';
+      const initials  = (((s.first_name || '')[0] || '') + ((s.last_name || '')[0] || '')).toUpperCase() || '?';
+      return `
+      <div class="dash-result-row" onclick="_currentEditStudentId=${Number(s.id)};loadView('students-view');">
+        <div class="dash-result-avatar">${_dashEsc(initials)}</div>
+        <div>
+          <div class="dash-result-name">${_dashEsc(fullName)}</div>
+          <div class="dash-result-sub">${_dashEsc(s.student_id || '-')} &middot; ${_dashEsc(s.class_name || '-')}</div>
+        </div>
+        <span class="dash-result-view">View &rarr;</span>
+      </div>`;
+    }).join('') + (matched.length > 10 ? `<div class="dash-result-more">${matched.length - 10} more result(s) — refine your search.</div>` : '');
   } catch (_) {
-    resultsEl.innerHTML = '<p style="color:#c0392b;font-size:0.88rem;">Search failed. Please try again.</p>';
+    resultsEl.innerHTML = '<p class="dash-search-msg" style="color:var(--color-danger)">Search failed. Please try again.</p>';
   }
 }
 
