@@ -1121,25 +1121,35 @@ function _renderStuSiblingList() {
   }
 }
 
-async function stuSibPickSearch(val) {
+let _stuSibSearchTimer = null;
+function stuSibPickSearch(val) {
+  clearTimeout(_stuSibSearchTimer);
   const dd = document.getElementById('se-sibling-search-dd');
   if (!dd) return;
   if (!val.trim()) { dd.style.display = 'none'; return; }
-  const res = await apiFetch(`${API_BASE}/students/?search=${encodeURIComponent(val)}`);
-  const list = (res && res.ok) ? _toArray(await res.json().catch(() => [])) : [];
-  const taken = new Set([
-    String(_currentEditStudentId || ''),
-    ...window._stuSiblingExisting.map(p => String(p.id)),
-    ...window._stuSiblingNewPicks.map(p => String(p.id)),
-  ]);
-  const filtered = list.filter(s => !taken.has(String(s.id)));
-  dd.innerHTML = filtered.length ? filtered.slice(0, 10).map(s => {
-    const name = `${s.first_name||''} ${s.last_name||''}`.trim();
-    return `<a href="#" onclick="stuSibPickSelect(${s.id},'${_finEsc(s.student_id||'')}','${_finEsc(name)}','${_finEsc(s.date_of_birth||'')}',${s.sibling_group_id ?? 'null'});return false;">
-       ${_finEsc(s.student_id||'')} — ${_finEsc(name)}${s.sibling_group_id ? ' <span style="color:#888;font-size:0.8em;">(already in a sibling group)</span>' : ''}
-     </a>`;
-  }).join('') : '<div style="padding:10px 14px;color:#888;font-size:0.88rem;">No results found</div>';
-  dd.style.display = 'block';
+  // Debounced (matches saOnNameSearch's pattern) — firing a fetch on every
+  // keystroke let slower earlier-letter responses arrive after faster later
+  // ones and clobber the dropdown with stale, broader results, which looked
+  // like "the search only shows results for the first letter typed."
+  _stuSibSearchTimer = setTimeout(async () => {
+    const res = await apiFetch(`${API_BASE}/students/?search=${encodeURIComponent(val.trim())}`);
+    const list = (res && res.ok) ? _toArray(await res.json().catch(() => [])) : [];
+    const taken = new Set([
+      String(_currentEditStudentId || ''),
+      ...window._stuSiblingExisting.map(p => String(p.id)),
+      ...window._stuSiblingNewPicks.map(p => String(p.id)),
+    ]);
+    const filtered = list.filter(s => !taken.has(String(s.id)));
+    dd.innerHTML = filtered.length ? filtered.slice(0, 10).map(s => {
+      const name = `${s.first_name||''} ${s.last_name||''}`.trim();
+      const idLabel = _finEsc(s.student_id||'');
+      return `<a href="#" class="fin-search-option" onclick="stuSibPickSelect(${s.id},'${idLabel}','${_finEsc(name)}','${_finEsc(s.date_of_birth||'')}',${s.sibling_group_id ?? 'null'});return false;">
+         <span class="fin-search-option-name">${_finEsc(name)}</span>
+         <span class="fin-search-option-sub">${idLabel}${s.sibling_group_id ? ' · already in a sibling group' : ''}</span>
+       </a>`;
+    }).join('') : '<div style="padding:10px 14px;color:#888;font-size:0.88rem;">No results found</div>';
+    dd.style.display = 'block';
+  }, 300);
 }
 
 async function stuSibPickSelect(id, studentId, name, dateOfBirth, siblingGroupId) {
@@ -2097,6 +2107,7 @@ async function _stuSyncSiblingGroup(studentId, d) {
   // instead of requiring the user to already know its numeric id.
   if (d.sibling_group_id) {
     try { sessionStorage.setItem('_edugiga_last_sibling_group_id', String(d.sibling_group_id)); } catch (_) {}
+    rememberSiblingGroupId(d.sibling_group_id);
   }
 }
 

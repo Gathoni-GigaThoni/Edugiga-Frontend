@@ -2,6 +2,31 @@
 
 const API_BASE = "https://edugiga-sois-api.onrender.com/api";
 
+// ── Sibling Groups: browser-local "known groups" index ───────────────────────
+// The backend has no GET-list endpoint for sibling groups (only POST create
+// and GET by id — confirmed live, see finance-module memory) so Finance >
+// Set-up > Sibling Groups can't fetch "every group that exists." This index
+// (localStorage, not sessionStorage — persists across visits/reloads, unlike
+// the one-shot `_edugiga_last_sibling_group_id` handoff key) is the closest
+// achievable substitute: every id this browser has created/joined via
+// _stuSyncSiblingGroup (students.js) gets remembered here, so the Sibling
+// Groups page can show them automatically instead of requiring the user to
+// already know a Group ID. It is inherently browser-local, not a real
+// system-wide list — a group created from a different device/browser won't
+// appear here.
+function rememberSiblingGroupId(id) {
+  if (!id) return;
+  try {
+    const ids = JSON.parse(localStorage.getItem('edugiga_known_sibling_groups') || '[]');
+    const next = [String(id), ...ids.filter(x => String(x) !== String(id))].slice(0, 50);
+    localStorage.setItem('edugiga_known_sibling_groups', JSON.stringify(next));
+  } catch (_) {}
+}
+function knownSiblingGroupIds() {
+  try { return JSON.parse(localStorage.getItem('edugiga_known_sibling_groups') || '[]'); }
+  catch (_) { return []; }
+}
+
 // ── Token & user – restored from sessionStorage on page load ──────────────────
 let token = sessionStorage.getItem('edugiga_token') || '';
 let currentUser = null;

@@ -433,7 +433,10 @@ async function submitFeeScheduleForm(editId) {
   const isEdit = !!editId;
   const url = isEdit ? `${API_BASE}/receivables/setup/fee-schedules/${editId}` : `${API_BASE}/receivables/setup/fee-schedules`;
   const res = await apiFetch(url, {
-    method: isEdit ? 'PUT' : 'POST',
+    // Backend only exposes PATCH (not PUT) on the {schedule_id} update route
+    // (confirmed live via openapi.json) — PUT 405'd "Method Not Allowed" on
+    // every edit, regardless of scope type.
+    method: isEdit ? 'PATCH' : 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });

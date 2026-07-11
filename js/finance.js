@@ -1665,7 +1665,7 @@ async function loadSiblingGroupsView(container) {
             <span style="padding-top:10px;color:#888;">or</span>
             <div style="position:relative;flex:1;">
               <input id="sg-lookup-student" class="fin-search-input" style="width:100%!important" placeholder="Search student by name or SOIS ID&#8230;" oninput="sgLookupStudentSearch(this.value)" autocomplete="off">
-              <div id="sg-lookup-student-dd" class="fin-action-dropdown" style="display:none;max-height:200px;overflow-y:auto;position:absolute;top:100%;left:0;width:100%;z-index:100;"></div>
+              <div id="sg-lookup-student-dd" class="fin-action-dropdown" style="display:none;max-height:240px;overflow-y:auto;position:absolute;top:100%;left:0;width:100%;z-index:100;"></div>
             </div>
             <button class="fin-btn-teal" onclick="sgLookupById()">Find</button>
           </div>
@@ -1674,6 +1674,11 @@ async function loadSiblingGroupsView(container) {
         <div class="fin-form-actions" style="margin-top:24px;">
           <button class="fin-btn-teal" onclick="loadView('finance-sibling-groups-add')">Create New Sibling Group</button>
         </div>
+      </div>
+
+      <div class="fin-section-label" style="margin-top:32px;max-width:680px;">Recently Created/Joined Groups (this device)</div>
+      <div id="sg-known-groups-list" style="max-width:680px;">
+        <p style="color:#888;font-size:0.88rem;">Loading&#8230;</p>
       </div>
     </div>`;
 
@@ -1686,25 +1691,83 @@ async function loadSiblingGroupsView(container) {
     document.getElementById('sg-lookup-id').value = pendingId;
     sgLookupById();
   }
+
+  await _sgRenderKnownGroups();
 }
 
-async function sgLookupStudentSearch(val) {
+// The backend has no GET-list endpoint for sibling groups (see the
+// rememberSiblingGroupId comment in config.js) — this renders whatever this
+// browser has locally recorded, fetched individually by id (the one read
+// operation that does exist), so a group created via Student Add/Edit shows
+// up here automatically instead of the page always looking empty.
+async function _sgRenderKnownGroups() {
+  const listEl = document.getElementById('sg-known-groups-list');
+  if (!listEl) return;
+  const ids = knownSiblingGroupIds();
+  if (!ids.length) {
+    listEl.innerHTML = '<p style="color:#888;font-size:0.88rem;">No sibling groups created or joined from this browser yet. The backend has no way to list every group system-wide, so use the lookup above if you know a Group ID or a member student — groups created/joined from Student Add/Edit on this device will appear here automatically going forward.</p>';
+    return;
+  }
+  const groups = (await Promise.all(ids.map(async id => {
+    const res = await apiFetch(`${API_BASE}/receivables/sibling-groups/${id}`);
+    return (res && res.ok) ? await res.json().catch(() => null) : null;
+  }))).filter(Boolean);
+  listEl.innerHTML = groups.length
+    ? groups.map(g => _sgKnownGroupCardHtml(g)).join('')
+    : '<p style="color:#888;font-size:0.88rem;">No sibling groups found.</p>';
+}
+
+function _sgMemberNamesHtml(group) {
+  const memberNames = (group.student_ids || []).map(id => `${_invStudentName(id)} (#${id})`);
+  return memberNames.length ? memberNames.map(n => _finEsc(n)).join(', ') : '—';
+}
+
+function _sgKnownGroupCardHtml(group) {
+  return `
+    <div style="background:#f9fafb;border:1px solid #e0e0e0;border-radius:6px;padding:14px 16px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:12px;">
+      <div>
+        <p style="margin:0 0 4px;"><strong>Group #${group.id}</strong>${group.name ? ' — ' + _finEsc(group.name) : ''}</p>
+        <p style="margin:0;color:#555;font-size:0.88rem;">Members: ${_sgMemberNamesHtml(group)}</p>
+      </div>
+      <button class="fin-btn-outline" onclick="_sgOpenGroup(${group.id})">Manage</button>
+    </div>`;
+}
+
+function _sgOpenGroup(id) {
+  const idInput = document.getElementById('sg-lookup-id');
+  if (idInput) idInput.value = id;
+  sgLookupById();
+  document.getElementById('sg-lookup-result')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+let _sgLookupSearchTimer = null;
+function sgLookupStudentSearch(val) {
+  clearTimeout(_sgLookupSearchTimer);
   const dd = document.getElementById('sg-lookup-student-dd');
   if (!dd) return;
   if (!val.trim()) { dd.style.display = 'none'; return; }
-  const res = await apiFetch(`${API_BASE}/students/?search=${encodeURIComponent(val)}`);
-  const list = (res && res.ok) ? await res.json() : [];
-  if (!list.length) {
-    dd.innerHTML = '<div style="padding:10px 14px;color:#888;font-size:0.88rem;">No results found</div>';
+  // Debounced — see stuSibPickSearch (students.js) for why: firing on every
+  // keystroke let a slower response for an earlier, shorter search term
+  // arrive after a faster later one and overwrite the dropdown with stale
+  // results, which looked like the search only reacting to the first letter.
+  _sgLookupSearchTimer = setTimeout(async () => {
+    const res = await apiFetch(`${API_BASE}/students/?search=${encodeURIComponent(val.trim())}`);
+    const list = (res && res.ok) ? await res.json() : [];
+    if (!list.length) {
+      dd.innerHTML = '<div style="padding:10px 14px;color:#888;font-size:0.88rem;">No results found</div>';
+      dd.style.display = 'block';
+      return;
+    }
+    dd.innerHTML = list.slice(0, 10).map(s => {
+      const name = _finEsc(`${s.first_name||''} ${s.last_name||''}`.trim());
+      const idLabel = _finEsc(s.student_id||'');
+      return `<a href="#" class="fin-search-option" onclick="sgLookupStudentSelect(${s.id},${s.sibling_group_id ?? 'null'},'${idLabel} — ${name}');return false;">
+         <span class="fin-search-option-name">${name}</span>
+         <span class="fin-search-option-sub">${idLabel}</span>
+       </a>`;
+    }).join('');
     dd.style.display = 'block';
-    return;
-  }
-  dd.innerHTML = list.slice(0, 10).map(s =>
-    `<a href="#" onclick="sgLookupStudentSelect(${s.id},${s.sibling_group_id ?? 'null'},'${_finEsc(s.student_id||'')} — ${_finEsc(`${s.first_name||''} ${s.last_name||''}`.trim())}');return false;">
-       ${_finEsc(s.student_id||'')} — ${_finEsc(`${s.first_name||''} ${s.last_name||''}`.trim())}
-     </a>`
-  ).join('');
-  dd.style.display = 'block';
+  }, 300);
 }
 
 async function sgLookupStudentSelect(studentId, siblingGroupId, label) {
@@ -1747,12 +1810,12 @@ async function sgLookupById() {
   const group = await res.json().catch(() => null);
   _sgFoundGroup = group;
   if (!group) { resultEl.innerHTML = '<p style="color:#c0392b;font-size:0.88rem;">Group not found.</p>'; return; }
+  rememberSiblingGroupId(group.id);
 
-  const memberNames = (group.student_ids || []).map(id => `${_invStudentName(id)} (#${id})`);
   resultEl.innerHTML = `
     <div style="background:#f9fafb;border:1px solid #e0e0e0;border-radius:6px;padding:16px;">
       <p><strong>Group #${group.id}</strong> — ${_finEsc(group.name || '')}</p>
-      <p>Members: ${memberNames.length ? memberNames.map(n=>_finEsc(n)).join(', ') : '—'}</p>
+      <p>Members: ${_sgMemberNamesHtml(group)}</p>
       <div style="display:flex;gap:10px;align-items:flex-start;margin-top:10px;">
         <div style="position:relative;flex:1;max-width:360px;">
           <input id="sg-add-student" class="fin-search-input" style="width:100%!important" placeholder="Add a student to this group&#8230;" oninput="sgAddStudentSearch(this.value)" autocomplete="off">
@@ -1764,18 +1827,25 @@ async function sgLookupById() {
 
 let _sgAddStudentId = null;
 
-async function sgAddStudentSearch(val) {
+let _sgAddSearchTimer = null;
+function sgAddStudentSearch(val) {
+  clearTimeout(_sgAddSearchTimer);
   const dd = document.getElementById('sg-add-student-dd');
   if (!dd) return;
   if (!val.trim()) { dd.style.display = 'none'; return; }
-  const res = await apiFetch(`${API_BASE}/students/?search=${encodeURIComponent(val)}`);
-  const list = (res && res.ok) ? await res.json() : [];
-  dd.innerHTML = list.length ? list.slice(0, 10).map(s =>
-    `<a href="#" onclick="sgAddStudentSelect(${s.id},'${_finEsc(s.student_id||'')} — ${_finEsc(`${s.first_name||''} ${s.last_name||''}`.trim())}');return false;">
-       ${_finEsc(s.student_id||'')} — ${_finEsc(`${s.first_name||''} ${s.last_name||''}`.trim())}
-     </a>`
-  ).join('') : '<div style="padding:10px 14px;color:#888;font-size:0.88rem;">No results found</div>';
-  dd.style.display = 'block';
+  _sgAddSearchTimer = setTimeout(async () => {
+    const res = await apiFetch(`${API_BASE}/students/?search=${encodeURIComponent(val.trim())}`);
+    const list = (res && res.ok) ? await res.json() : [];
+    dd.innerHTML = list.length ? list.slice(0, 10).map(s => {
+      const name = _finEsc(`${s.first_name||''} ${s.last_name||''}`.trim());
+      const idLabel = _finEsc(s.student_id||'');
+      return `<a href="#" class="fin-search-option" onclick="sgAddStudentSelect(${s.id},'${idLabel} — ${name}');return false;">
+         <span class="fin-search-option-name">${name}</span>
+         <span class="fin-search-option-sub">${idLabel}</span>
+       </a>`;
+    }).join('') : '<div style="padding:10px 14px;color:#888;font-size:0.88rem;">No results found</div>';
+    dd.style.display = 'block';
+  }, 300);
 }
 
 function sgAddStudentSelect(studentId, label) {
@@ -1793,6 +1863,7 @@ async function sgSubmitAddStudent() {
     method: 'POST',
   });
   if (res && res.ok) {
+    rememberSiblingGroupId(_sgFoundGroup.id);
     showToast('Student added to sibling group.', 'success');
     sgLookupById();
   } else {
@@ -1868,6 +1939,7 @@ async function submitSiblingGroupCreate() {
       const res = await apiFetch(`${API_BASE}/receivables/sibling-groups/${targetGroupId}/add-student/${p.id}`, { method: 'POST' });
       if (!(res && res.ok)) { showToast('Error: ' + (res ? await parseApiError(res) : 'unknown error'), 'error'); return; }
     }
+    rememberSiblingGroupId(targetGroupId);
     showToast('Student(s) added to the existing sibling group.', 'success');
     loadView('finance-sibling-groups');
     return;
@@ -1883,6 +1955,8 @@ async function submitSiblingGroupCreate() {
     body: JSON.stringify(payload),
   });
   if (res && res.ok) {
+    const saved = await res.json().catch(() => null);
+    if (saved?.id) rememberSiblingGroupId(saved.id);
     showToast('Sibling group created.', 'success');
     loadView('finance-sibling-groups');
   } else {

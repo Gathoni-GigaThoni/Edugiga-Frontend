@@ -321,6 +321,17 @@ th {
 .role-action-dropdown a:hover,
 .um-action-dropdown a:hover { background: var(--navy-50); }
 
+/* Live-search result rows (student pickers) — name on its own line, ID/status
+   as a smaller muted line beneath, instead of one cramped "ID — Name" string. */
+.fin-action-dropdown a.fin-search-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  white-space: normal;
+}
+.fin-search-option-name { font-weight: 600; color: var(--grey-800); font-size: 0.88rem; }
+.fin-search-option-sub  { font-size: 0.76rem; color: var(--grey-600); }
+
 /* ── Unified pagination ── */
 .app-pagination,
 .fin-pagination,
