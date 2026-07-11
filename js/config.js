@@ -214,6 +214,65 @@ function hasPermission(moduleKey, action) {
   return !!(p && p[action]);
 }
 
+// ── Rail/module-level access check ───────────────────────────────────────────
+// The permissions matrix (GET /roles/permissions/matrix) is the only place
+// that pairs a human label ("Finance", "Student Management", ...) with its
+// authoritative module_key — so rail/flyout labels are matched against that
+// live map instead of guessing a key spelling by hand (only
+// student_management/transport_management/payroll/dashboard were ever
+// confirmed live — see frontend-gotchas memory).
+//
+// Fetched independently here (not via roles.js's _loadPermMatrix()) and
+// fully silent on failure: that helper surfaces an error toast, which is
+// fine on the admin-only Edit Role page but would misfire for every
+// non-admin user on every login if this endpoint turns out to be
+// admin-restricted. A failed/empty fetch just means every hasModuleAccess()
+// lookup below falls through to "no entry for this label" → fail open.
+let _permLabelToKey = null;
+let _permLabelToKeyPromise = null; // in-flight guard — _computeRailAccess() calls this ~12x at once
+async function _permMatrixLabelMap() {
+  if (_permLabelToKey) return _permLabelToKey;
+  if (_permLabelToKeyPromise) return _permLabelToKeyPromise;
+  _permLabelToKeyPromise = (async () => {
+    const map = {};
+    try {
+      const res = await apiFetch(`${API_BASE}/roles/permissions/matrix`);
+      if (res && res.ok) {
+        const matrix = await res.json().catch(() => ({}));
+        Object.entries(matrix || {}).forEach(([key, def]) => {
+          if (def?.label) map[def.label] = key;
+        });
+      }
+    } catch (_) {}
+    _permLabelToKey = map;
+    return map;
+  })();
+  return _permLabelToKeyPromise;
+}
+
+// Returns true if the current user can view the module whose rail/flyout
+// label is `label` (e.g. "Finance", "Student Management"). Checks can_view on
+// the matching top-level module_key OR any nested leaf under it, since parent
+// modules with children never get their own permission row (only leaves do —
+// see renderPermMatrix/_permFlattenLeaves in roles.js). If the matrix has no
+// entry for this label at all, access is NOT restricted (nothing defined to
+// enforce) so unmapped/new modules fail open rather than vanishing for
+// everyone.
+async function hasModuleAccess(label) {
+  if (currentUser?.clearance_level === 1 || currentUser?.role === 'SUPER_ADMIN') return true;
+  // If _userPermissions never got populated (loadCurrentUserPermissions() no-ops
+  // silently when currentUser.role_id is missing/the fetch fails), we have no
+  // basis to restrict anything — fail open rather than hiding every module for
+  // every non-super-admin user because of an unrelated data-loading gap.
+  if (Object.keys(_userPermissions).length === 0) return true;
+  const map = await _permMatrixLabelMap();
+  const permKey = map[label];
+  if (!permKey) return true;
+  return Object.entries(_userPermissions).some(([key, p]) =>
+    p.can_view && (key === permKey || key.startsWith(permKey + '.'))
+  );
+}
+
 // ── Toast notifications ───────────────────────────────────────────────────────
 function showToast(message, type = 'info') {
   let container = document.getElementById('toast-container');

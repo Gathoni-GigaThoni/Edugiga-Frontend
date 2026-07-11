@@ -29,8 +29,12 @@ async function login() {
   currentUser = _decodeAndNormalise(token);
   _scheduleTokenRefresh();
   showSidebarAfterAuth();
-  showDashboard();
-  loadCurrentUserPermissions(); // non-blocking — populates _userPermissions
+  // Awaited (not fire-and-forget) so the rail is built with the real
+  // permission set already in hand — showDashboard() reads it synchronously
+  // while rendering rail buttons, so rendering first and populating after
+  // would show every module on first paint regardless of role.
+  await loadCurrentUserPermissions();
+  await showDashboard();
 }
 
 function _decodeAndNormalise(jwt) {

@@ -1504,19 +1504,22 @@ async function renderFinanceDiscountSetup(container) {
   ]);
 }
 
+// Discount policies apply against a Fee Account — which isn't a separate
+// backend resource, it's Chart of Accounts filtered to
+// is_student_fees_related:true (same live-confirmed endpoint loadFeeAccountsView
+// uses, see the "FEE ACCOUNTS" comment above). The old /finance/fee-accounts/
+// endpoint and is_discount_account/is_deactivated fields this used to filter
+// on don't exist on the backend at all, which is why this dropdown was always
+// empty.
 async function _loadDiscountAccountDropdown() {
   const select = document.getElementById('disc-account');
   if (!select) return;
 
   let accounts = [];
-  const res = await apiFetch(`${API_BASE}/finance/fee-accounts/`);
+  const res = await apiFetch(`${API_BASE}/accounts/?is_student_fees_related=true`);
   if (res && res.ok) {
     const all = await res.json().catch(() => []);
-    accounts = _toArray(all).filter(a => {
-      const isDiscount  = a.is_discount_account ?? a.isDiscountAccount;
-      const deactivated = a.is_deactivated ?? a.isDeactivated;
-      return isDiscount === true && !deactivated;
-    });
+    accounts = _toArray(all).filter(a => a.is_active !== false);
   } else if (res) {
     showToast('Failed to load discount accounts.', 'error');
   }
@@ -1524,14 +1527,14 @@ async function _loadDiscountAccountDropdown() {
   accounts.forEach(acct => {
     const opt = document.createElement('option');
     opt.value = acct.id;
-    opt.textContent = acct.account_name || acct.accountName || acct.item_name || acct.itemName || `Account ${acct.id}`;
+    opt.textContent = `${acct.number || ''} — ${acct.account_name || `Account ${acct.id}`}`;
     select.appendChild(opt);
   });
 
   if (accounts.length === 0) {
     const hint = document.createElement('p');
     hint.className = 'fin-field-hint fin-field-hint-warning';
-    hint.textContent = 'No discount accounts found. Please create a discount account under Chart of Accounts before configuring sibling discounts.';
+    hint.textContent = 'No fee accounts found. Please create one under Finance › Fee Accounts before configuring sibling discounts.';
     select.insertAdjacentElement('afterend', hint);
   }
 }

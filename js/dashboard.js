@@ -12,8 +12,26 @@ function flyoutGroupUlStyle(ulId) {
   return `display:${flyoutGroupOpenState(ulId) ? 'block' : 'none'};`;
 }
 
-function showDashboard() {
+// Rail labels that carry a module-level permission gate. Must match each
+// button's title/flyout data-label text exactly — that's what's matched
+// against the live permissions matrix in hasModuleAccess() (config.js).
+const _RAIL_GATED_LABELS = [
+  'Student Management', 'Student Academics', 'Transport Management',
+  'Finance', 'Document Approvals', 'Inventory Management', 'Procurement',
+  'Human Resource', 'Payroll', 'Asset Management', 'Communication',
+  'Administration',
+];
+
+async function _computeRailAccess() {
+  const entries = await Promise.all(
+    _RAIL_GATED_LABELS.map(async label => [label, await hasModuleAccess(label)])
+  );
+  return Object.fromEntries(entries);
+}
+
+async function showDashboard() {
   const isSuperAdmin = currentUser?.clearance_level === 1 || currentUser?.role === 'super_admin';
+  const access = await _computeRailAccess();
   document.body.innerHTML = `
     <div class="container">
       <div class="left-rail" id="left-rail">
@@ -34,18 +52,18 @@ function showDashboard() {
           </div>
         </div>
         <button class="rail-item active" data-module="dashboard-home" title="Dashboard" onclick="goToDashboardHome()"><span class="rail-label-full">Dashboard</span><span class="rail-label-short">HOME</span></button>
-        <button class="rail-item" data-module="student-management" title="Student Management" onclick="handleRailClick('student-management')"><span class="rail-label-full">Student Management</span><span class="rail-label-short">STU</span></button>
-        <button class="rail-item" data-module="student-academics" title="Student Academics" onclick="handleRailClick('student-academics')"><span class="rail-label-full">Student Academics</span><span class="rail-label-short">ACA</span></button>
-        <button class="rail-item" data-module="transport-management" title="Transport Management" onclick="handleRailClick('transport-management')"><span class="rail-label-full">Transport</span><span class="rail-label-short">TRN</span></button>
-        <button class="rail-item" data-module="finance" title="Finance" onclick="handleRailClick('finance')"><span class="rail-label-full">Finance</span><span class="rail-label-short">FIN</span></button>
-        <button class="rail-item" data-module="document-approvals" title="Document Approvals" onclick="handleRailClick('document-approvals')"><span class="rail-label-full">Document Approvals</span><span class="rail-label-short">DAS</span></button>
-        <button class="rail-item" title="Inventory Management" onclick="loadView('inventory-management')"><span class="rail-label-full">Inventory</span><span class="rail-label-short">INV</span></button>
-        <button class="rail-item" data-module="procurement" title="Procurement" onclick="handleRailClick('procurement')"><span class="rail-label-full">Procurement</span><span class="rail-label-short">PRC</span></button>
-        <button class="rail-item" data-module="human-resource" title="Human Resource" onclick="handleRailClick('human-resource')"><span class="rail-label-full">Human Resource</span><span class="rail-label-short">HR</span></button>
-        <button class="rail-item" data-module="payroll" title="Payroll" onclick="handleRailClick('payroll')"><span class="rail-label-full">Payroll</span><span class="rail-label-short">PAY</span></button>
-        <button class="rail-item" title="Asset Management" onclick="loadView('asset-management')"><span class="rail-label-full">Assets</span><span class="rail-label-short">AST</span></button>
-        <button class="rail-item" title="Communication" onclick="loadView('communication')"><span class="rail-label-full">Communication</span><span class="rail-label-short">COM</span></button>
-        ${isSuperAdmin ? `<button class="rail-item" data-module="administration" title="Administration" onclick="handleRailClick('administration')"><span class="rail-label-full">Administration</span><span class="rail-label-short">ADM</span></button>` : ''}
+        ${access['Student Management'] ? `<button class="rail-item" data-module="student-management" title="Student Management" onclick="handleRailClick('student-management')"><span class="rail-label-full">Student Management</span><span class="rail-label-short">STU</span></button>` : ''}
+        ${access['Student Academics'] ? `<button class="rail-item" data-module="student-academics" title="Student Academics" onclick="handleRailClick('student-academics')"><span class="rail-label-full">Student Academics</span><span class="rail-label-short">ACA</span></button>` : ''}
+        ${access['Transport Management'] ? `<button class="rail-item" data-module="transport-management" title="Transport Management" onclick="handleRailClick('transport-management')"><span class="rail-label-full">Transport</span><span class="rail-label-short">TRN</span></button>` : ''}
+        ${access['Finance'] ? `<button class="rail-item" data-module="finance" title="Finance" onclick="handleRailClick('finance')"><span class="rail-label-full">Finance</span><span class="rail-label-short">FIN</span></button>` : ''}
+        ${access['Document Approvals'] ? `<button class="rail-item" data-module="document-approvals" title="Document Approvals" onclick="handleRailClick('document-approvals')"><span class="rail-label-full">Document Approvals</span><span class="rail-label-short">DAS</span></button>` : ''}
+        ${access['Inventory Management'] ? `<button class="rail-item" title="Inventory Management" onclick="loadView('inventory-management')"><span class="rail-label-full">Inventory</span><span class="rail-label-short">INV</span></button>` : ''}
+        ${access['Procurement'] ? `<button class="rail-item" data-module="procurement" title="Procurement" onclick="handleRailClick('procurement')"><span class="rail-label-full">Procurement</span><span class="rail-label-short">PRC</span></button>` : ''}
+        ${access['Human Resource'] ? `<button class="rail-item" data-module="human-resource" title="Human Resource" onclick="handleRailClick('human-resource')"><span class="rail-label-full">Human Resource</span><span class="rail-label-short">HR</span></button>` : ''}
+        ${access['Payroll'] ? `<button class="rail-item" data-module="payroll" title="Payroll" onclick="handleRailClick('payroll')"><span class="rail-label-full">Payroll</span><span class="rail-label-short">PAY</span></button>` : ''}
+        ${access['Asset Management'] ? `<button class="rail-item" title="Asset Management" onclick="loadView('asset-management')"><span class="rail-label-full">Assets</span><span class="rail-label-short">AST</span></button>` : ''}
+        ${access['Communication'] ? `<button class="rail-item" title="Communication" onclick="loadView('communication')"><span class="rail-label-full">Communication</span><span class="rail-label-short">COM</span></button>` : ''}
+        ${(isSuperAdmin || access['Administration']) ? `<button class="rail-item" data-module="administration" title="Administration" onclick="handleRailClick('administration')"><span class="rail-label-full">Administration</span><span class="rail-label-short">ADM</span></button>` : ''}
         <button class="rail-item" title="Logout" onclick="logout()"><span class="rail-label-full">Log Out</span><span class="rail-label-short">OUT</span></button>
       </div>
 
@@ -96,14 +114,6 @@ function showDashboard() {
               </li>
               <li id="sidebar-formative-assessment" onclick="loadView('formative-assessment')">Formative Assessment</li>
               <li id="sidebar-sa-subjects"     onclick="loadView('sa-subjects')">Subjects</li>
-              <li class="dropdown">
-                ${flyoutGroupHeader('Utilities', 'sa-utilities-dropdown')}
-                <ul id="sa-utilities-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('sa-utilities-dropdown')}"></ul>
-              </li>
-              <li class="dropdown">
-                ${flyoutGroupHeader('Set-up', 'sa-setup-dropdown')}
-                <ul id="sa-setup-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('sa-setup-dropdown')}"></ul>
-              </li>
               <li id="sidebar-sa-sessions"     onclick="loadView('sa-sessions')">Terms</li>
               <li id="sidebar-sa-session-types" onclick="loadView('sa-session-types')">Term Types</li>
               <li id="sidebar-sa-academic-years" onclick="loadView('sa-academic-years')">Academic Years</li>
@@ -431,9 +441,18 @@ function handleRailClick(moduleKey) {
   }
 }
 
-function openFlyout(moduleKey) {
+// Defense in depth: the rail button for a module the role can't access is
+// never rendered (see _computeRailAccess() in showDashboard()), but this
+// re-checks before actually opening the panel in case something else ever
+// calls openFlyout(moduleKey) directly (console, a stray onclick, a future
+// shortcut widget) bypassing the rail entirely.
+async function openFlyout(moduleKey) {
   const body = document.getElementById('flyout-body-' + moduleKey);
   if (!body) return;
+  if (!(await hasModuleAccess(body.dataset.label || ''))) {
+    showToast("You don't have access to this module.", 'error');
+    return;
+  }
   activeModule = moduleKey;
 
   document.querySelectorAll('.rail-item').forEach(btn => {
@@ -846,10 +865,6 @@ async function loadView(view) {
     case 'sa-subjects':
       setActiveSidebarItem('sidebar-sa-subjects');
       loadSaPlaceholderView(main, 'Subjects'); break;
-    case 'sa-utilities':
-      loadSaPlaceholderView(main, 'Utilities'); break;
-    case 'sa-setup':
-      loadSaPlaceholderView(main, 'Set-up'); break;
     case 'sa-sessions':
       setActiveSidebarItem('sidebar-sa-sessions'); await loadTermsView(main); break;
     case 'sa-session-types':

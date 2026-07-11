@@ -578,16 +578,23 @@ async function savePermissions(roleId) {
   }
 
   // Backend's PUT /roles/{id}/permissions takes one PermissionUpsert object
-  // per call, not a bulk array — send one request per module.
-  let firstErr = null;
-  for (const entry of entries) {
-    const res = await apiFetch(`${API_BASE}/roles/${roleId}/permissions`, {
+  // per call, not a bulk array — send one request per module, but in
+  // parallel (the calls are independent) rather than one-at-a-time, since a
+  // sequential await-loop here was the whole reason "Save Permissions" felt
+  // slow: it serialised what could easily be dozens of round-trips.
+  const results = await Promise.all(entries.map(entry =>
+    apiFetch(`${API_BASE}/roles/${roleId}/permissions`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(entry),
-    });
-    if (!res) return;
-    if (!res.ok && !firstErr) firstErr = await parseApiError(res);
+    })
+  ));
+
+  if (results.some(res => !res)) return;
+
+  let firstErr = null;
+  for (const res of results) {
+    if (!res.ok && !firstErr) { firstErr = await parseApiError(res); break; }
   }
 
   if (!firstErr) {
