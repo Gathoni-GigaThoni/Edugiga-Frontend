@@ -239,97 +239,71 @@ function stopKeepAlive() {
   keepAliveActive = false;
 }
 
-// ── Current-user permission store ────────────────────────────────────────────
-// Populated after login from GET /roles/{role_id}/permissions.
-// Keys are module_key strings; values are { can_view, can_add, can_edit, can_delete }.
-let _userPermissions = {};
+// ── Module registry cache (GET /api/administration/modules) ─────────────────
+// Fetched once at login. Confirmed live response shape:
+//   { modules: [{ key, label, parent_key, can_view, can_add, can_edit, can_delete }] }
+// Flat list, dot-notation keys (e.g. "finance.receivables"), parent_key is
+// null for top-level nav headers. A top-level (or any) entry with
+// can_view:false that still appears in the response is a nav-header-only
+// row — it exists purely so its viewable children have somewhere to hang
+// (confirmed: "the backend already omits header-only items that have no
+// viewable descendants"). Replaces the old /roles/{role_id}/permissions +
+// /roles/permissions/matrix label-matching approach entirely — this one
+// endpoint gives real keys and per-action flags in a single call, so there's
+// no more guessing/label-matching needed anywhere.
+let _modulesByKey = {};
+let _modulesLoaded = false; // true once a fetch has SUCCEEDED — see _moduleFlag for why this matters
 
-async function loadCurrentUserPermissions() {
-  const roleId = currentUser?.role_id;
-  if (!roleId) return;
+async function loadModulesCache() {
   try {
-    const res = await apiFetch(`${API_BASE}/roles/${roleId}/permissions`);
+    const res = await apiFetch(`${API_BASE}/administration/modules`);
     if (res && res.ok) {
       const data = await res.json().catch(() => null);
-      const list = data?.permissions || (Array.isArray(data) ? data : []);
-      _userPermissions = {};
-      list.forEach(p => {
-        _userPermissions[p.module_key] = {
-          can_view:   !!p.can_view,
-          can_add:    !!p.can_add,
-          can_edit:   !!p.can_edit,
-          can_delete: !!p.can_delete,
-        };
-      });
+      const list = data?.modules || [];
+      _modulesByKey = {};
+      list.forEach(m => { if (m?.key) _modulesByKey[m.key] = m; });
+      _modulesLoaded = true;
     }
   } catch (_) {}
 }
 
-// Returns true if the current user has the given permission on a module.
-// Super admins (clearance_level 1 or role SUPER_ADMIN) bypass all checks.
-// action must be one of: 'can_view', 'can_add', 'can_edit', 'can_delete'
-function hasPermission(moduleKey, action) {
-  if (currentUser?.clearance_level === 1 || currentUser?.role === 'SUPER_ADMIN') return true;
-  const p = _userPermissions[moduleKey];
-  return !!(p && p[action]);
+function _isSuperAdmin() {
+  return currentUser?.clearance_level === 1 || currentUser?.role === 'SUPER_ADMIN' || currentUser?.role === 'super_admin';
 }
 
-// ── Rail/module-level access check ───────────────────────────────────────────
-// The permissions matrix (GET /roles/permissions/matrix) is the only place
-// that pairs a human label ("Finance", "Student Management", ...) with its
-// authoritative module_key — so rail/flyout labels are matched against that
-// live map instead of guessing a key spelling by hand (only
-// student_management/transport_management/payroll/dashboard were ever
-// confirmed live — see frontend-gotchas memory).
-//
-// Fetched independently here (not via roles.js's _loadPermMatrix()) and
-// fully silent on failure: that helper surfaces an error toast, which is
-// fine on the admin-only Edit Role page but would misfire for every
-// non-admin user on every login if this endpoint turns out to be
-// admin-restricted. A failed/empty fetch just means every hasModuleAccess()
-// lookup below falls through to "no entry for this label" → fail open.
-let _permLabelToKey = null;
-let _permLabelToKeyPromise = null; // in-flight guard — _computeRailAccess() calls this ~12x at once
-async function _permMatrixLabelMap() {
-  if (_permLabelToKey) return _permLabelToKey;
-  if (_permLabelToKeyPromise) return _permLabelToKeyPromise;
-  _permLabelToKeyPromise = (async () => {
-    const map = {};
-    try {
-      const res = await apiFetch(`${API_BASE}/roles/permissions/matrix`);
-      if (res && res.ok) {
-        const matrix = await res.json().catch(() => ({}));
-        Object.entries(matrix || {}).forEach(([key, def]) => {
-          if (def?.label) map[def.label] = key;
-        });
-      }
-    } catch (_) {}
-    _permLabelToKey = map;
-    return map;
-  })();
-  return _permLabelToKeyPromise;
+// Generic flag lookup — flag is 'can_view'|'can_add'|'can_edit'|'can_delete'.
+// Fails OPEN only when there's genuinely no data to judge from: the fetch
+// never completed (network/auth issue — avoids locking every non-admin user
+// out of everything over an unrelated loading bug) or this specific key was
+// never registered (a screen with no matching permission key yet — nothing
+// defined to enforce). Fails CLOSED (returns false) whenever the fetch
+// succeeded and the registry explicitly says false for this key — including
+// the documented "authenticated but no role assigned" -> modules:[] case,
+// since that's real signal from the backend, not a data-loading gap.
+function _moduleFlag(key, flag) {
+  if (_isSuperAdmin()) return true;
+  if (!key) return true;
+  if (!_modulesLoaded) return true;
+  const m = _modulesByKey[key];
+  if (!m) return true;
+  return !!m[flag];
 }
 
-// Returns true if the current user can view the module whose rail/flyout
-// label is `label` (e.g. "Finance", "Student Management"). Checks can_view on
-// the matching top-level module_key OR any nested leaf under it, since parent
-// modules with children never get their own permission row (only leaves do —
-// see renderPermMatrix/_permFlattenLeaves in roles.js). If the matrix has no
-// entry for this label at all, access is NOT restricted (nothing defined to
-// enforce) so unmapped/new modules fail open rather than vanishing for
-// everyone.
-async function hasModuleAccess(label) {
-  if (currentUser?.clearance_level === 1 || currentUser?.role === 'SUPER_ADMIN') return true;
-  // If _userPermissions never got populated (loadCurrentUserPermissions() no-ops
-  // silently when currentUser.role_id is missing/the fetch fails), we have no
-  // basis to restrict anything — fail open rather than hiding every module for
-  // every non-super-admin user because of an unrelated data-loading gap.
-  if (Object.keys(_userPermissions).length === 0) return true;
-  const map = await _permMatrixLabelMap();
-  const permKey = map[label];
-  if (!permKey) return true;
-  return Object.entries(_userPermissions).some(([key, p]) =>
-    p.can_view && (key === permKey || key.startsWith(permKey + '.'))
+function canView(key)   { return _moduleFlag(key, 'can_view'); }
+function canAdd(key)    { return _moduleFlag(key, 'can_add'); }
+function canEdit(key)   { return _moduleFlag(key, 'can_edit'); }
+function canDelete(key) { return _moduleFlag(key, 'can_delete'); }
+
+// True if `key` itself is viewable, OR any registered key nested under it
+// (dot-prefix match, any depth) is viewable. Used for rail/flyout-group
+// visibility: a parent header can have can_view:false while still needing
+// to render (as an expandable group) so its viewable children stay reachable.
+function hasModuleAccess(key) {
+  if (_isSuperAdmin()) return true;
+  if (!key) return true;
+  if (!_modulesLoaded) return true;
+  return Object.entries(_modulesByKey).some(([k, m]) =>
+    m.can_view && (k === key || k.startsWith(key + '.'))
   );
 }
 

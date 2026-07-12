@@ -34,6 +34,7 @@ function _prInfoPlaceholder(message, action, actionLabel) {
 async function loadPayrollEspListingView(container) {
   await renderSplitView({
     container,
+    moduleKey: 'payroll.employee_service_profiles',
     title: 'Employee Service Profiles',
     breadcrumb: [
       {label:'Dashboard',view:null},
@@ -255,6 +256,7 @@ function openPayrollDropdowns() {
 async function loadPayrollFiListingView(container) {
   await renderSplitView({
     container,
+    moduleKey: 'payroll.utilities.financial_institutions',
     title: 'Financial Institutions',
     breadcrumb: [
       {label:'Dashboard',view:null},
@@ -519,6 +521,7 @@ window._currentEditPayGradeId = null;
 async function loadPayGradesView(container) {
   await renderSplitView({
     container,
+    moduleKey: 'payroll.utilities.pay_grades',
     title: 'Pay Grades',
     breadcrumb: [
       {label:'Dashboard',view:null},
@@ -1022,6 +1025,7 @@ async function _prBulkSend(runId) {
 async function loadPayrollPayslipsView(container) {
   await renderSplitView({
     container,
+    moduleKey: 'payroll.payslips',
     title: 'Payslips',
     breadcrumb: [
       {label:'Dashboard',view:null},

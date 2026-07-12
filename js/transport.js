@@ -34,6 +34,7 @@ async function loadTransportRoutesView(container) {
   await renderSplitView({
     container,
     title: 'Routes',
+    moduleKey: 'transport_management',
     breadcrumb: [
       {label:'Dashboard',view:null},
       {label:'Transport Management',view:'transport-routes'},
@@ -498,6 +499,7 @@ async function loadBusesView(container) {
   await renderSplitView({
     container,
     title: 'Vehicles',
+    moduleKey: 'transport_management',
     breadcrumb: [
       {label:'Dashboard',view:null},
       {label:'Transport Management',view:'transport-routes'},

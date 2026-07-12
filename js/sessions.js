@@ -43,6 +43,7 @@ async function loadSessionsView(container) {
   await renderSplitView({
     container,
     title: 'Terms',
+    moduleKey: 'student_academics.academic_year_setup',
     breadcrumb: [
       {label:'Dashboard',view:null},
       {label:'Student Academics',view:'sa-sessions'},

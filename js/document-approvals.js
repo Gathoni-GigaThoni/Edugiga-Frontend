@@ -100,6 +100,7 @@ async function _daRenderQueueSplit(mountEl) {
   await renderSplitView({
     container: mountEl,
     title: 'Approval Queue',
+    moduleKey: 'document_approval',
     breadcrumb: [
       { label: 'Dashboard', view: null },
       { label: 'Document Approvals', view: 'document-approvals-queue' },
@@ -191,6 +192,7 @@ async function _daRenderAllSplit() {
   await renderSplitView({
     container: mountEl,
     title: 'All Approvals',
+    moduleKey: 'document_approval',
     breadcrumb: [
       { label: 'Dashboard', view: null },
       { label: 'Document Approvals', view: 'document-approvals-all' },
@@ -418,7 +420,7 @@ async function loadDaSurchargePolicyView(container) {
           </label>
         </div>
         <div class="fin-form-actions">
-          <button class="fin-btn-teal" onclick="_daSaveSurchargePolicy()">Save Policy</button>
+          ${canEdit('document_approval') ? `<button class="fin-btn-teal" onclick="_daSaveSurchargePolicy()">Save Policy</button>` : ''}
         </div>
       </div>
     </div>

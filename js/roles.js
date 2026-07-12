@@ -49,6 +49,7 @@ async function _loadStaffCounts() {
 async function loadRolesListingView(container) {
   await renderSplitView({
     container,
+    moduleKey: 'administration.roles',
     title: 'Roles',
     breadcrumb: [
       {label:'Dashboard',view:null},
@@ -117,8 +118,8 @@ async function _roleSubmitSplit() {
 }
 
 function renderRoleListPage(container) {
-  const canAdd    = hasPermission('administration.roles', 'can_add');
-  const canDelete = hasPermission('administration.roles', 'can_delete');
+  const _canAddRole    = canAdd('administration.roles');
+  const _canDeleteRole = canDelete('administration.roles');
 
   container.innerHTML = `
     <div class="role-page">
@@ -135,7 +136,7 @@ function renderRoleListPage(container) {
           &nbsp;|&nbsp; Total <span id="role-total-count">${rolesTotal}</span> entries
         </div>
         <div class="role-controls-right">
-          ${canAdd ? `<button class="role-add-btn" onclick="openCreateRoleModal()">+ Create Role</button>` : ''}
+          ${_canAddRole ? `<button class="role-add-btn" onclick="openCreateRoleModal()">+ Create Role</button>` : ''}
         </div>
       </div>
       <div id="role-table-container"></div>
@@ -172,7 +173,8 @@ function renderRoleListPage(container) {
 }
 
 function renderRoleTable() {
-  const canDelete = hasPermission('administration.roles', 'can_delete');
+  const _canEditRole   = canEdit('administration.roles');
+  const _canDeleteRole = canDelete('administration.roles');
 
   let html = `<table class="role-table"><thead><tr>
     <th>TITLE</th><th>DESCRIPTION</th><th>STAFF</th><th>ACTION</th>
@@ -192,8 +194,8 @@ function renderRoleTable() {
           <div class="role-action-wrap">
             <button class="role-action-btn" onclick="toggleRoleDropdown(event,'${r.id}')">&#8230;</button>
             <div id="role-dd-${r.id}" class="role-action-dropdown" style="display:none;">
-              <a href="#" onclick="openRoleEdit('${r.id}');return false;">&#9998; Edit</a>
-              ${canDelete && !isSuperAdmin
+              ${_canEditRole ? `<a href="#" onclick="openRoleEdit('${r.id}');return false;">&#9998; Edit</a>` : ''}
+              ${_canDeleteRole && !isSuperAdmin
                 ? `<a href="#" onclick="deleteRole('${r.id}');return false;" style="color:#e0534a;">&#128465; Delete</a>`
                 : ''}
             </div>

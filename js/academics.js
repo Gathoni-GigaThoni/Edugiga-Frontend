@@ -11,6 +11,7 @@ async function loadAcademicYearsView(container) {
   await renderSplitView({
     container,
     title: 'Academic Years',
+    moduleKey: 'student_academics.academic_year_setup',
     breadcrumb: [
       {label:'Dashboard',view:null},
       {label:'Administration',view:'sa-academic-years'},
@@ -500,6 +501,7 @@ async function loadAcademicLevelsView(container) {
   await renderSplitView({
     container,
     title: 'Academic Levels',
+    moduleKey: 'student_academics.levels',
     breadcrumb: [
       {label:'Dashboard',view:null},
       {label:'Student Academics',view:'sa-academic-levels'},

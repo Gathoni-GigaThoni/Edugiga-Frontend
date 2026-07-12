@@ -13,6 +13,7 @@ async function loadSuppliersView(container) {
   await renderSplitView({
     container,
     title: 'Suppliers',
+    moduleKey: 'procurement',
     breadcrumb: [
       {label:'Dashboard',view:null},
       {label:'Procurement',view:'procurement-suppliers'},

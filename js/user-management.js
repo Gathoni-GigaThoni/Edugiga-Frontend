@@ -32,6 +32,7 @@ async function loadUserManagementView(container) {
 
   await renderSplitView({
     container,
+    moduleKey: 'administration.users',
     title: 'User Management',
     breadcrumb: [
       {label:'Dashboard',view:null},
@@ -149,7 +150,7 @@ async function _umSaveSplit(id) {
 }
 
 function renderUmListPage(container) {
-  const canAdd    = hasPermission('administration.users', 'can_add');
+  const _canAddUser = canAdd('administration.users');
 
   container.innerHTML = `
     <div class="um-page">
@@ -167,7 +168,7 @@ function renderUmListPage(container) {
         </div>
         <div class="um-controls-right">
           <input id="um-search-input" placeholder="Search name or email…" onkeyup="handleUmSearch()" class="um-search">
-          ${canAdd ? `<button class="role-add-btn" onclick="openUmCreateModal()">+ Add User</button>` : ''}
+          ${_canAddUser ? `<button class="role-add-btn" onclick="openUmCreateModal()">+ Add User</button>` : ''}
         </div>
       </div>
       <div id="um-table-container"></div>
@@ -276,8 +277,8 @@ function umGoToPage(page) {
 }
 
 function renderUmTable() {
-  const canEdit   = hasPermission('administration.users', 'can_edit');
-  const canAssign = hasPermission('administration.roles', 'can_edit');
+  const _canEditUser   = canEdit('administration.users');
+  const _canAssignRole = canEdit('administration.roles');
 
   const filtered = _umSearch
     ? umUsers.filter(u => {
@@ -322,10 +323,10 @@ function renderUmTable() {
           <div class="um-action-wrap">
             <button class="um-action-btn" onclick="toggleUmDropdown(event,${u.id})">&#8230;</button>
             <div id="um-dd-${u.id}" class="um-action-dropdown" style="display:none;">
-              ${canEdit ? `<a href="#" onclick="openUmEditModal(${u.id});return false;">&#9998; Edit Profile</a>` : ''}
-              ${canAssign ? `<a href="#" onclick="openAssignRoleModal(${u.id});return false;">&#128274; Assign Role</a>` : ''}
-              ${canEdit && u.is_active  ? `<a href="#" onclick="deactivateUser(${u.id});return false;" style="color:#e0534a;">&#10005; Deactivate</a>` : ''}
-              ${canEdit && !u.is_active ? `<a href="#" onclick="activateUser(${u.id});return false;" style="color:#27ae60;">&#10003; Activate</a>` : ''}
+              ${_canEditUser ? `<a href="#" onclick="openUmEditModal(${u.id});return false;">&#9998; Edit Profile</a>` : ''}
+              ${_canAssignRole ? `<a href="#" onclick="openAssignRoleModal(${u.id});return false;">&#128274; Assign Role</a>` : ''}
+              ${_canEditUser && u.is_active  ? `<a href="#" onclick="deactivateUser(${u.id});return false;" style="color:#e0534a;">&#10005; Deactivate</a>` : ''}
+              ${_canEditUser && !u.is_active ? `<a href="#" onclick="activateUser(${u.id});return false;" style="color:#27ae60;">&#10003; Activate</a>` : ''}
             </div>
           </div>
         </td>

@@ -2,6 +2,11 @@
 async function loadAdministrationView(container) {
   await renderSplitView({
     container,
+    // Same underlying resource as User Management (GET /team/, and its own
+    // onAdd/onEdit already just redirect there) — no distinct registry key
+    // exists for "Staff Management" as its own screen, so this reuses
+    // administration.users rather than being left ungated.
+    moduleKey: 'administration.users',
     title: 'Staff Management',
     breadcrumb: [
       {label:'Dashboard',view:null},

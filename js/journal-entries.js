@@ -15,6 +15,7 @@ async function loadJournalEntriesView(container) {
   await renderSplitView({
     container,
     title: 'Journal Entries',
+    moduleKey: 'finance.journal_entries',
     breadcrumb: [
       {label:'Dashboard',view:null},
       {label:'Finance',view:'journal-entries'},

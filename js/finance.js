@@ -190,6 +190,7 @@ function _finSendActionRow() {
 async function loadStudentFeesStatusView(container) {
   await renderSplitView({
     container,
+    moduleKey: 'finance.student_fees_status',
     title: 'Student Fees Status',
     breadcrumb: [
       {label:'Dashboard',view:null},
@@ -589,6 +590,7 @@ async function loadStudentInvoicesView(container) {
   await _invLoadLookups();
   await renderSplitView({
     container,
+    moduleKey: 'finance.student_finance',
     title: 'Student Invoices',
     breadcrumb: [
       {label:'Dashboard',view:null},
@@ -1127,6 +1129,7 @@ let _sfaData = [], _sfaFilterStudentId = '', _sfaFilterTermId = '';
 
 async function loadStudentFeeAssignmentsView(container) {
   await _invLoadLookups();
+  const _canAddSfa = canAdd('finance.student_finance');
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -1145,7 +1148,7 @@ async function loadStudentFeeAssignmentsView(container) {
           </select>
         </div>
         <div class="fin-controls-right">
-          <button class="fin-btn-teal" onclick="openCreateFeeAssignmentModal()">+ Add Assignment</button>
+          ${_canAddSfa ? `<button class="fin-btn-teal" onclick="openCreateFeeAssignmentModal()">+ Add Assignment</button>` : ''}
         </div>
       </div>
       <div id="sfa-table-container"></div>
@@ -1172,6 +1175,7 @@ async function _sfaLoad() {
 function _sfaRenderTable() {
   const el = document.getElementById('sfa-table-container');
   if (!el) return;
+  const _canDeleteSfa = canDelete('finance.student_finance');
   const rows = _sfaData.length === 0
     ? `<tr><td colspan="7" class="fin-empty">No records found.</td></tr>`
     : _sfaData.map(a => `<tr>
@@ -1181,7 +1185,7 @@ function _sfaRenderTable() {
         <td>${a.override_amount != null ? _finFmt(parseFloat(a.override_amount)) : '-'}</td>
         <td>${a.created_from_previous_term ? 'Yes' : 'No'}</td>
         <td>${_finEsc(a.source_type || '-')}</td>
-        <td class="fin-action-cell"><a href="#" onclick="deleteFeeAssignment(${a.id});return false;">&#128465; Delete</a></td>
+        <td class="fin-action-cell">${_canDeleteSfa ? `<a href="#" onclick="deleteFeeAssignment(${a.id});return false;">&#128465; Delete</a>` : ''}</td>
       </tr>`).join('');
   el.innerHTML = `
     <div class="fin-table-wrap">
@@ -1282,6 +1286,7 @@ async function submitCreateFeeAssignment() {
 let _bulkClassesData = [];
 
 async function loadStudentBulkInvoicingView(container) {
+  const _canAddBulkInv = canAdd('finance.student_finance');
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -1328,7 +1333,7 @@ async function loadStudentBulkInvoicingView(container) {
       </div>
 
       <div class="fin-form-actions" style="margin-top:20px;">
-        <button class="fin-btn-teal" onclick="submitBulkInvoicing()">Submit</button>
+        ${_canAddBulkInv ? `<button class="fin-btn-teal" onclick="submitBulkInvoicing()">Submit</button>` : ''}
         <button class="fin-btn-cancel" onclick="loadView('student-finance')">Cancel</button>
       </div>
       <div id="bulk-status"></div>
@@ -1651,6 +1656,7 @@ let _sgNewPicks = [null, null, null]; // up to 3 slots, each {id, sibling_group_
 async function loadSiblingGroupsView(container) {
   _sgFoundGroup = null;
   await _invLoadLookups();
+  const _canAddSiblingGroup = canAdd('finance.setup');
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -1672,7 +1678,7 @@ async function loadSiblingGroupsView(container) {
         </div>
         <div id="sg-lookup-result" style="margin-top:16px;"></div>
         <div class="fin-form-actions" style="margin-top:24px;">
-          <button class="fin-btn-teal" onclick="loadView('finance-sibling-groups-add')">Create New Sibling Group</button>
+          ${_canAddSiblingGroup ? `<button class="fin-btn-teal" onclick="loadView('finance-sibling-groups-add')">Create New Sibling Group</button>` : ''}
         </div>
       </div>
 
@@ -1984,6 +1990,7 @@ let _invAdjPerPage = 10, _invAdjPage = 1, _invAdjSearch = '';
 async function loadInvoiceAdjustmentsView(container) {
   await renderSplitView({
     container,
+    moduleKey: 'finance.student_finance',
     title: 'Invoice Adjustments',
     breadcrumb: [
       {label:'Dashboard',view:null},
@@ -2284,6 +2291,7 @@ let _sponAllocPerPage = 10, _sponAllocPage = 1, _sponAllocSearch = '';
 async function loadSponsorshipAllocationsView(container) {
   await renderSplitView({
     container,
+    moduleKey: 'finance.student_finance',
     title: 'Sponsorship Allocations',
     breadcrumb: [
       {label:'Dashboard',view:null},
@@ -2551,6 +2559,7 @@ async function loadFeeSetupPerClassView(container) {
   await _fsLoadLookups();
   await renderSplitView({
     container,
+    moduleKey: 'finance.student_finance',
     title: 'Class Fee Setup',
     breadcrumb: [
       {label:'Dashboard',view:null},
@@ -2901,6 +2910,7 @@ async function loadReceivePaymentsView(container) {
   await _invLoadLookups();
   await renderSplitView({
     container,
+    moduleKey: 'finance.receivables',
     title: 'Receive Payments',
     breadcrumb: [
       {label:'Dashboard',view:null},
@@ -3055,6 +3065,7 @@ async function loadChartOfAccountsView(container) {
   await _coaLoadCache();
   await renderSplitView({
     container,
+    moduleKey: 'finance.utilities',
     title: 'Chart of Accounts',
     breadcrumb: [
       {label:'Dashboard',view:null},
@@ -3384,6 +3395,7 @@ async function loadFeeAccountsView(container) {
   await _coaLoadCache();
   await renderSplitView({
     container,
+    moduleKey: 'finance.utilities',
     title: 'Fee Accounts',
     breadcrumb: [
       {label:'Dashboard',view:null},
@@ -3445,6 +3457,7 @@ async function loadFeeItemsView(container) {
   await _fiLoadLookups();
   await renderSplitView({
     container,
+    moduleKey: 'finance.utilities',
     title: 'Fee Items',
     breadcrumb: [
       {label:'Dashboard',view:null},
@@ -3748,6 +3761,7 @@ async function loadGeneralItemsView(container) {
   await _giLoadAccounts();
   await renderSplitView({
     container,
+    moduleKey: 'finance.utilities',
     title: 'General Items',
     breadcrumb: [
       {label:'Dashboard',view:null},
@@ -4619,6 +4633,7 @@ async function _rtReload() {
   if (status) params.set('status', status);
   await renderSplitView({
     container: document.getElementById('rt-split'),
+    moduleKey: 'finance.receivables',
     title: 'Transactions',
     breadcrumb: [{label:'Dashboard',view:null},{label:'Finance',view:null},{label:'Transactions'}],
     apiUrl: `${_RT_BASE}${params.toString() ? '?' + params.toString() : ''}`,

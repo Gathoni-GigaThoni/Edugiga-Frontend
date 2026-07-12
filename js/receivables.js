@@ -118,6 +118,7 @@ async function loadFeeSchedulesView(container) {
   await _rcvLoadLookups({ items:true, terms:true, levels:true, classes:true, routes:true });
   await renderSplitView({
     container,
+    moduleKey: 'finance.student_finance',
     title: 'Fee Schedules',
     breadcrumb: [
       {label:'Dashboard',view:null},
@@ -268,6 +269,8 @@ async function openFeeScheduleModal(editId) {
   _rcvCloseModal();
   await _rcvLoadLookups({ items:true, terms:true, levels:true, classes:true, routes:true });
   const s = editId ? rcvFeeSchedulesData.find(x=>String(x.id)===String(editId)) : null;
+  const _canSubmitFS = s ? canEdit('finance.student_finance') : canAdd('finance.student_finance');
+  const _canDeleteFS = canDelete('finance.student_finance');
   const overlay = document.createElement('div');
   overlay.id = 'fin-gen-modal-overlay';
   overlay.style = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:1000;overflow-y:auto;';
@@ -350,9 +353,9 @@ async function openFeeScheduleModal(editId) {
         <input type="number" id="rcv-fs-student-id" class="fin-form-input" placeholder="Student ID" value="${s?.student_id||s?.scope_id||''}">
       </div>
       <div class="fin-form-actions">
-        <button class="fin-btn-teal" onclick="submitFeeScheduleForm(${s?s.id:'null'})">${s?'Update':'Submit'}</button>
+        ${_canSubmitFS ? `<button class="fin-btn-teal" onclick="submitFeeScheduleForm(${s?s.id:'null'})">${s?'Update':'Submit'}</button>` : ''}
         <button class="fin-btn-cancel" onclick="_rcvCloseModal()">Cancel</button>
-        ${s ? `<button class="btn-danger" style="margin-left:auto" onclick="deleteFeeSchedule(${s.id})">&#128465; Delete</button>` : ''}
+        ${(s && _canDeleteFS) ? `<button class="btn-danger" style="margin-left:auto" onclick="deleteFeeSchedule(${s.id})">&#128465; Delete</button>` : ''}
       </div>
     </div>`;
   document.body.appendChild(overlay);
@@ -540,6 +543,7 @@ async function rcvFscOnClassChange(classId) {
 
 function _rcvRenderFscPanel(panel) {
   const className = _rcvClassName(_rcvFscClassId);
+  const _canDeleteFSC = canDelete('finance.student_finance');
   const rows = _rcvFscSchedules.length ? _rcvFscSchedules.map(s => `<tr>
     <td>${_finEsc(_rcvFeeItemName(s.fee_item_id))}</td>
     <td>KES ${_finFmt(s.amount)}</td>
@@ -550,7 +554,7 @@ function _rcvRenderFscPanel(panel) {
         <button class="fin-action-btn" onclick="_pvToggleDropdown(event,'rcv-fsc','${s.id}')">&#8230;</button>
         <div id="rcv-fsc-dd-${s.id}" class="fin-action-dropdown" style="display:none;">
           <a href="#" onclick="rcvFscBackfill(${s.id},${_rcvFscClassId},'${s.term_id||_rcvFscTermId}');return false;">&#8635; Backfill Students</a>
-          <a href="#" onclick="rcvFscDeleteSchedule(${s.id});return false;">&#128465; Delete</a>
+          ${_canDeleteFSC ? `<a href="#" onclick="rcvFscDeleteSchedule(${s.id});return false;">&#128465; Delete</a>` : ''}
         </div>
       </div>
     </td></tr>`).join('')
@@ -558,7 +562,7 @@ function _rcvRenderFscPanel(panel) {
   panel.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
       <h3 style="margin:0;font-size:1rem;">${_finEsc(className)} — Fee Schedules</h3>
-      <button class="fin-btn-teal" onclick="openFeeScheduleModalForClass(${_rcvFscClassId})">+ Add Schedule for This Class</button>
+      ${canAdd('finance.student_finance') ? `<button class="fin-btn-teal" onclick="openFeeScheduleModalForClass(${_rcvFscClassId})">+ Add Schedule for This Class</button>` : ''}
     </div>
     <div class="fin-table-wrap"><table class="fin-table">
       <thead><tr><th>FEE ITEM</th><th>AMOUNT</th><th>TERM</th><th title="Students enrolling in this class are assigned this fee automatically.">AUTO-ASSIGNED</th><th>ACTIONS</th></tr></thead>
@@ -1137,7 +1141,7 @@ async function loadInvoiceDetailView(container, invoiceId) {
     actions=`<button class="fin-btn-teal" onclick="rcvInvoiceIssue(${inv.id})">Issue Invoice</button>
              <button class="fin-btn-cancel" onclick="rcvInvoiceCancel(${inv.id})">Cancel Invoice</button>`;
   } else if (status==='issued'||status==='partially_paid'||status==='overdue') {
-    actions=`<button class="fin-btn-teal" onclick="openRecordPaymentModal(${inv.id},${bal},${inv.income_account_id||'null'})">Record Payment</button>
+    actions=`${canAdd('finance.receivables') ? `<button class="fin-btn-teal" onclick="openRecordPaymentModal(${inv.id},${bal},${inv.income_account_id||'null'})">Record Payment</button>` : ''}
              <button class="fin-btn-cancel" onclick="rcvInvoiceCancel(${inv.id})">Cancel Invoice</button>`;
   }
   container.innerHTML = `

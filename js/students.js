@@ -92,6 +92,7 @@ async function loadStudentsListView(container) {
   await renderSplitView({
     container,
     title: 'Students',
+    moduleKey: 'student_management.students',
     breadcrumb: [
       { label: 'Dashboard',           view: null },
       { label: 'Student Management',  view: 'students-list' },

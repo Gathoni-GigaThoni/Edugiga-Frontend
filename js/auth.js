@@ -33,8 +33,8 @@ async function login() {
   // permission set already in hand — showDashboard() reads it synchronously
   // while rendering rail buttons, so rendering first and populating after
   // would show every module on first paint regardless of role.
-  await loadCurrentUserPermissions();
-  await showDashboard();
+  await loadModulesCache();
+  showDashboard();
 }
 
 function _decodeAndNormalise(jwt) {

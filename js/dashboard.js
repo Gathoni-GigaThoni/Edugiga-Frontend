@@ -12,41 +12,35 @@ function flyoutGroupUlStyle(ulId) {
   return `display:${flyoutGroupOpenState(ulId) ? 'block' : 'none'};`;
 }
 
-// Rail label -> live permissions-matrix label. Usually identical, but the
-// matrix is the backend's own naming and isn't guaranteed to match this
-// app's rail/flyout copy verbatim — confirmed live 2026-07-12 (GET
-// /roles/permissions/matrix) that "Document Approvals" here is actually
-// labelled "Document Approval System" on the backend. That one mismatch
-// meant hasModuleAccess() never found a matching key for it, so it silently
-// failed open (see the "fail open when no matrix entry" comment in
-// config.js) — the module was visible to every role regardless of their
-// saved permissions. Keeping this as an explicit map (not just an array of
-// rail labels) means any future naming drift between the two sides fails
-// loudly as a wrong lookup, not as a silently-ungated module.
-const _RAIL_TO_MATRIX_LABEL = {
-  'Student Management':   'Student Management',
-  'Student Academics':    'Student Academics',
-  'Transport Management': 'Transport Management',
-  'Finance':              'Finance',
-  'Document Approvals':   'Document Approval System',
-  'Inventory Management': 'Inventory Management',
-  'Procurement':          'Procurement',
-  'Human Resource':       'Human Resource',
-  'Payroll':              'Payroll',
-  'Asset Management':     'Asset Management',
-  'Communication':        'Communication',
-  'Administration':       'Administration',
+// Rail data-module -> real registry key (dot-notation, GET
+// /api/administration/modules). Confirmed live 2026-07-12 against the same
+// module registry (cross-checked via GET /roles/permissions/matrix, which
+// shares identical keys — e.g. matrix "document_approval" / label "Document
+// Approval System" matches this registry's key exactly, resolving the old
+// label-matching hack's one confirmed mismatch). Since the registry gives
+// real keys directly, no more label-guessing is needed at all.
+const RAIL_MODULE_KEYS = {
+  'student-management':   'student_management',
+  'student-academics':    'student_academics',
+  'transport-management': 'transport_management',
+  'finance':              'finance',
+  'document-approvals':   'document_approval',
+  'inventory-management': 'inventory_management',
+  'procurement':          'procurement',
+  'human-resource':       'human_resource',
+  'payroll':              'payroll',
+  'asset-management':     'asset_management',
+  'communication':        'communication',
+  'administration':       'administration',
 };
 
-async function _computeRailAccess() {
-  const entries = await Promise.all(
-    Object.keys(_RAIL_TO_MATRIX_LABEL).map(async label =>
-      [label, await hasModuleAccess(_RAIL_TO_MATRIX_LABEL[label])])
-  );
+function _computeRailAccess() {
+  const entries = Object.keys(RAIL_MODULE_KEYS).map(railKey =>
+    [railKey, hasModuleAccess(RAIL_MODULE_KEYS[railKey])]);
   return Object.fromEntries(entries);
 }
 
-async function showDashboard() {
+function showDashboard() {
   const isSuperAdmin = currentUser?.clearance_level === 1 || currentUser?.role === 'super_admin';
   const access = await _computeRailAccess();
   document.body.innerHTML = `
@@ -69,18 +63,18 @@ async function showDashboard() {
           </div>
         </div>
         <button class="rail-item active" data-module="dashboard-home" title="Dashboard" onclick="goToDashboardHome()"><span class="rail-label-full">Dashboard</span><span class="rail-label-short">HOME</span></button>
-        ${access['Student Management'] ? `<button class="rail-item" data-module="student-management" title="Student Management" onclick="handleRailClick('student-management')"><span class="rail-label-full">Student Management</span><span class="rail-label-short">STU</span></button>` : ''}
-        ${access['Student Academics'] ? `<button class="rail-item" data-module="student-academics" title="Student Academics" onclick="handleRailClick('student-academics')"><span class="rail-label-full">Student Academics</span><span class="rail-label-short">ACA</span></button>` : ''}
-        ${access['Transport Management'] ? `<button class="rail-item" data-module="transport-management" title="Transport Management" onclick="handleRailClick('transport-management')"><span class="rail-label-full">Transport</span><span class="rail-label-short">TRN</span></button>` : ''}
-        ${access['Finance'] ? `<button class="rail-item" data-module="finance" title="Finance" onclick="handleRailClick('finance')"><span class="rail-label-full">Finance</span><span class="rail-label-short">FIN</span></button>` : ''}
-        ${access['Document Approvals'] ? `<button class="rail-item" data-module="document-approvals" title="Document Approvals" onclick="handleRailClick('document-approvals')"><span class="rail-label-full">Document Approvals</span><span class="rail-label-short">DAS</span></button>` : ''}
-        ${access['Inventory Management'] ? `<button class="rail-item" title="Inventory Management" onclick="loadView('inventory-management')"><span class="rail-label-full">Inventory</span><span class="rail-label-short">INV</span></button>` : ''}
-        ${access['Procurement'] ? `<button class="rail-item" data-module="procurement" title="Procurement" onclick="handleRailClick('procurement')"><span class="rail-label-full">Procurement</span><span class="rail-label-short">PRC</span></button>` : ''}
-        ${access['Human Resource'] ? `<button class="rail-item" data-module="human-resource" title="Human Resource" onclick="handleRailClick('human-resource')"><span class="rail-label-full">Human Resource</span><span class="rail-label-short">HR</span></button>` : ''}
-        ${access['Payroll'] ? `<button class="rail-item" data-module="payroll" title="Payroll" onclick="handleRailClick('payroll')"><span class="rail-label-full">Payroll</span><span class="rail-label-short">PAY</span></button>` : ''}
-        ${access['Asset Management'] ? `<button class="rail-item" title="Asset Management" onclick="loadView('asset-management')"><span class="rail-label-full">Assets</span><span class="rail-label-short">AST</span></button>` : ''}
-        ${access['Communication'] ? `<button class="rail-item" title="Communication" onclick="loadView('communication')"><span class="rail-label-full">Communication</span><span class="rail-label-short">COM</span></button>` : ''}
-        ${(isSuperAdmin || access['Administration']) ? `<button class="rail-item" data-module="administration" title="Administration" onclick="handleRailClick('administration')"><span class="rail-label-full">Administration</span><span class="rail-label-short">ADM</span></button>` : ''}
+        ${access['student-management'] ? `<button class="rail-item" data-module="student-management" title="Student Management" onclick="handleRailClick('student-management')"><span class="rail-label-full">Student Management</span><span class="rail-label-short">STU</span></button>` : ''}
+        ${access['student-academics'] ? `<button class="rail-item" data-module="student-academics" title="Student Academics" onclick="handleRailClick('student-academics')"><span class="rail-label-full">Student Academics</span><span class="rail-label-short">ACA</span></button>` : ''}
+        ${access['transport-management'] ? `<button class="rail-item" data-module="transport-management" title="Transport Management" onclick="handleRailClick('transport-management')"><span class="rail-label-full">Transport</span><span class="rail-label-short">TRN</span></button>` : ''}
+        ${access['finance'] ? `<button class="rail-item" data-module="finance" title="Finance" onclick="handleRailClick('finance')"><span class="rail-label-full">Finance</span><span class="rail-label-short">FIN</span></button>` : ''}
+        ${access['document-approvals'] ? `<button class="rail-item" data-module="document-approvals" title="Document Approvals" onclick="handleRailClick('document-approvals')"><span class="rail-label-full">Document Approvals</span><span class="rail-label-short">DAS</span></button>` : ''}
+        ${access['inventory-management'] ? `<button class="rail-item" title="Inventory Management" onclick="loadView('inventory-management')"><span class="rail-label-full">Inventory</span><span class="rail-label-short">INV</span></button>` : ''}
+        ${access['procurement'] ? `<button class="rail-item" data-module="procurement" title="Procurement" onclick="handleRailClick('procurement')"><span class="rail-label-full">Procurement</span><span class="rail-label-short">PRC</span></button>` : ''}
+        ${access['human-resource'] ? `<button class="rail-item" data-module="human-resource" title="Human Resource" onclick="handleRailClick('human-resource')"><span class="rail-label-full">Human Resource</span><span class="rail-label-short">HR</span></button>` : ''}
+        ${access['payroll'] ? `<button class="rail-item" data-module="payroll" title="Payroll" onclick="handleRailClick('payroll')"><span class="rail-label-full">Payroll</span><span class="rail-label-short">PAY</span></button>` : ''}
+        ${access['asset-management'] ? `<button class="rail-item" title="Asset Management" onclick="loadView('asset-management')"><span class="rail-label-full">Assets</span><span class="rail-label-short">AST</span></button>` : ''}
+        ${access['communication'] ? `<button class="rail-item" title="Communication" onclick="loadView('communication')"><span class="rail-label-full">Communication</span><span class="rail-label-short">COM</span></button>` : ''}
+        ${(isSuperAdmin || access['administration']) ? `<button class="rail-item" data-module="administration" title="Administration" onclick="handleRailClick('administration')"><span class="rail-label-full">Administration</span><span class="rail-label-short">ADM</span></button>` : ''}
         <button class="rail-item" title="Logout" onclick="logout()"><span class="rail-label-full">Log Out</span><span class="rail-label-short">OUT</span></button>
       </div>
 
@@ -463,11 +457,11 @@ function handleRailClick(moduleKey) {
 // re-checks before actually opening the panel in case something else ever
 // calls openFlyout(moduleKey) directly (console, a stray onclick, a future
 // shortcut widget) bypassing the rail entirely.
-async function openFlyout(moduleKey) {
+function openFlyout(moduleKey) {
   const body = document.getElementById('flyout-body-' + moduleKey);
   if (!body) return;
-  const matrixLabel = _RAIL_TO_MATRIX_LABEL[body.dataset.label] || body.dataset.label || '';
-  if (!(await hasModuleAccess(matrixLabel))) {
+  const registryKey = RAIL_MODULE_KEYS[moduleKey];
+  if (registryKey && !hasModuleAccess(registryKey)) {
     showToast("You don't have access to this module.", 'error');
     return;
   }
@@ -590,6 +584,14 @@ async function renderSplitView(cfg) {
   let mode = 'add';
   let searchTerm = '';
 
+  // Optional cfg.moduleKey (registry dot-notation key, e.g. "finance.receivables")
+  // gates the Add trigger/renderAdd and Edit button on canAdd/canEdit for that
+  // key. Hidden, not disabled, per spec — omitting moduleKey leaves a screen
+  // fully open (back-compat for the many call sites not yet wired up; see the
+  // module-registry rollout tasks).
+  const _canAddHere  = !cfg.moduleKey || canAdd(cfg.moduleKey);
+  const _canEditHere = !cfg.moduleKey || canEdit(cfg.moduleKey);
+
   // 2-column left panel config
   const col1Label = cfg.col1Label || 'Name';
   const col2Label = cfg.col2Label || '';
@@ -640,12 +642,12 @@ async function renderSplitView(cfg) {
     if (mode === 'add') {
       rightEl.className = 'split-right-add';
       rightEl.innerHTML = '';
-      if (typeof cfg.renderAdd === 'function') cfg.renderAdd(rightEl);
+      if (_canAddHere && typeof cfg.renderAdd === 'function') cfg.renderAdd(rightEl);
     } else if (mode === 'detail' && selectedItem) {
       rightEl.className = 'split-right-detail';
       const bannerTitle  = nameLabel(selectedItem);
       const bannerSub    = cfg.rowSub ? cfg.rowSub(selectedItem) : col2Fn(selectedItem);
-      const hasEditAction = typeof cfg.onEdit === 'function' || typeof cfg.renderEdit === 'function';
+      const hasEditAction = _canEditHere && (typeof cfg.onEdit === 'function' || typeof cfg.renderEdit === 'function');
       rightEl.innerHTML = `
         <div class="detail-banner">
           <div class="detail-banner-initials">${bannerTitle.charAt(0).toUpperCase()}</div>
@@ -658,9 +660,9 @@ async function renderSplitView(cfg) {
         <div class="detail-info-card">
           <div class="detail-fields-grid">${buildDetailFields(selectedItem, cfg.detailFields || [])}</div>
           ${typeof cfg.detailActions === 'function' ? `<div class="detail-actions-row" style="margin-top:16px;padding-top:16px;border-top:1px solid var(--grey-100)">${cfg.detailActions(selectedItem) || ''}</div>` : ''}
-          <div style="display:flex;gap:10px;margin-top:20px;padding-top:16px;border-top:1px solid var(--grey-100)">
+          ${_canAddHere ? `<div style="display:flex;gap:10px;margin-top:20px;padding-top:16px;border-top:1px solid var(--grey-100)">
             <button class="btn" onclick="window._splitGoAdd()">+ Add New</button>
-          </div>
+          </div>` : ''}
         </div>`;
     } else if (mode === 'edit' && selectedItem) {
       rightEl.className = 'split-edit-fullscreen';
@@ -699,10 +701,12 @@ async function renderSplitView(cfg) {
     renderRight();
   };
   window._splitEditItem = function() {
+    if (!_canEditHere) return; // defense in depth — the Edit button is already hidden when this is false
     if (typeof cfg.onEdit === 'function') { cfg.onEdit(selectedItem); return; }
     mode = 'edit'; renderRight();
   };
   window._splitGoAdd = function() {
+    if (!_canAddHere) return; // defense in depth — the +Add trigger is already hidden when this is false
     if (typeof cfg.onAdd === 'function') { cfg.onAdd(); return; }
     selectedItem = null; mode = 'add'; renderList(); renderRight();
   };

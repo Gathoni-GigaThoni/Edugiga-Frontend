@@ -15,6 +15,7 @@ async function loadSessionTypesView(container) {
   await renderSplitView({
     container,
     title: 'Term Types',
+    moduleKey: 'student_academics.academic_year_setup',
     breadcrumb: [
       {label:'Dashboard',view:null},
       {label:'Student Academics',view:'sa-session-types'},

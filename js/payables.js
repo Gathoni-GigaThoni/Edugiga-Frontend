@@ -172,6 +172,7 @@ async function loadPayablesPaymentVouchersView(container) {
   await _pvLoadLookups();
   await renderSplitView({
     container,
+    moduleKey: 'finance.payables',
     title: 'Payment Vouchers',
     breadcrumb: [
       {label:'Dashboard',view:null},
@@ -495,6 +496,7 @@ async function loadPayablesTaxVouchersView(container) {
   await _pvLoadLookups();
   await renderSplitView({
     container,
+    moduleKey: 'finance.payables',
     title: 'Tax Vouchers',
     breadcrumb: [
       {label:'Dashboard',view:null},
@@ -673,6 +675,7 @@ async function _pvTvSubmitAdd() {
 async function loadPayablesTaxVouchersUpcomingView(container) {
   await renderSplitView({
     container,
+    moduleKey: 'finance.payables',
     title: 'Tax Vouchers — Upcoming Deadlines',
     breadcrumb: [
       {label:'Dashboard',view:null},
@@ -705,6 +708,7 @@ async function loadPayablesSupplierInvoicesView(container) {
   await _pvLoadLookups();
   await renderSplitView({
     container,
+    moduleKey: 'finance.payables',
     title: 'Supplier Invoices',
     breadcrumb: [
       {label:'Dashboard',view:null},
@@ -829,6 +833,7 @@ async function loadPayablesSupplierInvoicesMissingEtimsView(container) {
   await _pvLoadLookups();
   await renderSplitView({
     container,
+    moduleKey: 'finance.payables',
     title: 'Supplier Invoices — Missing eTIMS',
     breadcrumb: [
       {label:'Dashboard',view:null},
@@ -1055,6 +1060,7 @@ async function loadPayablesWhtVatCertificatesView(container) {
   await _pvLoadLookups();
   await renderSplitView({
     container,
+    moduleKey: 'finance.payables',
     title: 'Supplier WHT VAT Certificates',
     breadcrumb: [
       {label:'Dashboard',view:null},
@@ -1127,6 +1133,7 @@ async function loadPayablesExpenseClaimsView(container) {
   await _pvLoadLookups();
   await renderSplitView({
     container,
+    moduleKey: 'finance.payables',
     title: 'Expense Claims',
     breadcrumb: [
       {label:'Dashboard',view:null},
@@ -1266,6 +1273,7 @@ async function loadPayablesExpenseClaimDisbursementsView(container) {
   await _pvLoadLookups();
   await renderSplitView({
     container,
+    moduleKey: 'finance.payables',
     title: 'Expense Claim Disbursements',
     breadcrumb: [
       {label:'Dashboard',view:null},
@@ -1374,6 +1382,7 @@ async function loadPayablesPettyCashApplicationsView(container) {
   await _pvLoadLookups();
   await renderSplitView({
     container,
+    moduleKey: 'finance.payables',
     title: 'Petty Cash Applications',
     breadcrumb: [
       {label:'Dashboard',view:null},
@@ -1469,6 +1478,7 @@ async function loadPayablesPettyCashDisbursementsView(container) {
   await _pvLoadLookups();
   await renderSplitView({
     container,
+    moduleKey: 'finance.payables',
     title: 'Petty Cash Disbursements',
     breadcrumb: [
       {label:'Dashboard',view:null},
@@ -1574,6 +1584,7 @@ async function loadPayablesImprestWarrantsView(container) {
   await _pvLoadLookups();
   await renderSplitView({
     container,
+    moduleKey: 'finance.payables',
     title: 'Imprest Warrant',
     breadcrumb: [
       {label:'Dashboard',view:null},
@@ -1603,6 +1614,7 @@ async function loadPayablesImprestWarrantsOverdueView(container) {
   await _pvLoadLookups();
   await renderSplitView({
     container,
+    moduleKey: 'finance.payables',
     title: 'Imprest Warrants — Overdue',
     breadcrumb: [
       {label:'Dashboard',view:null},
@@ -1757,6 +1769,7 @@ async function loadPayablesImprestDisbursementsView(container) {
   await _pvLoadLookups();
   await renderSplitView({
     container,
+    moduleKey: 'finance.payables',
     title: 'Imprest Disbursements',
     breadcrumb: [
       {label:'Dashboard',view:null},

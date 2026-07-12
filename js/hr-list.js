@@ -29,6 +29,7 @@ async function loadHrEmployeeDirectoryView(container) {
 
   await renderSplitView({
     container,
+    moduleKey: 'human_resource.employee_directory',
     title: 'Employees',
     breadcrumb: [
       {label:'Dashboard',view:null},
