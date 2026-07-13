@@ -18,7 +18,7 @@ async function _pvLoadLookups(force = false) {
     apiFetch(`${API_BASE}/lookups/ledgers`),
     apiFetch(`${API_BASE}/lookups/cost-centers`),
     apiFetch(`${API_BASE}/departments/`),
-    apiFetch(`${API_BASE}/finance/accounts/?is_active=true`),
+    apiFetch(`${API_BASE}/accounts/?is_active=true`),
     apiFetch(`${API_BASE}/suppliers/`),
     apiFetch(`${API_BASE}/hr/employees`),
   ]);
@@ -55,7 +55,15 @@ function _pvLedgerOptions(sel)     { return _pvOptions(_pvLedgers, 'id', l => l.
 function _pvCostCenterOptions(sel) { return _pvOptions(_pvCostCenters, 'id', c => c.name, sel); }
 function _pvDepartmentOptions(sel) { return _pvOptions(_pvDepartments, 'id', d => d.name, sel); }
 function _pvAccountOptions(sel)    { return _pvOptions(_pvAccounts, 'id', a => `${a.number ? a.number + ' - ' : ''}${a.account_name}`, sel); }
-function _pvTendepayWalletOptions(sel) { return _pvOptions(_pvAccounts.filter(a => (a.account_name || '').toLowerCase().startsWith('tendepay')), 'id', a => a.account_name, sel); }
+// "Tendepay Wallet" options are child accounts of the "Tendepay - Main Wallet"
+// parent account (chart-of-accounts parent_id link), not accounts whose name
+// happens to start with "Tendepay" — a single Ledger, Bank, or Suspense
+// account named e.g. "Tendepay Clearing" would otherwise leak into this list.
+function _pvTendepayWalletOptions(sel) {
+  const parent = _pvAccounts.find(a => (a.account_name || '').trim().toLowerCase() === 'tendepay - main wallet');
+  const children = parent ? _pvAccounts.filter(a => String(a.parent_id) === String(parent.id)) : [];
+  return _pvOptions(children, 'id', a => a.account_name, sel);
+}
 function _pvSupplierOptions(sel)   { return _pvOptions(_pvSuppliers, 'id', s => s.name, sel); }
 function _pvEmployeeOptions(sel)   { return _pvOptions(_pvEmployees, 'id', e => `${e.first_name} ${e.last_name}`, sel); }
 

@@ -3011,16 +3011,16 @@ async function loadStudentSourcesView(container) {
       {label:'Student Management',view:'students-list'},
       {label:'Student Sources'}
     ],
-    apiUrl: `${API_BASE}/student-management/student-sources`,
+    apiUrl: `${API_BASE}/student-management/funding-sources/`,
     col1Label: 'Title', col2Label: 'Status',
     col1: s => s.title || s.name || '—',
-    col2: s => s.is_inactive ? 'Inactive' : 'Active',
+    col2: s => s.status === 'inactive' ? 'Inactive' : 'Active',
     rowLabel: s => s.title || s.name || '—',
-    rowSub:   s => s.is_inactive ? 'Inactive' : 'Active',
+    rowSub:   s => s.status === 'inactive' ? 'Inactive' : 'Active',
     idKey: 'id',
     detailFields: [
       {label:'Title',  key:'title'},
-      {label:'Status', key:'is_inactive', fmt: v => v ? 'Inactive' : 'Active'},
+      {label:'Status', key:'status', fmt: v => v === 'inactive' ? 'Inactive' : 'Active'},
     ],
     renderAdd:  el => _stuSrcSplitForm(null, el),
     renderEdit: (item, el) => _stuSrcSplitForm(item, el),
@@ -3038,7 +3038,7 @@ function _stuSrcSplitForm(item, el) {
         <input id="stusrc-title" value="${_esc(item?.title||item?.name||'')}" style="max-width:none;width:100%">
       </div>
       ${isEdit ? `<div class="stu-form-group" style="margin-bottom:16px">
-        <label><input type="checkbox" id="stusrc-deactivate"${item?.is_inactive?' checked':''}> Mark as Inactive</label>
+        <label><input type="checkbox" id="stusrc-deactivate"${item?.status==='inactive'?' checked':''}> Mark as Inactive</label>
       </div>` : ''}
       <div style="display:flex;gap:12px;margin-top:20px">
         <button class="btn-primary" style="padding:9px 20px" onclick="saveStudentSource('${id||''}')">
@@ -3060,7 +3060,7 @@ function _renderStuSrcTable() {
   let rows = paged.length
     ? paged.map(s => `<tr>
         <td>${_esc(s.title||s.name||'')}</td>
-        <td><span style="color:${s.is_inactive?'#e74c3c':'#27ae60'};font-weight:600;">${s.is_inactive?'Inactive':'Active'}</span></td>
+        <td><span style="color:${s.status==='inactive'?'#e74c3c':'#27ae60'};font-weight:600;">${s.status==='inactive'?'Inactive':'Active'}</span></td>
         <td class="fin-action-cell">
           <div class="fin-action-wrap">
             <button class="fin-action-btn" onclick="toggleStuDd(event,'stusrc-${s.id}')">&#8230;</button>
@@ -3098,7 +3098,7 @@ function showStudentSourceForm(id) {
           <input id="stusrc-title" class="fin-search-input" style="width:100%!important;" value="${_esc(item?.title||item?.name||'')}">
         </div>
         ${isEdit ? `<div class="stu-form-group" style="margin-bottom:20px;">
-          <label><input type="checkbox" id="stusrc-deactivate"${item?.is_inactive?' checked':''}> Deactivate/Activate</label>
+          <label><input type="checkbox" id="stusrc-deactivate"${item?.status==='inactive'?' checked':''}> Deactivate/Activate</label>
         </div>` : ''}
         <div style="display:flex;gap:12px;">
           <button class="fin-btn-teal" onclick="saveStudentSource('${id||''}')">${isEdit?'Update':'Save'}</button>
@@ -3112,9 +3112,9 @@ function showStudentSourceForm(id) {
 async function saveStudentSource(id) {
   const title = document.getElementById('stusrc-title')?.value.trim();
   if (!title) { showToast('Title is required.', 'error'); return; }
-  const payload = { title, is_inactive: id ? _fc('stusrc-deactivate') : false };
-  const url    = id ? `${API_BASE}/student-management/student-sources/${id}` : `${API_BASE}/student-management/student-sources`;
-  const method = id ? 'PUT' : 'POST';
+  const payload = { title, status: (id && _fc('stusrc-deactivate')) ? 'inactive' : 'active' };
+  const url    = id ? `${API_BASE}/student-management/funding-sources/${id}` : `${API_BASE}/student-management/funding-sources/`;
+  const method = id ? 'PATCH' : 'POST';
   const res    = await apiFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   if (res && res.ok) {
     showToast(id ? 'Student source updated!' : 'Student source added!', 'success');
