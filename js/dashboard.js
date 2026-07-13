@@ -42,7 +42,7 @@ function _computeRailAccess() {
 
 function showDashboard() {
   const isSuperAdmin = currentUser?.clearance_level === 1 || currentUser?.role === 'super_admin';
-  const access = await _computeRailAccess();
+  const access = _computeRailAccess();
   document.body.innerHTML = `
     <div class="container">
       <div class="left-rail" id="left-rail">
