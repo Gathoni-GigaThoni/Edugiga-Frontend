@@ -169,7 +169,7 @@ async function attLoadClass() {
 
     let students = Array.isArray(data.students) ? data.students : [];
     if (studentFilter) {
-      students = students.filter(s => (s.student_name || '').toLowerCase().includes(studentFilter));
+      students = students.filter(s => (s.full_name || '').toLowerCase().includes(studentFilter));
     }
 
     _attStudents = students;
@@ -192,8 +192,8 @@ function _attRenderTable(container, students) {
   students.forEach(s => {
     rows += `
       <tr id="att-row-${s.student_id}">
-        <td>${s.student_id}</td>
-        <td>${s.student_name || ''}</td>
+        <td>${s.student_id_number || s.student_id}</td>
+        <td>${s.full_name || ''}</td>
         <td>
           <select id="att-status-${s.student_id}" class="sa-table-select">
             <option value="">Select status</option>
