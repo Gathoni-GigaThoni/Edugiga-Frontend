@@ -4251,7 +4251,7 @@ async function saveEcAssignmentChanges() {
 
 let _stuRptData = [], _stuRptPage = 1, _stuRptPerPage = 10, _stuRptSearch = '';
 let _stuRptFilters = {};
-let _stuRptFilterCache = { types: [], classes: [], streams: [], routes: [], ec: [] };
+let _stuRptFilterCache = { classes: [], streams: [], routes: [], ec: [], houses: [] };
 
 async function loadStudentReportView(container) {
   openStuReportsDropdown();
@@ -4288,7 +4288,11 @@ async function loadStudentReportView(container) {
         <div class="hr-filter-panel-body">
           <div class="hr-filter-group">
             <label class="hr-filter-label">Student Type</label>
-            <select id="srpt-f-type" class="hr-filter-select"><option value="">Please Select</option></select>
+            <select id="srpt-f-type" class="hr-filter-select">
+              <option value="">Please Select</option>
+              <option value="Full Day">Full Day</option>
+              <option value="Half Day">Half Day</option>
+            </select>
           </div>
           <div class="hr-filter-group">
             <label class="hr-filter-label">Class</label>
@@ -4349,21 +4353,22 @@ async function loadStudentReportView(container) {
 }
 
 async function _loadStuRptFilterDropdowns() {
-  // Sports House: no flat /sports-houses endpoint confirmed on the backend —
-  // flagged as backend gap; leaving dropdown empty with console warning.
-  // TODO: backend needs GET /sports-houses (flat list, all levels) for this filter to work.
-  const [typesRes, classesRes, streamsRes, routesRes, ecRes] = await Promise.all([
-    apiFetch(`${API_BASE}/student-management/student-sources`),
+  // Extra Curriculum: the master activity list below is real, but StudentReadFull
+  // (what /students/ returns, our data source) carries no enrolled-activity field,
+  // so this filter can't be applied client-side without an N+1 lookup per student.
+  // Left wired for visibility but not enforced in _fetchStuReport() — flagged there too.
+  const [classesRes, streamsRes, routesRes, ecRes, housesRes] = await Promise.all([
     apiFetch(`${API_BASE}/classes/`),
     apiFetch(`${API_BASE}/student-management/streams`),
     apiFetch(`${API_BASE}/routes/`),
     apiFetch(`${API_BASE}/student-management/extra-curriculum/`),
+    apiFetch(`${API_BASE}/student-management/sports-houses/`),
   ]);
-  _stuRptFilterCache.types   = typesRes   && typesRes.ok   ? _toArray(await typesRes.json())   : [];
   _stuRptFilterCache.classes = classesRes && classesRes.ok ? _toArray(await classesRes.json()) : [];
   _stuRptFilterCache.streams = streamsRes && streamsRes.ok ? _toArray(await streamsRes.json()) : [];
   _stuRptFilterCache.routes  = routesRes  && routesRes.ok  ? _toArray(await routesRes.json())  : [];
   _stuRptFilterCache.ec      = ecRes      && ecRes.ok      ? _toArray(await ecRes.json())      : [];
+  _stuRptFilterCache.houses  = housesRes  && housesRes.ok  ? _toArray(await housesRes.json())   : [];
 
   const _opt = (id, items, vk, lk) => {
     const sel = document.getElementById(id);
@@ -4371,16 +4376,11 @@ async function _loadStuRptFilterDropdowns() {
     sel.innerHTML = `<option value="">Please Select</option>` +
       items.map(it => `<option value="${_esc(String(it[vk]))}">${_esc(it[lk])}</option>`).join('');
   };
-  _opt('srpt-f-type',   _stuRptFilterCache.types,   'id', 'name');
-  _opt('srpt-f-class',  _stuRptFilterCache.classes,  'id', 'name');
-  _opt('srpt-f-stream', _stuRptFilterCache.streams,  'id', 'title');
-  _opt('srpt-f-route',  _stuRptFilterCache.routes,   'id', 'name');
-  _opt('srpt-f-ec',     _stuRptFilterCache.ec,       'id', 'title');
-
-  if (!_stuRptFilterCache.types.length && !_stuRptFilterCache.streams.length) {
-    console.warn('[EduGiga] Student Report: some filter dropdowns may be empty due to missing API endpoints.');
-  }
-  console.warn('[EduGiga] Student Report: Sports House filter requires a flat GET /sports-houses endpoint (not yet available).');
+  _opt('srpt-f-class',        _stuRptFilterCache.classes,  'id', 'name');
+  _opt('srpt-f-stream',       _stuRptFilterCache.streams,  'id', 'title');
+  _opt('srpt-f-route',        _stuRptFilterCache.routes,   'id', 'name');
+  _opt('srpt-f-ec',           _stuRptFilterCache.ec,       'id', 'title');
+  _opt('srpt-f-sports-house', _stuRptFilterCache.houses,   'id', 'name');
 }
 
 function showStuRptFilterPanel() {
@@ -4390,10 +4390,11 @@ function showStuRptFilterPanel() {
   // Restore current filter selections
   const f = _stuRptFilters;
   const set = (id, v) => { const el = document.getElementById(id); if (el && v !== undefined) el.value = v; };
-  set('srpt-f-type',          f.student_type_id || '');
+  set('srpt-f-type',          f.student_type    || '');
   set('srpt-f-class',         f.class_id        || '');
   set('srpt-f-status',        f.status          || '');
   set('srpt-f-ec',            f.extra_curriculum_id || '');
+  set('srpt-f-sports-house',  f.sports_house_id || '');
   set('srpt-f-stream',        f.stream_id       || '');
   set('srpt-f-route',         f.transport_route_id  || '');
   set('srpt-f-photo-consent', f.parent_consents_photo !== undefined ? String(f.parent_consents_photo) : '');
@@ -4410,10 +4411,11 @@ async function applyStuRptFilters() {
   _stuRptFilters = {};
   const read = id => document.getElementById(id)?.value || '';
   const v = (k, id) => { const val = read(id); if (val) _stuRptFilters[k] = val; };
-  v('student_type_id',      'srpt-f-type');
+  v('student_type',         'srpt-f-type');
   v('class_id',             'srpt-f-class');
   v('status',               'srpt-f-status');
   v('extra_curriculum_id',  'srpt-f-ec');
+  v('sports_house_id',      'srpt-f-sports-house');
   v('stream_id',            'srpt-f-stream');
   v('transport_route_id',   'srpt-f-route');
   v('parent_consents_photo','srpt-f-photo-consent');
@@ -4438,15 +4440,31 @@ function sendStuRptSms() {
 
 async function _fetchStuReport() {
   renderSkeletonRows('srpt-table', 7);
-  const params = new URLSearchParams();
-  Object.entries(_stuRptFilters).forEach(([k, v]) => { if (v !== '' && v !== undefined) params.set(k, v); });
-  const qs = params.toString();
-  const url = `${API_BASE}/reports/students${qs ? '?' + qs : ''}`;
-  const res = await apiFetch(url);
+  // GET /reports/students doesn't exist on the backend (confirmed 404) — there is
+  // no server-side filtered report endpoint for students, so this pulls the full
+  // roster from GET /students/ (StudentReadFull[], max limit 1000) and filters
+  // client-side against the real fields that endpoint actually returns.
+  const res = await apiFetch(`${API_BASE}/students/?limit=1000`);
+  let all = [];
   if (res && res.ok) {
     const raw = await res.json();
-    _stuRptData = Array.isArray(raw) ? raw : (raw.data || raw.results || []);
+    all = Array.isArray(raw) ? raw : [];
   }
+
+  const f = _stuRptFilters;
+  _stuRptData = all.filter(s => {
+    if (f.student_type        && s.student_type !== f.student_type) return false;
+    if (f.class_id            && String(s.class_id ?? s.school_class_id) !== String(f.class_id)) return false;
+    if (f.status               && s.student_status !== f.status) return false;
+    if (f.sports_house_id      && String(s.sports_house_id) !== String(f.sports_house_id)) return false;
+    if (f.stream_id            && String(s.stream_id) !== String(f.stream_id)) return false;
+    if (f.transport_route_id   && String(s.transport_route_id) !== String(f.transport_route_id)) return false;
+    if (f.parent_consents_photo !== undefined && String(!!s.parent_consents_photo) !== f.parent_consents_photo) return false;
+    if (f.nationality          && (s.nationality || '').toLowerCase() !== f.nationality.toLowerCase()) return false;
+    // extra_curriculum_id: not filterable — StudentReadFull carries no enrolled-
+    // activity field (see _loadStuRptFilterDropdowns comment above).
+    return true;
+  });
   _stuRptPage = 1;
   _renderStuRptTable();
 }
