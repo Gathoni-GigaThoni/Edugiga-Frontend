@@ -91,12 +91,10 @@ function showDashboard() {
               <li id="sidebar-stu-cohort"        onclick="loadView('cohort-term-planner')">Cohort Term Planner</li>
               <li id="sidebar-stu-classes"       onclick="loadView('student-classes')">Classes</li>
               <li id="sidebar-stu-close-records" onclick="loadView('close-records-per-class')">Close Records Per Class</li>
-              <li id="sidebar-stu-eca-assignment" onclick="loadView('eca-assignment')">ECA Assignment</li>
               <li id="sidebar-stu-parent-portal" onclick="loadView('student-parent-portal')">Parent Portal Access</li>
               <li class="dropdown">
                 ${flyoutGroupHeader('Utilities', 'stu-utilities-dropdown')}
                 <ul id="stu-utilities-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('stu-utilities-dropdown')}">
-                  <li id="sidebar-stu-sources" class="sa-sub-sub" onclick="loadView('utilities-student-sources')">Student Sources</li>
                   <li id="sidebar-stu-streams" class="sa-sub-sub" onclick="loadView('utilities-streams')">Streams</li>
                   <li id="sidebar-stu-funding" class="sa-sub-sub" onclick="loadView('utilities-funding-sources')">Funding Sources</li>
                   <li id="sidebar-stu-sports-houses" class="sa-sub-sub" onclick="loadView('utilities-sports-houses')">Sports Houses</li>
@@ -774,7 +772,7 @@ const FORM_VIEWS = new Set([
   // Academic setup
   'sa-academic-years', 'sa-sessions', 'sa-session-types',
   // Utilities with add/edit forms
-  'utilities-student-sources', 'utilities-streams', 'utilities-funding-sources', 'utilities-sports-houses',
+  'utilities-streams', 'utilities-funding-sources', 'utilities-sports-houses',
   'student-classes',
   // Transport
   'transport-routes-add', 'transport-routes-edit',
@@ -840,16 +838,10 @@ async function loadView(view) {
     case 'student-close-records':
       setActiveSidebarItem('sidebar-stu-close-records'); openStuMgmtDropdowns();
       await loadCloseRecordsView(main); break;
-    case 'eca-assignment':
-      setActiveSidebarItem('sidebar-stu-eca-assignment'); openStuMgmtDropdowns();
-      await loadEcaAssignmentView(main); break;
     case 'student-parent-portal':
       setActiveSidebarItem('sidebar-stu-parent-portal'); openStuMgmtDropdowns();
       await loadParentPortalAccessView(main); break;
     // Student Management – Utilities
-    case 'utilities-student-sources':
-      setActiveSidebarItem('sidebar-stu-sources'); openStuUtilitiesDropdown();
-      await loadStudentSourcesView(main); break;
     case 'utilities-streams':
     case 'stu-streams':
       setActiveSidebarItem('sidebar-stu-streams'); openStuUtilitiesDropdown();

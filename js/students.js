@@ -2023,7 +2023,8 @@ async function _stuSyncTransport(studentId, d) {
 // Best-effort — a failure here doesn't roll back the record save that already
 // succeeded. Syncs the selected Extra Curriculum activities (the legacy
 // ExtraCurriculumActivity catalog behind the Personal tab's multiselect —
-// unrelated to the Fee-Items/ECA-Assignment grid in eca-assignment.js) against
+// unrelated to the Fee-Items/ECA-Assignment grid used by Extra Curricular
+// Activity Assignment under Utilities) against
 // the real StudentExtraCurriculum rows via POST/DELETE, then PATCHes
 // extra_curriculum_term_id to trigger the backend's own enrollment +
 // fee-assignment sync for this term. Previously the selections were captured
@@ -2997,136 +2998,6 @@ async function submitBulkReport() {
   }
 }
 
-// ==================== 6. UTILITIES — STUDENT SOURCES ====================
-
-let _stuSrcData = [], _stuSrcPage = 1, _stuSrcPerPage = 10;
-
-async function loadStudentSourcesView(container) {
-  openStuUtilitiesDropdown();
-  await renderSplitView({
-    container,
-    title: 'Student Sources',
-    breadcrumb: [
-      {label:'Dashboard',view:null},
-      {label:'Student Management',view:'students-list'},
-      {label:'Student Sources'}
-    ],
-    apiUrl: `${API_BASE}/student-management/funding-sources/`,
-    col1Label: 'Title', col2Label: 'Status',
-    col1: s => s.title || s.name || '—',
-    col2: s => s.status === 'inactive' ? 'Inactive' : 'Active',
-    rowLabel: s => s.title || s.name || '—',
-    rowSub:   s => s.status === 'inactive' ? 'Inactive' : 'Active',
-    idKey: 'id',
-    detailFields: [
-      {label:'Title',  key:'title'},
-      {label:'Status', key:'status', fmt: v => v === 'inactive' ? 'Inactive' : 'Active'},
-    ],
-    renderAdd:  el => _stuSrcSplitForm(null, el),
-    renderEdit: (item, el) => _stuSrcSplitForm(item, el),
-  });
-}
-
-function _stuSrcSplitForm(item, el) {
-  const id = item?.id ?? null;
-  const isEdit = !!item;
-  el.innerHTML = `
-    <div style="max-width:460px">
-      <h3 class="split-right-add-title">${isEdit ? 'Edit' : 'Add'} Student Source</h3>
-      <div class="stu-form-group" style="margin-bottom:16px">
-        <label>Title <span style="color:var(--coral-500)">*</span></label>
-        <input id="stusrc-title" value="${_esc(item?.title||item?.name||'')}" style="max-width:none;width:100%">
-      </div>
-      ${isEdit ? `<div class="stu-form-group" style="margin-bottom:16px">
-        <label><input type="checkbox" id="stusrc-deactivate"${item?.status==='inactive'?' checked':''}> Mark as Inactive</label>
-      </div>` : ''}
-      <div style="display:flex;gap:12px;margin-top:20px">
-        <button class="btn-primary" style="padding:9px 20px" onclick="saveStudentSource('${id||''}')">
-          ${isEdit ? 'Update' : 'Save'}
-        </button>
-        <button class="btn-cancel" onclick="window._splitGoAdd?.()">Cancel</button>
-      </div>
-    </div>
-  `;
-}
-
-function _renderStuSrcTable() {
-  const totalEl = document.getElementById('stusrc-total');
-  if (totalEl) totalEl.textContent = _stuSrcData.length;
-  const start = (_stuSrcPage - 1) * _stuSrcPerPage;
-  const paged = _stuSrcData.slice(start, start + _stuSrcPerPage);
-  const pages = Math.max(1, Math.ceil(_stuSrcData.length / _stuSrcPerPage));
-
-  let rows = paged.length
-    ? paged.map(s => `<tr>
-        <td>${_esc(s.title||s.name||'')}</td>
-        <td><span style="color:${s.status==='inactive'?'#e74c3c':'#27ae60'};font-weight:600;">${s.status==='inactive'?'Inactive':'Active'}</span></td>
-        <td class="fin-action-cell">
-          <div class="fin-action-wrap">
-            <button class="fin-action-btn" onclick="toggleStuDd(event,'stusrc-${s.id}')">&#8230;</button>
-            <div id="stu-dd-stusrc-${s.id}" class="fin-action-dropdown" style="display:none;">
-              <a href="#" onclick="showStudentSourceForm('${s.id}');return false;">&#9998; Edit</a>
-            </div>
-          </div>
-        </td>
-      </tr>`).join('')
-    : '<tr><td colspan="3" class="fin-empty">No student sources found.</td></tr>';
-
-  const t = document.getElementById('stusrc-table');
-  if (t) t.innerHTML = `<div class="fin-table-wrap"><table class="fin-table">
-    <thead><tr><th>TITLE</th><th>STATUS</th><th>ACTION</th></tr></thead>
-    <tbody>${rows}</tbody></table></div>`;
-  _mkPagination('stusrc-pagination', _stuSrcPage, pages, 'stuSrcGoPage');
-}
-function changeStuSrcPerPage(v) { _stuSrcPerPage = parseInt(v); _stuSrcPage = 1; _renderStuSrcTable(); }
-function stuSrcGoPage(p)        { _stuSrcPage = p; _renderStuSrcTable(); }
-
-function showStudentSourceForm(id) {
-  const item   = id ? _stuSrcData.find(s => String(s.id) === String(id)) : null;
-  const isEdit = !!item;
-  const main   = document.getElementById('main-content');
-  if (!main) return;
-  main.innerHTML = `
-    <div class="fin-page">
-      <div class="fin-header-row">
-        <h2 class="fin-title">${isEdit?'Edit':'Add'} Student Source</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Utilities &rsaquo; Student Sources &rsaquo; ${isEdit?'Edit':'Add'}</div>
-      </div>
-      <div style="background:white;border-radius:6px;padding:28px;max-width:600px;box-shadow:0 1px 4px rgba(0,0,0,0.06);">
-        <div class="stu-form-group" style="margin-bottom:16px;">
-          <label style="font-weight:600;">Title <span style="color:#e74c3c">*</span></label>
-          <input id="stusrc-title" class="fin-search-input" style="width:100%!important;" value="${_esc(item?.title||item?.name||'')}">
-        </div>
-        ${isEdit ? `<div class="stu-form-group" style="margin-bottom:20px;">
-          <label><input type="checkbox" id="stusrc-deactivate"${item?.status==='inactive'?' checked':''}> Deactivate/Activate</label>
-        </div>` : ''}
-        <div style="display:flex;gap:12px;">
-          <button class="fin-btn-teal" onclick="saveStudentSource('${id||''}')">${isEdit?'Update':'Save'}</button>
-          <button class="fin-btn-cancel" onclick="loadView('utilities-student-sources')">Cancel</button>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-async function saveStudentSource(id) {
-  const title = document.getElementById('stusrc-title')?.value.trim();
-  if (!title) { showToast('Title is required.', 'error'); return; }
-  const payload = { title, status: (id && _fc('stusrc-deactivate')) ? 'inactive' : 'active' };
-  const url    = id ? `${API_BASE}/student-management/funding-sources/${id}` : `${API_BASE}/student-management/funding-sources/`;
-  const method = id ? 'PATCH' : 'POST';
-  const res    = await apiFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-  if (res && res.ok) {
-    showToast(id ? 'Student source updated!' : 'Student source added!', 'success');
-    loadView('utilities-student-sources');
-  } else {
-    if (id) { const idx = _stuSrcData.findIndex(s => String(s.id) === String(id)); if (idx !== -1) _stuSrcData[idx] = { ..._stuSrcData[idx], ...payload }; }
-    else    { _stuSrcData.push({ id: 'src_' + Date.now(), ...payload }); }
-    showToast(id ? 'Student source updated!' : 'Student source added!', 'success');
-    loadView('utilities-student-sources');
-  }
-}
-
 // ==================== 7. UTILITIES — STREAMS ====================
 
 let _strPage = 1, _strPerPage = 10;
@@ -3282,16 +3153,16 @@ async function loadFundingSourcesView(container) {
       {label:'Student Management',view:'students-list'},
       {label:'Funding Sources'}
     ],
-    apiUrl: `${API_BASE}/student-management/funding-sources`,
+    apiUrl: `${API_BASE}/student-management/funding-sources/`,
     col1Label: 'Title', col2Label: 'Status',
     col1: f => f.title || '—',
-    col2: f => f.is_inactive ? 'Inactive' : 'Active',
+    col2: f => f.status === 'inactive' ? 'Inactive' : 'Active',
     rowLabel: f => f.title || '—',
-    rowSub:   f => f.is_inactive ? 'Inactive' : 'Active',
+    rowSub:   f => f.status === 'inactive' ? 'Inactive' : 'Active',
     idKey: 'id',
     detailFields: [
       {label:'Title',  key:'title'},
-      {label:'Status', key:'is_inactive', fmt: v => v ? 'Inactive' : 'Active'},
+      {label:'Status', key:'status', fmt: v => v === 'inactive' ? 'Inactive' : 'Active'},
     ],
     renderAdd:  el => _fsSplitForm(null, el),
     renderEdit: (item, el) => _fsSplitForm(item, el),
@@ -3309,7 +3180,7 @@ function _fsSplitForm(item, el) {
         <input id="fs-title" value="${_esc(item?.title||'')}" style="max-width:none;width:100%">
       </div>
       ${isEdit ? `<div class="stu-form-group" style="margin-bottom:16px">
-        <label><input type="checkbox" id="fs-deactivate"${item?.is_inactive?' checked':''}> Mark as Inactive</label>
+        <label><input type="checkbox" id="fs-deactivate"${item?.status==='inactive'?' checked':''}> Mark as Inactive</label>
       </div>` : ''}
       <div style="display:flex;gap:12px;margin-top:20px">
         <button class="btn-primary" style="padding:9px 20px" onclick="saveFundingSource('${id||''}')">
@@ -3331,7 +3202,7 @@ function _renderFsTable() {
   let rows = paged.length
     ? paged.map(f => `<tr>
         <td>${_esc(f.title||'')}</td>
-        <td><span style="color:${f.is_inactive?'#e74c3c':'#27ae60'};font-weight:600;">${f.is_inactive?'Inactive':'Active'}</span></td>
+        <td><span style="color:${f.status==='inactive'?'#e74c3c':'#27ae60'};font-weight:600;">${f.status==='inactive'?'Inactive':'Active'}</span></td>
         <td class="fin-action-cell">
           <div class="fin-action-wrap">
             <button class="fin-action-btn" onclick="toggleStuDd(event,'fs-${f.id}')">&#8230;</button>
@@ -3369,7 +3240,7 @@ function showFundingSourceForm(id) {
           <input id="fs-title" class="fin-search-input" style="width:100%!important;" value="${_esc(item?.title||'')}">
         </div>
         ${isEdit ? `<div class="stu-form-group" style="margin-bottom:20px;">
-          <label><input type="checkbox" id="fs-deactivate"${item?.is_inactive?' checked':''}> Deactivate/Activate</label>
+          <label><input type="checkbox" id="fs-deactivate"${item?.status==='inactive'?' checked':''}> Deactivate/Activate</label>
         </div>` : ''}
         <div style="display:flex;gap:12px;">
           <button class="fin-btn-teal" onclick="saveFundingSource('${id||''}')">${isEdit?'Update':'Save'}</button>
@@ -3383,9 +3254,9 @@ function showFundingSourceForm(id) {
 async function saveFundingSource(id) {
   const title = document.getElementById('fs-title')?.value.trim();
   if (!title) { showToast('Title is required.', 'error'); return; }
-  const payload = { title, is_inactive: id ? _fc('fs-deactivate') : false };
-  const url     = id ? `${API_BASE}/student-management/funding-sources/${id}` : `${API_BASE}/student-management/funding-sources`;
-  const method  = id ? 'PUT' : 'POST';
+  const payload = { title, status: (id && _fc('fs-deactivate')) ? 'inactive' : 'active' };
+  const url     = id ? `${API_BASE}/student-management/funding-sources/${id}` : `${API_BASE}/student-management/funding-sources/`;
+  const method  = id ? 'PATCH' : 'POST';
   const res     = await apiFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   if (res && res.ok) {
     showToast(id ? 'Funding source updated!' : 'Funding source added!', 'success');
@@ -4522,9 +4393,11 @@ function exportStuReportCSV() {
 // ==================== 10. STUDENT GUARDIAN REPORT ====================
 
 let _stuGuaData = [], _stuGuaPage = 1, _stuGuaPerPage = 10, _stuGuaSearch = '';
+let _stuGuaFilters = {};
 
 async function loadStudentGuardianReportView(container) {
   openStuReportsDropdown();
+  _stuGuaFilters = {};
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -4538,31 +4411,156 @@ async function loadStudentGuardianReportView(container) {
           </select> entries &nbsp;|&nbsp; Total <span id="sgr-total">0</span> entries
         </div>
         <div class="fin-controls-right">
-          <button class="fin-export-btn" title="Export PDF">&#128438;</button>
-          <button class="fin-export-btn" title="Export CSV">&#128202;</button>
+          <button class="fin-export-btn" title="Export CSV" onclick="exportStuGuaReportCSV()">&#128202;</button>
           <input type="text" class="fin-search-input" id="sgr-search" placeholder="&#128269; Search&#8230;" oninput="onStuGuaSearch(this.value)">
-          <button class="fin-btn-filter">&#9776; Filters</button>
+          <button class="fin-btn-filter" onclick="showStuGuaFilterPanel()">&#9776; Filters</button>
         </div>
       </div>
       <div id="sgr-table"></div>
       <div id="sgr-pagination"></div>
     </div>
+
+    <div id="sgr-filter-overlay" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.35);z-index:400;" onclick="closeStuGuaFilterPanel(event)">
+      <div class="hr-filter-panel" onclick="event.stopPropagation()">
+        <div class="hr-filter-panel-header">
+          <span class="hr-filter-panel-title">Filters</span>
+          <button class="hr-filter-close-btn" onclick="closeStuGuaFilterPanel()">&#x2715;</button>
+        </div>
+        <div class="hr-filter-panel-body">
+          <div class="hr-filter-group">
+            <label class="hr-filter-label">Relationship</label>
+            <select id="sgr-f-relationship" class="hr-filter-select">
+              <option value="">Please Select</option>
+              <option value="MOTHER">Mother</option>
+              <option value="FATHER">Father</option>
+              <option value="GUARDIAN">Guardian</option>
+            </select>
+          </div>
+          <div class="hr-filter-group">
+            <label class="hr-filter-label">Pickup Authorized</label>
+            <select id="sgr-f-pickup" class="hr-filter-select">
+              <option value="">Please Select</option>
+              <option value="true">Yes</option>
+              <option value="false">No</option>
+            </select>
+          </div>
+          <div class="hr-filter-group">
+            <label class="hr-filter-label">Class</label>
+            <select id="sgr-f-class" class="hr-filter-select"><option value="">Please Select</option></select>
+          </div>
+        </div>
+        <div class="hr-filter-panel-footer" style="display:flex;align-items:center;gap:8px;padding:14px 20px;border-top:1px solid #eee;">
+          <a href="#" onclick="clearStuGuaFilters();return false;" style="color:#555;font-size:0.88rem;text-decoration:none;margin-right:auto;">Clear All Filters</a>
+          <button class="fin-btn-teal" onclick="applyStuGuaFilters()">Submit</button>
+        </div>
+      </div>
+    </div>
   `;
   renderSkeletonRows('sgr-table', 6);
-  const res = await apiFetch(`${API_BASE}/reports/student-guardians`);
-  if (res && res.ok) _stuGuaData = await res.json();
+  await _fetchStuGuaReport();
+}
+
+// GET /reports/student-guardians doesn't exist on the backend (confirmed 404).
+// The real resource is GET /students/guardians/ (ParentInfoRead[] — id, student_id
+// [int FK], full_name, email, phone, relationship, pickup_authorized, no student
+// name/admission number on the record itself), so it's joined here against
+// GET /students/ (StudentReadFull[]) by student_id === student.id to get the
+// admission number, student name, and class for display/filtering.
+async function _fetchStuGuaReport() {
+  const [guaRes, stuRes] = await Promise.all([
+    apiFetch(`${API_BASE}/students/guardians/`),
+    apiFetch(`${API_BASE}/students/?limit=1000`),
+  ]);
+  const guardians = (guaRes && guaRes.ok) ? _toArray(await guaRes.json()) : [];
+  const students  = (stuRes && stuRes.ok) ? _toArray(await stuRes.json()) : [];
+  const stuById = new Map(students.map(s => [s.id, s]));
+
+  _stuGuaData = guardians.map(g => {
+    const s = stuById.get(g.student_id);
+    return {
+      ...g,
+      admission_no: s?.student_id || '',
+      student_name: s ? `${s.first_name||''} ${s.last_name||''}`.trim() : '',
+      class_id:     s?.class_id ?? s?.school_class_id ?? null,
+      class_name:   s?.school_class_name || '',
+    };
+  });
+
+  _populateStuGuaClassFilter(students);
+  _stuGuaPage = 1;
+  _renderStuGuaTable();
+}
+
+function _populateStuGuaClassFilter(students) {
+  const sel = document.getElementById('sgr-f-class');
+  if (!sel) return;
+  const seen = new Map();
+  students.forEach(s => {
+    const id = s.class_id ?? s.school_class_id;
+    if (id != null && !seen.has(id)) seen.set(id, s.school_class_name || `#${id}`);
+  });
+  sel.innerHTML = `<option value="">Please Select</option>` +
+    Array.from(seen, ([id, name]) => `<option value="${_esc(String(id))}">${_esc(name)}</option>`).join('');
+  if (_stuGuaFilters.class_id) sel.value = String(_stuGuaFilters.class_id);
+}
+
+function showStuGuaFilterPanel() {
+  const o = document.getElementById('sgr-filter-overlay');
+  if (o) o.style.display = 'block';
+  const f = _stuGuaFilters;
+  const set = (id, v) => { const el = document.getElementById(id); if (el && v !== undefined) el.value = v; };
+  set('sgr-f-relationship', f.relationship || '');
+  set('sgr-f-pickup',       f.pickup_authorized !== undefined ? String(f.pickup_authorized) : '');
+  set('sgr-f-class',        f.class_id || '');
+}
+
+function closeStuGuaFilterPanel(e) {
+  if (e && e.target !== document.getElementById('sgr-filter-overlay')) return;
+  const o = document.getElementById('sgr-filter-overlay');
+  if (o) o.style.display = 'none';
+}
+
+function applyStuGuaFilters() {
+  _stuGuaFilters = {};
+  const read = id => document.getElementById(id)?.value || '';
+  if (read('sgr-f-relationship')) _stuGuaFilters.relationship       = read('sgr-f-relationship');
+  if (read('sgr-f-pickup'))       _stuGuaFilters.pickup_authorized  = read('sgr-f-pickup');
+  if (read('sgr-f-class'))        _stuGuaFilters.class_id           = read('sgr-f-class');
+  const o = document.getElementById('sgr-filter-overlay');
+  if (o) o.style.display = 'none';
+  _stuGuaPage = 1;
+  _renderStuGuaTable();
+}
+
+function clearStuGuaFilters() {
+  _stuGuaFilters = {};
+  ['sgr-f-relationship','sgr-f-pickup','sgr-f-class'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
   _stuGuaPage = 1;
   _renderStuGuaTable();
 }
 
 function _stuGuaFiltered() {
-  if (!_stuGuaSearch) return _stuGuaData;
-  const q = _stuGuaSearch;
-  return _stuGuaData.filter(g =>
-    (g.admission_no||g.student_id||'').toLowerCase().includes(q) ||
-    (g.student_name||g.contact_name||'').toLowerCase().includes(q)
-  );
+  const f = _stuGuaFilters;
+  let d = _stuGuaData.filter(g => {
+    if (f.relationship        && g.relationship !== f.relationship) return false;
+    if (f.pickup_authorized !== undefined && String(!!g.pickup_authorized) !== f.pickup_authorized) return false;
+    if (f.class_id           && String(g.class_id) !== String(f.class_id)) return false;
+    return true;
+  });
+  if (_stuGuaSearch) {
+    const q = _stuGuaSearch;
+    d = d.filter(g =>
+      (g.admission_no||'').toLowerCase().includes(q) ||
+      (g.student_name||'').toLowerCase().includes(q) ||
+      (g.full_name||'').toLowerCase().includes(q)
+    );
+  }
+  return d;
 }
+
+const _STU_GUA_RELATIONSHIP_LABEL = { MOTHER: 'Mother', FATHER: 'Father', GUARDIAN: 'Guardian' };
 
 function _renderStuGuaTable() {
   const filtered = _stuGuaFiltered();
@@ -4574,11 +4572,11 @@ function _renderStuGuaTable() {
 
   let rows = paged.length
     ? paged.map(g => `<tr>
-        <td>${_esc(g.admission_no||g.student_id||'')}</td>
+        <td>${_esc(g.admission_no||'')}</td>
         <td>${_esc(g.student_name||'')}</td>
-        <td>${_esc(g.guardian_name||g.contact_name||'')}</td>
-        <td>${_esc(g.relationship||'')}</td>
-        <td>${_esc(g.phone||g.primary_phone||'')}</td>
+        <td>${_esc(g.full_name||'')}</td>
+        <td>${_esc(_STU_GUA_RELATIONSHIP_LABEL[g.relationship]||g.relationship||'')}</td>
+        <td>${_esc(g.phone||'')}</td>
         <td>${_esc(g.email||'')}</td>
       </tr>`).join('')
     : '<tr><td colspan="6" class="fin-empty">No records found.</td></tr>';
@@ -4592,6 +4590,16 @@ function _renderStuGuaTable() {
 function changeStuGuaPerPage(v) { _stuGuaPerPage = parseInt(v); _stuGuaPage = 1; _renderStuGuaTable(); }
 function onStuGuaSearch(v)      { _stuGuaSearch  = v.trim().toLowerCase(); _stuGuaPage = 1; _renderStuGuaTable(); }
 function stuGuaGoPage(p)        { _stuGuaPage = p; _renderStuGuaTable(); }
+function exportStuGuaReportCSV() {
+  exportTableCSV(
+    ['Admission No.','Student Name','Guardian Name','Relationship','Phone','Email'],
+    _stuGuaFiltered().map(g => [
+      g.admission_no||'', g.student_name||'', g.full_name||'',
+      _STU_GUA_RELATIONSHIP_LABEL[g.relationship]||g.relationship||'', g.phone||'', g.email||''
+    ]),
+    'student-guardian-report.csv'
+  );
+}
 
 // ==================== 11. CLASSES ====================
 

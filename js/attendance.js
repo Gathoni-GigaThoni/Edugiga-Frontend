@@ -520,26 +520,31 @@ async function _rptSubmit() {
     }
     const data = await res.json();
 
-    const rows = Array.isArray(data) ? data : (data.students || data.results || data.data || []);
+    // Confirmed live shape: { summary: {expected,present,absent,late}, records: [...] }
+    // — rows live under `records`, not `students`/`results`/`data` (the previous
+    // fallback chain didn't include it, so rows silently came out empty on every
+    // submit — indistinguishable from "nothing happened" since the pre-submit
+    // state is also empty). Field names on each record are exactly admission_no/
+    // name/gender/class_name/date/status/notes, no guessing needed.
+    const rows = Array.isArray(data) ? data : (data.records || []);
 
     _rptData = rows.map(s => ({
-      admission_no: s.admission_no || s.student_admission_no || '-',
-      name:         s.student_name || s.name || '',
+      admission_no: s.admission_no || '-',
+      name:         s.name || '',
       gender:       s.gender || '-',
-      class_name:   s.class_name || s.school_class_name || className,
-      date:         s.date || s.date_of || s.attendance_date || startDate,
-      status:       (s.current_status || s.status) === 'Late' ? 'Half Day' : ((s.current_status || s.status) || '-'),
-      reason:       s.notes || s.reason || '-'
+      class_name:   s.class_name || className,
+      date:         s.date || startDate,
+      status:       s.status === 'Late' ? 'Half Day' : (s.status || '-'),
+      reason:       s.notes || '-'
     }));
 
-    // Update stat cards
-    const present = _rptData.filter(r => r.status === 'Present').length;
-    const absent  = _rptData.filter(r => r.status === 'Absent').length;
-    const halfday = _rptData.filter(r => r.status === 'Half Day').length;
-    document.getElementById('rpt-stat-expected').textContent = _rptData.length;
-    document.getElementById('rpt-stat-present').textContent  = present;
-    document.getElementById('rpt-stat-absent').textContent   = absent;
-    document.getElementById('rpt-stat-halfday').textContent  = halfday;
+    // Update stat cards — prefer the server's own summary block (covers the
+    // full date range server-side) over a client count of the current page.
+    const summary = data.summary || {};
+    document.getElementById('rpt-stat-expected').textContent = summary.expected ?? _rptData.length;
+    document.getElementById('rpt-stat-present').textContent  = summary.present  ?? _rptData.filter(r => r.status === 'Present').length;
+    document.getElementById('rpt-stat-absent').textContent   = summary.absent   ?? _rptData.filter(r => r.status === 'Absent').length;
+    document.getElementById('rpt-stat-halfday').textContent  = summary.late     ?? _rptData.filter(r => r.status === 'Half Day').length;
 
     _rptPage   = 1;
     _rptSearch = '';
