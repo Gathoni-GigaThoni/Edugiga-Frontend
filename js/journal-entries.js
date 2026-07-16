@@ -10,8 +10,19 @@
 const _JE_API = `${API_BASE}/journal-entries/`;
 let _jePage = 1, _jePerPage = 10, _jeData = [];
 
+// Deep-link handoff so other modules (e.g. Supplier Invoice's Accrual
+// Journal Entry link) can navigate straight to a specific JE's detail pane
+// instead of just the bare list. One-shot: read and cleared immediately so
+// a later plain loadView('journal-entries') doesn't stick to the old id.
+function _jeOpenDetail(id) {
+  window._jeOpenId = id;
+  loadView('journal-entries');
+}
+
 async function loadJournalEntriesView(container) {
   await _pvLoadLookups();
+  const preselectId = window._jeOpenId ?? null;
+  window._jeOpenId = null;
   await renderSplitView({
     container,
     title: 'Journal Entries',
@@ -22,6 +33,7 @@ async function loadJournalEntriesView(container) {
       {label:'Journal Entries'}
     ],
     apiUrl: _JE_API,
+    preselectId,
     searchFields: ['jv_number','reference','status'],
     col1Label: 'JV Number', col2Label: 'Status',
     col1: je => je.jv_number || `#${je.id}`,

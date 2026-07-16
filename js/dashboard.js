@@ -256,6 +256,7 @@ function showDashboard() {
                   <li class="sidebar-sub-sub" onclick="loadView('reports-student-prepayment-analysis')">Student Prepayment Analysis</li>
                   <li class="sidebar-sub-sub" onclick="loadView('reports-customer-aging-analysis')">Customer Aging Analysis</li>
                   <li class="sidebar-sub-sub" onclick="loadView('reports-aged-payables')">Aged Payables</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-ap-reconciliation')">AP Reconciliation</li>
                   <li class="sidebar-sub-sub" onclick="loadView('reports-bank-reconciliation')">Bank Reconciliation Report</li>
                   <li class="sidebar-sub-sub" onclick="loadView('reports-budget-vs-actual')">Statement of Budget vs Actual Comparison</li>
                   <li class="sidebar-sub-sub" onclick="loadView('reports-statement-of-changes-in-net-assets')">Statement of Changes in Net Assets</li>
@@ -569,10 +570,11 @@ function renderSplitSkeleton() {
 
 function buildDetailFields(item, fields) {
   return fields.map(f => {
+    if (typeof f.hideWhen === 'function' && f.hideWhen(item)) return '';
     const raw = item[f.key];
     const val = f.fmt ? f.fmt(raw, item) : (raw ?? '—');
     return `
-      <div class="detail-field">
+      <div class="detail-field"${f.fullWidth ? ' style="grid-column:1/-1"' : ''}>
         <span class="detail-field-label">${f.label}</span>
         <span class="detail-field-value">${val ?? '—'}</span>
       </div>`;
@@ -650,7 +652,8 @@ async function renderSplitView(cfg) {
       rightEl.className = 'split-right-detail';
       const bannerTitle  = nameLabel(selectedItem);
       const bannerSub    = cfg.rowSub ? cfg.rowSub(selectedItem) : col2Fn(selectedItem);
-      const hasEditAction = _canEditHere && (typeof cfg.onEdit === 'function' || typeof cfg.renderEdit === 'function');
+      const _itemEditable = typeof cfg.canEdit !== 'function' || cfg.canEdit(selectedItem);
+      const hasEditAction = _canEditHere && _itemEditable && (typeof cfg.onEdit === 'function' || typeof cfg.renderEdit === 'function');
       rightEl.innerHTML = `
         <div class="detail-banner">
           <div class="detail-banner-initials">${bannerTitle.charAt(0).toUpperCase()}</div>
@@ -705,6 +708,7 @@ async function renderSplitView(cfg) {
   };
   window._splitEditItem = function() {
     if (!_canEditHere) return; // defense in depth — the Edit button is already hidden when this is false
+    if (typeof cfg.canEdit === 'function' && !cfg.canEdit(selectedItem)) return; // ditto, per-item gate
     if (typeof cfg.onEdit === 'function') { cfg.onEdit(selectedItem); return; }
     mode = 'edit'; renderRight();
   };
@@ -712,6 +716,15 @@ async function renderSplitView(cfg) {
     if (!_canAddHere) return; // defense in depth — the +Add trigger is already hidden when this is false
     if (typeof cfg.onAdd === 'function') { cfg.onAdd(); return; }
     selectedItem = null; mode = 'add'; renderList(); renderRight();
+  };
+  // Optimistic local removal (e.g. after a 204 DELETE) — no re-fetch, just
+  // splices the item out and drops back to the add/empty pane. Used where
+  // the spec explicitly calls for "remove the row optimistically" rather
+  // than a full reload (Tendepay Import History batch delete).
+  window._splitRemoveItem = function(itemId) {
+    allItems = allItems.filter(i => String(i[idKey]) !== String(itemId));
+    if (selectedItem && String(selectedItem[idKey]) === String(itemId)) { selectedItem = null; mode = 'add'; }
+    renderList(); renderRight();
   };
   window._splitReload = async function() {
     try {
@@ -736,6 +749,10 @@ async function renderSplitView(cfg) {
     renderList(); renderRight();
   };
 
+  if (cfg.preselectId != null) {
+    const pre = allItems.find(i => String(i[idKey]) === String(cfg.preselectId));
+    if (pre) { selectedItem = pre; mode = 'detail'; }
+  }
   renderList();
   renderRight();
 }
@@ -1152,6 +1169,7 @@ async function loadView(view) {
     case 'reports-student-prepayment-analysis':
     case 'reports-customer-aging-analysis':
     case 'reports-aged-payables':
+    case 'reports-ap-reconciliation':
     case 'reports-bank-reconciliation':
     case 'reports-budget-vs-actual':
     case 'reports-statement-of-changes-in-net-assets':

@@ -65,6 +65,9 @@ const REPORT_DEFS = {
     columns: [['student_name','STUDENT NAME'],['student_id','STUDENT ID'],['credit_balance','CREDIT BALANCE']] },
   'reports-aged-payables': { title: 'Aged Payables', api: 'aged-payables', dateMode: 'asof',
     columns: [['supplier_name','SUPPLIER NAME'],['current','CURRENT'],['30_days','30 DAYS'],['60_days','60 DAYS'],['90_days','90+ DAYS'],['total','TOTAL']] },
+  // AP sub-ledger vs GL control account. Always 200s — configured/is_reconciled
+  // drive the render, not the HTTP status (§2 of the 2026-07-16 addendum).
+  'reports-ap-reconciliation': { title: 'AP Reconciliation', api: 'ap-reconciliation', dateMode: 'asof', layout: 'ap-reconciliation' },
 
   'reports-daily-cash-return': { title: 'Daily Cash Return', api: 'daily-cash-return', dateMode: 'single', dateParam: 'report_date',
     columns: [['account','ACCOUNT'],['opening_balance','OPENING BALANCE'],['inflows','INFLOWS'],['outflows','OUTFLOWS'],['closing_balance','CLOSING BALANCE']] },
@@ -187,6 +190,8 @@ async function _repGenerate(routeKey) {
     const data = await res.json();
     if (def.layout === 'statement') _repRenderStatement(def, data);
     else if (def.layout === 'notes') _repRenderNotes(def, data);
+    else if (def.layout === 'ap-reconciliation') _repRenderApReconciliation(def, data);
+    else if (routeKey === 'reports-supplier-statements') _repRenderSupplierStatement(def, data);
     else _repRenderTable(def, data);
   } catch (e) { showToast('Network error generating report.', 'error'); }
 }
@@ -358,4 +363,121 @@ function _repRenderStatement(def, data) {
         </div>
       </div>`;
   }
+}
+
+// ── AP Reconciliation (§2 of the 2026-07-16 addendum) ──────────────────────
+function _repStatCard(label, value, color) {
+  return `<div style="flex:1;min-width:160px;background:var(--white);border:1px solid var(--card-border,#e5e5e5);border-radius:8px;padding:14px 16px;">
+    <div style="font-size:11px;font-weight:600;color:var(--grey-400,#999);text-transform:uppercase;letter-spacing:0.06em;">${_finEsc(label)}</div>
+    <div style="font-size:1.15rem;font-weight:700;margin-top:4px;color:${color || 'var(--grey-900,#222)'};">${value}</div>
+  </div>`;
+}
+
+function _repRenderApReconciliation(def, data) {
+  const out = document.getElementById('rep-output');
+  if (!data || typeof data !== 'object') { out.innerHTML = '<p class="fin-empty">No data returned.</p>'; return; }
+
+  // Always a 200 — configured/is_reconciled decide the render, not the
+  // HTTP status. Not-configured is a sysadmin prompt, never a red error.
+  if (!data.configured) {
+    out.innerHTML = `<div style="padding:14px 18px;border-radius:6px;border-left:3px solid var(--gold-500);background:var(--gold-100);color:#7a6110;font-size:0.9rem;">
+      AP control account not configured — ask the sysadmin to set AP_CONTROL_ACCOUNT_ID.
+    </div>`;
+    return;
+  }
+
+  const cards = `<div style="display:flex;flex-wrap:wrap;gap:14px;margin:16px 0;">
+    ${_repStatCard('Sub-ledger Balance', _pvMoney(data.subledger_balance))}
+    ${_repStatCard('GL Balance', _pvMoney(data.gl_balance))}
+    ${_repStatCard('Difference', _pvMoney(data.difference), data.is_reconciled ? 'var(--color-success)' : 'var(--coral-500)')}
+  </div>`;
+
+  if (data.is_reconciled) {
+    out.innerHTML = `
+      <div style="padding:12px 18px;border-radius:6px;background:#dcf3e2;color:#1e7e34;font-weight:600;font-size:0.9rem;">
+        &#10003; Reconciled — the AP sub-ledger agrees with the GL.
+      </div>
+      ${cards}`;
+    return;
+  }
+
+  const driftRows = (data.drift_invoices || []).map(d => `<tr>
+    <td><a href="#" onclick="_pvSiOpenDetail(${d.invoice_id});return false;">${_finEsc(d.invoice_number || ('#' + d.invoice_id))}</a></td>
+    <td>${_finEsc(_pvSupplierName(d.supplier_id))}</td>
+    <td>${_finEsc(d.reason || '')}</td>
+    <td>${_pvMoney(d.expected_in_gl)}</td>
+  </tr>`).join('');
+
+  out.innerHTML = `
+    <div style="padding:12px 18px;border-radius:6px;border-left:3px solid var(--coral-500);background:var(--coral-100);color:var(--coral-600);font-weight:600;font-size:0.9rem;">
+      AP sub-ledger and GL disagree by ${_pvMoney(data.difference)}.
+    </div>
+    ${cards}
+    <div class="fin-table-wrap"><table class="fin-table">
+      <thead><tr><th>INVOICE NUMBER</th><th>SUPPLIER</th><th>REASON</th><th>EXPECTED IN GL</th></tr></thead>
+      <tbody>${driftRows || '<tr><td colspan="4" class="fin-empty">No drift rows returned.</td></tr>'}</tbody>
+    </table></div>`;
+}
+
+// ── Supplier Statement (§3 of the 2026-07-16 addendum) ─────────────────────
+// The response is now an object ({supplier_id, ..., rows, closing_balance,
+// drift_warning?}), not a bare array — _repRenderTable's own data.rows
+// fallback already happened to handle that shape, but drift_warning and the
+// voided-row treatment need dedicated rendering, so this report gets its
+// own path instead. Exact row field names for "this row is voided" aren't
+// given in the addendum (only the JSON skeleton is), so — same convention
+// this file already uses for unconfirmed shapes — try the likely candidates
+// and fall back gracefully rather than assuming one.
+function _repIsVoidedStatementRow(r) {
+  const s = (r.status || r.invoice_status || '').toString().toLowerCase();
+  return s === 'voided' || r.is_voided === true;
+}
+
+function _repRenderSupplierStatement(def, data) {
+  const out = document.getElementById('rep-output');
+  if (!data || typeof data !== 'object') { out.innerHTML = '<p class="fin-empty">No data for the selected criteria.</p>'; return; }
+  const rows = Array.isArray(data) ? data : (data.rows || data.data || data.items || data.results || []);
+
+  let html = '';
+  if (data.drift_warning) {
+    const dw = data.drift_warning;
+    html += `<div style="padding:12px 18px;border-radius:6px;border-left:3px solid var(--coral-500);background:var(--coral-100);color:var(--coral-600);font-size:0.88rem;margin-bottom:14px;">
+      <div style="font-weight:600;margin-bottom:6px;">${_finEsc(dw.message || 'Supplier statement disagrees with the AP control GL balance for this supplier.')}</div>
+      <div style="display:flex;gap:22px;flex-wrap:wrap;font-size:0.85rem;">
+        <span>Sub-ledger: <strong>${_pvMoney(dw.subledger_balance)}</strong></span>
+        <span>GL: <strong>${_pvMoney(dw.gl_balance)}</strong></span>
+        <span>Difference: <strong>${_pvMoney(dw.difference)}</strong></span>
+      </div>
+    </div>`;
+  }
+
+  if (!rows.length) {
+    out.innerHTML = html + '<div class="fin-table-wrap"><table class="fin-table"><tbody><tr><td class="fin-empty">No data for the selected criteria.</td></tr></tbody></table></div>';
+    return;
+  }
+
+  const firstRow = rows[0];
+  const knownKeysPresent = def.columns.some(([key]) => firstRow.hasOwnProperty(key));
+  const cols = knownKeysPresent ? def.columns : Object.keys(firstRow)
+    .filter(k => !['status','invoice_status','is_voided'].includes(k))
+    .map(k => [k, _repHumanize(k)]);
+
+  const bodyRows = rows.map(r => {
+    const cells = cols.map(([k]) => `<td>${_repCell(r[k])}</td>`).join('');
+    if (_repIsVoidedStatementRow(r)) {
+      return `<tr style="text-decoration:line-through;opacity:0.6;">${cells}<td><span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.72rem;font-weight:600;color:var(--white);background:var(--coral-500);">Voided</span></td></tr>`;
+    }
+    return `<tr>${cells}<td></td></tr>`;
+  }).join('');
+
+  html += `
+    <div style="display:flex;gap:24px;margin-bottom:12px;font-size:0.88rem;">
+      <span>Opening Balance: <strong>${_pvMoney(data.opening_balance)}</strong></span>
+      <span>Closing Balance: <strong>${_pvMoney(data.closing_balance)}</strong></span>
+    </div>
+    <div class="fin-table-wrap"><table class="fin-table">
+      <thead><tr>${cols.map(([,label]) => `<th>${_finEsc(label)}</th>`).join('')}<th></th></tr></thead>
+      <tbody>${bodyRows}</tbody>
+    </table></div>`;
+  out.innerHTML = html;
 }

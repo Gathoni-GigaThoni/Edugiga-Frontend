@@ -714,8 +714,68 @@ async function loadPayablesTaxVouchersUpcomingView(container) {
 let _pvSiPage = 1, _pvSiPerPage = 10, _pvSiData = [];
 const _PV_SI_API = `${API_BASE}/payables/supplier-invoices`;
 
+// Status badge — theme tokens only (per the accrual-lifecycle addendum's
+// "introduce NO new colours" rule), not the generic hex map in _pvBadge:
+// pending=grey, approved=navy, paid=green, disputed=gold, voided=coral.
+const _SI_STATUS_STYLE = {
+  pending:   ['#666', '#eee'],
+  approved:  ['var(--white)', 'var(--navy-700)'],
+  paid:      ['var(--white)', 'var(--color-success)'],
+  disputed:  ['#7a6110', 'var(--gold-100)'],
+  voided:    ['var(--white)', 'var(--coral-500)'],
+};
+function _siStatusBadge(status) {
+  const [color, bg] = _SI_STATUS_STYLE[status] || ['#888', '#eee'];
+  return `<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:0.78rem;font-weight:600;color:${color};background:${bg};">${_finEsc((status || '').replace(/_/g,' '))}</span>`;
+}
+
+// Voucher status cache (invoice_id -> voucher status string), warmed
+// on-demand by _pvSiWarmVoucherGate — used to decide Edit-button visibility
+// without an await inside the synchronous canEdit/detailFields callbacks
+// (see [[frontend-gotchas]]-style pattern already used for JE number below).
+let _pvSiVoucherStatusCache = {};
+// JE id -> jv_number, resolved on demand for the Accrual Journal Entry link.
+let _pvSiJeNumberCache = {};
+
+// Both edit gates from the accrual addendum, in one place, per its own
+// explicit ask (§5 refactor #1) — three call sites (detail pane, action
+// menu, edit form) drifting apart is how a "PAID invoice is editable" bug
+// ships. `voucher` may be null/undefined (no linked voucher, or not yet
+// fetched) — treated as non-blocking.
+function _pvSiIsEditable(inv, voucher) {
+  if (inv.status === 'paid')   return { ok: false, reason: 'Cannot edit a PAID invoice. Void it and issue a new one.' };
+  if (inv.status === 'voided') return { ok: false, reason: 'Cannot edit a VOIDED invoice.' };
+  if (voucher && (voucher.status === 'awaiting_tendepay' || voucher.status === 'paid')) {
+    return { ok: false, reason: `Voucher ${voucher.voucher_no || ('#' + voucher.id)} is '${voucher.status}'. Cancel the voucher before editing the invoice.` };
+  }
+  return { ok: true };
+}
+
+// Best-effort warm-up for the split-view Edit button: fetches the linked
+// voucher's status once per invoice, caches it, and — only if it turns out
+// to be actually blocking — refreshes the selected detail pane so the Edit
+// button (gated by canEdit below) disappears. Optimistic: the button stays
+// visible until proven otherwise, which is fine since the Edit *view* itself
+// re-checks authoritatively before rendering the form (see
+// loadPayablesSupplierInvoicesEditView).
+async function _pvSiWarmVoucherGate(inv) {
+  if (!inv.payment_voucher_id || inv.id in _pvSiVoucherStatusCache) return;
+  try {
+    const res = await apiFetch(`${_PV_PV_API}${inv.payment_voucher_id}`);
+    if (res && res.ok) {
+      const voucher = await res.json();
+      _pvSiVoucherStatusCache[inv.id] = voucher.status;
+      if (voucher.status === 'awaiting_tendepay' || voucher.status === 'paid') {
+        await window._splitRefreshSelected?.();
+      }
+    }
+  } catch (_) {}
+}
+
 async function loadPayablesSupplierInvoicesView(container) {
   await _pvLoadLookups();
+  const preselectId = window._pvSiOpenId ?? null;
+  window._pvSiOpenId = null;
   await renderSplitView({
     container,
     moduleKey: 'finance.payables',
@@ -727,6 +787,7 @@ async function loadPayablesSupplierInvoicesView(container) {
     ],
     apiUrl: `${_PV_SI_API}`,
     searchFields: ['invoice_number'],
+    preselectId,
     col1Label: 'Supplier', col2Label: 'Invoice No',
     col1: inv => _pvSupplierName(inv.supplier_id) || '—',
     col2: inv => inv.invoice_number || `#${inv.id}`,
@@ -739,21 +800,152 @@ async function loadPayablesSupplierInvoicesView(container) {
       {label:'Invoice Date', key:'invoice_date', fmt:v=>_pvDate(v)},
       {label:'Due Date',     key:'due_date', fmt:v=>_pvDate(v)},
       {label:'Amount',       key:'amount', fmt:v=>_pvMoney(v)},
-      {label:'Status',       key:'status', fmt:v=>v||'—'},
+      {label:'Expense Account', key:'expense_account_id', fmt:v=>v?_pvAccountName(v):'—'},
+      {label:'Status',       key:'status', fmt:v=>_siStatusBadge(v)},
+      {label:'Accrual Journal Entry', key:'accrual_journal_entry_id', fmt:(v,inv)=>{
+        if (!v) return '—';
+        if (_pvSiJeNumberCache[v]) return `<a href="#" onclick="_jeOpenDetail(${v});return false;">${_finEsc(_pvSiJeNumberCache[v])}</a>`;
+        // Resolved async below and patched into this span once known.
+        (async () => {
+          try {
+            const res = await apiFetch(`${_JE_API}${v}`);
+            if (res && res.ok) {
+              const je = await res.json();
+              _pvSiJeNumberCache[v] = je.jv_number || `#${v}`;
+              const el = document.getElementById(`si-je-link-${inv.id}`);
+              if (el) el.innerHTML = `<a href="#" onclick="_jeOpenDetail(${v});return false;">${_finEsc(_pvSiJeNumberCache[v])}</a>`;
+            }
+          } catch (_) {}
+        })();
+        return `<span id="si-je-link-${inv.id}">Loading…</span>`;
+      }},
+      {label:'Voided At',    key:'voided_at', hideWhen: inv=>!inv.voided_at, fmt:v=>_pvDate(v)},
+      {label:'Voided By',    key:'voided_by', hideWhen: inv=>!inv.voided_at, fmt:v=>v||'—'},
+      {label:'Void Reason',  key:'void_reason', hideWhen: inv=>!inv.voided_at, fullWidth: true, fmt:v=>`<div style="border-left:3px solid var(--coral-500);background:var(--coral-100);padding:8px 12px;border-radius:4px;color:var(--coral-600);">${_finEsc(v||'—')}</div>`},
     ],
     renderAdd: _pvAddPlaceholder('Supplier Invoice', 'payables-supplier-invoices-add', 'Record an invoice received from a supplier.'),
     onAdd:  () => loadView('payables-supplier-invoices-add'),
     onEdit: item => { window._pvEditSiId = item.id; loadView('payables-supplier-invoices-edit'); },
+    canEdit: item => _pvSiIsEditable(item, item.payment_voucher_id ? { status: _pvSiVoucherStatusCache[item.id] } : null).ok,
     detailActions: _pvSiDetailActions,
   });
 }
 
+// Deep-link handoff, mirrors _jeOpenDetail — used by AP Reconciliation's
+// drift table so a row's Invoice Number opens straight to that invoice.
+function _pvSiOpenDetail(id) {
+  window._pvSiOpenId = id;
+  loadView('payables-supplier-invoices');
+}
+
+// ── Inline action-result callout (below the lifecycle buttons) ─────────────
+// Per the addendum's own classification rule (§5 refactor #3): 400s here are
+// configuration signals (gold, "ask the sysadmin"), 409s are workflow
+// guidance (coral, shown as-is) — never funnel both into one generic toast.
+function _pvSiShowActionMsg(text, kind) {
+  const el = document.getElementById('si-action-msg');
+  const isGold = kind === 'config';
+  const html = `<div style="margin-top:10px;width:100%;padding:10px 14px;border-radius:6px;border-left:3px solid ${isGold ? 'var(--gold-500)' : 'var(--coral-500)'};background:${isGold ? 'var(--gold-100)' : 'var(--coral-100)'};color:${isGold ? '#7a6110' : 'var(--coral-600)'};font-size:0.85rem;">${isGold ? '<strong>Configuration needed — contact a sysadmin.</strong><br>' : ''}${_finEsc(text)}</div>`;
+  if (el) el.innerHTML = html; else showToast(text, 'error');
+}
+
 function _pvSiDetailActions(inv) {
-  if (inv.payment_voucher_id) {
-    return `<div style="color:var(--grey-500,#666);font-size:0.9rem;">Linked to Payment Voucher #${inv.payment_voucher_id}.</div>`;
-  }
   window._pvSiPendingInvoice = inv;
-  return `<button class="btn" onclick="_pvSiOpenCreateVoucherModal(${inv.id})">Create Payment Voucher</button>`;
+  _pvSiWarmVoucherGate(inv);
+  let html = '';
+
+  if (inv.status === 'paid') {
+    html += `<div style="color:var(--grey-500,#666);font-size:0.9rem;">Linked to Payment Voucher #${inv.payment_voucher_id}. This invoice is PAID and immutable.</div>`;
+  } else if (inv.status === 'voided') {
+    html += `<div style="color:var(--grey-500,#666);font-size:0.9rem;">This invoice was voided${inv.void_reason ? ': ' + _finEsc(inv.void_reason) : ''}.</div>`;
+  } else {
+    if (inv.status === 'pending') {
+      html += `<button class="btn" onclick="_pvSiOpenApproveModal(${inv.id})">Approve</button>`;
+    } else if (inv.status === 'approved') {
+      if (inv.payment_voucher_id) {
+        html += `<div style="color:var(--grey-500,#666);font-size:0.9rem;">Linked to Payment Voucher #${inv.payment_voucher_id}.</div>`;
+      } else {
+        html += `<button class="btn" onclick="_pvSiOpenCreateVoucherModal(${inv.id})">Create Payment Voucher</button>`;
+      }
+    }
+    // disputed: no lifecycle actions — informational only (§1.1)
+    if (inv.status === 'pending' || inv.status === 'approved') {
+      html += `<button class="fin-btn-cancel" onclick="_pvSiOpenVoidModal(${inv.id})">Void</button>`;
+    }
+  }
+  html += `<div id="si-action-msg" style="width:100%;"></div>`;
+  return `<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">${html}</div>`;
+}
+
+// ── Approve ──────────────────────────────────────────────────────────────
+function _pvSiOpenApproveModal(invoiceId) {
+  const inv = window._pvSiPendingInvoice || {};
+  const acctName = inv.expense_account_id ? _pvAccountName(inv.expense_account_id) : '(no expense account set)';
+  const wrap = document.createElement('div');
+  wrap.id = 'pv-si-approve-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:white;border-radius:8px;padding:24px;width:440px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 14px;font-size:1.05rem;color:#2c3e50;">Approve Invoice</h3>
+      <p style="font-size:0.9rem;color:var(--grey-700,#444);line-height:1.5;">
+        Approve this invoice? An accrual journal entry will be posted:<br>
+        <strong>DR ${_finEsc(acctName)} / CR AP Control, ${_pvMoney(inv.amount)}.</strong>
+      </p>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="document.getElementById('pv-si-approve-modal-overlay').remove()">Cancel</button>
+        <button class="fin-btn-teal" onclick="_pvSiApprove(${invoiceId})">Approve</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+
+async function _pvSiApprove(invoiceId) {
+  const res = await apiFetch(`${_PV_SI_API}/${invoiceId}/approve`, { method: 'POST' });
+  document.getElementById('pv-si-approve-modal-overlay')?.remove();
+  if (res && res.ok) {
+    showToast('Invoice approved. Accrual journal entry posted.', 'success');
+    await window._splitRefreshSelected?.();
+  } else if (res && res.status === 400) {
+    _pvSiShowActionMsg(await parseApiError(res), 'config');
+  } else if (res && res.status === 409) {
+    _pvSiShowActionMsg(await parseApiError(res), 'workflow');
+  } else if (res) {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
+}
+
+// ── Void ─────────────────────────────────────────────────────────────────
+function _pvSiOpenVoidModal(invoiceId) {
+  const wrap = document.createElement('div');
+  wrap.id = 'pv-si-void-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:white;border-radius:8px;padding:24px;width:440px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 8px;font-size:1.05rem;color:#2c3e50;">Void Supplier Invoice</h3>
+      <p style="font-size:0.82rem;color:var(--coral-600);margin:0 0 12px;">Voiding reverses the accrual journal entry and cannot be undone.</p>
+      <label class="fin-form-label">Reason <span class="fin-required">*</span></label>
+      <textarea id="pv-si-void-reason" class="fin-form-textarea" rows="3" placeholder="Enter reason..."></textarea>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="document.getElementById('pv-si-void-modal-overlay').remove()">Cancel</button>
+        <button class="fin-btn-teal" onclick="_pvSiVoid(${invoiceId})">Void Invoice</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+
+async function _pvSiVoid(invoiceId) {
+  const reason = document.getElementById('pv-si-void-reason').value.trim();
+  if (!reason) { showToast('Reason is required.', 'error'); return; }
+  const res = await apiFetch(`${_PV_SI_API}/${invoiceId}/void`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }) });
+  document.getElementById('pv-si-void-modal-overlay')?.remove();
+  if (res && res.ok) {
+    showToast('Invoice voided.', 'success');
+    await window._splitRefreshSelected?.();
+  } else if (res && res.status === 409) {
+    _pvSiShowActionMsg(await parseApiError(res), 'workflow');
+  } else if (res) {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
 }
 
 function _pvSiOpenCreateVoucherModal(invoiceId) {
@@ -833,7 +1025,9 @@ async function _pvSiSubmitCreateVoucher(invoiceId, supplierId) {
     showToast('Payment voucher created.', 'success');
     await window._splitRefreshSelected?.();
   } else if (res && res.status === 409) {
-    showToast('This invoice already has a payment voucher.', 'error');
+    // Covers both "already linked" and the newer "Approve it first" wrong-
+    // status message — surface whatever the backend actually says (§5.3).
+    showToast(await parseApiError(res), 'error');
   } else if (res) {
     showToast('Error: ' + await parseApiError(res), 'error');
   }
@@ -974,6 +1168,12 @@ function _pvSiFormHtml(inv) {
         <label class="fin-form-label">eTIMS Number</label>
         <input type="text" id="si-f-etims" class="fin-form-input" value="${_finEsc(inv?.etims_invoice_number || '')}">
       </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Expense Account <span class="fin-required">*</span></label>
+        <select id="si-f-expense-account" class="fin-form-select"><option value="">Please Select</option>${_pvAccountOptions(inv?.expense_account_id)}</select>
+        <span style="font-size:11px;color:var(--grey-500,#888);">The P&amp;L account debited when this invoice is approved.</span>
+        <span class="fin-field-error" id="si-f-expense-err"></span>
+      </div>
     </div>`;
 }
 
@@ -1000,7 +1200,8 @@ async function loadPayablesSupplierInvoicesAddView(container) {
 function _pvSiValidate() {
   let valid = true;
   const req = [['si-f-supplier','si-f-supplier-err'],['si-f-invoice-number','si-f-invno-err'],
-    ['si-f-invoice-date','si-f-invdate-err'],['si-f-due-date','si-f-duedate-err']];
+    ['si-f-invoice-date','si-f-invdate-err'],['si-f-due-date','si-f-duedate-err'],
+    ['si-f-expense-account','si-f-expense-err']];
   req.forEach(([fid,eid]) => {
     const v = document.getElementById(fid).value.trim();
     document.getElementById(eid).textContent = v ? '' : 'This field is required.';
@@ -1019,14 +1220,25 @@ function _pvSiPayload() {
     due_date: document.getElementById('si-f-due-date').value,
     amount: parseFloat(document.getElementById('si-f-amount').value),
     etims_invoice_number: document.getElementById('si-f-etims').value.trim() || null,
+    expense_account_id: parseInt(document.getElementById('si-f-expense-account').value, 10),
   };
+}
+// Surfaces the backend's expense_account_id 400 inline on that field
+// verbatim; any other error falls back to the generic toast.
+async function _pvSiHandleSaveError(res) {
+  const msg = await parseApiError(res);
+  if (res.status === 400 && /expense_account_id/i.test(msg)) {
+    document.getElementById('si-f-expense-err').textContent = msg;
+  } else {
+    showToast('Error: ' + msg, 'error');
+  }
 }
 async function _pvSiSubmitAdd() {
   if (!_pvSiValidate()) return;
   try {
     const res = await apiFetch(_PV_SI_API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(_pvSiPayload()) });
     if (res && res.ok) { showToast('Supplier invoice created successfully.', 'success'); loadView('payables-supplier-invoices'); }
-    else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+    else if (res) await _pvSiHandleSaveError(res);
   } catch (e) { showToast('Network error.', 'error'); }
 }
 
@@ -1036,6 +1248,23 @@ async function loadPayablesSupplierInvoicesEditView(container) {
   const res = await apiFetch(`${_PV_SI_API}/${id}`);
   if (!res || !res.ok) { showToast('Could not load supplier invoice.', 'error'); loadView('payables-supplier-invoices'); return; }
   const inv = await res.json();
+
+  // Authoritative edit gate (§1.6, both gates) — the split-view Edit button
+  // hides itself on a best-effort cache, but this is the real check: fetch
+  // the linked voucher (if any) and block navigation with the exact reason
+  // if either gate says no.
+  let voucher = null;
+  if (inv.payment_voucher_id) {
+    const vRes = await apiFetch(`${_PV_PV_API}${inv.payment_voucher_id}`);
+    if (vRes && vRes.ok) voucher = await vRes.json();
+  }
+  const gate = _pvSiIsEditable(inv, voucher);
+  if (!gate.ok) {
+    showToast(gate.reason, 'error');
+    loadView('payables-supplier-invoices');
+    return;
+  }
+
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -1045,6 +1274,7 @@ async function loadPayablesSupplierInvoicesEditView(container) {
         </div>
       </div>
       <div class="fin-form-wrap">
+        ${inv.status === 'approved' ? `<div style="margin-bottom:16px;padding:10px 14px;border-radius:6px;border-left:3px solid var(--gold-500);background:var(--gold-100);color:#7a6110;font-size:0.85rem;">This invoice is approved. Changing the amount, expense account or invoice date will reverse and re-post the accrual journal entry.</div>` : ''}
         ${_pvSiFormHtml(inv)}
         <div class="fin-form-actions">
           <button class="fin-btn-teal" onclick="_pvSiSubmitEdit(${inv.id})">Update</button>
@@ -1057,8 +1287,16 @@ async function _pvSiSubmitEdit(id) {
   if (!_pvSiValidate()) return;
   try {
     const res = await apiFetch(`${_PV_SI_API}/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(_pvSiPayload()) });
-    if (res && res.ok) { showToast('Supplier invoice updated.', 'success'); loadView('payables-supplier-invoices'); }
-    else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+    if (res && res.ok) {
+      // The accrual JE may have been reversed and re-posted at a new id —
+      // never keep a stale accrual_journal_entry_id (§5 refactor #4). Nothing
+      // to invalidate here beyond not caching it ourselves: the list view
+      // re-fetches fresh data on return, and the JE-number cache is keyed by
+      // JE id so a changed id is simply a fresh cache entry.
+      showToast('Supplier invoice updated.', 'success');
+      loadView('payables-supplier-invoices');
+    }
+    else if (res) await _pvSiHandleSaveError(res);
   } catch (e) { showToast('Network error.', 'error'); }
 }
 

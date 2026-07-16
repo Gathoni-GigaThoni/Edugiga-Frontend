@@ -4447,25 +4447,48 @@ function _tpHistDetailActions(b) {
   } else {
     html += `<div style="width:100%;color:var(--grey-600,#666);font-size:0.9rem;">This batch has been ${_finEsc((b.status||'').replace(/_/g,' '))}.</div>`;
   }
-  // No DELETE /tendepay/import/{batch_id} exists on the live backend yet
-  // (confirmed via openapi.json — only GET is exposed) — this ships ahead of
-  // that route per the app's established pattern (see Academic Levels Edit),
-  // gated to zero-match batches only since those are the "upload went wrong,
-  // nothing to lose" case; flag to backend to add the route.
-  if ((b.matched_count ?? 0) === 0) {
-    html += `<button class="fin-btn-cancel" onclick="_tpHistDeleteBatch(${b.id})">Delete</button>`;
+  // DELETE /tendepay/import/{batch_id} is real now: 204 for pending_review
+  // (and cancelled, unreachable today) batches, 409 for confirmed ones
+  // ("its journal entries and voucher settlements are already posted" —
+  // unwinding those belongs to the JE reversal flow, not DELETE). Hide the
+  // button on confirmed batches so the 409 is a backstop, not the primary UX.
+  if (b.status !== 'confirmed') {
+    html += `<button class="fin-btn-cancel" onclick="_tpHistOpenDeleteModal(${b.id})">Delete</button>`;
   }
+  html += `<div id="tp-hist-action-msg" style="width:100%;"></div>`;
   return html;
 }
 
+function _tpHistShowActionMsg(text) {
+  const el = document.getElementById('tp-hist-action-msg');
+  const html = `<div style="margin-top:10px;width:100%;padding:10px 14px;border-radius:6px;border-left:3px solid var(--coral-500);background:var(--coral-100);color:var(--coral-600);font-size:0.85rem;">${_finEsc(text)}</div>`;
+  if (el) el.innerHTML = html; else showToast(text, 'error');
+}
+
+function _tpHistOpenDeleteModal(batchId) {
+  const wrap = document.createElement('div');
+  wrap.id = 'tp-hist-delete-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:white;border-radius:8px;padding:24px;width:420px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 12px;font-size:1.05rem;color:#2c3e50;">Discard Batch</h3>
+      <p style="font-size:0.88rem;color:var(--grey-700,#444);line-height:1.5;">Discard this batch? Its parsed preview rows will be permanently removed. This cannot be undone.</p>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="document.getElementById('tp-hist-delete-modal-overlay').remove()">Cancel</button>
+        <button class="fin-btn-teal" onclick="_tpHistDeleteBatch(${batchId})">Discard</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+
 async function _tpHistDeleteBatch(batchId) {
-  if (!confirm('Delete this import batch? This cannot be undone.')) return;
   const res = await apiFetch(`${_TP_BASE}/import/${batchId}`, { method: 'DELETE' });
-  if (res && res.ok) {
-    showToast('Batch deleted.', 'success');
-    await _tpHistReload();
-  } else if (res && (res.status === 404 || res.status === 405)) {
-    showToast('The backend does not yet support deleting import batches (needs DELETE /tendepay/import/{batch_id}).', 'error');
+  document.getElementById('tp-hist-delete-modal-overlay')?.remove();
+  if (res && res.status === 204) {
+    showToast('Batch discarded.', 'success');
+    window._splitRemoveItem?.(batchId);
+  } else if (res && res.status === 409) {
+    _tpHistShowActionMsg(await parseApiError(res));
   } else if (res) {
     showToast('Error: ' + await parseApiError(res), 'error');
   }
@@ -4556,6 +4579,25 @@ async function _tpHistConfirmBatch(batch, modalWrap) {
     .map(t => isPayroll
       ? { tendepay_transaction_id: t.id, payroll_run_line_id: t.matched_voucher_id, match_method: t.match_method || 'auto' }
       : { tendepay_transaction_id: t.id, voucher_id: t.matched_voucher_id, match_method: t.match_method || 'auto' });
+
+  // _tpFetchBatchTransactions reconstructs a pending batch's rows from the
+  // Tendepay Transaction History report — which only carries already-posted
+  // transactions. For a batch still sitting in pending_review (the exact
+  // case this Resume flow exists for), that lookup comes back empty or
+  // short. An empty/short confirmedMatches here is NOT "this batch really
+  // has fewer matches" — it's "the reconstruction failed" — so POSTing it
+  // anyway would silently confirm the batch with fewer matches (0 JEs, 0
+  // amount) than it actually has, with no way back (the batch flips to
+  // 'confirmed' and can then only be unwound via JE reversal — of JEs that
+  // were never posted). Refuse and tell the operator what actually happened.
+  if (confirmedMatches.length < (batch.matched_count ?? 0)) {
+    showToast(
+      `Could not recover this batch's matched rows from Import History (found ${confirmedMatches.length} of ${batch.matched_count} expected). Confirming now would post the batch with fewer matches than it actually has. This batch was NOT confirmed — re-run the Import Statement wizard from the original file instead of confirming from History.`,
+      'error'
+    );
+    if (btn) { btn.disabled = false; btn.textContent = 'Confirm Import'; }
+    return;
+  }
 
   const res = await apiFetch(`${_TP_BASE}/import/${batch.id}/confirm`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
