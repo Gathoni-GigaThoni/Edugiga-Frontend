@@ -4441,10 +4441,34 @@ function _tpHistDetailActions(b) {
   // render, so it's stashed here for the modal opener below rather than
   // round-tripping fields through an inline onclick string.
   window._tpHistCurrentBatch = b;
-  if (b.status !== 'pending_review') {
-    return `<div style="color:var(--grey-600,#666);font-size:0.9rem;">This batch has been ${_finEsc((b.status||'').replace(/_/g,' '))}.</div>`;
+  let html = '';
+  if (b.status === 'pending_review') {
+    html += `<button class="fin-btn-teal" onclick="_tpHistOpenConfirmModal()">Confirm Batch</button>`;
+  } else {
+    html += `<div style="width:100%;color:var(--grey-600,#666);font-size:0.9rem;">This batch has been ${_finEsc((b.status||'').replace(/_/g,' '))}.</div>`;
   }
-  return `<button class="fin-btn-teal" onclick="_tpHistOpenConfirmModal()">Confirm Batch</button>`;
+  // No DELETE /tendepay/import/{batch_id} exists on the live backend yet
+  // (confirmed via openapi.json — only GET is exposed) — this ships ahead of
+  // that route per the app's established pattern (see Academic Levels Edit),
+  // gated to zero-match batches only since those are the "upload went wrong,
+  // nothing to lose" case; flag to backend to add the route.
+  if ((b.matched_count ?? 0) === 0) {
+    html += `<button class="fin-btn-cancel" onclick="_tpHistDeleteBatch(${b.id})">Delete</button>`;
+  }
+  return html;
+}
+
+async function _tpHistDeleteBatch(batchId) {
+  if (!confirm('Delete this import batch? This cannot be undone.')) return;
+  const res = await apiFetch(`${_TP_BASE}/import/${batchId}`, { method: 'DELETE' });
+  if (res && res.ok) {
+    showToast('Batch deleted.', 'success');
+    await _tpHistReload();
+  } else if (res && (res.status === 404 || res.status === 405)) {
+    showToast('The backend does not yet support deleting import batches (needs DELETE /tendepay/import/{batch_id}).', 'error');
+  } else if (res) {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
 }
 
 // GET /tendepay/import/{batch_id} only returns batch-level metadata (no
