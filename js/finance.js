@@ -3218,7 +3218,7 @@ function _coaFormHtml(acct, opts = {}) {
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Account Name <span class="fin-required">*</span></label>
-        <input type="text" id="coa-f-name" class="fin-form-input" value="${_finEsc(acct?.account_name||'')}">
+        <input type="text" id="coa-f-name" class="fin-form-input" value="${_finEsc(acct?.account_name||'')}" oninput="_coaToggleWalletCode(this.value)">
         <span class="fin-field-error" id="coa-f-name-err"></span>
       </div>
       <div class="fin-form-group">
@@ -3257,7 +3257,19 @@ function _coaFormHtml(acct, opts = {}) {
       <label class="fin-form-check-label" style="display:flex;align-items:center;gap:8px;font-size:0.9rem;cursor:pointer;">
         <input type="checkbox" id="coa-f-budget-item" class="fin-cb" ${acct?.is_budget_item?'checked':''}> Budget Item
       </label>
+    </div>
+    <div class="fin-form-group" id="coa-f-wallet-code-wrap" style="display:${/^tendepay/i.test(acct?.account_name||'')?'block':'none'};">
+      <label class="fin-form-label">Tendepay Wallet Code</label>
+      <input type="text" id="coa-f-wallet-code" class="fin-form-input" value="${_finEsc(acct?.tendepay_wallet_code||'')}" placeholder="e.g. KOC5329547696">
+      <span style="font-size:12px;color:var(--grey-600)">The code shown in parentheses on the Tendepay statement for this wallet, e.g. KOC5329547696.</span>
     </div>`;
+}
+
+// Only Tendepay wallet accounts carry a tendepay_wallet_code — show the field
+// once the Account Name starts with "Tendepay" (§5.7).
+function _coaToggleWalletCode(name) {
+  const wrap = document.getElementById('coa-f-wallet-code-wrap');
+  if (wrap) wrap.style.display = /^tendepay/i.test(name || '') ? 'block' : 'none';
 }
 
 // Prefilling the Number field from the selected Parent Account — user can still override it manually.
@@ -3313,7 +3325,8 @@ async function submitCoaAdd(returnView) {
     cash_flow_group:       cfg || null,
     parent_id:             parentId ? parseInt(parentId) : null,
     is_student_fees_related: document.getElementById('coa-f-fees-related').checked,
-    is_budget_item:        document.getElementById('coa-f-budget-item').checked
+    is_budget_item:        document.getElementById('coa-f-budget-item').checked,
+    tendepay_wallet_code:  document.getElementById('coa-f-wallet-code')?.value.trim() || null
   };
   // NOTE: no separate "Fee Account" resource to sync to — is_student_fees_related
   // on this single POST is the entire mechanism (confirmed live: GET /accounts/
@@ -3372,7 +3385,8 @@ async function submitCoaEdit(id, returnView) {
     payment_ordering:       ordering ? parseInt(ordering) : null,
     parent_id:              parentId ? parseInt(parentId) : null,
     is_student_fees_related: document.getElementById('coa-f-fees-related').checked,
-    is_budget_item:         document.getElementById('coa-f-budget-item').checked
+    is_budget_item:         document.getElementById('coa-f-budget-item').checked,
+    tendepay_wallet_code:   document.getElementById('coa-f-wallet-code')?.value.trim() || null
   };
   const res = await apiFetch(`${API_BASE}/accounts/${id}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
@@ -4034,7 +4048,8 @@ async function _tpFetchVoucherMap() {
 let _tpWiz = null;
 function _tpNewWizState() {
   return { step: 1, batchId: null, transactions: [], matchedCount: 0, unmatchedCount: 0, totalAmount: 0,
-    skippedRows: [], alreadyImported: [], voucherPicks: {}, voucherMap: {} };
+    totalCharges: 0, legacyFormat: false, importMode: 'supplier', payrollRunId: null,
+    skippedRows: [], alreadyImported: [], voucherPicks: {}, confirmedIds: {}, voucherMap: {} };
 }
 
 async function loadTendepayImportView(container) {
@@ -4076,20 +4091,34 @@ function _tpRenderWizStep() {
 async function _tpRenderStep1() {
   const body = document.getElementById('tp-wiz-body');
   body.innerHTML = '<p class="sa-loading">Loading column contract&#8230;</p>';
-  let cols = { required_columns: [], optional_columns: [] };
+  let cols = { required_columns: [], optional_columns: [], notes: '' };
   try {
     const res = await apiFetch(`${_TP_BASE}/import/expected-columns`);
     if (res && res.ok) cols = await res.json();
   } catch (_) {}
-  const colRows = list => (list || []).map(c => `
-    <tr><td>${_finEsc(c.name || c.column || '')}</td><td>${_finEsc(c.type || '')}</td><td>${_finEsc(c.description || '')}</td><td>${_finEsc(c.example ?? '')}</td></tr>`).join('');
+  const colRows = (list, required) => (list || []).map(c => `
+    <tr><td>${_finEsc(c.header || c.name || '')}</td><td>${required ? 'Required' : 'Optional'}</td><td>${_finEsc(c.description || '')}</td><td>${_finEsc(c.example ?? '')}</td></tr>`).join('');
+  const notesHtml = cols.notes ? `
+    <div style="background:#eef3fb;border-radius:8px;padding:12px 16px;margin:12px 0;font-size:0.85rem;color:#2c3e50;white-space:pre-wrap;">${_finEsc(cols.notes)}</div>` : '';
   body.innerHTML = `
     <div class="fin-form-wrap">
       <div class="fin-section-label">Expected File Format</div>
       <div class="fin-table-wrap"><table class="fin-table">
-        <thead><tr><th>Column</th><th>Type</th><th>Description</th><th>Example</th></tr></thead>
-        <tbody>${colRows(cols.required_columns) || ''}${colRows(cols.optional_columns) || ''}</tbody>
+        <thead><tr><th>Column</th><th>Required</th><th>Description</th><th>Example</th></tr></thead>
+        <tbody>${colRows(cols.required_columns, true)}${colRows(cols.optional_columns, false)}</tbody>
       </table></div>
+      ${notesHtml}
+      <div class="fin-form-group" style="margin-top:16px;">
+        <label class="fin-form-label">Mode</label>
+        <div style="display:flex;gap:20px;margin-top:6px;">
+          <label><input type="radio" name="tp-import-mode" value="supplier" checked onchange="_tpToggleImportMode()"> Supplier payments</label>
+          <label><input type="radio" name="tp-import-mode" value="payroll" onchange="_tpToggleImportMode()"> Payroll return statement</label>
+        </div>
+        <div id="tp-import-payroll-run-wrap" style="display:none;margin-top:10px;max-width:340px;">
+          <label class="fin-form-label">Payroll Run <span class="fin-required">*</span></label>
+          <select id="tp-import-payroll-run" class="fin-form-select"><option value="">Please Select</option></select>
+        </div>
+      </div>
       <div style="margin-top:16px;display:flex;gap:10px;align-items:center;">
         <button class="fin-btn-outline" onclick="_tpDownloadTemplate()">Download Template</button>
         <input type="file" id="tp-upload-file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="_tpUploadFile(this)">
@@ -4097,6 +4126,29 @@ async function _tpRenderStep1() {
         <span id="tp-upload-status" style="color:#888;font-size:0.85rem;"></span>
       </div>
     </div>`;
+  await _tpLoadPayrollRunOptions();
+}
+
+function _tpToggleImportMode() {
+  const mode = (document.querySelector('input[name="tp-import-mode"]:checked') || {}).value || 'supplier';
+  const wrap = document.getElementById('tp-import-payroll-run-wrap');
+  if (wrap) wrap.style.display = mode === 'payroll' ? 'block' : 'none';
+}
+
+async function _tpLoadPayrollRunOptions() {
+  const sel = document.getElementById('tp-import-payroll-run');
+  if (!sel) return;
+  try {
+    const [awaitingRes, paidRes] = await Promise.all([
+      apiFetch(`${API_BASE}/payroll/runs/?status=awaiting_payment`),
+      apiFetch(`${API_BASE}/payroll/runs/?status=paid`),
+    ]);
+    const awaiting = (awaitingRes && awaitingRes.ok) ? _toArray(await awaitingRes.json()) : [];
+    const paid     = (paidRes && paidRes.ok)     ? _toArray(await paidRes.json())     : [];
+    const runs = [...awaiting, ...paid];
+    sel.innerHTML = '<option value="">Please Select</option>' +
+      runs.map(r => `<option value="${r.id}">${_finEsc(r.run_number || ('Run #' + r.id))}</option>`).join('');
+  } catch (_) {}
 }
 
 async function _tpDownloadTemplate() {
@@ -4113,10 +4165,15 @@ async function _tpDownloadTemplate() {
 async function _tpUploadFile(input) {
   const file = input.files[0];
   if (!file) return;
+  const mode = (document.querySelector('input[name="tp-import-mode"]:checked') || {}).value || 'supplier';
+  const payrollRunId = document.getElementById('tp-import-payroll-run')?.value || '';
+  if (mode === 'payroll' && !payrollRunId) { showToast('Payroll Run is required for a payroll return statement.', 'error'); return; }
   const statusEl = document.getElementById('tp-upload-status');
   if (statusEl) statusEl.textContent = 'Uploading…';
   const fd = new FormData();
   fd.append('file', file);
+  fd.append('import_mode', mode);
+  if (mode === 'payroll') fd.append('payroll_run_id', payrollRunId);
   const res = await apiFetch(`${_TP_BASE}/import`, { method: 'POST', body: fd });
   if (!res || !res.ok) {
     if (statusEl) statusEl.textContent = '';
@@ -4129,19 +4186,44 @@ async function _tpUploadFile(input) {
   _tpWiz.matchedCount = data.matched_count ?? _tpWiz.transactions.filter(t => t.matched_voucher_id).length;
   _tpWiz.unmatchedCount = data.unmatched_count ?? (_tpWiz.transactions.length - _tpWiz.matchedCount);
   _tpWiz.totalAmount = data.total_amount ?? _tpWiz.transactions.reduce((s, t) => s + (parseFloat(t.amount) || 0), 0);
+  _tpWiz.totalCharges = data.total_charges ?? 0;
+  _tpWiz.legacyFormat = !!data.legacy_format;
+  _tpWiz.importMode = data.import_mode || mode;
+  _tpWiz.payrollRunId = data.payroll_run_id ?? (mode === 'payroll' ? parseInt(payrollRunId, 10) : null);
   _tpWiz.skippedRows = data.skipped_rows || [];
   _tpWiz.alreadyImported = data.already_imported || [];
   _tpWiz.voucherMap = await _tpFetchVoucherMap();
+  // Pre-tick rows the backend is confident about — exact/high confidence auto-match;
+  // medium confidence is never pre-ticked, the operator must confirm manually (§5.5).
+  _tpWiz.transactions.forEach(t => {
+    if (t.matched_voucher_id != null) _tpWiz.confirmedIds[t.id] = t.match_confidence !== 'medium';
+  });
   _tpWiz.step = 2;
   _tpRenderWizStep();
+}
+
+function _tpConfidencePill(conf) {
+  const map = { exact: ['Exact', '#1e7e34', '#dcf3e2'], high: ['High', '#1a5fb4', '#dce8fb'], medium: ['Medium — confirm', '#8a6d00', '#f5e6a8'] };
+  const entry = map[conf];
+  if (!entry) return '';
+  const [label, color, bg] = entry;
+  return `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.72rem;font-weight:600;color:${color};background:${bg};margin-left:6px;">${label}</span>`;
 }
 
 function _tpRenderStep2() {
   const body = document.getElementById('tp-wiz-body');
   const rows = _tpWiz.transactions.map(t => {
     let matchCell;
-    if (t.matched_voucher_id) {
-      matchCell = `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.78rem;font-weight:600;color:#1e7e34;background:#dcf3e2;">Auto-matched &rarr; PV#${t.matched_voucher_id}</span>${t.match_method ? ` <span style="color:#888;font-size:0.75rem;">(${_finEsc(t.match_method)})</span>` : ''}`;
+    if (t.amount_mismatch) {
+      matchCell = `<div style="background:var(--coral-100,#fde0de);color:var(--coral-600,#c0392b);padding:8px 10px;border-radius:6px;font-size:0.78rem;">
+        Amount mismatch — statement says ${_tpMoney(t.amount)}, voucher ${_finEsc(t.voucher_ref || '')} expects ${_tpMoney(t.expected_amount ?? t.expected)}. Resolve before confirming.
+      </div>`;
+    } else if (t.matched_voucher_id != null) {
+      const checked = _tpWiz.confirmedIds[t.id] ? 'checked' : '';
+      matchCell = `<label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+        <input type="checkbox" ${checked} onchange="_tpWiz.confirmedIds[${t.id}]=this.checked;">
+        <span>${_finEsc(_tpWiz.voucherMap[t.matched_voucher_id] || ('#' + t.matched_voucher_id))}</span>${_tpConfidencePill(t.match_confidence)}
+      </label>`;
     } else if (t.wallet_unrecognised) {
       matchCell = `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.78rem;font-weight:600;color:#c0392b;background:#fde0de;">Unrecognised wallet</span>`;
     } else if (t.possible_voucher_ids && t.possible_voucher_ids.length) {
@@ -4156,11 +4238,21 @@ function _tpRenderStep2() {
       <td>${_finEsc(t.tendepay_reference || '')}</td>
       <td>${_finEsc(t.wallet_name || '')}</td>
       <td>${_finEsc(t.payee_name || '')}</td>
+      <td>${_finEsc(t.service_account || '')}</td>
       <td>${_tpMoney(t.amount)}</td>
+      <td>${_tpMoney(t.charge)}</td>
       <td>${_tpDate(t.transaction_date)}</td>
+      <td>${_finEsc(t.gateway_receipt || '')}</td>
+      <td>${_finEsc(t.voucher_ref || '')}</td>
       <td>${matchCell}</td>
     </tr>`;
   }).join('');
+
+  const legacyHtml = _tpWiz.legacyFormat ? `
+    <div style="background:#eef3fb;border-left:4px solid var(--navy-700,#1B3057);padding:10px 14px;border-radius:6px;margin-bottom:14px;font-size:0.85rem;color:#1B3057;display:flex;align-items:center;gap:12px;">
+      <span>This file uses the previous template. It has been accepted, but download the current template for future imports.</span>
+      <button class="fin-btn-outline" onclick="_tpDownloadTemplate()">Download current template</button>
+    </div>` : '';
 
   const skippedHtml = _tpWiz.skippedRows.length ? `
     <details style="margin-top:14px;">
@@ -4182,12 +4274,13 @@ function _tpRenderStep2() {
 
   body.innerHTML = `
     <div class="fin-form-wrap">
+      ${legacyHtml}
       <div class="fin-controls-row">
-        <div class="fin-controls-left">${_tpWiz.matchedCount} matched, ${_tpWiz.unmatchedCount} unmatched &middot; Total ${_tpMoney(_tpWiz.totalAmount)}</div>
+        <div class="fin-controls-left">${_tpWiz.matchedCount} matched, ${_tpWiz.unmatchedCount} unmatched &middot; Total ${_tpMoney(_tpWiz.totalAmount)} &middot; Transaction Charges ${_tpMoney(_tpWiz.totalCharges)}</div>
       </div>
       <div class="fin-table-wrap"><table class="fin-table">
-        <thead><tr><th>Tendepay Ref</th><th>Wallet</th><th>Payee</th><th>Amount</th><th>Date</th><th>Match</th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="6" class="fin-empty">No transactions in this file.</td></tr>'}</tbody>
+        <thead><tr><th>Tendepay Ref</th><th>Wallet</th><th>Payee</th><th>Service/Account</th><th>Amount</th><th>Charge</th><th>Date</th><th>Receipt</th><th>Voucher Ref</th><th>Match</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="10" class="fin-empty">No transactions in this file.</td></tr>'}</tbody>
       </table></div>
       ${skippedHtml}
       ${alreadyHtml}
@@ -4232,12 +4325,18 @@ async function _tpConfirmImport() {
   const unmatchedAction = (document.querySelector('input[name="tp-unmatched-action"]:checked') || {}).value || 'suspense';
   if (!ledgerId || !costCenterId) { showToast('Ledger and Cost Center are required.', 'error'); return; }
 
+  const isPayroll = _tpWiz.importMode === 'payroll';
   const confirmedMatches = [];
   _tpWiz.transactions.forEach(t => {
-    if (t.matched_voucher_id) {
-      confirmedMatches.push({ tendepay_transaction_id: t.id, voucher_id: t.matched_voucher_id, match_method: 'auto' });
+    if (t.amount_mismatch) return; // cannot auto-tick; operator must resolve the mismatch first
+    if (t.matched_voucher_id != null && _tpWiz.confirmedIds[t.id]) {
+      confirmedMatches.push(isPayroll
+        ? { tendepay_transaction_id: t.id, payroll_run_line_id: t.matched_voucher_id, match_method: 'auto' }
+        : { tendepay_transaction_id: t.id, voucher_id: t.matched_voucher_id, match_method: 'auto' });
     } else if (_tpWiz.voucherPicks[t.id]) {
-      confirmedMatches.push({ tendepay_transaction_id: t.id, voucher_id: _tpWiz.voucherPicks[t.id], match_method: 'manual' });
+      confirmedMatches.push(isPayroll
+        ? { tendepay_transaction_id: t.id, payroll_run_line_id: _tpWiz.voucherPicks[t.id], match_method: 'manual' }
+        : { tendepay_transaction_id: t.id, voucher_id: _tpWiz.voucherPicks[t.id], match_method: 'manual' });
     }
   });
 
@@ -4248,16 +4347,39 @@ async function _tpConfirmImport() {
   if (res && res.ok) {
     const data = await res.json();
     const jvNumbers = (data.posted_journal_entries || []).map(j => (typeof j === 'object' ? (j.jv_number || j.id) : j)).join(', ');
-    showToast(`Batch confirmed. ${confirmedMatches.length} vouchers paid, ${(data.posted_journal_entries || []).length} journal entries posted.${jvNumbers ? ' (' + jvNumbers + ')' : ''}`, 'success');
+    let msg = `Batch confirmed. ${confirmedMatches.length} vouchers paid, ${(data.posted_journal_entries || []).length} journal entries posted.${jvNumbers ? ' (' + jvNumbers + ')' : ''}`;
+    if (data.charges_journal_entry_id) msg += ` Transaction Charges JE #${data.charges_journal_entry_id}.`;
+    showToast(msg, 'success');
     loadView('tendepay-import-history');
   } else if (res && res.status === 409) {
     showToast('This batch has already been confirmed.', 'error');
     loadView('tendepay-import-history');
   } else if (res) {
     const body = await res.json().catch(() => null);
-    const errs = body && body.validation_errors ? body.validation_errors.map(e => e.msg || JSON.stringify(e)).join('; ') : await parseApiError(res);
-    showToast('Error: ' + errs, 'error');
+    if (body && Array.isArray(body.validation_errors) && body.validation_errors.length) {
+      _tpRenderValidationErrors(body.validation_errors);
+    } else {
+      const detail = body && body.detail;
+      const msg = typeof detail === 'string' ? detail : (detail ? JSON.stringify(detail) : `HTTP ${res.status}`);
+      showToast('Error: ' + msg, 'error');
+    }
   }
+}
+
+// Split-salary and other row-level confirm failures — keyed to the affected
+// row/line rather than swallowed into a single generic toast (§6.3).
+function _tpRenderValidationErrors(errors) {
+  const body = document.getElementById('tp-wiz-body');
+  if (!body) return;
+  const list = errors.map(e => {
+    const label = e.tendepay_transaction_id ?? e.payroll_run_line_id ?? e.row ?? '';
+    const msg = e.msg || e.detail || (typeof e === 'string' ? e : JSON.stringify(e));
+    return `<li>${label !== '' ? `<strong>${_finEsc(String(label))}:</strong> ` : ''}${_finEsc(msg)}</li>`;
+  }).join('');
+  const banner = document.createElement('div');
+  banner.style.cssText = 'background:var(--coral-100,#fde0de);color:var(--coral-600,#c0392b);padding:12px 16px;border-radius:8px;margin-top:14px;font-size:0.85rem;';
+  banner.innerHTML = `<strong>Could not confirm batch:</strong><ul style="margin:8px 0 0 18px;">${list}</ul>`;
+  body.appendChild(banner);
 }
 
 // ── Import History ──────────────────────────────────────────────────────────
@@ -4300,6 +4422,8 @@ async function _tpHistReload() {
       {label:'Matched',      key:'matched_count', fmt:v=>v ?? '—'},
       {label:'Unmatched',    key:'unmatched_count', fmt:v=>v ?? '—'},
       {label:'Total Amount', key:'total_amount', fmt:v=>_tpMoney(v)},
+      {label:'Transaction Charges', key:'total_charges', fmt:v=>v!=null?_tpMoney(v):'—'},
+      {label:'Charges Journal Entry', key:'charges_journal_entry_id', fmt:v=>v||'—'},
       {label:'Notes',        key:'notes', fmt:v=>v||'—'},
     ],
   });
@@ -4492,15 +4616,24 @@ async function _tpReconGenerate() {
   if (!accounts.length) { out.innerHTML = '<p class="fin-empty">No Tendepay wallet accounts found.</p>'; return; }
   out.innerHTML = `
     <div class="fin-table-wrap"><table class="fin-table">
-      <thead><tr><th>Account</th><th>GL Balance</th><th>Tendepay Posted Total</th><th>Difference</th></tr></thead>
+      <thead><tr><th>Account</th><th>GL Balance</th><th>Tendepay Posted Total</th><th>Charges Credited</th><th>Expected Balance</th><th>Difference</th></tr></thead>
       <tbody>
         ${accounts.map(a => {
-          const diff = parseFloat(a.difference ?? 0);
+          // expected_balance = fund_loads_total - tendepay_posted_total - charges_credited;
+          // difference = gl_balance - expected_balance. Use the backend's own figures
+          // when present rather than recomputing, falling back only if it omits them.
+          const charges = parseFloat(a.charges_credited ?? 0);
+          const expected = a.expected_balance != null
+            ? parseFloat(a.expected_balance)
+            : parseFloat(a.fund_loads_total ?? 0) - parseFloat(a.tendepay_posted_total ?? 0) - charges;
+          const diff = a.difference != null ? parseFloat(a.difference) : parseFloat(a.gl_balance ?? 0) - expected;
           const diffColor = Math.abs(diff) > 0.005 ? 'color:#c0392b;font-weight:600;' : 'color:#1e7e34;font-weight:600;';
           return `<tr>
             <td>${_finEsc(a.account_name || a.name || '')}</td>
             <td>${_tpMoney(a.gl_balance)}</td>
             <td>${_tpMoney(a.tendepay_posted_total)}</td>
+            <td>${_tpMoney(charges)}</td>
+            <td>${_tpMoney(expected)}</td>
             <td style="${diffColor}">${_tpMoney(diff)}</td>
           </tr>`;
         }).join('')}

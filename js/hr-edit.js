@@ -29,6 +29,7 @@ function renderHrEditPage(container, record) {
     </div>
     ${hrEditModalsHtml()}
   `;
+  loadDepartmentOptions('hr-edit-department', hrEditRecord.department_id);
 }
 
 function hrEditTabPlaceholder() {
@@ -222,8 +223,8 @@ function renderHrEditTabBasic() {
           <input type="text" id="hr-edit-other-names" class="hr-form-input" value="${r.other_names || r.first_name || ''}">
         </div>
         <div class="hr-form-group">
-          <label class="hr-form-label">Alias</label>
-          <input type="text" id="hr-edit-alias" class="hr-form-input" value="${r.alias || ''}">
+          <label class="hr-form-label">Department</label>
+          <select id="hr-edit-department" class="hr-form-select"><option value="">Loading&#8230;</option></select>
         </div>
         <div class="hr-form-group">
           <label class="hr-form-label">Email <span class="hr-required">*</span></label>
@@ -291,17 +292,6 @@ function renderHrEditTabBasic() {
           <label class="hr-form-label">National ID No</label>
           <input type="text" id="hr-edit-national-id" class="hr-form-input" value="${r.national_id || ''}">
         </div>
-        <div class="hr-form-group">
-          <label class="hr-form-label">Rank</label>
-          <select id="hr-edit-rank" class="hr-form-select">
-            <option value="">Please Select</option>
-            <option value="Junior" ${sel(r.rank,'Junior')}>Junior</option>
-            <option value="Mid"    ${sel(r.rank,'Mid')}>Mid</option>
-            <option value="Senior" ${sel(r.rank,'Senior')}>Senior</option>
-            <option value="Lead"   ${sel(r.rank,'Lead')}>Lead</option>
-          </select>
-        </div>
-        <div class="hr-form-group"></div>
       </div>
       <div class="hr-form-checkboxes">
         <label class="hr-form-checkbox-label">
@@ -356,7 +346,7 @@ async function updateHrEditBasic() {
   hrEditRecord.employment_terms = employment_terms;
   hrEditRecord.last_name        = surname;
   hrEditRecord.first_name       = other_names;
-  hrEditRecord.alias            = gvt('hr-edit-alias');
+  hrEditRecord.department_id    = gv('hr-edit-department') || null;
   hrEditRecord.email            = email;
   hrEditRecord.phone_code       = gv('hr-edit-phone-code');
   hrEditRecord.phone            = gv('hr-edit-phone');
@@ -367,7 +357,6 @@ async function updateHrEditBasic() {
   hrEditRecord.address          = gv('hr-edit-address');
   hrEditRecord.nationality      = nationality;
   hrEditRecord.national_id      = gvt('hr-edit-national-id');
-  hrEditRecord.rank             = gv('hr-edit-rank');
   hrEditRecord.is_director      = document.getElementById('hr-edit-director')?.checked || false;
 
   const nameEl = document.getElementById('hr-edit-info-name');
@@ -378,7 +367,7 @@ async function updateHrEditBasic() {
     employment_terms:  hrEditRecord.employment_terms,
     last_name:         hrEditRecord.last_name,
     first_name:        hrEditRecord.first_name,
-    alias:             hrEditRecord.alias,
+    department_id:     hrEditRecord.department_id ? parseInt(hrEditRecord.department_id, 10) : null,
     email:             hrEditRecord.email,
     phone_code:        hrEditRecord.phone_code,
     phone:             hrEditRecord.phone,
@@ -389,7 +378,6 @@ async function updateHrEditBasic() {
     address:           hrEditRecord.address,
     nationality:       hrEditRecord.nationality,
     national_id:       hrEditRecord.national_id,
-    rank:              hrEditRecord.rank,
     is_director:       hrEditRecord.is_director,
     emergency_contact: hrEditRecord.emergency_contact || null,
   };
@@ -830,7 +818,7 @@ function renderHrEditTabServiceProfile() {
   const rows = (hrEditRecord.service_profile || []).length === 0
     ? `<tr><td colspan="6" class="hr-empty">No records found</td></tr>`
     : (hrEditRecord.service_profile || []).map((sp, i) => `<tr>
-        <td>${sp.reason_event || ''}</td><td>${sp.pay_grade || ''}</td>
+        <td>${sp.reason_event || ''}</td><td>${payGradeLabelFor(sp.pay_grade_id)}</td>
         <td>${sp.basic_salary || ''}</td><td>${sp.effective_date || ''}</td><td>${sp.end_date || ''}</td>
         <td class="hr-action-cell">
           <div class="hr-action-wrap">
@@ -905,5 +893,12 @@ function switchHrEditTab(tabId) {
   });
   const content = document.getElementById('hr-edit-tab-content');
   if (content) content.innerHTML = renderHrEditTabContent(tabId);
+  loadDepartmentOptions('hr-edit-department', hrEditRecord.department_id);
+  if (tabId === 'service-profile') {
+    ensurePayGradeCache().then(() => {
+      const c = document.getElementById('hr-edit-tab-content');
+      if (c && hrEditActiveTab === 'service-profile') c.innerHTML = renderHrEditTabServiceProfile();
+    });
+  }
 }
 

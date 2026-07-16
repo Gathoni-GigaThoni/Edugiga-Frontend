@@ -10,7 +10,15 @@ function renderHrAddPage(container) {
     </div>
     ${hrAddModalsHtml()}
   `;
-  document.getElementById('hr-add-tab-content').innerHTML = renderHrAddTabContent(hrAddActiveTab);
+  _hrAddSetTabContent(hrAddActiveTab);
+}
+
+// Sets the tab-content innerHTML and, when the Basic tab is showing, kicks
+// off the async department picker load (loadDepartmentOptions is a no-op if
+// the select isn't present in the currently-rendered tab).
+function _hrAddSetTabContent(tabId) {
+  document.getElementById('hr-add-tab-content').innerHTML = renderHrAddTabContent(tabId);
+  loadDepartmentOptions('hr-add-department', hrAddFormState.department_id);
 }
 
 function hrAddModalsHtml() {
@@ -129,7 +137,7 @@ function switchHrAddTab(tabId) {
   document.querySelectorAll('.hr-form-tabs .hr-tab-btn').forEach(btn => {
     btn.classList.toggle('hr-tab-btn--active', btn.getAttribute('data-tab-id') === tabId);
   });
-  document.getElementById('hr-add-tab-content').innerHTML = renderHrAddTabContent(tabId);
+  _hrAddSetTabContent(tabId);
 }
 
 function saveHrAddCurrentTabState() {
@@ -138,7 +146,7 @@ function saveHrAddCurrentTabState() {
   set('employment_terms', 'hr-add-employment-terms');
   set('surname',          'hr-add-surname');
   set('other_names',      'hr-add-other-names');
-  set('alias',            'hr-add-alias');
+  set('department_id',    'hr-add-department');
   set('email',            'hr-add-email');
   set('phone_code',       'hr-add-phone-code');
   set('phone',            'hr-add-phone');
@@ -149,7 +157,6 @@ function saveHrAddCurrentTabState() {
   set('address',          'hr-add-address');
   set('nationality',      'hr-add-nationality');
   set('national_id',      'hr-add-national-id');
-  set('rank',             'hr-add-rank');
   set('disability_type',  'hr-add-disability-type');
   set('medical_info',     'hr-add-medical-info');
   set('kra_pin',          'hr-add-kra-pin');
@@ -205,8 +212,8 @@ function renderHrAddTabBasic() {
           <input type="text" id="hr-add-other-names" class="hr-form-input" value="${s.other_names}" placeholder="Other Names">
         </div>
         <div class="hr-form-group">
-          <label class="hr-form-label">Alias</label>
-          <input type="text" id="hr-add-alias" class="hr-form-input" value="${s.alias}" placeholder="Alias">
+          <label class="hr-form-label">Department</label>
+          <select id="hr-add-department" class="hr-form-select"><option value="">Loading&#8230;</option></select>
         </div>
         <div class="hr-form-group">
           <label class="hr-form-label">Email <span class="hr-required">*</span></label>
@@ -274,17 +281,6 @@ function renderHrAddTabBasic() {
           <label class="hr-form-label">National ID No</label>
           <input type="text" id="hr-add-national-id" class="hr-form-input" value="${s.national_id}" placeholder="National ID">
         </div>
-        <div class="hr-form-group">
-          <label class="hr-form-label">Rank</label>
-          <select id="hr-add-rank" class="hr-form-select">
-            <option value="">Please Select</option>
-            <option value="Junior" ${sel(s.rank,'Junior')}>Junior</option>
-            <option value="Mid"    ${sel(s.rank,'Mid')}>Mid</option>
-            <option value="Senior" ${sel(s.rank,'Senior')}>Senior</option>
-            <option value="Lead"   ${sel(s.rank,'Lead')}>Lead</option>
-          </select>
-        </div>
-        <div class="hr-form-group"></div>
       </div>
       <div class="hr-form-checkboxes">
         <label class="hr-form-checkbox-label">
@@ -482,7 +478,7 @@ async function submitHrAddEmployee() {
     employment_terms:  s.employment_terms,
     last_name:         s.surname,
     first_name:        s.other_names,
-    alias:             s.alias,
+    department_id:     s.department_id ? parseInt(s.department_id, 10) : null,
     email:             s.email,
     phone_code:        s.phone_code,
     phone:             s.phone,
@@ -495,7 +491,6 @@ async function submitHrAddEmployee() {
     emergency_contact: s.emergency_contact,
     nationality:       s.nationality,
     national_id:       s.national_id,
-    rank:              s.rank,
     is_director:       s.is_director,
     is_active:         true,
     disability_type:   s.disability_type,

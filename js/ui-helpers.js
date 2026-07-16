@@ -1,6 +1,97 @@
 // ==================== UI HELPERS ====================
 // Shared utilities used across all modules.
 
+// ── Money formatting ─────────────────────────────────────────────────────────
+function formatKES(v) {
+  const n = parseFloat(v);
+  if (isNaN(n)) return 'KES 0.00';
+  return 'KES ' + n.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// ── Shared Department picker (BE/FE Contract 2026-07-15 §1.4) ──────────────
+// Departments is a single shared lookup used by Employee, PaymentVoucher and
+// PettyCash. This is the canonical picker for NEW consumers (Employee
+// create/edit, HR list filter, send-email filter, PV create) — it is
+// deliberately separate from payables.js's _pvDepartmentOptions/_pvDepartments,
+// which batch-fetch departments together with ledgers/cost-centers/suppliers
+// for the Payables screens already built against that cache.
+let _deptOptionsCache = null; // active-only, for pickers
+let _deptAllCache = null;     // active + archived, for label resolution
+
+async function loadDepartmentOptions(selectId, selectedId = null) {
+  const selectEl = document.getElementById(selectId);
+  if (!selectEl) return;
+  if (_deptOptionsCache === null) {
+    try {
+      const res = await apiFetch(`${API_BASE}/departments/?is_active=true`);
+      _deptOptionsCache = (res && res.ok) ? _toArray(await res.json()) : [];
+    } catch (_) { _deptOptionsCache = []; }
+  }
+  let list = _deptOptionsCache;
+  const hasSelected = selectedId != null && list.some(d => String(d.id) === String(selectedId));
+  selectEl.innerHTML = '<option value="">Please Select</option>' +
+    list.map(d => `<option value="${d.id}" ${String(selectedId) === String(d.id) ? 'selected' : ''}>${d.name}</option>`).join('');
+  // Edge case: editing a record whose department_id points at an archived
+  // department — it won't be in the active-only list above. Fetch it
+  // directly so the picker shows the truth instead of a blank selection.
+  if (selectedId != null && !hasSelected) {
+    try {
+      const res = await apiFetch(`${API_BASE}/departments/${selectedId}`);
+      if (res && res.ok) {
+        const d = await res.json();
+        const opt = document.createElement('option');
+        opt.value = d.id;
+        opt.textContent = `${d.name} (archived)`;
+        opt.selected = true;
+        opt.disabled = true;
+        selectEl.appendChild(opt);
+        selectEl.value = String(d.id);
+      }
+    } catch (_) {}
+  }
+}
+
+// Pre-fetch once per view (await this before rendering), then resolve
+// id -> name synchronously via departmentLabelFor — avoids a lookup per row
+// (BE/FE Contract 2026-07-15 §11.2).
+async function ensureDepartmentCache() {
+  if (_deptAllCache !== null) return;
+  try {
+    const [activeRes, inactiveRes] = await Promise.all([
+      apiFetch(`${API_BASE}/departments/?is_active=true`),
+      apiFetch(`${API_BASE}/departments/?is_active=false`),
+    ]);
+    const active   = (activeRes && activeRes.ok)   ? _toArray(await activeRes.json())   : [];
+    const inactive = (inactiveRes && inactiveRes.ok) ? _toArray(await inactiveRes.json()) : [];
+    _deptAllCache = [...active, ...inactive];
+  } catch (_) { _deptAllCache = []; }
+}
+
+function departmentLabelFor(id) {
+  if (id == null || id === '') return '—';
+  const d = (_deptAllCache || []).find(d => String(d.id) === String(id));
+  return d ? d.name : '—';
+}
+
+// ── Shared Pay Grade label resolver (BE/FE Contract 2026-07-15 §4.1) ───────
+// ServiceProfileRead.pay_grade_id returns an id with no label — pre-fetch
+// once per view and resolve locally rather than a lookup per row.
+let _payGradeAllCache = null;
+
+async function ensurePayGradeCache() {
+  if (_payGradeAllCache !== null) return;
+  try {
+    const res = await apiFetch(`${API_BASE}/payroll/utilities/pay-grades/`);
+    _payGradeAllCache = (res && res.ok) ? _toArray(await res.json()) : [];
+  } catch (_) { _payGradeAllCache = []; }
+}
+
+function payGradeLabelFor(id) {
+  if (id == null || id === '') return '—';
+  const g = (_payGradeAllCache || []).find(g => String(g.id) === String(id));
+  return g ? `${g.position} — ${formatKES(g.amount)}` : '—';
+}
+
 // ── Paginated table renderer ──────────────────────────────────────────────────
 // containerId   — id of the wrapping element for the table
 // paginationId  — id of the element for pagination buttons (can be null)

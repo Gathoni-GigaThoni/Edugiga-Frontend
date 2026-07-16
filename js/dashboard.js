@@ -280,7 +280,12 @@ function showDashboard() {
             <ul id="hr-dropdown" class="dropdown-menu">
               <li id="sidebar-hr-employee-directory" onclick="loadView('hr-employee-directory')">Employee Directory</li>
               <li id="sidebar-hr-staff-attendance" onclick="loadView('hr-staff-attendance')">Staff Attendance</li>
-              <li id="sidebar-hr-utilities" onclick="loadView('hr-utilities')">Utilities</li>
+              <li class="dropdown">
+                ${flyoutGroupHeader('Utilities', 'hr-utilities-dropdown')}
+                <ul id="hr-utilities-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('hr-utilities-dropdown')}">
+                  <li id="sidebar-hr-pay-grades" class="sidebar-sub-sub" onclick="loadView('hr-utilities-pay-grades')">Pay Grades</li>
+                </ul>
+              </li>
             </ul>
           </div>
 
@@ -293,7 +298,6 @@ function showDashboard() {
                 ${flyoutGroupHeader('Utilities', 'payroll-utilities-dropdown')}
                 <ul id="payroll-utilities-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('payroll-utilities-dropdown')}">
                   <li id="sidebar-payroll-pay-accounts"        class="sidebar-sub-sub" onclick="loadView('payroll-pay-accounts')">Pay Accounts</li>
-                  <li id="sidebar-payroll-pay-grades"          class="sidebar-sub-sub" onclick="loadView('payroll-pay-grades')">Pay Grades</li>
                   <li id="sidebar-payroll-salary-periods"      class="sidebar-sub-sub" onclick="loadView('payroll-salary-periods')">Salary Periods</li>
                   <li id="sidebar-payroll-salary-disbursement" class="sidebar-sub-sub" onclick="loadView('payroll-salary-disbursement')">Salary Disbursement Mode</li>
                   <li id="sidebar-payroll-fi"                  class="sidebar-sub-sub" onclick="loadView('payroll-fi')">Financial Institutions</li>
@@ -315,6 +319,7 @@ function showDashboard() {
             <ul id="admin-dropdown" class="dropdown-menu">
               <li onclick="loadView('user-management')">User Management</li>
               <li onclick="loadView('admin-roles')">Roles</li>
+              <li onclick="loadView('admin-departments')">Departments</li>
               <li onclick="loadView('admin-setup')">Setup</li>
             </ul>
           </div>
@@ -764,7 +769,6 @@ const FORM_VIEWS = new Set([
   'tendepay-import', 'tendepay-fund-loads',
   // HR / Payroll
   'hr-employee-directory', 'payroll-esp', 'payroll-fi', 'payroll-runs', 'payroll-payslips',
-  'payroll-pay-grades-add', 'payroll-pay-grades-edit',
   // Procurement
   'procurement-suppliers-add', 'procurement-suppliers-edit',
   // Administration
@@ -1171,15 +1175,6 @@ async function loadView(view) {
     case 'payroll-pay-accounts':
       setActiveSidebarItem('sidebar-payroll-pay-accounts'); openPayrollDropdowns();
       showPlaceholder(main, 'Pay Accounts'); break;
-    case 'payroll-pay-grades':
-      setActiveSidebarItem('sidebar-payroll-pay-grades'); openPayrollDropdowns();
-      await loadPayGradesView(main); break;
-    case 'payroll-pay-grades-add':
-      openPayrollDropdowns();
-      await loadPayGradeFormView(main, null); break;
-    case 'payroll-pay-grades-edit':
-      openPayrollDropdowns();
-      await loadPayGradeFormView(main, window._currentEditPayGradeId); break;
     case 'payroll-salary-periods':
       setActiveSidebarItem('sidebar-payroll-salary-periods'); openPayrollDropdowns();
       showPlaceholder(main, 'Salary Periods'); break;
@@ -1195,7 +1190,9 @@ async function loadView(view) {
     // Human Resource
     case 'hr-employee-directory': loadHrEmployeeDirectoryView(main); break;
     case 'hr-staff-attendance': showPlaceholder(main, 'Staff Attendance'); break;
-    case 'hr-utilities': showPlaceholder(main, 'Utilities'); break;
+    case 'hr-utilities-pay-grades':
+      setActiveSidebarItem('sidebar-hr-pay-grades'); openHrDropdowns();
+      await loadPayGradesView(main); break;
     // Administration
     case 'administration': await loadAdministrationView(main); break;
     case 'user-management': await loadUserManagementView(main); break;
@@ -1203,6 +1200,7 @@ async function loadView(view) {
     case 'admin-role-permissions':
     case 'admin-role-edit': await renderRoleEditPage(main); break;
     case 'admin-setup': showPlaceholder(main, 'Setup'); break;
+    case 'admin-departments': await loadDepartmentsView(main); break;
     // Empty modules
     // Procurement
     case 'procurement':

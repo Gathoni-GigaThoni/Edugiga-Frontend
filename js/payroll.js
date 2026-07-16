@@ -31,7 +31,14 @@ function _prInfoPlaceholder(message, action, actionLabel) {
   };
 }
 
+function _prEspDepartment(sp) {
+  const emp = employeesData.find(e => e.employee_code === sp.employee_code);
+  return emp ? departmentLabelFor(emp.department_id) : '—';
+}
+
 async function loadPayrollEspListingView(container) {
+  await ensureDepartmentCache();
+  await ensurePayGradeCache();
   await renderSplitView({
     container,
     moduleKey: 'payroll.employee_service_profiles',
@@ -42,18 +49,18 @@ async function loadPayrollEspListingView(container) {
       {label:'Service Profiles'}
     ],
     apiUrl: `${API_BASE}/payroll/employee-service-profiles/`,
-    searchFields: ['employee_name','employee_code','department'],
+    searchFields: ['employee_name','employee_code'],
     col1Label: 'Employee', col2Label: 'Department',
     col1: sp => sp.employee_name || '—',
-    col2: sp => sp.department || sp.employee_code || '—',
+    col2: sp => _prEspDepartment(sp) !== '—' ? _prEspDepartment(sp) : (sp.employee_code || '—'),
     rowLabel: sp => sp.employee_name || '—',
     rowSub:   sp => sp.employee_code || '',
     idKey: 'id',
     detailFields: [
       {label:'Employee',    key:'employee_name', fmt:v=>v||'—'},
       {label:'Emp Code',    key:'employee_code', fmt:v=>v||'—'},
-      {label:'Department',  key:'department', fmt:v=>v||'—'},
-      {label:'Pay Grade',   key:'pay_grade', fmt:v=>v||'—'},
+      {label:'Department',  key:'employee_code', fmt:(_,sp)=>_prEspDepartment(sp)},
+      {label:'Pay Grade',   key:'pay_grade_id', fmt:v=>payGradeLabelFor(v)},
       {label:'Basic Salary',key:'basic_salary', fmt:v=>v!=null?String(v):'—'},
       {label:'Eff. Date',   key:'effective_date', fmt:v=>v||'—'},
     ],
@@ -515,142 +522,179 @@ async function submitFiEdit(id) {
 }
 
 // ==================== PAY GRADES ====================
-let payGradesData = [];
-window._currentEditPayGradeId = null;
+// Natural key is (position, effective_from) — the same position may hold
+// several time-slotted grades (BE/FE Contract 2026-07-15 §2).
+function _pgBadge(isActive) {
+  return isActive ? '' : `<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:0.78rem;font-weight:600;color:#888;background:#eee;margin-left:6px;">Retired</span>`;
+}
+function _pgRange(g) {
+  return `${g.effective_from || '—'} &rarr; ${g.effective_to || 'open'}`;
+}
 
 async function loadPayGradesView(container) {
+  container.innerHTML = `
+    <div class="fin-filter-section">
+      <div class="fin-filter-grid">
+        <div class="fin-filter-field"><label class="fin-filter-label">Position</label><input type="text" id="pg-f-position" class="fin-filter-input" placeholder="e.g. Assistant Teacher"></div>
+        <div class="fin-filter-field" style="display:flex;align-items:flex-end;">
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="pg-f-active-only" checked style="width:auto;"> Active only</label>
+        </div>
+      </div>
+      <div class="fin-filter-actions"><button class="fin-btn-teal" onclick="_pgReload()">Filter</button></div>
+    </div>
+    <div id="pg-split"></div>`;
+  await _pgReload();
+}
+
+async function _pgReload() {
+  const position = (document.getElementById('pg-f-position')?.value || '').trim();
+  const activeOnly = document.getElementById('pg-f-active-only')?.checked ?? true;
+  const params = new URLSearchParams();
+  if (position) params.set('position', position);
+  if (activeOnly) params.set('active_only', 'true');
+
   await renderSplitView({
-    container,
+    container: document.getElementById('pg-split'),
     moduleKey: 'payroll.utilities.pay_grades',
     title: 'Pay Grades',
     breadcrumb: [
       {label:'Dashboard',view:null},
-      {label:'Payroll',view:'payroll-pay-grades'},
+      {label:'Human Resource',view:null},
+      {label:'Utilities',view:null},
       {label:'Pay Grades'}
     ],
-    apiUrl: `${API_BASE}/payroll/utilities/pay-grades`,
-    searchFields: ['name'],
-    col1Label: 'Name', col2Label: 'Base Salary',
-    col1: g => g.name || '—',
-    col2: g => g.base_salary != null ? String(g.base_salary) : '—',
-    rowLabel: g => g.name || '—',
-    rowSub:   g => g.base_salary != null ? `Base: ${g.base_salary}` : '',
+    apiUrl: `${API_BASE}/payroll/utilities/pay-grades/${params.toString() ? '?' + params.toString() : ''}`,
+    searchFields: ['position', 'name'],
+    col1Label: 'Position', col2Label: 'Amount',
+    col1: g => `${g.position || '—'}${_pgBadge(g.is_active)}`,
+    col2: g => formatKES(g.amount),
+    rowLabel: g => g.position || '—',
+    rowSub:   g => g.name || _pgRange(g),
     idKey: 'id',
     detailFields: [
-      {label:'Name',        key:'name'},
-      {label:'Base Salary', key:'base_salary', fmt:v=>v!=null?String(v):'—'},
+      {label:'Position',        key:'position'},
+      {label:'Name',            key:'name', fmt:v=>v||'—'},
+      {label:'Effective From',  key:'effective_from'},
+      {label:'Effective To',    key:'effective_to', fmt:v=>v||'—'},
+      {label:'Amount',          key:'amount', fmt:v=>formatKES(v)},
+      {label:'Status',          key:'is_active', fmt:v=>v?'Active':'Retired'},
     ],
-    renderAdd: _prAddPlaceholder('Pay Grade', "loadView('payroll-pay-grades-add')", 'Add a new pay grade.'),
-    onAdd:  () => loadView('payroll-pay-grades-add'),
-    onEdit: item => { window._currentEditPayGradeId = item.id; loadView('payroll-pay-grades-edit'); },
+    renderAdd:  el => _pgSplitForm(null, el),
+    renderEdit: (item, el) => _pgSplitForm(item, el),
+    detailActions: item => `
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        ${item.is_active ? `<button class="btn" onclick="_pgRetire(${item.id})">Retire</button>` : ''}
+        <button class="btn-danger" onclick="_pgDelete(${item.id})">Delete</button>
+      </div>
+      <div id="pg-action-error" style="margin-top:12px;"></div>
+    `,
   });
 }
 
-function renderPayGradesTable() {
-  const el = document.getElementById('pay-grades-table-container');
-  if (!el) return;
-  const rows = payGradesData.length === 0
-    ? `<tr><td colspan="3" class="hr-empty">No records found</td></tr>`
-    : payGradesData.map((g, i) => `<tr>
-        <td>${g.name || ''}</td>
-        <td>${g.base_salary != null ? g.base_salary : '-'}</td>
-        <td class="hr-action-cell">
-          <div class="hr-action-wrap">
-            <button class="hr-action-btn" onclick="togglePayGradeDropdown(event,${i})">&#8230;</button>
-            <div id="pay-grade-dd-${i}" class="hr-action-dropdown" style="display:none;">
-              <a href="#" onclick="payGradeEdit(${i});return false;">&#9998; Edit</a>
-              <a href="#" onclick="payGradeDelete(${i});return false;">&#128465; Delete</a>
-            </div>
-          </div>
-        </td>
-      </tr>`).join('');
-  el.innerHTML = `<table class="hr-table"><thead><tr><th>NAME</th><th>BASE SALARY</th><th>ACTION</th></tr></thead><tbody>${rows}</tbody></table>`;
-}
-
-function togglePayGradeDropdown(event, idx) {
-  event.stopPropagation();
-  document.querySelectorAll('[id^="pay-grade-dd-"]').forEach(d => { if (d.id !== `pay-grade-dd-${idx}`) d.style.display = 'none'; });
-  const dd = document.getElementById(`pay-grade-dd-${idx}`);
-  if (dd) dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
-}
-
-document.addEventListener('click', () => {
-  document.querySelectorAll('[id^="pay-grade-dd-"]').forEach(d => d.style.display = 'none');
-});
-
-function payGradeEdit(idx) {
-  window._currentEditPayGradeId = payGradesData[idx].id;
-  loadView('payroll-pay-grades-edit');
-}
-
-async function payGradeDelete(idx) {
-  const grade = payGradesData[idx];
-  if (!grade || !confirm(`Delete pay grade "${grade.name}"?`)) return;
-  try {
-    const res = await apiFetch(`${API_BASE}/payroll/utilities/pay-grades/${grade.id}`, { method: 'DELETE' });
-    if (res && res.ok) { showToast('Pay grade deleted.', 'success'); loadPayGradesView(document.getElementById('main-content')); }
-    else if (res) showToast(await parseApiError(res), 'error');
-  } catch (_) { showToast('Network error.', 'error'); }
-}
-
-async function loadPayGradeFormView(container, gradeId) {
-  const isEdit = !!gradeId;
-  let grade = {};
-  if (isEdit) {
-    try {
-      const res = await apiFetch(`${API_BASE}/payroll/utilities/pay-grades/${gradeId}`);
-      if (res && res.ok) grade = await res.json();
-    } catch (_) {}
-  }
-  container.innerHTML = `
-    <div class="payroll-page">
-      <div class="hr-header-row">
-        <h2 class="hr-title">${isEdit ? 'Edit' : 'Add'} Pay Grade</h2>
-        <div class="hr-breadcrumb">Dashboard &rsaquo; Payroll &rsaquo; Pay Grades &rsaquo; ${isEdit ? 'Edit' : 'Add'}</div>
+function _pgSplitForm(item, el) {
+  const id = item?.id ?? null;
+  const isEdit = !!item;
+  el.innerHTML = `
+    <div style="max-width:480px">
+      <h3 class="split-right-add-title">${isEdit ? 'Edit' : 'Add'} Pay Grade</h3>
+      <div class="stu-form-grid" style="grid-template-columns:1fr 1fr;gap:14px 20px">
+        <div class="stu-form-group" style="grid-column:span 2">
+          <label>Position <span style="color:var(--coral-500)">*</span></label>
+          <input id="pg-f-pos" value="${_finEsc(item?.position || '')}" style="max-width:none;width:100%">
+        </div>
+        <div class="stu-form-group">
+          <label>Effective From <span style="color:var(--coral-500)">*</span></label>
+          <input id="pg-f-eff-from" type="date" value="${item?.effective_from || ''}" style="max-width:none;width:100%">
+        </div>
+        <div class="stu-form-group">
+          <label>Effective To</label>
+          <input id="pg-f-eff-to" type="date" value="${item?.effective_to || ''}" style="max-width:none;width:100%">
+          <span style="font-size:12px;color:var(--grey-600)">Leave blank for open-ended.</span>
+        </div>
+        <div class="stu-form-group">
+          <label>Amount <span style="color:var(--coral-500)">*</span></label>
+          <input id="pg-f-amount" type="number" step="0.01" min="0" value="${item?.amount ?? ''}" style="max-width:none;width:100%">
+        </div>
+        <div class="stu-form-group">
+          <label>Name</label>
+          <input id="pg-f-name" value="${_finEsc(item?.name || '')}" style="max-width:none;width:100%">
+          <span style="font-size:12px;color:var(--grey-600)">Optional label. Does not need to be unique.</span>
+        </div>
+        <div class="stu-form-group" style="grid-column:span 2">
+          <label><input type="checkbox" id="pg-f-active" style="width:auto;margin:0 6px 0 0;padding:0"${(item ? item.is_active : true) ? ' checked' : ''}> Active</label>
+        </div>
       </div>
-      <div class="hr-tab-body">
-        <div class="hr-form-grid">
-          <div class="hr-form-group">
-            <label class="hr-form-label">Name <span class="hr-required">*</span></label>
-            <input type="text" id="pay-grade-name" class="hr-form-input" value="${(grade.name || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}">
-          </div>
-          <div class="hr-form-group">
-            <label class="hr-form-label">Base Salary</label>
-            <input type="number" id="pay-grade-base-salary" class="hr-form-input" step="0.01" min="0" value="${grade.base_salary ?? ''}">
-          </div>
-        </div>
-        <div class="hr-form-actions">
-          <button class="hr-btn-form-submit" onclick="submitPayGradeForm(${isEdit ? `'${gradeId}'` : 'null'})">${isEdit ? 'Update' : 'Submit'}</button>
-          <button class="hr-btn-form-cancel" onclick="loadView('payroll-pay-grades')">Cancel</button>
-        </div>
+      <div id="pg-split-status" style="margin-top:10px;font-size:13px;color:var(--coral-500)"></div>
+      <div style="display:flex;gap:12px;margin-top:20px">
+        <button class="btn-primary" style="padding:9px 20px" onclick="_pgSaveSplit(${id ?? 'null'})">${isEdit ? 'Update' : 'Save'}</button>
+        <button class="btn-cancel" onclick="window._splitGoAdd?.()">Cancel</button>
       </div>
     </div>
   `;
 }
 
-async function submitPayGradeForm(gradeId) {
-  const name = (document.getElementById('pay-grade-name')?.value || '').trim();
-  if (!name) { showToast('Name is required.', 'error'); return; }
-  const baseSalaryRaw = document.getElementById('pay-grade-base-salary')?.value;
+async function _pgSaveSplit(id) {
+  const statusEl = document.getElementById('pg-split-status');
+  const position = (document.getElementById('pg-f-pos')?.value || '').trim();
+  const effectiveFrom = document.getElementById('pg-f-eff-from')?.value || '';
+  const effectiveTo = document.getElementById('pg-f-eff-to')?.value || '';
+  const amountRaw = document.getElementById('pg-f-amount')?.value;
+  const name = (document.getElementById('pg-f-name')?.value || '').trim();
+  const isActive = document.getElementById('pg-f-active')?.checked ?? true;
+
+  if (!position || !effectiveFrom || amountRaw === '') {
+    if (statusEl) statusEl.textContent = 'Position, Effective From, and Amount are required.';
+    return;
+  }
   const payload = {
-    name,
-    base_salary: baseSalaryRaw === '' ? null : parseFloat(baseSalaryRaw),
+    position,
+    effective_from: effectiveFrom,
+    effective_to: effectiveTo || null,
+    amount: parseFloat(amountRaw),
+    name: name || null,
+    is_active: isActive,
   };
-  const isEdit = !!gradeId;
-  try {
-    const res = await apiFetch(`${API_BASE}/payroll/utilities/pay-grades/${isEdit ? gradeId : ''}`, {
-      method: isEdit ? 'PUT' : 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (res && res.ok) {
-      showToast(isEdit ? 'Pay grade updated!' : 'Pay grade created!', 'success');
-      window._currentEditPayGradeId = null;
-      loadView('payroll-pay-grades');
-    } else if (res) {
-      showToast(await parseApiError(res), 'error');
-    }
-  } catch (_) { showToast('Network error.', 'error'); }
+  const res = await apiFetch(
+    id ? `${API_BASE}/payroll/utilities/pay-grades/${id}` : `${API_BASE}/payroll/utilities/pay-grades/`,
+    { method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
+  );
+  if (res && res.ok) {
+    showToast(id ? 'Pay grade updated!' : 'Pay grade created!', 'success');
+    loadView('hr-utilities-pay-grades');
+  } else {
+    if (statusEl) statusEl.textContent = res ? await parseApiError(res) : 'Save failed.';
+  }
+}
+
+async function _pgRetire(id) {
+  const res = await apiFetch(`${API_BASE}/payroll/utilities/pay-grades/${id}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ is_active: false }),
+  });
+  if (res && res.ok) {
+    showToast('Pay grade retired. Existing service profiles keep their reference.', 'success');
+    window._splitRefreshSelected?.();
+  } else if (res) {
+    showToast(await parseApiError(res), 'error');
+  }
+}
+
+async function _pgDelete(id) {
+  if (!confirm('Delete this pay grade? This cannot be undone.')) return;
+  const errEl = document.getElementById('pg-action-error');
+  const res = await apiFetch(`${API_BASE}/payroll/utilities/pay-grades/${id}`, { method: 'DELETE' });
+  if (res && res.ok) {
+    showToast('Pay grade deleted.', 'success');
+    window._splitReload?.();
+  } else if (res && res.status === 409) {
+    const msg = await parseApiError(res);
+    if (errEl) errEl.innerHTML = `
+      <div style="background:var(--coral-100);color:var(--coral-600);padding:12px 14px;border-radius:8px;font-size:13px;">
+        ${_finEsc(msg)}
+        <div style="margin-top:10px;"><button class="btn" onclick="_pgRetire(${id})">Retire instead</button></div>
+      </div>`;
+  } else if (res) {
+    showToast(await parseApiError(res), 'error');
+  }
 }
 
 // ==================== PAYROLL RUNS ====================
@@ -764,6 +808,7 @@ async function _prCreateRun() {
 }
 
 async function _prSelectRun(runId) {
+  if (String(_prSelectedRunId) !== String(runId)) _prDetailTab = 'lines';
   _prSelectedRunId = runId;
   _prStopPolling();
   _prRenderList();
@@ -776,8 +821,11 @@ async function _prSelectRun(runId) {
   _prRenderDetail(right, run);
 }
 
+let _prCurrentRun = null;
+let _prDetailTab = 'lines';
+
 function _prRenderDetail(right, run) {
-  const lines = run.lines || [];
+  _prCurrentRun = run;
   right.innerHTML = `
     <div style="background:var(--navy-700,#1B3057);color:#fff;border-radius:8px;padding:18px 22px;margin-bottom:16px;display:flex;flex-wrap:wrap;gap:24px;align-items:center;">
       <div>
@@ -791,8 +839,41 @@ function _prRenderDetail(right, run) {
       </div>
     </div>
     <div id="pr-action-row" style="margin-bottom:16px;"></div>
+    <div id="pr-export-error" style="margin-bottom:16px;"></div>
+    <div style="display:flex;gap:8px;margin-bottom:14px;">
+      <button onclick="_prSwitchDetailTab('lines')" style="padding:6px 14px;border-radius:14px;border:none;cursor:pointer;font-size:0.85rem;${_prDetailTab==='lines'?'background:var(--navy-700,#1B3057);color:#fff;font-weight:600;':'background:#eee;color:#888;'}">Lines</button>
+      <button onclick="_prSwitchDetailTab('reconciliation')" style="padding:6px 14px;border-radius:14px;border:none;cursor:pointer;font-size:0.85rem;${_prDetailTab==='reconciliation'?'background:var(--navy-700,#1B3057);color:#fff;font-weight:600;':'background:#eee;color:#888;'}">Payment Reconciliation</button>
+    </div>
+    <div id="pr-detail-tab-body"></div>`;
+  document.getElementById('pr-action-row').innerHTML = _prActionsHtml(run);
+  _prRenderDetailTabBody();
+}
+
+function _prSwitchDetailTab(tab) {
+  _prDetailTab = tab;
+  const right = document.getElementById('pr-right-panel');
+  if (right && _prCurrentRun) _prRenderDetail(right, _prCurrentRun);
+}
+
+function _prRenderDetailTabBody() {
+  const el = document.getElementById('pr-detail-tab-body');
+  if (!el || !_prCurrentRun) return;
+  if (_prDetailTab === 'reconciliation') _prRenderReconciliationTab(el, _prCurrentRun);
+  else _prRenderLinesTab(el, _prCurrentRun);
+}
+
+function _prPaymentStatusBadge(status) {
+  const colors = { pending: '#888;background:#eee', paid: '#1e7e34;background:#dcf3e2', failed: '#c0392b;background:#fde0de' };
+  const c = colors[status] || colors.pending;
+  const [color, bg] = c.split(';background:');
+  return `<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:0.78rem;font-weight:600;color:${color};background:${bg};">${_finEsc(status || 'pending')}</span>`;
+}
+
+function _prRenderLinesTab(el, run) {
+  const lines = run.lines || [];
+  el.innerHTML = `
     <div class="fin-table-wrap"><table class="fin-table">
-      <thead><tr><th>Employee Code</th><th>Basic Salary</th><th>Gross Pay</th><th>NSSF</th><th>SHIF</th><th>PAYE</th><th>Housing Levy</th><th>Total Deductions</th><th>Net Pay</th></tr></thead>
+      <thead><tr><th>Employee Code</th><th>Basic Salary</th><th>Gross Pay</th><th>NSSF</th><th>SHIF</th><th>PAYE</th><th>Housing Levy</th><th>Total Deductions</th><th>Net Pay</th><th>Payment Status</th><th>Tendepay Ref</th><th>Receipt</th><th>Paid At</th><th>Failure Reason</th></tr></thead>
       <tbody>
         ${lines.length ? lines.map(l => `<tr>
           <td>${_finEsc(l.employee_code)}</td>
@@ -804,14 +885,61 @@ function _prRenderDetail(right, run) {
           <td>${_pvMoney(l.housing_levy_employee)}</td>
           <td>${_pvMoney(l.total_deductions)}</td>
           <td>${_pvMoney(l.net_pay)}</td>
-        </tr>`).join('') : `<tr><td colspan="9" class="fin-empty">No lines yet &mdash; run Calculate first.</td></tr>`}
+          <td>${_prPaymentStatusBadge(l.payment_status)}</td>
+          <td>${_finEsc(l.tendepay_reference || '—')}</td>
+          <td>${_finEsc(l.gateway_receipt || '—')}</td>
+          <td>${l.paid_at ? _pvDate(l.paid_at) : '—'}</td>
+          <td>${l.payment_status === 'failed' ? `<span style="color:#c0392b;">${_finEsc(l.failure_reason || '—')}</span>` : ''}</td>
+        </tr>`).join('') : `<tr><td colspan="14" class="fin-empty">No lines yet &mdash; run Calculate first.</td></tr>`}
       </tbody>
     </table></div>
     <div id="pr-payslips-panel" style="margin-top:20px;"></div>`;
-  document.getElementById('pr-action-row').innerHTML = _prActionsHtml(run);
   if (run.status === 'paid' || run.status === 'payslips_generated') {
     _prRenderPayslipsPanel(document.getElementById('pr-payslips-panel'), run);
   }
+}
+
+function _prReconStatCard(label, value, bg, fg) {
+  return `<div style="flex:1;min-width:140px;background:${bg};color:${fg};border-radius:8px;padding:14px 16px;">
+    <div style="font-size:0.75rem;opacity:0.8;">${label}</div>
+    <div style="font-size:1.15rem;font-weight:700;">${value}</div>
+  </div>`;
+}
+
+// Read-only accountant view: who got paid, who didn't, and why (§10.3).
+async function _prRenderReconciliationTab(el, run) {
+  el.innerHTML = '<p class="sa-loading">Loading&#8230;</p>';
+  const res = await apiFetch(`${API_BASE}/payroll/runs/${run.id}/payment-reconciliation`);
+  if (!res || !res.ok) { el.innerHTML = `<p class="fin-error-msg">Could not load payment reconciliation.</p>`; return; }
+  const data = await res.json();
+  const lines = data.lines || [];
+  const strip = `
+    <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px;">
+      ${_prReconStatCard('Expected Total', _pvMoney(data.expected_total), 'var(--navy-700,#1B3057)', '#fff')}
+      ${_prReconStatCard('Paid Total', _pvMoney(data.paid_total), '#f5e6a8', '#8a6d00')}
+      ${_prReconStatCard('Paid', data.paid_line_count ?? 0, '#dcf3e2', '#1e7e34')}
+      ${_prReconStatCard('Pending', data.pending_line_count ?? 0, '#eee', '#888')}
+      ${_prReconStatCard('Failed', data.failed_line_count ?? 0, '#fde0de', '#c0392b')}
+    </div>`;
+  const rows = lines.map(l => `<tr>
+    <td>${_finEsc(l.employee_code || '')}</td>
+    <td>${_finEsc(l.employee_name || '')}</td>
+    <td>${_pvMoney(l.expected_net)}</td>
+    <td>${_prPaymentStatusBadge(l.payment_status)}</td>
+    <td>${_finEsc(l.tendepay_reference || '—')}</td>
+    <td>${_finEsc(l.gateway_receipt || '—')}</td>
+    <td>${l.paid_at ? _pvDate(l.paid_at) : '—'}</td>
+    <td>${l.payment_status === 'failed' ? `<span style="color:#c0392b;">${_finEsc(l.failure_reason || '—')}</span>` : '—'}</td>
+  </tr>`).join('');
+  const retryBtn = data.failed_line_count > 0
+    ? `<div style="margin-top:14px;"><button class="btn" onclick="_prRetryExport(${run.id})">Retry export (unpaid only)</button></div>` : '';
+  el.innerHTML = `
+    ${strip}
+    <div class="fin-table-wrap"><table class="fin-table">
+      <thead><tr><th>Employee Code</th><th>Employee Name</th><th>Expected Net</th><th>Payment Status</th><th>Tendepay Ref</th><th>Receipt</th><th>Paid At</th><th>Failure Reason</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="8" class="fin-empty">No lines.</td></tr>'}</tbody>
+    </table></div>
+    ${retryBtn}`;
 }
 
 function _prActionsHtml(run) {
@@ -825,7 +953,85 @@ function _prActionsHtml(run) {
   } else if (run.status === 'awaiting_payment') {
     html += `<div style="color:#666;font-size:0.9rem;">Awaiting Tendepay settlement. The run will move to Paid automatically once the payroll voucher is confirmed in a Tendepay import.</div>`;
   }
+  if (['approved', 'awaiting_payment', 'paid', 'payslips_generated'].includes(run.status)) {
+    html += `
+      <select id="pr-export-format-${run.id}" class="fin-form-select" style="width:auto;">
+        <option value="xlsx">XLSX</option><option value="csv">CSV</option>
+      </select>
+      <button class="btn" onclick="_prExportTendepay(${run.id})">Export to Tendepay</button>`;
+  }
+  if ((run.failed_line_count > 0) || (run.pending_line_count > 0)) {
+    html += `<button class="btn" onclick="_prRetryExport(${run.id})">Retry export (unpaid only)</button>`;
+  }
   return `<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">${html}</div>`;
+}
+
+// Authenticated blob download — the export/retry-export endpoints require
+// auth and stream a file, so a plain <a href> would send no Authorization
+// header and 401 (§11.5).
+async function _prDownloadRunFile(url, runId) {
+  const res = await apiFetch(url);
+  if (!res) return;
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    if (body && body.detail && typeof body.detail === 'object' && Array.isArray(body.detail.affected)) {
+      _prShowExportFixList(body.detail);
+      return;
+    }
+    const detail = body && body.detail;
+    const msg = typeof detail === 'string' ? detail : (detail ? JSON.stringify(detail) : `HTTP ${res.status}`);
+    showToast('Export failed: ' + msg, 'error');
+    return;
+  }
+  const errEl = document.getElementById('pr-export-error');
+  if (errEl) errEl.innerHTML = '';
+  const blob = await res.blob();
+  const cd = res.headers.get('Content-Disposition') || '';
+  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
+  const filename = match ? decodeURIComponent(match[1]) : `payroll-run-${runId}-tendepay.xlsx`;
+  const objUrl = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = objUrl; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(objUrl);
+}
+
+async function _prExportTendepay(runId) {
+  const format = document.getElementById(`pr-export-format-${runId}`)?.value || 'xlsx';
+  await _prDownloadRunFile(`${API_BASE}/payroll/runs/${runId}/tendepay-export?format=${format}&only_unpaid=false`, runId);
+}
+
+async function _prRetryExport(runId) {
+  const format = document.getElementById(`pr-export-format-${runId}`)?.value || 'xlsx';
+  await _prDownloadRunFile(`${API_BASE}/payroll/runs/${runId}/retry-export?format=${format}`, runId);
+}
+
+// Turns the export's blocking 400 into a work queue — the single highest-value
+// UX detail in the Tendepay export spec (§9.2).
+function _prShowExportFixList(detail) {
+  const el = document.getElementById('pr-export-error');
+  if (!el) return;
+  const rows = (detail.affected || []).map(a => `
+    <li><a href="#" onclick="_prGoToServiceProfile('${_finEsc(a.employee_code)}');return false;">${_finEsc(a.employee_code)}</a> — ${_finEsc(a.error)}</li>`).join('');
+  el.innerHTML = `
+    <div style="background:var(--coral-100,#fde0de);color:var(--coral-600,#c0392b);padding:14px 16px;border-radius:8px;">
+      <strong>${_finEsc(detail.error || 'Cannot export — some employees are missing payment details.')}</strong>
+      <ul style="margin:10px 0 0 18px;">${rows}</ul>
+    </div>`;
+}
+
+function _prGoToServiceProfile(employeeCode) {
+  const emp = employeesData.find(e => e.employee_code === employeeCode);
+  if (!emp) { showToast('Employee not found in cache — open HR ▸ Employee Directory first.', 'error'); return; }
+  const existing = (emp.service_profile && emp.service_profile[0]) || null;
+  hrEspFormState = {
+    context: existing ? 'edit' : 'add', sourceView: 'payroll',
+    editSourceIdx: existing ? 0 : -1,
+    lockedEmpCode: emp.employee_code, lockedEmpName: `${emp.first_name || ''} ${emp.last_name || ''}`.trim(),
+    bankAccounts: existing ? [...(existing.bank_accounts || [])] : [],
+    editingBankIdx: -1, existingRecord: existing,
+  };
+  renderHrEspFormPage(document.getElementById('main-content'));
 }
 
 async function _prCalculate(runId) {
@@ -911,8 +1117,14 @@ function _prPayslipBadge(status) {
 }
 
 function _prRenderPayslipsPanel(el, run) {
+  const failedCount = (run.lines || []).filter(l => l.payment_status === 'failed').length;
+  const failedNote = failedCount > 0 ? `
+    <div style="background:#fde0de;color:#c0392b;padding:10px 14px;border-radius:6px;margin-bottom:12px;font-size:0.85rem;">
+      ${failedCount} employee(s) have no payslip because their payment failed. Resolve via Payment Reconciliation &rarr; Retry export.
+    </div>` : '';
   el.innerHTML = `
     <div class="fin-section-label">Payslips</div>
+    ${failedNote}
     <div style="display:flex;gap:10px;margin-bottom:12px;">
       <button class="btn" onclick="_prGeneratePayslips(${run.id})">Generate Payslips</button>
       <button class="btn" id="pr-bulk-send-btn" disabled onclick="_prBulkSend(${run.id})">Send Bulk</button>

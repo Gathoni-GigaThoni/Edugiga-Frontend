@@ -13,11 +13,12 @@ function renderHrEspFormPage(container) {
   const pre = key  => sp[key] || '';
 
   // Pre-compute department for locked employee
-  let lockedDept = pre('department');
-  if (locked && hrEspFormState.lockedEmpCode && !lockedDept) {
+  let lockedDeptId = sp.department_id;
+  if (locked && hrEspFormState.lockedEmpCode && lockedDeptId == null) {
     const lockedEmp = employeesData.find(e => e.employee_code === hrEspFormState.lockedEmpCode);
-    if (lockedEmp) lockedDept = lockedEmp.department || '';
+    if (lockedEmp) lockedDeptId = lockedEmp.department_id;
   }
+  const lockedDept = departmentLabelFor(lockedDeptId);
 
   const empOptions = employeesData.map(e => {
     const name = ((e.surname || e.first_name || '') + ' ' + (e.other_names || e.last_name || '')).trim();
@@ -79,7 +80,7 @@ function renderHrEspFormPage(container) {
           <div class="hr-form-group">
             <label class="hr-form-label">Pay Grade <span class="hr-required">*</span></label>
             <select id="hr-esp-pay-grade" class="hr-form-select">
-              ${_renderEspPayGradeOptions(pre('pay_grade'))}
+              ${_renderEspPayGradeOptions(pre('pay_grade_id'))}
             </select>
           </div>
           <div class="hr-form-group hr-form-span2">
@@ -153,6 +154,16 @@ function renderHrEspFormPage(container) {
           </div>
           <div class="hr-modal-field"><label class="hr-form-label">Account Details</label><input type="text" id="hr-esp-bank-acct-details" class="hr-modal-input" placeholder="e.g. Main Branch"></div>
           <div class="hr-modal-field"><label class="hr-form-label">Percentage</label><input type="number" id="hr-esp-bank-pct" class="hr-modal-input" min="0" max="100" placeholder="e.g. 100"></div>
+          <div class="hr-modal-field">
+            <label class="hr-form-label">Account Name</label>
+            <input type="text" id="hr-esp-bank-acct-name" class="hr-modal-input" placeholder="Name as printed on the bank account">
+            <span style="font-size:12px;color:var(--grey-600)">Falls back to the employee's full name when blank.</span>
+          </div>
+          <div class="hr-modal-field">
+            <label class="hr-form-label">As it appears on gateway statements (optional)</label>
+            <input type="text" id="hr-esp-bank-gateway-name" class="hr-modal-input" placeholder="e.g. G WANJIRU">
+            <span style="font-size:12px;color:var(--grey-600)">Only needed when the gateway echoes a different string. Used to match return statements.</span>
+          </div>
         </div>
         <div class="hr-modal-actions">
           <button class="hr-modal-btn-close" onclick="closeHrEspBankModal()">Close</button>
@@ -161,6 +172,10 @@ function renderHrEspFormPage(container) {
       </div>
     </div>
   `;
+  ensureDepartmentCache().then(() => {
+    const deptEl = document.getElementById('hr-esp-department');
+    if (deptEl) deptEl.value = departmentLabelFor(lockedDeptId);
+  });
 }
 
 // Pay Grade options come from the real PayGrade list (/payroll/utilities/pay-grades/)
@@ -168,26 +183,28 @@ function renderHrEspFormPage(container) {
 // is rendered synchronously from several call sites.
 let _espPayGradesCache = null;
 
+function _espPayGradeOptionLabel(g) { return `${g.position} — ${formatKES(g.amount)}`; }
+
 function _renderEspPayGradeOptions(selected) {
-  const sel = (val, opt) => val === opt ? 'selected' : '';
+  const sel = (val, opt) => String(val) === String(opt) ? 'selected' : '';
   if (_espPayGradesCache === null) {
     _loadEspPayGrades(selected);
     return `<option value="">Loading&#8230;</option>`;
   }
   return `<option value="">Please Select</option>` +
-    _espPayGradesCache.map(g => `<option value="${g.name}" ${sel(selected, g.name)}>${g.name}</option>`).join('');
+    _espPayGradesCache.map(g => `<option value="${g.id}" ${sel(selected, g.id)}>${_espPayGradeOptionLabel(g)}</option>`).join('');
 }
 
 async function _loadEspPayGrades(selected) {
   try {
-    const res = await apiFetch(`${API_BASE}/payroll/utilities/pay-grades`);
+    const res = await apiFetch(`${API_BASE}/payroll/utilities/pay-grades/`);
     _espPayGradesCache = (res && res.ok) ? await res.json() : [];
   } catch (_) { _espPayGradesCache = []; }
   const select = document.getElementById('hr-esp-pay-grade');
   if (select) {
-    const sel = (val, opt) => val === opt ? 'selected' : '';
+    const sel = (val, opt) => String(val) === String(opt) ? 'selected' : '';
     select.innerHTML = `<option value="">Please Select</option>` +
-      _espPayGradesCache.map(g => `<option value="${g.name}" ${sel(selected, g.name)}>${g.name}</option>`).join('');
+      _espPayGradesCache.map(g => `<option value="${g.id}" ${sel(selected, g.id)}>${_espPayGradeOptionLabel(g)}</option>`).join('');
   }
 }
 
@@ -197,12 +214,14 @@ function renderHrEspBankSection() {
   const total = banks.reduce((s, b) => s + (parseFloat(b.percentage) || 0), 0);
   const totalCls = total === 100 ? 'hr-esp-bank-total--ok' : 'hr-esp-bank-total--warn';
   const rows = banks.length === 0
-    ? `<tr><td colspan="5" class="hr-empty">No bank accounts added</td></tr>`
+    ? `<tr><td colspan="7" class="hr-empty">No bank accounts added</td></tr>`
     : banks.map((b, i) => `<tr>
         <td>${b.accountNo || ''}</td>
         <td>${b.bank || ''}</td>
         <td>${b.accountDetails || ''}</td>
         <td>${b.percentage || 0}%</td>
+        <td>${b.accountName || ''}</td>
+        <td>${b.gatewayDisplayName || ''}</td>
         <td class="hr-action-cell">
           <div class="hr-action-wrap">
             <button class="hr-action-btn" onclick="toggleHrEspBankDropdown(event,${i})">&#8230;</button>
@@ -225,7 +244,7 @@ function renderHrEspBankSection() {
       </div>
       <div class="hr-table-wrap">
         <table class="hr-table"><thead><tr>
-          <th>ACCOUNT NO.</th><th>BANK</th><th>ACCOUNT DETAILS</th><th>PERCENTAGE</th><th>ACTION</th>
+          <th>ACCOUNT NO.</th><th>BANK</th><th>ACCOUNT DETAILS</th><th>PERCENTAGE</th><th>ACCOUNT NAME</th><th>GATEWAY DISPLAY NAME</th><th>ACTION</th>
         </tr></thead><tbody>${rows}</tbody></table>
       </div>
       <div class="hr-esp-bank-total ${totalCls}">Total: ${total}%</div>
@@ -251,7 +270,7 @@ function toggleHrEspBankDropdown(event, idx) {
 
 function openHrEspBankModalNew() {
   hrEspFormState.editingBankIdx = -1;
-  ['hr-esp-bank-acct-no','hr-esp-bank-acct-details'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  ['hr-esp-bank-acct-no','hr-esp-bank-acct-details','hr-esp-bank-acct-name','hr-esp-bank-gateway-name'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   const pct = document.getElementById('hr-esp-bank-pct'); if (pct) pct.value = '';
   const sel = document.getElementById('hr-esp-bank-select');
   if (sel) { sel.innerHTML = `<option value="">Please Select</option>${buildHrEspBankOptions()}`; sel.value = ''; }
@@ -266,6 +285,8 @@ function openHrEspBankModalEdit(idx) {
   setv('hr-esp-bank-acct-no', b.accountNo);
   setv('hr-esp-bank-acct-details', b.accountDetails);
   setv('hr-esp-bank-pct', b.percentage);
+  setv('hr-esp-bank-acct-name', b.accountName);
+  setv('hr-esp-bank-gateway-name', b.gatewayDisplayName);
   const sel = document.getElementById('hr-esp-bank-select');
   if (sel) { sel.innerHTML = `<option value="">Please Select</option>${buildHrEspBankOptions()}`; sel.value = b.bankId || ''; }
   const ov = document.getElementById('hr-esp-bank-overlay'); if (ov) ov.style.display = 'flex';
@@ -284,7 +305,9 @@ function saveHrEspBankAccount() {
     bankId,
     bank:             bankName,
     accountDetails: document.getElementById('hr-esp-bank-acct-details')?.value || '',
-    percentage:       parseFloat(document.getElementById('hr-esp-bank-pct')?.value || 0)
+    percentage:       parseFloat(document.getElementById('hr-esp-bank-pct')?.value || 0),
+    accountName:         document.getElementById('hr-esp-bank-acct-name')?.value || '',
+    gatewayDisplayName:  document.getElementById('hr-esp-bank-gateway-name')?.value || '',
   };
   if (hrEspFormState.editingBankIdx === -1) {
     hrEspFormState.bankAccounts.push(entry);
@@ -307,7 +330,7 @@ function onHrEspEmpCodeChange() {
   const code = (document.getElementById('hr-esp-emp-code')?.value || '').trim();
   const emp  = employeesData.find(e => e.employee_code === code);
   const deptEl = document.getElementById('hr-esp-department');
-  if (deptEl) deptEl.value = emp ? (emp.department || '') : '';
+  if (deptEl) deptEl.value = emp ? departmentLabelFor(emp.department_id) : '';
 }
 
 
@@ -348,17 +371,19 @@ async function submitHrEspForm() {
 
   // Map internal camelCase bank account fields to snake_case for the API
   const bankAccountsForApi = hrEspFormState.bankAccounts.map(b => ({
-    account_no:      b.accountNo || '',
-    bank_id:         b.bankId || null,
-    account_details: b.accountDetails || '',
-    percentage:      parseFloat(b.percentage) || 0,
+    account_no:               b.accountNo || '',
+    financial_institution_id: b.bankId || null,
+    account_details:          b.accountDetails || '',
+    percentage:               parseFloat(b.percentage) || 0,
+    account_name:             b.accountName || null,
+    gateway_display_name:     b.gatewayDisplayName || null,
   }));
 
   const payload = {
     employee_code:             empCode,
     reason_event:              reasonEvent,
     processing_method:         document.getElementById('hr-esp-processing-method')?.value || '',
-    pay_grade:                 payGrade,
+    pay_grade_id:              parseInt(payGrade, 10) || null,
     basic_salary:              parseFloat(document.getElementById('hr-esp-basic-salary')?.value) || null,
     effective_date:            effectiveDate,
     end_date:                  document.getElementById('hr-esp-end-date')?.value || null,

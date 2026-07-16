@@ -74,11 +74,7 @@ function _pvSupplierName(id)   { return (_pvSuppliers.find(s => String(s.id) ===
 function _pvEmployeeName(id)   { const e = _pvEmployees.find(e => String(e.id) === String(id)); return e ? `${e.first_name} ${e.last_name}` : '-'; }
 
 // ── Formatting ────────────────────────────────────────────────────────────────
-function _pvMoney(v) {
-  const n = parseFloat(v);
-  if (isNaN(n)) return 'KES 0.00';
-  return 'KES ' + n.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
+function _pvMoney(v) { return formatKES(v); }
 function _pvDate(v) {
   if (!v) return '-';
   const d = new Date(v);
