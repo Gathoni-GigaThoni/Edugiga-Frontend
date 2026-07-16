@@ -59,8 +59,14 @@ function _pvAccountOptions(sel)    { return _pvOptions(_pvAccounts, 'id', a => `
 // parent account (chart-of-accounts parent_id link), not accounts whose name
 // happens to start with "Tendepay" — a single Ledger, Bank, or Suspense
 // account named e.g. "Tendepay Clearing" would otherwise leak into this list.
+// Match is dash/whitespace/case-insensitive: the seeded account name uses an
+// en dash ("Tendepay – Main Wallet"), and a strict hyphen comparison here
+// silently matched nothing, which is why this dropdown showed empty.
+function _pvNormalizeDashes(s) {
+  return (s || '').replace(/[‐-―]/g, '-').replace(/\s+/g, ' ').trim().toLowerCase();
+}
 function _pvTendepayWalletOptions(sel) {
-  const parent = _pvAccounts.find(a => (a.account_name || '').trim().toLowerCase() === 'tendepay - main wallet');
+  const parent = _pvAccounts.find(a => _pvNormalizeDashes(a.account_name) === 'tendepay - main wallet');
   const children = parent ? _pvAccounts.filter(a => String(a.parent_id) === String(parent.id)) : [];
   return _pvOptions(children, 'id', a => a.account_name, sel);
 }
