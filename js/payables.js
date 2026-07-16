@@ -459,7 +459,7 @@ async function loadPayablesPaymentVouchersEditView(container) {
   const res = await apiFetch(`${_PV_PV_API}${id}`);
   if (!res || !res.ok) { showToast('Could not load payment voucher.', 'error'); loadView('payables-payment-vouchers'); return; }
   const v = await res.json();
-  if (v.status !== 'draft') { showToast('Only draft vouchers can be edited.', 'error'); loadView('payables-payment-vouchers'); return; }
+  if (v.status !== 'draft' && v.status !== 'submitted') { showToast('Only draft or submitted vouchers can be edited.', 'error'); loadView('payables-payment-vouchers'); return; }
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">

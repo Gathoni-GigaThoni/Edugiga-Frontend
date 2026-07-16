@@ -4394,6 +4394,7 @@ function exportStuReportCSV() {
 
 let _stuGuaData = [], _stuGuaPage = 1, _stuGuaPerPage = 10, _stuGuaSearch = '';
 let _stuGuaFilters = {};
+let _stuGuaClasses = [];
 
 async function loadStudentGuardianReportView(container) {
   openStuReportsDropdown();
@@ -4428,25 +4429,20 @@ async function loadStudentGuardianReportView(container) {
         </div>
         <div class="hr-filter-panel-body">
           <div class="hr-filter-group">
-            <label class="hr-filter-label">Relationship</label>
-            <select id="sgr-f-relationship" class="hr-filter-select">
-              <option value="">Please Select</option>
+            <label class="hr-filter-label">Student Name</label>
+            <input type="text" id="sgr-f-name" class="hr-filter-select" placeholder="Search by student name">
+          </div>
+          <div class="hr-filter-group">
+            <label class="hr-filter-label">Relationship <span style="font-weight:400;color:#888;">(select multiple)</span></label>
+            <select id="sgr-f-relationship" class="stu-multiselect" multiple>
               <option value="MOTHER">Mother</option>
               <option value="FATHER">Father</option>
               <option value="GUARDIAN">Guardian</option>
             </select>
           </div>
           <div class="hr-filter-group">
-            <label class="hr-filter-label">Pickup Authorized</label>
-            <select id="sgr-f-pickup" class="hr-filter-select">
-              <option value="">Please Select</option>
-              <option value="true">Yes</option>
-              <option value="false">No</option>
-            </select>
-          </div>
-          <div class="hr-filter-group">
-            <label class="hr-filter-label">Class</label>
-            <select id="sgr-f-class" class="hr-filter-select"><option value="">Please Select</option></select>
+            <label class="hr-filter-label">Class <span style="font-weight:400;color:#888;">(select multiple)</span></label>
+            <select id="sgr-f-class" class="stu-multiselect" multiple></select>
           </div>
         </div>
         <div class="hr-filter-panel-footer" style="display:flex;align-items:center;gap:8px;padding:14px 20px;border-top:1px solid #eee;">
@@ -4467,12 +4463,14 @@ async function loadStudentGuardianReportView(container) {
 // GET /students/ (StudentReadFull[]) by student_id === student.id to get the
 // admission number, student name, and class for display/filtering.
 async function _fetchStuGuaReport() {
-  const [guaRes, stuRes] = await Promise.all([
+  const [guaRes, stuRes, clsRes] = await Promise.all([
     apiFetch(`${API_BASE}/students/guardians/`),
     apiFetch(`${API_BASE}/students/?limit=1000`),
+    apiFetch(`${API_BASE}/classes/`),
   ]);
   const guardians = (guaRes && guaRes.ok) ? _toArray(await guaRes.json()) : [];
   const students  = (stuRes && stuRes.ok) ? _toArray(await stuRes.json()) : [];
+  _stuGuaClasses  = (clsRes && clsRes.ok) ? _toArray(await clsRes.json()) : [];
   const stuById = new Map(students.map(s => [s.id, s]));
 
   _stuGuaData = guardians.map(g => {
@@ -4486,32 +4484,39 @@ async function _fetchStuGuaReport() {
     };
   });
 
-  _populateStuGuaClassFilter(students);
+  _populateStuGuaClassFilter();
+  _restoreStuGuaFilterSelections();
   _stuGuaPage = 1;
   _renderStuGuaTable();
 }
 
-function _populateStuGuaClassFilter(students) {
+// Sourced from the real /classes/ master list (not derived from the roster's own
+// denormalized school_class_name) so the dropdown always shows every class with a
+// stable id/name pair, matching the pattern used by the Student Report's Class filter.
+function _populateStuGuaClassFilter() {
   const sel = document.getElementById('sgr-f-class');
   if (!sel) return;
-  const seen = new Map();
-  students.forEach(s => {
-    const id = s.class_id ?? s.school_class_id;
-    if (id != null && !seen.has(id)) seen.set(id, s.school_class_name || `#${id}`);
-  });
-  sel.innerHTML = `<option value="">Please Select</option>` +
-    Array.from(seen, ([id, name]) => `<option value="${_esc(String(id))}">${_esc(name)}</option>`).join('');
-  if (_stuGuaFilters.class_id) sel.value = String(_stuGuaFilters.class_id);
+  sel.innerHTML = _stuGuaClasses.map(c => `<option value="${_esc(String(c.id))}">${_esc(c.name)}</option>`).join('');
+}
+
+function _restoreStuGuaFilterSelections() {
+  const f = _stuGuaFilters;
+  const nameEl = document.getElementById('sgr-f-name');
+  if (nameEl) nameEl.value = f.student_name || '';
+  const setMulti = (id, values) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const selected = new Set((values || []).map(String));
+    Array.from(el.options).forEach(o => { o.selected = selected.has(o.value); });
+  };
+  setMulti('sgr-f-relationship', f.relationship);
+  setMulti('sgr-f-class', f.class_id);
 }
 
 function showStuGuaFilterPanel() {
   const o = document.getElementById('sgr-filter-overlay');
   if (o) o.style.display = 'block';
-  const f = _stuGuaFilters;
-  const set = (id, v) => { const el = document.getElementById(id); if (el && v !== undefined) el.value = v; };
-  set('sgr-f-relationship', f.relationship || '');
-  set('sgr-f-pickup',       f.pickup_authorized !== undefined ? String(f.pickup_authorized) : '');
-  set('sgr-f-class',        f.class_id || '');
+  _restoreStuGuaFilterSelections();
 }
 
 function closeStuGuaFilterPanel(e) {
@@ -4522,10 +4527,13 @@ function closeStuGuaFilterPanel(e) {
 
 function applyStuGuaFilters() {
   _stuGuaFilters = {};
-  const read = id => document.getElementById(id)?.value || '';
-  if (read('sgr-f-relationship')) _stuGuaFilters.relationship       = read('sgr-f-relationship');
-  if (read('sgr-f-pickup'))       _stuGuaFilters.pickup_authorized  = read('sgr-f-pickup');
-  if (read('sgr-f-class'))        _stuGuaFilters.class_id           = read('sgr-f-class');
+  const nameVal = (document.getElementById('sgr-f-name')?.value || '').trim();
+  if (nameVal) _stuGuaFilters.student_name = nameVal;
+  const readMulti = id => Array.from(document.getElementById(id)?.selectedOptions || []).map(o => o.value);
+  const relationships = readMulti('sgr-f-relationship');
+  if (relationships.length) _stuGuaFilters.relationship = relationships;
+  const classIds = readMulti('sgr-f-class');
+  if (classIds.length) _stuGuaFilters.class_id = classIds;
   const o = document.getElementById('sgr-filter-overlay');
   if (o) o.style.display = 'none';
   _stuGuaPage = 1;
@@ -4534,8 +4542,11 @@ function applyStuGuaFilters() {
 
 function clearStuGuaFilters() {
   _stuGuaFilters = {};
-  ['sgr-f-relationship','sgr-f-pickup','sgr-f-class'].forEach(id => {
-    const el = document.getElementById(id); if (el) el.value = '';
+  const nameEl = document.getElementById('sgr-f-name');
+  if (nameEl) nameEl.value = '';
+  ['sgr-f-relationship','sgr-f-class'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) Array.from(el.options).forEach(o => { o.selected = false; });
   });
   _stuGuaPage = 1;
   _renderStuGuaTable();
@@ -4544,9 +4555,9 @@ function clearStuGuaFilters() {
 function _stuGuaFiltered() {
   const f = _stuGuaFilters;
   let d = _stuGuaData.filter(g => {
-    if (f.relationship        && g.relationship !== f.relationship) return false;
-    if (f.pickup_authorized !== undefined && String(!!g.pickup_authorized) !== f.pickup_authorized) return false;
-    if (f.class_id           && String(g.class_id) !== String(f.class_id)) return false;
+    if (f.relationship && f.relationship.length && !f.relationship.includes(g.relationship)) return false;
+    if (f.class_id && f.class_id.length && !f.class_id.map(String).includes(String(g.class_id))) return false;
+    if (f.student_name && !(g.student_name||'').toLowerCase().includes(f.student_name.toLowerCase())) return false;
     return true;
   });
   if (_stuGuaSearch) {
@@ -4583,7 +4594,7 @@ function _renderStuGuaTable() {
 
   const tbl = document.getElementById('sgr-table');
   if (tbl) tbl.innerHTML = `<div class="fin-table-wrap"><table class="fin-table">
-    <thead><tr><th>ADMISSION NO.</th><th>STUDENT NAME</th><th>GUARDIAN NAME</th><th>RELATIONSHIP</th><th>PHONE</th><th>EMAIL</th></tr></thead>
+    <thead><tr><th>STUDENT ID</th><th>STUDENT NAME</th><th>GUARDIAN NAME</th><th>RELATIONSHIP</th><th>PHONE</th><th>EMAIL</th></tr></thead>
     <tbody>${rows}</tbody></table></div>`;
   _mkPagination('sgr-pagination', _stuGuaPage, pages, 'stuGuaGoPage');
 }
@@ -4592,7 +4603,7 @@ function onStuGuaSearch(v)      { _stuGuaSearch  = v.trim().toLowerCase(); _stuG
 function stuGuaGoPage(p)        { _stuGuaPage = p; _renderStuGuaTable(); }
 function exportStuGuaReportCSV() {
   exportTableCSV(
-    ['Admission No.','Student Name','Guardian Name','Relationship','Phone','Email'],
+    ['Student ID','Student Name','Guardian Name','Relationship','Phone','Email'],
     _stuGuaFiltered().map(g => [
       g.admission_no||'', g.student_name||'', g.full_name||'',
       _STU_GUA_RELATIONSHIP_LABEL[g.relationship]||g.relationship||'', g.phone||'', g.email||''
