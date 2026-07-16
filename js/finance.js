@@ -4384,6 +4384,7 @@ function _tpRenderValidationErrors(errors) {
 
 // ── Import History ──────────────────────────────────────────────────────────
 async function loadTendepayImportHistoryView(container) {
+  await _pvLoadLookups();
   container.innerHTML = `
     <div class="fin-filter-section">
       <div class="fin-filter-grid">
@@ -4426,7 +4427,133 @@ async function _tpHistReload() {
       {label:'Charges Journal Entry', key:'charges_journal_entry_id', fmt:v=>v||'—'},
       {label:'Notes',        key:'notes', fmt:v=>v||'—'},
     ],
+    detailActions: _tpHistDetailActions,
   });
+}
+
+// A batch stays `pending_review` if the operator uploaded a statement but
+// didn't finish the Import wizard's Step 3 (Ledger/Cost Center/Confirm) in
+// that same session — there was previously no way back into that batch, so
+// it just sat there with no path to "payment done." This resumes confirmation
+// from History instead of requiring a re-upload.
+function _tpHistDetailActions(b) {
+  // renderSplitView hands the selected item straight to detailActions each
+  // render, so it's stashed here for the modal opener below rather than
+  // round-tripping fields through an inline onclick string.
+  window._tpHistCurrentBatch = b;
+  if (b.status !== 'pending_review') {
+    return `<div style="color:var(--grey-600,#666);font-size:0.9rem;">This batch has been ${_finEsc((b.status||'').replace(/_/g,' '))}.</div>`;
+  }
+  return `<button class="fin-btn-teal" onclick="_tpHistOpenConfirmModal()">Confirm Batch</button>`;
+}
+
+// GET /tendepay/import/{batch_id} only returns batch-level metadata (no
+// transaction rows — confirmed against the live TendepayImportBatchRead
+// schema), and there's no dedicated "list this batch's transactions"
+// endpoint. Re-derives them from the Tendepay Transaction History report
+// (which does carry import_batch_id per row, per TendepayTransactionRead)
+// filtered client-side by batch id, over a window wide enough to contain any
+// statement's transaction dates. Flag to backend: a direct
+// GET /tendepay/import/{batch_id}/transactions endpoint would make this exact
+// and remove the date-window guess.
+async function _tpFetchBatchTransactions(batch) {
+  const end = new Date(batch.imported_at || Date.now());
+  end.setDate(end.getDate() + 1);
+  const start = new Date(end);
+  start.setFullYear(start.getFullYear() - 1);
+  const fmt = d => d.toISOString().split('T')[0];
+  const res = await apiFetch(`${API_BASE}/reports/tendepay-transaction-history?start_date=${fmt(start)}&end_date=${fmt(end)}`);
+  if (!res || !res.ok) return null;
+  const rows = _toArray(await res.json());
+  return rows.filter(t => String(t.import_batch_id) === String(batch.id));
+}
+
+async function _tpHistOpenConfirmModal() {
+  const batch = window._tpHistCurrentBatch;
+  if (!batch) { showToast('Could not find that batch.', 'error'); return; }
+
+  const wrap = document.createElement('div');
+  wrap.id = 'tp-hist-confirm-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:white;border-radius:8px;padding:24px;width:440px;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 14px;font-size:1.05rem;color:#2c3e50;">Confirm Batch — ${_finEsc(batch.filename || `#${batch.id}`)}</h3>
+      <p style="font-size:0.85rem;color:#666;margin:0 0 14px;">${batch.matched_count ?? 0} matched, ${batch.unmatched_count ?? 0} unmatched.</p>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Statement type <span class="fin-required">*</span></label>
+        <div style="display:flex;gap:20px;margin-top:6px;">
+          <label><input type="radio" name="tp-hist-import-mode" value="supplier" checked> Supplier vouchers</label>
+          <label><input type="radio" name="tp-hist-import-mode" value="payroll"> Payroll return</label>
+        </div>
+        <span style="font-size:0.78rem;color:#888;">The batch record doesn't carry this — pick whichever this statement actually was.</span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Ledger <span class="fin-required">*</span></label>
+        <select id="tp-hist-confirm-ledger" class="fin-form-select"><option value="">Please Select</option>${_pvLedgerOptions(null)}</select>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Cost Center <span class="fin-required">*</span></label>
+        <select id="tp-hist-confirm-cc" class="fin-form-select"><option value="">Please Select</option>${_pvCostCenterOptions(null)}</select>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Unmatched rows</label>
+        <div style="display:flex;gap:20px;margin-top:6px;">
+          <label><input type="radio" name="tp-hist-unmatched-action" value="suspense" checked> Send to Suspense</label>
+          <label><input type="radio" name="tp-hist-unmatched-action" value="skip"> Skip</label>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="document.getElementById('tp-hist-confirm-modal-overlay').remove()">Cancel</button>
+        <button class="fin-btn-teal" id="tp-hist-confirm-btn">Confirm Import</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  document.getElementById('tp-hist-confirm-btn').onclick = () => _tpHistConfirmBatch(batch, wrap);
+}
+
+async function _tpHistConfirmBatch(batch, modalWrap) {
+  const ledgerId = parseInt(document.getElementById('tp-hist-confirm-ledger').value, 10);
+  const costCenterId = parseInt(document.getElementById('tp-hist-confirm-cc').value, 10);
+  const unmatchedAction = (document.querySelector('input[name="tp-hist-unmatched-action"]:checked') || {}).value || 'suspense';
+  const isPayroll = (document.querySelector('input[name="tp-hist-import-mode"]:checked') || {}).value === 'payroll';
+  if (!ledgerId || !costCenterId) { showToast('Ledger and Cost Center are required.', 'error'); return; }
+
+  const btn = document.getElementById('tp-hist-confirm-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Confirming…'; }
+
+  const transactions = await _tpFetchBatchTransactions(batch);
+  if (transactions === null) {
+    showToast('Could not load this batch\'s transactions. Please try again.', 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Confirm Import'; }
+    return;
+  }
+  const confirmedMatches = transactions
+    .filter(t => t.matched_voucher_id != null)
+    .map(t => isPayroll
+      ? { tendepay_transaction_id: t.id, payroll_run_line_id: t.matched_voucher_id, match_method: t.match_method || 'auto' }
+      : { tendepay_transaction_id: t.id, voucher_id: t.matched_voucher_id, match_method: t.match_method || 'auto' });
+
+  const res = await apiFetch(`${_TP_BASE}/import/${batch.id}/confirm`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ confirmed_matches: confirmedMatches, unmatched_action: unmatchedAction, ledger_id: ledgerId, cost_center_id: costCenterId }),
+  });
+
+  if (res && res.ok) {
+    const data = await res.json();
+    const jvNumbers = (data.posted_journal_entries || []).map(j => (typeof j === 'object' ? (j.jv_number || j.id) : j)).join(', ');
+    let msg = `Batch confirmed. ${confirmedMatches.length} vouchers paid, ${(data.posted_journal_entries || []).length} journal entries posted.${jvNumbers ? ' (' + jvNumbers + ')' : ''}`;
+    if (data.charges_journal_entry_id) msg += ` Transaction Charges JE #${data.charges_journal_entry_id}.`;
+    showToast(msg, 'success');
+    modalWrap.remove();
+    await _tpHistReload();
+  } else if (res && res.status === 409) {
+    showToast('This batch has already been confirmed.', 'error');
+    modalWrap.remove();
+    await _tpHistReload();
+  } else if (res) {
+    showToast('Error: ' + await parseApiError(res), 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Confirm Import'; }
+  }
 }
 
 // ── Suspense ─────────────────────────────────────────────────────────────────

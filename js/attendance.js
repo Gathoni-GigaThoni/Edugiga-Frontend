@@ -16,15 +16,15 @@ async function loadAttendanceView(container) {
   // fetched here — see the Report view below for that.
   try {
     const [clsRes, sessRes, schedRes] = await Promise.all([
-      fetch(`${API_BASE}/classes/`,               { headers: { Authorization: `Bearer ${token}` } }),
-      fetch(`${API_BASE}/terms/`,                 { headers: { Authorization: `Bearer ${token}` } }),
-      fetch(`${API_BASE}/attendance-schedules`,   { headers: { Authorization: `Bearer ${token}` } }),
+      apiFetch(`${API_BASE}/classes/`),
+      apiFetch(`${API_BASE}/terms/`),
+      apiFetch(`${API_BASE}/attendance-schedules`),
     ]);
-    _attClassesData  = clsRes.ok  ? await clsRes.json()  : [];
-    const rawSess  = sessRes.ok ? await sessRes.json() : [];
+    _attClassesData  = clsRes && clsRes.ok  ? await clsRes.json()  : [];
+    const rawSess  = sessRes && sessRes.ok ? await sessRes.json() : [];
     _attTermsData  = (Array.isArray(rawSess) ? rawSess : (rawSess.data || rawSess.results || []))
       .filter(t => t.is_active !== false);
-    _attSchedulesData = schedRes.ok ? await schedRes.json() : [];
+    _attSchedulesData = schedRes && schedRes.ok ? await schedRes.json() : [];
   } catch(_) {
     _attClassesData  = [];
     _attTermsData    = [];
@@ -321,15 +321,15 @@ async function loadAttendanceRegisterReportView(container) {
   // Populate dropdowns in parallel
   try {
     const [clsRes, sessRes, schedRes] = await Promise.all([
-      fetch(`${API_BASE}/classes/`,               { headers: { Authorization: `Bearer ${token}` } }),
-      fetch(`${API_BASE}/terms/`,                 { headers: { Authorization: `Bearer ${token}` } }),
-      fetch(`${API_BASE}/attendance-schedules`,   { headers: { Authorization: `Bearer ${token}` } }),
+      apiFetch(`${API_BASE}/classes/`),
+      apiFetch(`${API_BASE}/terms/`),
+      apiFetch(`${API_BASE}/attendance-schedules`),
     ]);
-    _attClassesData  = clsRes.ok  ? await clsRes.json()  : [];
-    const rawSess  = sessRes.ok ? await sessRes.json() : [];
+    _attClassesData  = clsRes && clsRes.ok  ? await clsRes.json()  : [];
+    const rawSess  = sessRes && sessRes.ok ? await sessRes.json() : [];
     _attTermsData  = (Array.isArray(rawSess) ? rawSess : (rawSess.data || rawSess.results || []))
       .filter(t => t.is_active !== false);
-    _attSchedulesData = schedRes.ok ? await schedRes.json() : [];
+    _attSchedulesData = schedRes && schedRes.ok ? await schedRes.json() : [];
   } catch(_) {}
 
   const today = new Date().toISOString().split('T')[0];
@@ -501,7 +501,6 @@ async function _rptSubmit() {
   document.getElementById('rpt-table-area').innerHTML = '<p class="sa-loading">Loading&#8230;</p>';
 
   try {
-    // TODO: convert to apiFetch (raw fetch bypasses auth retry logic — out of scope for this patch)
     // GET /attendance/report requires term_id, class_id, start_date, end_date.
     // attendance_schedule_id is optional.
     const params = new URLSearchParams({ term_id: termId, class_id: classId, start_date: startDate, end_date: endDate });
@@ -511,11 +510,9 @@ async function _rptSubmit() {
     if (genderFilter)  params.set('gender', genderFilter);
     if (studentFilter) params.set('student_search', studentFilter);
 
-    const res  = await fetch(`${API_BASE}/attendance/report?${params}`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    if (!res.ok) {
-      document.getElementById('rpt-table-area').innerHTML = `<p class="sa-error-msg">${await parseApiError(res) || 'Error loading report.'}</p>`;
+    const res  = await apiFetch(`${API_BASE}/attendance/report?${params}`);
+    if (!res || !res.ok) {
+      document.getElementById('rpt-table-area').innerHTML = `<p class="sa-error-msg">${res ? (await parseApiError(res) || 'Error loading report.') : 'Could not reach the server. Please try again.'}</p>`;
       return;
     }
     const data = await res.json();
