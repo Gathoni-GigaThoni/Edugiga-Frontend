@@ -4652,49 +4652,147 @@ async function _tpOpenResolveModal(tendepayTransactionId) {
   };
 }
 
-// ── Fund Loads (wallet top-ups) ─────────────────────────────────────────────
-const _TP_FL_API = `${_TP_BASE}/fund-loads/`;
+// ── Fund Loads (wallet top-ups / transfers) ─────────────────────────────────
+// POST {_TP_FL_API} (bare) is retired and now returns 405 — replaced by two
+// intent-specific endpoints. See BE/FE contract addendum 2026-07-17 §5.
+const _TP_FL_API          = `${_TP_BASE}/fund-loads/`;
+const _TP_FL_TOPUPS_API   = `${_TP_FL_API}top-ups`;
+const _TP_FL_TRANSFERS_API = `${_TP_FL_API}transfers`;
+
+const _TP_FL_TYPE_LABEL = { bank_topup: 'Top-up', wallet_transfer: 'Transfer' };
+function _tpFlTypeBadge(movementType) {
+  const isTopup = movementType === 'bank_topup';
+  const bg = isTopup ? 'var(--navy-700,#1B3057)' : 'var(--gold-500,#C9A227)';
+  const label = _TP_FL_TYPE_LABEL[movementType] || movementType || '—';
+  return `<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:0.78rem;font-weight:600;color:#fff;background:${bg};">${_finEsc(label)}</span>`;
+}
+
+// Fund Loads' banks-with-gl-account lookup is specific to this screen (the
+// existing shared _pvAccounts is chart-of-accounts GL rows, not the separate
+// /bank-accounts/ resource that carries gl_account_id) — loaded lazily once.
+let _tpFlBankAccounts = null;
+async function _tpFlLoadBankAccounts(force = false) {
+  if (_tpFlBankAccounts && !force) return _tpFlBankAccounts;
+  const res = await apiFetch(`${API_BASE}/bank-accounts/?is_active=true`);
+  _tpFlBankAccounts = (res && res.ok) ? _toArray(await res.json()) : [];
+  return _tpFlBankAccounts;
+}
+function _tpFlBankAccountName(id) {
+  const b = (_tpFlBankAccounts || []).find(b => String(b.id) === String(id));
+  return b ? `${b.bank_name} — ${b.account_name}` : '—';
+}
 
 async function loadTendepayFundLoadsView(container) {
   await _pvLoadLookups();
+  await _tpFlLoadBankAccounts();
+  const movementType = window._tpFlListFilter || '';
+  const filterBar = `
+    <div class="fin-filter-section" style="margin-bottom:12px;">
+      <div class="fin-filter-grid">
+        <div class="fin-filter-field" style="display:flex;gap:6px;">
+          ${['', 'bank_topup', 'wallet_transfer'].map(v => `
+            <button type="button" class="${movementType===v?'fin-btn-teal':'fin-btn-outline'}"
+              onclick="window._tpFlListFilter='${v}'; loadView('tendepay-fund-loads');">
+              ${v === '' ? 'All' : (v === 'bank_topup' ? 'Top-ups' : 'Transfers')}
+            </button>`).join('')}
+        </div>
+      </div>
+    </div>`;
+  container.innerHTML = filterBar + '<div id="tp-fl-split"></div>';
+  const splitContainer = document.getElementById('tp-fl-split');
+  const apiUrl = _TP_FL_API + (movementType ? `?movement_type=${movementType}` : '');
   await renderSplitView({
-    container,
+    container: splitContainer,
     title: 'Fund Loads',
     breadcrumb: [{label:'Dashboard',view:null},{label:'Finance',view:null},{label:'Tendepay Fund Loads'}],
-    apiUrl: _TP_FL_API,
+    apiUrl,
     searchFields: ['reference'],
     col1Label: 'Reference', col2Label: 'Amount',
     col1: f => f.reference || `#${f.id}`,
     col2: f => _tpMoney(f.amount),
     rowLabel: f => f.reference || `#${f.id}`,
-    rowSub: f => _tpDate(f.fund_date),
+    rowSub: f => `${_TP_FL_TYPE_LABEL[f.movement_type] || ''} · ${_tpDate(f.fund_date)}`,
     idKey: 'id',
     detailFields: [
+      {label:'Type',             key:'movement_type', fmt:v=>_tpFlTypeBadge(v)},
       {label:'Reference',        key:'reference', fmt:v=>v||'—'},
-      {label:'Wallet Account',   key:'wallet_account_id', fmt:v=>_pvAccountName(v)},
-      {label:'Source Bank Acct', key:'source_bank_account_id', fmt:v=>_pvAccountName(v)},
+      {label:'Destination Wallet', key:'wallet_account_id', fmt:v=>_pvAccountName(v)},
+      {label:'Source Bank Acct', key:'source_bank_account_id', fmt:v=>v?_tpFlBankAccountName(v):'—'},
+      {label:'Source Wallet',    key:'source_wallet_account_id', fmt:v=>v?_pvAccountName(v):'—'},
       {label:'Amount',           key:'amount', fmt:v=>_tpMoney(v)},
+      {label:'Charge',           key:'charge', fmt:v=>_tpMoney(v)},
       {label:'Fund Date',        key:'fund_date', fmt:v=>_tpDate(v)},
       {label:'Ledger',           key:'ledger_id', fmt:v=>_pvLedgerName(v)},
       {label:'Cost Center',      key:'cost_center_id', fmt:v=>_pvCostCenterName(v)},
       {label:'Notes',            key:'notes', fmt:v=>v||'—'},
+      {label:'Batch',            key:'fund_load_batch_id', fmt:v=>v?`Bulk upload batch #${v}`:'—'},
     ],
     renderAdd: _tpFundLoadAddForm,
   });
 }
 
+// client_reference is the idempotency key for a retried submit — must be
+// generated once when the Add form opens, never regenerated per-submit,
+// otherwise a retry after a network timeout mints a fresh key and creates
+// the duplicate this key exists to prevent.
+let _tpFlClientRef = null;
+let _tpFlMode = 'topup';
+
 function _tpFundLoadAddForm(rightEl) {
+  _tpFlClientRef = crypto.randomUUID();
+  _tpFlMode = 'topup';
+  _tpFlRenderAddForm(rightEl);
+}
+
+function _tpFlRenderAddForm(rightEl) {
+  const mainWallets = _pvAccounts.filter(a => a.wallet_role === 'main');
+  const miniWallets = _pvAccounts.filter(a => a.wallet_role === 'mini');
+  const banksWithGl = (_tpFlBankAccounts || []).filter(b => b.gl_account_id);
+  const today = new Date().toISOString().split('T')[0];
+  const isTopup = _tpFlMode === 'topup';
+
   rightEl.innerHTML = `
     <div class="fin-form-wrap">
       <h3 class="fin-title" style="font-size:1.1rem;">Add Fund Load</h3>
-      <div class="fin-form-group">
-        <label class="fin-form-label">Tendepay Wallet <span class="fin-required">*</span></label>
-        <select id="tp-fl-wallet" class="fin-form-select"><option value="">Please Select</option>${_pvTendepayWalletOptions(null)}</select>
+      <div class="fin-form-group" style="display:flex;gap:8px;">
+        <button type="button" class="${isTopup?'fin-btn-teal':'fin-btn-outline'}" onclick="_tpFlSwitchMode('topup')">Top-up Main wallet</button>
+        <button type="button" class="${!isTopup?'fin-btn-teal':'fin-btn-outline'}" onclick="_tpFlSwitchMode('transfer')">Transfer to Mini wallet</button>
       </div>
-      <div class="fin-form-group">
-        <label class="fin-form-label">Source Bank Account <span class="fin-required">*</span></label>
-        <select id="tp-fl-source" class="fin-form-select"><option value="">Please Select</option>${_pvAccountOptions(null)}</select>
-      </div>
+      ${isTopup ? `
+        ${!banksWithGl.length ? `
+          <div style="background:var(--gold-100,#FAF2D3);border-left:3px solid var(--gold-500,#C9A227);padding:10px 14px;border-radius:6px;margin:10px 0;font-size:0.85rem;color:#6b5400;">
+            No bank account has a linked GL account. Set <code>gl_account_id</code> on a bank account first.
+          </div>` : ''}
+        <div class="fin-form-group">
+          <label class="fin-form-label">Source Bank <span class="fin-required">*</span></label>
+          <select id="tp-fl-source-bank" class="fin-form-select">
+            <option value="">Please Select</option>
+            ${banksWithGl.map(b => `<option value="${b.id}">${_finEsc(b.bank_name)} — ${_finEsc(b.account_name)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="fin-form-group">
+          <label class="fin-form-label">Destination Wallet <span class="fin-required">*</span></label>
+          <select id="tp-fl-dest-wallet" class="fin-form-select" ${mainWallets.length===1?'disabled':''}>
+            <option value="">Please Select</option>
+            ${mainWallets.map(w => `<option value="${w.id}" ${mainWallets.length===1?'selected':''}>${_finEsc(w.account_name)}</option>`).join('')}
+          </select>
+        </div>
+      ` : `
+        <div class="fin-form-group">
+          <label class="fin-form-label">Source Wallet <span class="fin-required">*</span></label>
+          <select id="tp-fl-source-wallet" class="fin-form-select" ${mainWallets.length===1?'disabled':''}>
+            <option value="">Please Select</option>
+            ${mainWallets.map(w => `<option value="${w.id}" ${mainWallets.length===1?'selected':''}>${_finEsc(w.account_name)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="fin-form-group">
+          <label class="fin-form-label">Destination Wallet <span class="fin-required">*</span></label>
+          <select id="tp-fl-dest-wallet-mini" class="fin-form-select">
+            <option value="">Please Select</option>
+            ${miniWallets.map(w => `<option value="${w.id}">${_finEsc(w.account_name)}</option>`).join('')}
+          </select>
+        </div>
+      `}
       <div class="fin-form-grid-2">
         <div class="fin-form-group">
           <label class="fin-form-label">Amount (KES) <span class="fin-required">*</span></label>
@@ -4702,51 +4800,86 @@ function _tpFundLoadAddForm(rightEl) {
         </div>
         <div class="fin-form-group">
           <label class="fin-form-label">Fund Date <span class="fin-required">*</span></label>
-          <input type="date" id="tp-fl-date" class="fin-form-input" value="${new Date().toISOString().split('T')[0]}">
+          <input type="date" id="tp-fl-date" class="fin-form-input" value="${today}">
         </div>
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Reference <span class="fin-required">*</span></label>
         <input type="text" id="tp-fl-reference" class="fin-form-input">
       </div>
-      <div class="fin-form-grid-2">
-        <div class="fin-form-group">
-          <label class="fin-form-label">Ledger <span class="fin-required">*</span></label>
-          <select id="tp-fl-ledger" class="fin-form-select"><option value="">Please Select</option>${_pvLedgerOptions(null)}</select>
-        </div>
-        <div class="fin-form-group">
-          <label class="fin-form-label">Cost Center <span class="fin-required">*</span></label>
-          <select id="tp-fl-cost-center" class="fin-form-select"><option value="">Please Select</option>${_pvCostCenterOptions(null)}</select>
-        </div>
-      </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Notes</label>
         <textarea id="tp-fl-notes" class="fin-form-textarea" rows="3"></textarea>
       </div>
       <div class="fin-form-actions">
-        <button class="fin-btn-teal" onclick="_tpFundLoadSubmit()">Submit</button>
+        <button class="fin-btn-teal" onclick="${isTopup?'_tpFundLoadSubmitTopup()':'_tpFundLoadSubmitTransfer()'}">Submit</button>
       </div>
     </div>`;
 }
 
-async function _tpFundLoadSubmit() {
-  const walletId = parseInt(document.getElementById('tp-fl-wallet').value, 10);
-  const sourceId = parseInt(document.getElementById('tp-fl-source').value, 10);
+function _tpFlSwitchMode(mode) {
+  _tpFlMode = mode;
+  const rightEl = document.getElementById('split-right-panel');
+  if (rightEl) _tpFlRenderAddForm(rightEl);
+}
+
+// Dispatch on the addendum's config-vs-workflow distinction: a missing
+// gl_account_id / wallet_role mismatch is a setup problem (gold callout),
+// everything else (amount validation, 409 conflicts) is workflow guidance
+// surfaced verbatim (coral toast).
+async function _tpFundLoadHandleError(res) {
+  const msg = await parseApiError(res);
+  const isConfigIssue = /gl_account_id|no linked gl account|has no linked gl account/i.test(msg);
+  if (isConfigIssue) {
+    showToast(msg, 'warning');
+  } else {
+    showToast('Error: ' + msg, 'error');
+  }
+}
+
+async function _tpFundLoadSubmitTopup() {
+  const sourceBankId = parseInt(document.getElementById('tp-fl-source-bank').value, 10);
+  const destWalletId = parseInt(document.getElementById('tp-fl-dest-wallet').value, 10);
   const amount = parseFloat(document.getElementById('tp-fl-amount').value);
   const fundDate = document.getElementById('tp-fl-date').value;
   const reference = document.getElementById('tp-fl-reference').value.trim();
-  const ledgerId = parseInt(document.getElementById('tp-fl-ledger').value, 10);
-  const costCenterId = parseInt(document.getElementById('tp-fl-cost-center').value, 10);
   const notes = document.getElementById('tp-fl-notes').value.trim() || null;
-  if (!walletId || !sourceId || !(amount > 0) || !fundDate || !reference || !ledgerId || !costCenterId) {
-    showToast('All fields except Notes are required.', 'error'); return;
+  if (!sourceBankId || !destWalletId || !(amount > 0) || !fundDate || !reference) {
+    showToast('Source Bank, Destination Wallet, Amount, Fund Date and Reference are required.', 'error'); return;
   }
-  const res = await apiFetch(_TP_FL_API, {
+  const res = await apiFetch(_TP_FL_TOPUPS_API, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ wallet_account_id: walletId, source_bank_account_id: sourceId, amount, fund_date: fundDate, reference, notes, ledger_id: ledgerId, cost_center_id: costCenterId }),
+    body: JSON.stringify({
+      wallet_account_id: destWalletId, source_bank_account_id: sourceBankId,
+      amount, fund_date: fundDate, reference, notes, client_reference: _tpFlClientRef,
+    }),
   });
   if (res && res.ok) { showToast('Fund load recorded. Journal entry posted.', 'success'); await window._splitReload?.(); }
-  else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+  else if (res) await _tpFundLoadHandleError(res);
+}
+
+async function _tpFundLoadSubmitTransfer() {
+  const sourceWalletId = parseInt(document.getElementById('tp-fl-source-wallet').value, 10);
+  const destWalletId = parseInt(document.getElementById('tp-fl-dest-wallet-mini').value, 10);
+  const amount = parseFloat(document.getElementById('tp-fl-amount').value);
+  const fundDate = document.getElementById('tp-fl-date').value;
+  const reference = document.getElementById('tp-fl-reference').value.trim();
+  const notes = document.getElementById('tp-fl-notes').value.trim() || null;
+  if (!sourceWalletId || !destWalletId || !(amount > 0) || !fundDate || !reference) {
+    showToast('Source Wallet, Destination Wallet, Amount, Fund Date and Reference are required.', 'error'); return;
+  }
+  if (sourceWalletId === destWalletId) {
+    showToast('Source and destination wallets must differ.', 'error'); return;
+  }
+  const res = await apiFetch(_TP_FL_TRANSFERS_API, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      source_wallet_account_id: sourceWalletId, destination_wallet_account_id: destWalletId,
+      amount, fund_date: fundDate, reference, notes, client_reference: _tpFlClientRef,
+    }),
+  });
+  if (res && res.ok) { showToast('Fund load recorded. Journal entry posted.', 'success'); await window._splitReload?.(); }
+  else if (res) await _tpFundLoadHandleError(res);
 }
 
 // ── Reconciliation ──────────────────────────────────────────────────────────

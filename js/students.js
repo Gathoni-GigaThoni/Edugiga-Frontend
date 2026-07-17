@@ -2000,22 +2000,27 @@ async function _stuResolveTransportPricingId(d) {
 // Best-effort — a failure here doesn't roll back the record save that already
 // succeeded, it just surfaces a separate toast so transport isn't silently lost.
 async function _stuSyncTransport(studentId, d) {
-  // StudentRouteAssign now has an optional term_id — the backend uses it to
-  // auto-create the matching StudentFee for that term (and to void the right
-  // term's unpaid fee on removal), so it's derived from the same term_id
-  // _deriveStuTermAndClass() already resolves for the student's enrollment.
+  // StudentRouteAssign.term_id is now an explicit override only — an omitted
+  // term_id makes the backend fall back to the student's own current term_id
+  // itself. Previously this always sent d.term_id explicitly; whenever that
+  // derived value didn't match what the backend considered current, the write
+  // silently no-op'd. Trust the backend's fallback by default and only send a
+  // term_id when the operator has deliberately chosen an override (no such UI
+  // control exists yet — d.transport_term_override is where it would plug in).
   const sel = d.transport_selection;
   if (d.uses_school_transport && sel && sel.route_id && sel.journey_type) {
     const direction = sel.journey_type === 'two_way'
       ? 'two_way'
       : (sel.time_of_day === 'evening' ? 'one_way_evening' : 'one_way_morning');
+    const body = { route_id: String(sel.route_id), direction, use_daily_rate: false };
+    if (d.transport_term_override) body.term_id = d.transport_term_override;
     const res = await apiFetch(`${API_BASE}/students/${studentId}/transport`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ route_id: String(sel.route_id), direction, use_daily_rate: false, term_id: d.term_id || null }),
+      body: JSON.stringify(body),
     });
     if (!(res && res.ok)) showToast('Saved, but transport assignment failed: ' + (res ? await parseApiError(res) : 'unknown error'), 'error');
   } else if (!d.uses_school_transport) {
-    const qs = d.term_id ? `?term_id=${d.term_id}` : '';
+    const qs = d.transport_term_override ? `?term_id=${d.transport_term_override}` : '';
     await apiFetch(`${API_BASE}/students/${studentId}/transport${qs}`, { method: 'DELETE' }).catch(() => {});
   }
 }

@@ -55,20 +55,19 @@ function _pvLedgerOptions(sel)     { return _pvOptions(_pvLedgers, 'id', l => l.
 function _pvCostCenterOptions(sel) { return _pvOptions(_pvCostCenters, 'id', c => c.name, sel); }
 function _pvDepartmentOptions(sel) { return _pvOptions(_pvDepartments, 'id', d => d.name, sel); }
 function _pvAccountOptions(sel)    { return _pvOptions(_pvAccounts, 'id', a => `${a.number ? a.number + ' - ' : ''}${a.account_name}`, sel); }
-// "Tendepay Wallet" options are child accounts of the "Tendepay - Main Wallet"
-// parent account (chart-of-accounts parent_id link), not accounts whose name
-// happens to start with "Tendepay" — a single Ledger, Bank, or Suspense
-// account named e.g. "Tendepay Clearing" would otherwise leak into this list.
-// Match is dash/whitespace/case-insensitive: the seeded account name uses an
-// en dash ("Tendepay – Main Wallet"), and a strict hyphen comparison here
-// silently matched nothing, which is why this dropdown showed empty.
-function _pvNormalizeDashes(s) {
-  return (s || '').replace(/[‐-―]/g, '-').replace(/\s+/g, ' ').trim().toLowerCase();
-}
-function _pvTendepayWalletOptions(sel) {
-  const parent = _pvAccounts.find(a => _pvNormalizeDashes(a.account_name) === 'tendepay - main wallet');
-  const children = parent ? _pvAccounts.filter(a => String(a.parent_id) === String(parent.id)) : [];
-  return _pvOptions(children, 'id', a => a.account_name, sel);
+// "Tendepay Wallet" options are accounts tagged with Account.wallet_role —
+// the authoritative Tendepay-pipeline marker (replaces the old parent_id
+// relationship to a "Tendepay - Main Wallet" parent, which itself replaced an
+// even older account_name ILIKE 'Tendepay%' scan). wallet_role is nullable —
+// a hand-named "Tendepay Clearing" account with no role set is deliberately
+// invisible here, which is intentional per the backend contract.
+// Default role is 'mini' — every existing caller (disbursement forms picking
+// which sub-wallet a payment comes out of) wants the Suppliers/Payroll/
+// Transport mini wallets, matching the old parent_id-children behavior; only
+// Fund Loads' top-up/transfer forms pass role='main' explicitly.
+function _pvTendepayWalletOptions(sel, role = 'mini') {
+  const wallets = _pvAccounts.filter(a => a.wallet_role === role);
+  return _pvOptions(wallets, 'id', a => a.account_name, sel);
 }
 function _pvSupplierOptions(sel)   { return _pvOptions(_pvSuppliers, 'id', s => s.name, sel); }
 function _pvEmployeeOptions(sel)   { return _pvOptions(_pvEmployees, 'id', e => `${e.first_name} ${e.last_name}`, sel); }

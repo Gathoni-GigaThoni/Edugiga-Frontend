@@ -224,23 +224,23 @@ function _renderTrnRouteForm(container, route, routeCode, isEdit) {
     <div class="trn-form-grid">
       <div class="trn-form-group">
         <label class="trn-form-label">Two-Way Price</label>
-        <input type="number" id="trn-rt-two-way" class="fin-search-input trn-form-input" min="0" step="0.01"
+        <input type="number" id="trn-rt-two-way" class="fin-search-input trn-form-input" min="0.01" step="0.01"
                value="${_e(r.two_way_price ?? '')}">
         <span class="stu-field-error" id="err-trn-rt-price"></span>
       </div>
       <div class="trn-form-group">
         <label class="trn-form-label">Morning Only Price</label>
-        <input type="number" id="trn-rt-morning" class="fin-search-input trn-form-input" min="0" step="0.01"
+        <input type="number" id="trn-rt-morning" class="fin-search-input trn-form-input" min="0.01" step="0.01"
                value="${_e(r.one_way_morning_price ?? '')}">
       </div>
       <div class="trn-form-group">
         <label class="trn-form-label">Evening Only Price</label>
-        <input type="number" id="trn-rt-evening" class="fin-search-input trn-form-input" min="0" step="0.01"
+        <input type="number" id="trn-rt-evening" class="fin-search-input trn-form-input" min="0.01" step="0.01"
                value="${_e(r.one_way_evening_price ?? '')}">
       </div>
       <div class="trn-form-group">
         <label class="trn-form-label">Daily Rate</label>
-        <input type="number" id="trn-rt-daily" class="fin-search-input trn-form-input" min="0" step="0.01"
+        <input type="number" id="trn-rt-daily" class="fin-search-input trn-form-input" min="0.01" step="0.01"
                value="${_e(r.daily_rate ?? '')}">
       </div>
     </div>
@@ -255,7 +255,7 @@ function _renderTrnRouteForm(container, route, routeCode, isEdit) {
                <option value="one_way_morning">One-way (Morning)</option>
                <option value="one_way_evening">One-way (Evening)</option>
              </select>
-             <input type="number" id="trn-pricing-price" class="fin-search-input" style="flex:1;" min="0" step="0.01" placeholder="Price">
+             <input type="number" id="trn-pricing-price" class="fin-search-input" style="flex:1;" min="0.01" step="0.01" placeholder="Price">
              <button type="button" class="trn-add-stop-btn" onclick="trnAddPricing('${r.id}')">+ Add</button>
            </div>`
         : `<p class="trn-stops-hint">Save the route first, then manage per-direction pricing from its Edit page.</p>`}
@@ -380,14 +380,16 @@ async function submitTrnRouteForm(routeId) {
   const daily   = document.getElementById('trn-rt-daily')?.value;
 
   const prices = [twoWay, morning, evening, daily].map(v => v !== '' && v !== undefined ? parseFloat(v) : null);
-  const hasAtLeastOnePrice = prices.some(p => p !== null && !isNaN(p) && p >= 0);
-  if (!hasAtLeastOnePrice) {
-    if (errPrice) errPrice.textContent = 'At least one price field must be provided.';
+  // Backend now rejects 0 (gt=0, was ge=0) — a free route made no accounting
+  // sense — so a provided price of exactly 0 is invalid, not just negatives.
+  const invalidPrice = prices.some(p => p !== null && !isNaN(p) && p <= 0);
+  if (invalidPrice) {
+    if (errPrice) errPrice.textContent = 'Prices must be greater than 0.';
     return;
   }
-  const negativePrice = prices.some(p => p !== null && !isNaN(p) && p < 0);
-  if (negativePrice) {
-    if (errPrice) errPrice.textContent = 'Prices must be non-negative.';
+  const hasAtLeastOnePrice = prices.some(p => p !== null && !isNaN(p));
+  if (!hasAtLeastOnePrice) {
+    if (errPrice) errPrice.textContent = 'At least one price field must be provided.';
     return;
   }
 
@@ -424,10 +426,13 @@ async function submitTrnRouteForm(routeId) {
     showToast(isEdit ? 'Route updated successfully.' : 'Route created successfully.', 'success');
     window._currentEditRouteId = null;
     loadView('transport-routes');
-  } else {
-    let msg = 'An error occurred.';
-    if (res) { try { const e = await res.json(); msg = e.detail || JSON.stringify(e); } catch (_) {} }
-    showToast('Error: ' + msg, 'error');
+  } else if (res) {
+    // 409s (duplicate name, still-referenced FK, etc) previously bubbled as raw
+    // 500s that the browser reported as CORS errors — Starlette's
+    // ServerErrorMiddleware sits outside CORSMiddleware, so a raw 500 never got
+    // Access-Control-Allow-Origin. The backend now returns an actionable 409
+    // with a verbatim detail string; parseApiError already surfaces it as-is.
+    showToast('Error: ' + await parseApiError(res), 'error');
   }
 }
 
@@ -462,7 +467,7 @@ async function trnAddPricing(routeId) {
   const direction = document.getElementById('trn-pricing-direction')?.value;
   const priceVal = document.getElementById('trn-pricing-price')?.value;
   const price = parseFloat(priceVal);
-  if (!direction || !(price >= 0)) { showToast('Direction and a non-negative price are required.', 'error'); return; }
+  if (!direction || !(price > 0)) { showToast('Direction and a price greater than 0 are required.', 'error'); return; }
   const res = await apiFetch(`${API_BASE}/routes/${routeId}/pricing/`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ direction, price }),
   });
@@ -804,10 +809,12 @@ async function submitTrnBusForm(busId) {
     showToast(isEdit ? 'Bus updated successfully.' : 'Bus created successfully.', 'success');
     window._currentEditBusId = null;
     loadView('transport-vehicles');
-  } else {
-    let msg = 'An error occurred.';
-    if (res) { try { const e = await res.json(); msg = e.detail || JSON.stringify(e); } catch (_) {} }
-    showToast('Error: ' + msg, 'error');
+  } else if (res) {
+    // Duplicate name is now allowed (UNIQUE constraint dropped — buses are
+    // keyed by plate, not nickname); a 409 here means a genuine conflict
+    // (e.g. duplicate plate). Surface parseApiError's verbatim detail rather
+    // than the raw JSON this used to hand-parse.
+    showToast('Error: ' + await parseApiError(res), 'error');
   }
 }
 
