@@ -4443,7 +4443,24 @@ function _tpHistDetailActions(b) {
   window._tpHistCurrentBatch = b;
   let html = '';
   if (b.status === 'pending_review') {
-    html += `<button class="fin-btn-teal" onclick="_tpHistOpenConfirmModal()">Confirm Batch</button>`;
+    if ((b.matched_count ?? 0) > 0) {
+      // Resuming a matched batch from History can never actually recover
+      // its row-level matches: GET /tendepay/import/{id} only returns
+      // batch metadata, and the only other source — the Tendepay
+      // Transaction History report — never carries rows for a batch that
+      // hasn't been confirmed yet. _tpHistConfirmBatch already refuses to
+      // POST a fabricated short/empty confirm rather than silently
+      // corrupting the batch (see its own guard), but that's a dead end
+      // discovered only after the operator fills the whole modal in.
+      // Don't dangle "Confirm Batch" as if it were the primary path when
+      // it's guaranteed to fail — say so up front and point at the actual
+      // recovery (discard + re-upload).
+      html += `<div style="width:100%;padding:10px 14px;border-radius:6px;border-left:3px solid var(--gold-500);background:var(--gold-100);color:#7a6110;font-size:0.85rem;">
+        This batch has ${b.matched_count} matched row${b.matched_count === 1 ? '' : 's'} that can't be recovered from Import History — only the original upload session had that detail, and there's no backend route yet to fetch it afterward. Discard this batch (below) and re-run the Import Statement wizard on the original file to confirm it properly.
+      </div>`;
+    } else {
+      html += `<button class="fin-btn-teal" onclick="_tpHistOpenConfirmModal()">Confirm Batch</button>`;
+    }
   } else {
     html += `<div style="width:100%;color:var(--grey-600,#666);font-size:0.9rem;">This batch has been ${_finEsc((b.status||'').replace(/_/g,' '))}.</div>`;
   }
@@ -4494,27 +4511,6 @@ async function _tpHistDeleteBatch(batchId) {
   }
 }
 
-// GET /tendepay/import/{batch_id} only returns batch-level metadata (no
-// transaction rows — confirmed against the live TendepayImportBatchRead
-// schema), and there's no dedicated "list this batch's transactions"
-// endpoint. Re-derives them from the Tendepay Transaction History report
-// (which does carry import_batch_id per row, per TendepayTransactionRead)
-// filtered client-side by batch id, over a window wide enough to contain any
-// statement's transaction dates. Flag to backend: a direct
-// GET /tendepay/import/{batch_id}/transactions endpoint would make this exact
-// and remove the date-window guess.
-async function _tpFetchBatchTransactions(batch) {
-  const end = new Date(batch.imported_at || Date.now());
-  end.setDate(end.getDate() + 1);
-  const start = new Date(end);
-  start.setFullYear(start.getFullYear() - 1);
-  const fmt = d => d.toISOString().split('T')[0];
-  const res = await apiFetch(`${API_BASE}/reports/tendepay-transaction-history?start_date=${fmt(start)}&end_date=${fmt(end)}`);
-  if (!res || !res.ok) return null;
-  const rows = _toArray(await res.json());
-  return rows.filter(t => String(t.import_batch_id) === String(batch.id));
-}
-
 async function _tpHistOpenConfirmModal() {
   const batch = window._tpHistCurrentBatch;
   if (!batch) { showToast('Could not find that batch.', 'error'); return; }
@@ -4525,15 +4521,7 @@ async function _tpHistOpenConfirmModal() {
   wrap.innerHTML = `
     <div style="background:white;border-radius:8px;padding:24px;width:440px;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
       <h3 style="margin:0 0 14px;font-size:1.05rem;color:#2c3e50;">Confirm Batch — ${_finEsc(batch.filename || `#${batch.id}`)}</h3>
-      <p style="font-size:0.85rem;color:#666;margin:0 0 14px;">${batch.matched_count ?? 0} matched, ${batch.unmatched_count ?? 0} unmatched.</p>
-      <div class="fin-form-group">
-        <label class="fin-form-label">Statement type <span class="fin-required">*</span></label>
-        <div style="display:flex;gap:20px;margin-top:6px;">
-          <label><input type="radio" name="tp-hist-import-mode" value="supplier" checked> Supplier vouchers</label>
-          <label><input type="radio" name="tp-hist-import-mode" value="payroll"> Payroll return</label>
-        </div>
-        <span style="font-size:0.78rem;color:#888;">The batch record doesn't carry this — pick whichever this statement actually was.</span>
-      </div>
+      <p style="font-size:0.85rem;color:#666;margin:0 0 14px;">This batch has 0 matched rows${(batch.unmatched_count ?? 0) > 0 ? ` and ${batch.unmatched_count} unmatched` : ''}. Confirming just settles the unmatched-rows handling below — there's nothing else to post.</p>
       <div class="fin-form-group">
         <label class="fin-form-label">Ledger <span class="fin-required">*</span></label>
         <select id="tp-hist-confirm-ledger" class="fin-form-select"><option value="">Please Select</option>${_pvLedgerOptions(null)}</select>
@@ -4562,42 +4550,25 @@ async function _tpHistConfirmBatch(batch, modalWrap) {
   const ledgerId = parseInt(document.getElementById('tp-hist-confirm-ledger').value, 10);
   const costCenterId = parseInt(document.getElementById('tp-hist-confirm-cc').value, 10);
   const unmatchedAction = (document.querySelector('input[name="tp-hist-unmatched-action"]:checked') || {}).value || 'suspense';
-  const isPayroll = (document.querySelector('input[name="tp-hist-import-mode"]:checked') || {}).value === 'payroll';
   if (!ledgerId || !costCenterId) { showToast('Ledger and Cost Center are required.', 'error'); return; }
 
   const btn = document.getElementById('tp-hist-confirm-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Confirming…'; }
 
-  const transactions = await _tpFetchBatchTransactions(batch);
-  if (transactions === null) {
-    showToast('Could not load this batch\'s transactions. Please try again.', 'error');
-    if (btn) { btn.disabled = false; btn.textContent = 'Confirm Import'; }
-    return;
-  }
-  const confirmedMatches = transactions
-    .filter(t => t.matched_voucher_id != null)
-    .map(t => isPayroll
-      ? { tendepay_transaction_id: t.id, payroll_run_line_id: t.matched_voucher_id, match_method: t.match_method || 'auto' }
-      : { tendepay_transaction_id: t.id, voucher_id: t.matched_voucher_id, match_method: t.match_method || 'auto' });
-
-  // _tpFetchBatchTransactions reconstructs a pending batch's rows from the
-  // Tendepay Transaction History report — which only carries already-posted
-  // transactions. For a batch still sitting in pending_review (the exact
-  // case this Resume flow exists for), that lookup comes back empty or
-  // short. An empty/short confirmedMatches here is NOT "this batch really
-  // has fewer matches" — it's "the reconstruction failed" — so POSTing it
-  // anyway would silently confirm the batch with fewer matches (0 JEs, 0
-  // amount) than it actually has, with no way back (the batch flips to
-  // 'confirmed' and can then only be unwound via JE reversal — of JEs that
-  // were never posted). Refuse and tell the operator what actually happened.
-  if (confirmedMatches.length < (batch.matched_count ?? 0)) {
-    showToast(
-      `Could not recover this batch's matched rows from Import History (found ${confirmedMatches.length} of ${batch.matched_count} expected). Confirming now would post the batch with fewer matches than it actually has. This batch was NOT confirmed — re-run the Import Statement wizard from the original file instead of confirming from History.`,
-      'error'
-    );
-    if (btn) { btn.disabled = false; btn.textContent = 'Confirm Import'; }
-    return;
-  }
+  // There is no backend endpoint that returns a pending batch's row-level
+  // matches (GET /tendepay/import/{batch_id} is metadata-only), so this
+  // Resume-from-History flow can never reconstruct real matched rows — it
+  // used to fake it by querying the Tendepay Transaction History report and
+  // filtering by import_batch_id, but that report only carries already-
+  // posted transactions, so the lookup silently came back empty for any
+  // batch still in pending_review and POSTed a fabricated 0-match confirm.
+  // _tpHistDetailActions now only renders this "Confirm Batch" button at
+  // all when batch.matched_count is already 0 (see there), so by the time
+  // we're here there is genuinely nothing to reconstruct — confirmedMatches
+  // is correctly empty by construction, not by a failed guess. Any batch
+  // with real matched rows must be re-uploaded through the Import
+  // Statement wizard instead, where the matches live in memory.
+  const confirmedMatches = [];
 
   const res = await apiFetch(`${_TP_BASE}/import/${batch.id}/confirm`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
