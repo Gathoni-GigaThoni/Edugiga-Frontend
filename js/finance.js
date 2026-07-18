@@ -3086,6 +3086,7 @@ async function loadChartOfAccountsView(container) {
       {label:'Account Type', key:'account_type'},
       {label:'Parent',       key:'parent_id', fmt:(_,a)=>_coaParentName(a)},
       {label:'Cash Flow Grp',key:'cash_flow_group', fmt:v=>v||'—'},
+      {label:'Wallet Role',  key:'wallet_role', fmt:v=>_coaWalletRolePill(v)},
       {label:'Status',       key:'is_active', fmt:v=>v===false?'Inactive':'Active'},
     ],
     renderAdd: _finAddPlaceholder('Account', "renderCoaAddPage(document.getElementById('main-content'))", 'Add a new Chart of Accounts entry.'),
@@ -3138,6 +3139,13 @@ function _coaParentName(a) {
   if (!a.parent_id) return '-';
   const parent = chartOfAccountsData.find(p => String(p.id) === String(a.parent_id));
   return parent ? (parent.account_name || '-') : '-';
+}
+
+const _COA_WALLET_ROLE_COLORS = { main: '#1a5fb4;background:#dce8fb', mini: '#8a6d00;background:#f5e6a8', suspense: '#888;background:#eee', charges: '#c0392b;background:#fde0de' };
+function _coaWalletRolePill(role) {
+  if (!role) return '—';
+  const colors = (_COA_WALLET_ROLE_COLORS[role] || '#888;background:#eee').split(';');
+  return `<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:0.78rem;font-weight:600;color:${colors[0]};${colors[1]};">${_finEsc(role)}</span>`;
 }
 
 function _renderCoaTable() {
@@ -3262,6 +3270,17 @@ function _coaFormHtml(acct, opts = {}) {
       <label class="fin-form-label">Tendepay Wallet Code</label>
       <input type="text" id="coa-f-wallet-code" class="fin-form-input" value="${_finEsc(acct?.tendepay_wallet_code||'')}" placeholder="e.g. KOC5329547696">
       <span style="font-size:12px;color:var(--grey-600)">The code shown in parentheses on the Tendepay statement for this wallet, e.g. KOC5329547696.</span>
+    </div>
+    <div class="fin-form-group">
+      <label class="fin-form-label">Wallet Role</label>
+      <select id="coa-f-wallet-role" class="fin-form-select" onchange="_coaCheckWalletRoleMismatch()">
+        <option value="">(none)</option>
+        ${['main','mini','suspense','charges'].map(r=>`<option value="${r}" ${acct?.wallet_role===r?'selected':''}>${r.charAt(0).toUpperCase()+r.slice(1)}</option>`).join('')}
+      </select>
+      <span style="font-size:12px;color:var(--grey-600)">Tags this account for the Tendepay pipeline. Required for any new Tendepay wallet seeded after the initial migration.</span>
+      <div id="coa-f-wallet-role-warn" style="display:none;background:var(--gold-100,#FAF2D3);border-left:3px solid var(--gold-500,#C9A227);padding:8px 12px;border-radius:6px;margin-top:8px;font-size:0.82rem;color:#6b5400;">
+        This account looks like a Tendepay wallet but has no wallet role. It will be invisible to the Tendepay import and reconciliation.
+      </div>
     </div>`;
 }
 
@@ -3270,6 +3289,19 @@ function _coaFormHtml(acct, opts = {}) {
 function _coaToggleWalletCode(name) {
   const wrap = document.getElementById('coa-f-wallet-code-wrap');
   if (wrap) wrap.style.display = /^tendepay/i.test(name || '') ? 'block' : 'none';
+  _coaCheckWalletRoleMismatch();
+}
+
+// wallet_role is now authoritative for the Tendepay pipeline (replaces the
+// account_name ILIKE 'Tendepay%' scan); a name that still looks like a wallet
+// but carries no role is the exact failure mode this warns about — non-
+// blocking, since a bursar may legitimately name a non-wallet account this way.
+function _coaCheckWalletRoleMismatch() {
+  const warn = document.getElementById('coa-f-wallet-role-warn');
+  if (!warn) return;
+  const name = document.getElementById('coa-f-name')?.value || '';
+  const role = document.getElementById('coa-f-wallet-role')?.value || '';
+  warn.style.display = (/^tendepay/i.test(name) && !role) ? 'block' : 'none';
 }
 
 // Prefilling the Number field from the selected Parent Account — user can still override it manually.
@@ -3326,7 +3358,8 @@ async function submitCoaAdd(returnView) {
     parent_id:             parentId ? parseInt(parentId) : null,
     is_student_fees_related: document.getElementById('coa-f-fees-related').checked,
     is_budget_item:        document.getElementById('coa-f-budget-item').checked,
-    tendepay_wallet_code:  document.getElementById('coa-f-wallet-code')?.value.trim() || null
+    tendepay_wallet_code:  document.getElementById('coa-f-wallet-code')?.value.trim() || null,
+    wallet_role:           document.getElementById('coa-f-wallet-role')?.value || null
   };
   // NOTE: no separate "Fee Account" resource to sync to — is_student_fees_related
   // on this single POST is the entire mechanism (confirmed live: GET /accounts/
@@ -3365,6 +3398,7 @@ function openCoaEdit(id, opts = {}) {
         </div>
       </div>
     </div>`;
+  _coaCheckWalletRoleMismatch();
 }
 
 async function submitCoaEdit(id, returnView) {
@@ -3386,7 +3420,8 @@ async function submitCoaEdit(id, returnView) {
     parent_id:              parentId ? parseInt(parentId) : null,
     is_student_fees_related: document.getElementById('coa-f-fees-related').checked,
     is_budget_item:         document.getElementById('coa-f-budget-item').checked,
-    tendepay_wallet_code:   document.getElementById('coa-f-wallet-code')?.value.trim() || null
+    tendepay_wallet_code:   document.getElementById('coa-f-wallet-code')?.value.trim() || null,
+    wallet_role:            document.getElementById('coa-f-wallet-role')?.value || null
   };
   const res = await apiFetch(`${API_BASE}/accounts/${id}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
@@ -4436,6 +4471,15 @@ async function _tpHistReload() {
 // that same session — there was previously no way back into that batch, so
 // it just sat there with no path to "payment done." This resumes confirmation
 // from History instead of requiring a re-upload.
+// A batch can land here CONFIRMED with 0 matched rows and 0 charges — the
+// old Resume-from-History flow used to POST exactly this fabricated confirm
+// (see the note in _tpHistConfirmBatch) before that path was closed off.
+// Nothing was actually posted to the ledger for these, so unlike a normal
+// confirmed batch they're safe to unwind without going through JE reversal.
+function isEmptyConfirm(b) {
+  return b.status === 'confirmed' && b.matched_count === 0 && parseFloat(b.total_charges || '0') === 0;
+}
+
 function _tpHistDetailActions(b) {
   // renderSplitView hands the selected item straight to detailActions each
   // render, so it's stashed here for the modal opener below rather than
@@ -4461,6 +4505,11 @@ function _tpHistDetailActions(b) {
     } else {
       html += `<button class="fin-btn-teal" onclick="_tpHistOpenConfirmModal()">Confirm Batch</button>`;
     }
+  } else if (isEmptyConfirm(b)) {
+    html += `<div style="width:100%;padding:10px 14px;border-radius:6px;border-left:3px solid var(--gold-500);background:var(--gold-100);color:#7a6110;font-size:0.85rem;margin-bottom:10px;">
+      This batch confirmed with 0 matched rows and no charges — nothing was actually posted to the ledger. Reset it to Pending Review to confirm it properly.
+    </div>
+    <button class="fin-btn-teal" onclick="_tpHistOpenResetToPendingModal(${b.id})">Reset to Pending</button>`;
   } else {
     html += `<div style="width:100%;color:var(--grey-600,#666);font-size:0.9rem;">This batch has been ${_finEsc((b.status||'').replace(/_/g,' '))}.</div>`;
   }
@@ -4508,6 +4557,51 @@ async function _tpHistDeleteBatch(batchId) {
     _tpHistShowActionMsg(await parseApiError(res));
   } else if (res) {
     showToast('Error: ' + await parseApiError(res), 'error');
+  }
+}
+
+function _tpHistOpenResetToPendingModal(batchId) {
+  const wrap = document.createElement('div');
+  wrap.id = 'tp-hist-reset-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:white;border-radius:8px;padding:24px;width:420px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 12px;font-size:1.05rem;color:#2c3e50;">Reset to Pending</h3>
+      <p style="font-size:0.88rem;color:var(--grey-700,#444);line-height:1.5;">This batch confirmed with 0 matched rows and no charges — nothing was posted. Reset it back to Pending Review so it can be confirmed properly?</p>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="document.getElementById('tp-hist-reset-modal-overlay').remove()">Cancel</button>
+        <button class="fin-btn-teal" onclick="_tpHistResetToPending(${batchId})">Reset</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+
+// Backend refuses (400/409-shaped body with detail.code) unless the batch has
+// zero GL footprint — dispatch on the code rather than showing raw English,
+// per the addendum's error contract for this endpoint.
+async function _tpHistResetToPending(batchId) {
+  const res = await apiFetch(`${_TP_BASE}/import/${batchId}/reset-to-pending`, { method: 'POST' });
+  document.getElementById('tp-hist-reset-modal-overlay')?.remove();
+  if (res && res.ok) {
+    showToast('Batch reset to pending review.', 'success');
+    await _tpHistReload();
+    return;
+  }
+  let body = null;
+  if (res) { try { body = await res.json(); } catch (_) {} }
+  const code = body?.detail?.code;
+  if (code === 'BATCH_NOT_FOUND') {
+    showToast('Batch not found.', 'error');
+  } else if (code === 'BATCH_NOT_CONFIRMED') {
+    // Should be unreachable: the CTA only renders for status==='confirmed'.
+    console.error('Reset to pending: backend says batch is not confirmed.', body);
+    showToast('This batch is not in a resettable state.', 'error');
+  } else if (code === 'BATCH_HAS_JOURNAL_TRAIL') {
+    _tpHistShowActionMsg('This batch has posted activity; reverse it through journal-entry reversal instead.');
+  } else if (res) {
+    showToast('Error: ' + (typeof body?.detail === 'string' ? body.detail : `HTTP ${res.status}`), 'error');
+  } else {
+    showToast('Network error.', 'error');
   }
 }
 
@@ -4882,60 +4976,582 @@ async function _tpFundLoadSubmitTransfer() {
   else if (res) await _tpFundLoadHandleError(res);
 }
 
+// ── Fund Loads Bulk Upload wizard (3 steps: upload → review → commit) ──────
+// Mirrors the Import Statement wizard's chrome (step badges, .fin-table,
+// grey <details> sections, coral banners) but not its query mechanics: this
+// contract is stateless across dry_run — there's no batch_id from the
+// preview to resume from, so Commit re-submits the same File object the
+// operator picked in Step 1 with dry_run=false. Field names for the preview
+// response (postable/already_imported/resolution_errors/skipped_rows/totals)
+// come from the BE/FE contract addendum (2026-07-17 §5.2); row-level fields
+// reuse the live FundLoad resource's own field names (reference,
+// movement_type, amount, charge, fund_date, wallet_account_id,
+// source_bank_account_id, source_wallet_account_id) already confirmed
+// elsewhere in this file — verify against a real dry-run response the first
+// time this runs against staging, since neither shape is typed in
+// openapi.json (both routes return a bare `schema: {}`).
+let _tpFlWiz = null;
+function _tpFlNewWizState() {
+  return { step: 1, file: null, filename: null, notes: null,
+    postable: [], alreadyImported: [], resolutionErrors: [], skippedRows: [] };
+}
+
+async function loadTendepayFundLoadsUploadView(container) {
+  await _pvLoadLookups();
+  await _tpFlLoadBankAccounts();
+  _tpFlWiz = _tpFlNewWizState();
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Fund Loads Bulk Upload</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Tendepay &rsaquo; Fund Loads Bulk Upload</div>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:16px;">
+        <span class="fin-wizard-step-badge" id="tp-fl-wiz-badge-1">1. Upload</span>
+        <span class="fin-wizard-step-badge" id="tp-fl-wiz-badge-2">2. Review</span>
+        <span class="fin-wizard-step-badge" id="tp-fl-wiz-badge-3">3. Commit</span>
+      </div>
+      <div id="tp-fl-wiz-body"></div>
+    </div>`;
+  _tpFlRenderWizStep();
+}
+
+function _tpFlRenderWizStepBadges() {
+  [1, 2, 3].forEach(n => {
+    const el = document.getElementById(`tp-fl-wiz-badge-${n}`);
+    if (!el) return;
+    el.style.cssText = n === _tpFlWiz.step
+      ? 'padding:6px 14px;border-radius:14px;background:var(--navy-700,#1B3057);color:#fff;font-weight:600;font-size:0.85rem;'
+      : 'padding:6px 14px;border-radius:14px;background:#eee;color:#888;font-size:0.85rem;';
+  });
+}
+
+function _tpFlRenderWizStep() {
+  _tpFlRenderWizStepBadges();
+  if (_tpFlWiz.step === 1) _tpFlRenderStep1();
+  else if (_tpFlWiz.step === 2) _tpFlRenderStep2();
+  else _tpFlRenderStep3();
+}
+
+async function _tpFlRenderStep1() {
+  const body = document.getElementById('tp-fl-wiz-body');
+  body.innerHTML = '<p class="sa-loading">Loading column contract&#8230;</p>';
+  let cols = { columns: [], notes: '' };
+  try {
+    const res = await apiFetch(`${_TP_BASE}/fund-loads/upload/expected-columns`);
+    if (res && res.ok) cols = await res.json();
+  } catch (_) {}
+  // Defensive: fall back to a required/optional split if the response uses
+  // that shape instead of a flat `columns` list (see file-header comment).
+  const colList = cols.columns || [...(cols.required_columns || []), ...(cols.optional_columns || [])];
+  const colRows = colList.map(c => `
+    <tr><td>${_finEsc(c.header || '')}</td><td>${_finEsc(c.description || '')}</td><td>${_finEsc(c.example ?? '')}</td></tr>`).join('');
+  const notesHtml = cols.notes ? `
+    <div style="background:#eef3fb;border-radius:8px;padding:12px 16px;margin:12px 0;font-size:0.85rem;color:#2c3e50;white-space:pre-wrap;">${_finEsc(cols.notes)}</div>` : '';
+  body.innerHTML = `
+    <div class="fin-form-wrap">
+      <div class="fin-section-label">Expected File Format</div>
+      <div class="fin-table-wrap"><table class="fin-table">
+        <thead><tr><th>Column</th><th>Description</th><th>Example</th></tr></thead>
+        <tbody>${colRows || '<tr><td colspan="3" class="fin-empty">Could not load the column contract.</td></tr>'}</tbody>
+      </table></div>
+      ${notesHtml}
+      <div class="fin-form-group" style="margin-top:16px;">
+        <label class="fin-form-label">Notes</label>
+        <textarea id="tp-fl-wiz-notes" class="fin-form-textarea" rows="2" placeholder="Optional note to attach to this batch"></textarea>
+      </div>
+      <div style="margin-top:16px;display:flex;gap:10px;align-items:center;">
+        <button class="fin-btn-outline" onclick="_tpFlDownloadTemplate()">Download Template</button>
+        <input type="file" id="tp-fl-wiz-file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="_tpFlUploadFile(this)">
+        <button class="fin-btn-teal" onclick="document.getElementById('tp-fl-wiz-file').click()">Choose File &amp; Preview</button>
+        <span id="tp-fl-wiz-upload-status" style="color:#888;font-size:0.85rem;"></span>
+      </div>
+    </div>`;
+}
+
+async function _tpFlDownloadTemplate() {
+  const res = await apiFetch(`${_TP_BASE}/fund-loads/upload/template`);
+  if (res && res.ok) {
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'fund_loads_upload_template.xlsx';
+    document.body.appendChild(a); a.click(); a.remove();
+  } else if (res) showToast('Could not download template: ' + await parseApiError(res), 'error');
+}
+
+async function _tpFlUploadFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const notes = document.getElementById('tp-fl-wiz-notes')?.value.trim() || null;
+  const statusEl = document.getElementById('tp-fl-wiz-upload-status');
+  if (statusEl) statusEl.textContent = 'Uploading…';
+  const fd = new FormData();
+  fd.append('file', file);
+  if (notes) fd.append('notes', notes);
+  // dry_run=true — parse + validate + resolve only, zero side effects.
+  const res = await apiFetch(`${_TP_BASE}/fund-loads/upload?dry_run=true`, { method: 'POST', body: fd });
+  if (!res || !res.ok) {
+    if (statusEl) statusEl.textContent = '';
+    showToast('Preview failed: ' + (res ? await parseApiError(res) : 'network error'), 'error');
+    return;
+  }
+  const data = await res.json();
+  _tpFlWiz.file = file;
+  _tpFlWiz.filename = file.name;
+  _tpFlWiz.notes = notes;
+  _tpFlWiz.postable = data.postable || [];
+  _tpFlWiz.alreadyImported = data.already_imported || [];
+  _tpFlWiz.resolutionErrors = data.resolution_errors || [];
+  _tpFlWiz.skippedRows = data.skipped_rows || [];
+  _tpFlWiz.step = 2;
+  _tpFlRenderWizStep();
+}
+
+function _tpFlComputeTotals(postable) {
+  const t = { count: postable.length, amount: 0, charges: 0, topupCount: 0, transferCount: 0 };
+  postable.forEach(r => {
+    t.amount += parseFloat(r.amount) || 0;
+    t.charges += parseFloat(r.charge) || 0;
+    if (r.movement_type === 'bank_topup') t.topupCount++;
+    else if (r.movement_type === 'wallet_transfer') t.transferCount++;
+  });
+  return t;
+}
+
+// Distinguishes a setup problem (no wallet_role='charges' account configured,
+// which blocks any charge>0 row) from an ordinary data/workflow error — the
+// former gets a gold "ask the sysadmin" callout per the addendum's
+// config-vs-workflow error classification, the latter stays coral.
+function _tpFlIsConfigError(e) {
+  const text = `${e.code || ''} ${e.reason || e.msg || ''}`;
+  return /charges/i.test(text) && /wallet_role|no.*(charges|linked).*account|account.*not.*configured/i.test(text);
+}
+
+function _tpFlRenderStep2() {
+  const body = document.getElementById('tp-fl-wiz-body');
+  const totals = _tpFlComputeTotals(_tpFlWiz.postable);
+
+  const rows = _tpFlWiz.postable.map((r, i) => {
+    const rowNum = r.row ?? r.row_number ?? (i + 1);
+    const charge = parseFloat(r.charge) || 0;
+    const chargeCell = charge > 0
+      ? `${_tpMoney(charge)} <span title="Posts a 3-leg journal entry (wallet, charges account, destination)" style="display:inline-block;margin-left:4px;padding:1px 7px;border-radius:9px;font-size:0.68rem;font-weight:600;color:#6b5400;background:var(--gold-100,#FAF2D3);">3-leg JE</span>`
+      : _tpMoney(charge);
+    const destination = _pvAccountName(r.wallet_account_id ?? r.destination_wallet_account_id);
+    const source = r.movement_type === 'bank_topup'
+      ? _tpFlBankAccountName(r.source_bank_account_id)
+      : _pvAccountName(r.source_wallet_account_id);
+    return `<tr>
+      <td>${_finEsc(String(rowNum))}</td>
+      <td>${_finEsc(r.reference || '')}</td>
+      <td>${_tpFlTypeBadge(r.movement_type)}</td>
+      <td>${_tpMoney(r.amount)}</td>
+      <td>${chargeCell}</td>
+      <td>${_tpDate(r.fund_date)}</td>
+      <td>${_finEsc(destination)}</td>
+      <td>${_finEsc(source)}</td>
+    </tr>`;
+  }).join('');
+
+  const skippedHtml = _tpFlWiz.skippedRows.length ? `
+    <details style="margin-top:14px;">
+      <summary style="cursor:pointer;font-weight:600;color:#2c3e50;">Skipped rows (${_tpFlWiz.skippedRows.length})</summary>
+      <div class="fin-table-wrap"><table class="fin-table">
+        <thead><tr><th>Row</th><th>Reference</th><th>Reason</th></tr></thead>
+        <tbody>${_tpFlWiz.skippedRows.map(r => `<tr><td>${_finEsc(r.row ?? r.row_number ?? '')}</td><td>${_finEsc(r.reference || '')}</td><td>${_finEsc(r.reason || '')}</td></tr>`).join('')}</tbody>
+      </table></div>
+    </details>` : '';
+
+  const alreadyHtml = _tpFlWiz.alreadyImported.length ? `
+    <details style="margin-top:14px;">
+      <summary style="cursor:pointer;font-weight:600;color:#2c3e50;">Already imported (${_tpFlWiz.alreadyImported.length})</summary>
+      <div class="fin-table-wrap"><table class="fin-table">
+        <thead><tr><th>Reference</th><th>Existing Fund Load</th></tr></thead>
+        <tbody>${_tpFlWiz.alreadyImported.map(r => {
+          const id = r.existing_fund_load_id ?? r.fund_load_id ?? r.id;
+          return `<tr><td>${_finEsc(r.reference || r.client_reference || '')}</td><td>${id != null ? `<a href="#" onclick="_tpFlOpenExistingFundLoad(${id});return false;">#${id}</a>` : '—'}</td></tr>`;
+        }).join('')}</tbody>
+      </table></div>
+    </details>` : '';
+
+  const configErrors = _tpFlWiz.resolutionErrors.filter(_tpFlIsConfigError);
+  const dataErrors = _tpFlWiz.resolutionErrors.filter(e => !_tpFlIsConfigError(e));
+  const configHtml = configErrors.length ? `
+    <div style="background:var(--gold-100,#FAF2D3);border-left:3px solid var(--gold-500,#C9A227);padding:12px 16px;border-radius:8px;margin-top:14px;font-size:0.85rem;color:#6b5400;">
+      ${[...new Set(configErrors.map(e => e.reason || e.msg || String(e)))].map(m => `<div>${_finEsc(m)}</div>`).join('')}
+    </div>` : '';
+  const dataErrorsHtml = dataErrors.length ? `
+    <div style="background:var(--coral-100,#fde0de);color:var(--coral-600,#c0392b);padding:12px 16px;border-radius:8px;margin-top:14px;font-size:0.85rem;">
+      <strong>Rows that can't be posted:</strong>
+      <ul style="margin:8px 0 0 18px;">
+        ${dataErrors.map(e => `<li>${e.row != null || e.row_number != null ? `<strong>Row ${_finEsc(String(e.row ?? e.row_number))}${e.reference ? ' (' + _finEsc(e.reference) + ')' : ''}:</strong> ` : ''}${_finEsc(e.reason || e.msg || JSON.stringify(e))}</li>`).join('')}
+      </ul>
+    </div>` : '';
+
+  const commitBlocked = _tpFlWiz.resolutionErrors.length > 0;
+
+  body.innerHTML = `
+    <div class="fin-form-wrap">
+      <div class="fin-controls-row">
+        <div class="fin-controls-left">
+          ${totals.count} postable &middot; Total ${_tpMoney(totals.amount)} &middot; Charges ${_tpMoney(totals.charges)}
+          <span style="margin-left:12px;display:inline-block;padding:2px 10px;border-radius:10px;font-size:0.78rem;font-weight:600;color:#fff;background:var(--navy-700,#1B3057);">${totals.topupCount} Top-up${totals.topupCount===1?'':'s'}</span>
+          <span style="margin-left:6px;display:inline-block;padding:2px 10px;border-radius:10px;font-size:0.78rem;font-weight:600;color:#fff;background:var(--gold-500,#C9A227);">${totals.transferCount} Transfer${totals.transferCount===1?'':'s'}</span>
+        </div>
+      </div>
+      <div class="fin-table-wrap"><table class="fin-table">
+        <thead><tr><th>Row</th><th>Ref</th><th>Type</th><th>Amount</th><th>Charge</th><th>Fund Date</th><th>Destination</th><th>Source</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="8" class="fin-empty">No postable rows in this file.</td></tr>'}</tbody>
+      </table></div>
+      ${configHtml}
+      ${dataErrorsHtml}
+      ${skippedHtml}
+      ${alreadyHtml}
+      <div class="fin-form-actions">
+        <button class="fin-btn-cancel" onclick="_tpFlWiz.step=1;_tpFlRenderWizStep();">Back</button>
+        <button class="fin-btn-teal" ${commitBlocked ? 'disabled title="Resolve the errors above before committing."' : ''} onclick="_tpFlWiz.step=3;_tpFlRenderWizStep();">Continue</button>
+      </div>
+    </div>`;
+}
+
+function _tpFlOpenExistingFundLoad(id) {
+  loadView('tendepay-fund-loads').then(() => window._splitSelectItem && window._splitSelectItem(id));
+}
+
+function _tpFlRenderStep3() {
+  const body = document.getElementById('tp-fl-wiz-body');
+  const totals = _tpFlComputeTotals(_tpFlWiz.postable);
+  body.innerHTML = `
+    <div class="fin-form-wrap">
+      <p style="font-size:0.9rem;color:#444;">Ready to post ${totals.count} row${totals.count === 1 ? '' : 's'} (${_tpMoney(totals.amount)}, ${_tpMoney(totals.charges)} in charges). This creates one journal entry per row and cannot be undone from here.</p>
+      <div class="fin-form-actions">
+        <button class="fin-btn-cancel" onclick="_tpFlWiz.step=2;_tpFlRenderWizStep();">Back</button>
+        <button class="fin-btn-teal" id="tp-fl-commit-btn" onclick="_tpFlCommit()">Commit</button>
+      </div>
+      <div id="tp-fl-commit-result" style="margin-top:14px;"></div>
+    </div>`;
+}
+
+async function _tpFlCommit() {
+  const btn = document.getElementById('tp-fl-commit-btn');
+  const resultEl = document.getElementById('tp-fl-commit-result');
+  if (btn) { btn.disabled = true; btn.textContent = 'Committing…'; }
+  const fd = new FormData();
+  fd.append('file', _tpFlWiz.file);
+  if (_tpFlWiz.notes) fd.append('notes', _tpFlWiz.notes);
+  // dry_run=false (default) — posts everything in one transaction, rolls
+  // back completely on any error. Re-submitting the same File object from
+  // Step 1, not a stored batch_id: this contract has no server-side preview
+  // to resume from (see file-header comment).
+  const res = await apiFetch(`${_TP_BASE}/fund-loads/upload?dry_run=false`, { method: 'POST', body: fd });
+
+  if (res && res.ok) {
+    const data = await res.json();
+    const postedCount = data.posted_count ?? (data.posted_fund_load_ids || []).length;
+    if (resultEl) {
+      resultEl.innerHTML = postedCount > 0
+        ? `<div style="background:#dcf3e2;border-left:3px solid #1e7e34;padding:12px 16px;border-radius:8px;color:#1e7e34;font-size:0.85rem;">
+            Posted ${postedCount} row${postedCount === 1 ? '' : 's'}${data.posted_amount != null ? ', ' + _tpMoney(data.posted_amount) : ''}${data.posted_charges ? ', ' + _tpMoney(data.posted_charges) + ' in charges' : ''}.${data.batch_id != null ? ` Batch #${data.batch_id}.` : ''}
+          </div>`
+        // Full-replay idempotent no-op: every row in the file was already imported by an earlier
+        // commit, so batch_id is null and nothing new was posted — a success, not an error.
+        : `<div style="background:#dcf3e2;border-left:3px solid #1e7e34;padding:12px 16px;border-radius:8px;color:#1e7e34;font-size:0.85rem;">
+            Nothing new to post — all ${_tpFlWiz.postable.length} row${_tpFlWiz.postable.length === 1 ? '' : 's'} were already imported.
+          </div>`;
+    }
+    showToast(postedCount > 0 ? 'Fund loads posted.' : 'Nothing new to post — already imported.', 'success');
+    if (btn) { btn.textContent = 'Committed'; }
+    return;
+  }
+
+  if (btn) { btn.disabled = false; btn.textContent = 'Commit'; }
+  if (!res) { showToast('Network error.', 'error'); return; }
+  const body = await res.json().catch(() => null);
+  const detail = body?.detail;
+
+  if (res.status === 400) {
+    // Structured validation failure — the whole transaction rolled back,
+    // nothing was posted. Mirrors _tpRenderValidationErrors' coral banner,
+    // plus the addendum's verbatim `hint` footer.
+    const errs = (typeof detail === 'object' && Array.isArray(detail?.errors)) ? detail.errors : [];
+    const hint = (typeof detail === 'object' && detail?.hint) || '';
+    if (resultEl) resultEl.innerHTML = `
+      <div style="background:var(--coral-100,#fde0de);color:var(--coral-600,#c0392b);padding:12px 16px;border-radius:8px;font-size:0.85rem;">
+        <strong>Could not post — nothing has been posted.</strong>
+        ${errs.length ? `<ul style="margin:8px 0 0 18px;">${errs.map(e => `<li>${e.row != null ? `Row ${_finEsc(String(e.row))}: ` : ''}${_finEsc(e.reason || e.msg || JSON.stringify(e))}</li>`).join('')}</ul>` : `<div style="margin-top:6px;">${_finEsc(typeof detail === 'string' ? detail : JSON.stringify(detail))}</div>`}
+        ${hint ? `<div style="margin-top:8px;font-style:italic;">${_finEsc(hint)}</div>` : ''}
+      </div>`;
+  } else if (res.status === 409) {
+    if (resultEl) resultEl.innerHTML = `<div style="background:var(--coral-100,#fde0de);color:var(--coral-600,#c0392b);padding:12px 16px;border-radius:8px;font-size:0.85rem;">${_finEsc(typeof detail === 'string' ? detail : (detail?.message || 'Another import for this file is already in progress. Try again in a moment.'))}</div>`;
+  } else if (res.status === 413) {
+    if (resultEl) resultEl.innerHTML = `<div style="background:var(--coral-100,#fde0de);color:var(--coral-600,#c0392b);padding:12px 16px;border-radius:8px;font-size:0.85rem;">${_finEsc(typeof detail === 'string' ? detail : (detail?.message || 'File is too large to upload.'))}</div>`;
+  } else {
+    showToast('Error: ' + (typeof detail === 'string' ? detail : (detail ? JSON.stringify(detail) : `HTTP ${res.status}`)), 'error');
+  }
+}
+
 // ── Reconciliation ──────────────────────────────────────────────────────────
+// GET /tendepay/reconciliation is confirmed live (openapi.json, 2026-07-18)
+// to be a single endpoint with two mutually-exclusive query modes —
+// Snapshot (as_of_date) XOR Period (start_date+end_date) — and a response
+// shape documented verbatim in the endpoint's own docstring:
+//   { as_of_date, start_date, end_date, mode, totals, by_role: {main,mini,suspense}, accounts }
+// by_role is the primary render path now; accounts[] (flat list) is kept
+// only as a back-compat fallback for a backend that hasn't shipped by_role
+// yet. GET /tendepay/reconciliation/transactions (start_date/end_date
+// required, wallet_role/account_id optional) is also confirmed live, but its
+// response shape is only described in prose, not typed — the per-wallet
+// wrapper key and movement field names below are a defensive best guess
+// (see the fallback chains in _tpReconWalletCard) pending a live dry run.
+function _tpReconWalletRow(a) {
+  const charges = parseFloat(a.charges_credited ?? 0);
+  const expected = a.expected_balance != null
+    ? parseFloat(a.expected_balance)
+    : parseFloat(a.fund_loads_total ?? 0) - parseFloat(a.tendepay_posted_total ?? 0) - charges;
+  const diff = a.difference != null ? parseFloat(a.difference) : parseFloat(a.gl_balance ?? 0) - expected;
+  return { ...a, _expected: expected, _diff: diff, _drift: Math.abs(diff) > 0.005 };
+}
+
 async function loadTendepayReconciliationView(container) {
-  const today = new Date().toISOString().split('T')[0];
+  await _pvLoadLookups();
+  window._tpReconTab = 'summary';
+  window._tpReconMode = 'snapshot';
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
         <h2 class="fin-title">Tendepay Reconciliation</h2>
         <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Tendepay &rsaquo; Reconciliation</div>
       </div>
-      <div class="fin-filter-section">
-        <div class="fin-filter-grid">
-          <div class="fin-filter-field"><label class="fin-filter-label">As of Date</label><input type="date" id="tp-recon-date" class="fin-filter-input" value="${today}"></div>
-        </div>
-        <div class="fin-filter-actions"><button class="fin-btn-teal" onclick="_tpReconGenerate()">Generate</button></div>
+      <div style="display:flex;gap:8px;margin-bottom:16px;">
+        <button class="fin-btn-teal" id="tp-recon-tab-summary" onclick="_tpReconSwitchTab('summary')">Summary</button>
+        <button class="fin-btn-outline" id="tp-recon-tab-transactions" onclick="_tpReconSwitchTab('transactions')">Transactions</button>
       </div>
-      <div id="tp-recon-output"></div>
+      <div id="tp-recon-body"></div>
     </div>`;
-  await _tpReconGenerate();
+  _tpReconRenderTab();
+}
+
+function _tpReconSwitchTab(tab) {
+  window._tpReconTab = tab;
+  const summaryBtn = document.getElementById('tp-recon-tab-summary');
+  const txBtn = document.getElementById('tp-recon-tab-transactions');
+  if (summaryBtn) summaryBtn.className = tab === 'summary' ? 'fin-btn-teal' : 'fin-btn-outline';
+  if (txBtn) txBtn.className = tab === 'transactions' ? 'fin-btn-teal' : 'fin-btn-outline';
+  _tpReconRenderTab();
+}
+
+function _tpReconRenderTab() {
+  const body = document.getElementById('tp-recon-body');
+  if (window._tpReconTab === 'transactions') _tpReconRenderTransactionsFilters(body);
+  else _tpReconRenderSummaryFilters(body);
+}
+
+// Snapshot XOR Period as a real segmented control — the inactive mode's
+// inputs are hidden and never read by _tpReconGenerate, so the server's
+// mutual-exclusivity 400 is unreachable from this UI, not just avoided by convention.
+function _tpReconRenderSummaryFilters(body) {
+  const today = new Date().toISOString().split('T')[0];
+  const mode = window._tpReconMode || 'snapshot';
+  body.innerHTML = `
+    <div class="fin-filter-section">
+      <div class="fin-filter-grid" style="align-items:flex-end;">
+        <div class="fin-filter-field">
+          <label class="fin-filter-label">Mode</label>
+          <div style="display:flex;gap:8px;">
+            <button type="button" class="${mode === 'snapshot' ? 'fin-btn-teal' : 'fin-btn-outline'}" onclick="_tpReconSetMode('snapshot')">Snapshot</button>
+            <button type="button" class="${mode === 'period' ? 'fin-btn-teal' : 'fin-btn-outline'}" onclick="_tpReconSetMode('period')">Period</button>
+          </div>
+        </div>
+        ${mode === 'snapshot' ? `
+          <div class="fin-filter-field"><label class="fin-filter-label">As of Date</label><input type="date" id="tp-recon-date" class="fin-filter-input" value="${today}"></div>
+        ` : `
+          <div class="fin-filter-field"><label class="fin-filter-label">Start Date</label><input type="date" id="tp-recon-start" class="fin-filter-input"></div>
+          <div class="fin-filter-field"><label class="fin-filter-label">End Date</label><input type="date" id="tp-recon-end" class="fin-filter-input" value="${today}"></div>
+        `}
+      </div>
+      <div class="fin-filter-actions"><button class="fin-btn-teal" onclick="_tpReconGenerate()">Generate</button></div>
+    </div>
+    <div id="tp-recon-output"></div>`;
+  _tpReconGenerate();
+}
+
+function _tpReconSetMode(mode) {
+  window._tpReconMode = mode;
+  _tpReconRenderSummaryFilters(document.getElementById('tp-recon-body'));
 }
 
 async function _tpReconGenerate() {
-  const asOfDate = document.getElementById('tp-recon-date').value;
+  const mode = window._tpReconMode || 'snapshot';
   const out = document.getElementById('tp-recon-output');
+  if (!out) return;
   out.innerHTML = '<p class="sa-loading">Loading&#8230;</p>';
-  const res = await apiFetch(`${_TP_BASE}/reconciliation?as_of_date=${asOfDate}`);
+  const params = new URLSearchParams();
+  if (mode === 'period') {
+    const start = document.getElementById('tp-recon-start')?.value;
+    const end = document.getElementById('tp-recon-end')?.value;
+    if (!start || !end) { out.innerHTML = '<p class="fin-error-msg">Start Date and End Date are required in Period mode.</p>'; return; }
+    params.set('start_date', start);
+    params.set('end_date', end);
+  } else {
+    const asOf = document.getElementById('tp-recon-date')?.value;
+    if (asOf) params.set('as_of_date', asOf);
+  }
+  const res = await apiFetch(`${_TP_BASE}/reconciliation?${params.toString()}`);
   if (!res || !res.ok) { out.innerHTML = `<p class="fin-error-msg">${res ? await parseApiError(res) : 'Network error.'}</p>`; return; }
   const data = await res.json();
-  const accounts = data.accounts || [];
-  if (!accounts.length) { out.innerHTML = '<p class="fin-empty">No Tendepay wallet accounts found.</p>'; return; }
-  out.innerHTML = `
-    <div class="fin-table-wrap"><table class="fin-table">
-      <thead><tr><th>Account</th><th>GL Balance</th><th>Tendepay Posted Total</th><th>Charges Credited</th><th>Expected Balance</th><th>Difference</th></tr></thead>
-      <tbody>
-        ${accounts.map(a => {
-          // expected_balance = fund_loads_total - tendepay_posted_total - charges_credited;
-          // difference = gl_balance - expected_balance. Use the backend's own figures
-          // when present rather than recomputing, falling back only if it omits them.
-          const charges = parseFloat(a.charges_credited ?? 0);
-          const expected = a.expected_balance != null
-            ? parseFloat(a.expected_balance)
-            : parseFloat(a.fund_loads_total ?? 0) - parseFloat(a.tendepay_posted_total ?? 0) - charges;
-          const diff = a.difference != null ? parseFloat(a.difference) : parseFloat(a.gl_balance ?? 0) - expected;
-          const diffColor = Math.abs(diff) > 0.005 ? 'color:#c0392b;font-weight:600;' : 'color:#1e7e34;font-weight:600;';
-          return `<tr>
+  out.innerHTML = _tpReconRenderSummary(data);
+}
+
+function _tpReconSectionHtml(title, accounts) {
+  if (!accounts || !accounts.length) return '';
+  const rows = accounts.map(_tpReconWalletRow);
+  const subtotalGl = rows.reduce((s, a) => s + (parseFloat(a.gl_balance) || 0), 0);
+  const subtotalExpected = rows.reduce((s, a) => s + a._expected, 0);
+  const hasDrift = rows.some(a => a._drift);
+  return `
+    <div class="fin-filter-section" style="margin-bottom:16px;${hasDrift ? 'border-left:4px solid var(--coral-500,#D94040);' : ''}">
+      <div class="fin-section-label">${_finEsc(title)}${hasDrift ? ' <span style="color:var(--coral-600,#c0392b);font-weight:600;">— drift detected</span>' : ''}</div>
+      <div class="fin-table-wrap"><table class="fin-table">
+        <thead><tr><th>Account</th><th>GL Balance</th><th>Tendepay Posted</th><th>Charges Credited</th><th>Expected Balance</th><th>Difference</th></tr></thead>
+        <tbody>
+          ${rows.map(a => `<tr style="${a._drift ? 'background:var(--coral-100,#fde0de);' : ''}">
             <td>${_finEsc(a.account_name || a.name || '')}</td>
             <td>${_tpMoney(a.gl_balance)}</td>
             <td>${_tpMoney(a.tendepay_posted_total)}</td>
-            <td>${_tpMoney(charges)}</td>
-            <td>${_tpMoney(expected)}</td>
-            <td style="${diffColor}">${_tpMoney(diff)}</td>
-          </tr>`;
-        }).join('')}
-      </tbody>
-    </table></div>`;
+            <td>${_tpMoney(a.charges_credited)}</td>
+            <td>${_tpMoney(a._expected)}</td>
+            <td style="${a._drift ? 'color:#c0392b;font-weight:700;' : 'color:#1e7e34;font-weight:600;'}">${_tpMoney(a._diff)}</td>
+          </tr>`).join('')}
+        </tbody>
+        <tfoot><tr class="fin-tfoot-total"><td><strong>Subtotal</strong></td><td><strong>${_tpMoney(subtotalGl)}</strong></td><td></td><td></td><td><strong>${_tpMoney(subtotalExpected)}</strong></td><td></td></tr></tfoot>
+      </table></div>
+    </div>`;
+}
+
+function _tpReconRenderSummary(data) {
+  const byRole = data.by_role || {};
+  const hasByRole = ['main', 'mini', 'suspense'].some(r => (byRole[r] || []).length);
+  const totals = data.totals || {};
+  const totalDiff = parseFloat(totals.difference) || 0;
+  const totalsHtml = `
+    <div class="fin-controls-row" style="margin-bottom:14px;">
+      <div class="fin-controls-left">
+        GL Balance ${_tpMoney(totals.gl_balance)} &middot; Fund Loads ${_tpMoney(totals.fund_loads_total)} &middot; Posted ${_tpMoney(totals.tendepay_posted_total)} &middot; Charges ${_tpMoney(totals.charges_credited)} &middot; Expected ${_tpMoney(totals.expected_balance)}
+        &middot; Difference <span style="${Math.abs(totalDiff) > 0.005 ? 'color:#c0392b;font-weight:700;' : 'color:#1e7e34;font-weight:600;'}">${_tpMoney(totals.difference)}</span>
+      </div>
+    </div>`;
+  if (hasByRole) {
+    const sections = _tpReconSectionHtml('Main', byRole.main) + _tpReconSectionHtml('Mini', byRole.mini) + _tpReconSectionHtml('Suspense', byRole.suspense);
+    return totalsHtml + (sections || '<p class="fin-empty">No Tendepay wallet accounts found.</p>');
+  }
+  // Back-compat fallback for a backend response without by_role.
+  const accounts = data.accounts || [];
+  if (!accounts.length) return '<p class="fin-empty">No Tendepay wallet accounts found.</p>';
+  return totalsHtml + _tpReconSectionHtml('All Wallets', accounts);
+}
+
+// ── Reconciliation: Transactions tab ────────────────────────────────────────
+function _tpReconRenderTransactionsFilters(body) {
+  const today = new Date().toISOString().split('T')[0];
+  const monthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  body.innerHTML = `
+    <div class="fin-filter-section">
+      <div class="fin-filter-grid">
+        <div class="fin-filter-field"><label class="fin-filter-label">Start Date</label><input type="date" id="tp-recon-tx-start" class="fin-filter-input" value="${monthAgo}"></div>
+        <div class="fin-filter-field"><label class="fin-filter-label">End Date</label><input type="date" id="tp-recon-tx-end" class="fin-filter-input" value="${today}"></div>
+        <div class="fin-filter-field"><label class="fin-filter-label">Wallet Role</label>
+          <select id="tp-recon-tx-role" class="fin-filter-select">
+            <option value="">All</option>
+            <option value="main">Main</option>
+            <option value="mini">Mini</option>
+            <option value="suspense">Suspense</option>
+          </select>
+        </div>
+        <div class="fin-filter-field"><label class="fin-filter-label">Account</label>
+          <select id="tp-recon-tx-account" class="fin-filter-select"><option value="">All</option>${_pvAccountOptions()}</select>
+        </div>
+      </div>
+      <div class="fin-filter-actions"><button class="fin-btn-teal" onclick="_tpReconTxGenerate()">Generate</button></div>
+    </div>
+    <div id="tp-recon-tx-output"></div>`;
+  _tpReconTxGenerate();
+}
+
+async function _tpReconTxGenerate() {
+  const start = document.getElementById('tp-recon-tx-start')?.value;
+  const end = document.getElementById('tp-recon-tx-end')?.value;
+  const role = document.getElementById('tp-recon-tx-role')?.value;
+  const accountId = document.getElementById('tp-recon-tx-account')?.value;
+  const out = document.getElementById('tp-recon-tx-output');
+  if (!out) return;
+  if (!start || !end) { out.innerHTML = '<p class="fin-error-msg">Start Date and End Date are required.</p>'; return; }
+  out.innerHTML = '<p class="sa-loading">Loading&#8230;</p>';
+  const params = new URLSearchParams({ start_date: start, end_date: end });
+  if (role) params.set('wallet_role', role);
+  if (accountId) params.set('account_id', accountId);
+  const res = await apiFetch(`${_TP_BASE}/reconciliation/transactions?${params.toString()}`);
+  if (!res || !res.ok) { out.innerHTML = `<p class="fin-error-msg">${res ? await parseApiError(res) : 'Network error.'}</p>`; return; }
+  const data = await res.json();
+  out.innerHTML = _tpReconRenderTransactions(data);
+}
+
+function _tpReconRenderTransactions(data) {
+  const wallets = data.wallets || data.accounts || (Array.isArray(data) ? data : []);
+  if (!wallets.length) return '<p class="fin-empty">No wallet activity for the selected criteria.</p>';
+  return wallets.map(_tpReconWalletCard).join('');
+}
+
+// direction is from THIS wallet's perspective — a wallet_transfer legitimately
+// appears once in the source wallet's list (Out) and once in the
+// destination's (In). Rendered per-wallet exactly as the backend returns
+// them, with no cross-wallet merge/dedup step.
+function _tpReconWalletCard(w) {
+  const opening = parseFloat(w.opening_balance ?? 0);
+  const closing = parseFloat(w.closing_balance ?? 0);
+  const movements = w.movements || [];
+  let inflows = 0, outflows = 0;
+  movements.forEach(m => {
+    const amt = parseFloat(m.amount) || 0;
+    const dir = (m.direction || '').toLowerCase();
+    if (dir === 'in' || dir === 'inflow' || dir === 'credit') inflows += amt;
+    else if (dir === 'out' || dir === 'outflow' || dir === 'debit') outflows += amt;
+  });
+  const balanced = Math.abs((opening + inflows - outflows) - closing) <= 0.005;
+  const accountName = w.account_name || w.wallet_name || w.name || `Account #${w.account_id ?? w.id ?? ''}`;
+  const role = w.wallet_role || w.role;
+  const rolePill = role ? `<span style="display:inline-block;margin-left:8px;padding:2px 9px;border-radius:10px;font-size:0.72rem;font-weight:600;color:#fff;background:${role === 'main' ? 'var(--navy-700,#1B3057)' : role === 'mini' ? 'var(--gold-500,#C9A227)' : '#888'};">${_finEsc(role)}</span>` : '';
+
+  const rows = movements.map(m => {
+    const dir = (m.direction || '').toLowerCase();
+    const dirLabel = dir === 'in' || dir === 'inflow' || dir === 'credit' ? 'In' : (dir === 'out' || dir === 'outflow' || dir === 'debit' ? 'Out' : (m.direction || '—'));
+    const dirColor = dirLabel === 'In' ? 'color:#1e7e34;font-weight:600;' : (dirLabel === 'Out' ? 'color:#c0392b;font-weight:600;' : '');
+    const je = m.journal_entry_id ?? m.je_id;
+    return `<tr>
+      <td>${_tpDate(m.date ?? m.transaction_date ?? m.fund_date)}</td>
+      <td>${_finEsc(m.kind || m.type || m.movement_kind || '')}</td>
+      <td style="${dirColor}">${dirLabel}</td>
+      <td>${_tpMoney(m.amount)}</td>
+      <td>${_tpMoney(m.charge ?? 0)}</td>
+      <td>${_finEsc(m.reference || m.tendepay_reference || '')}</td>
+      <td>${_finEsc(m.counterparty || m.payee_name || m.wallet_name || '')}</td>
+      <td>${je != null ? '#' + _finEsc(String(je)) : '—'}</td>
+    </tr>`;
+  }).join('');
+
+  return `
+    <div class="fin-filter-section" style="margin-bottom:16px;${balanced ? '' : 'border-left:4px solid var(--coral-500,#D94040);'}">
+      <div class="fin-section-label">${_finEsc(accountName)}${rolePill}${balanced ? '' : ' <span style="color:var(--coral-600,#c0392b);font-weight:600;">— balance identity mismatch: a manual JE likely bypassed the pipeline</span>'}</div>
+      <div class="fin-controls-row">
+        <div class="fin-controls-left">
+          Opening ${_tpMoney(opening)} &middot; Inflows <span style="color:var(--navy-700,#1B3057);font-weight:600;">${_tpMoney(inflows)}</span> &middot; Outflows <span style="color:var(--coral-600,#c0392b);font-weight:600;">${_tpMoney(outflows)}</span> &middot; Closing ${_tpMoney(closing)} &middot; ${movements.length} movement${movements.length === 1 ? '' : 's'}
+        </div>
+      </div>
+      <div class="fin-table-wrap"><table class="fin-table">
+        <thead><tr><th>Date</th><th>Kind</th><th>Direction</th><th>Amount</th><th>Charge</th><th>Reference</th><th>Counterparty</th><th>JE</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="8" class="fin-empty">No movements in this window.</td></tr>'}</tbody>
+      </table></div>
+    </div>`;
 }
 
 // ==================== GATEWAY TRANSACTIONS (Receivables) ====================

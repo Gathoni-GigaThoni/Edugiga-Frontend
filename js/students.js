@@ -1267,6 +1267,21 @@ function _resolveTransportPrice(route, journeyType, timeOfDay) {
   return isNaN(n) ? null : n;
 }
 
+// Adapts the flat-fields lookup above to StudentRouteRead's `direction`/
+// `use_daily_rate` shape (two_way | one_way_morning | one_way_evening),
+// used by the Transport tab on the student profile.
+function _resolveTransportPriceForDirection(route, direction, useDailyRate) {
+  if (!route) return null;
+  if (useDailyRate) {
+    const n = parseFloat(route.daily_rate);
+    return isNaN(n) ? null : n;
+  }
+  if (direction === 'two_way') return _resolveTransportPrice(route, 'two_way');
+  if (direction === 'one_way_morning') return _resolveTransportPrice(route, 'one_way', 'morning');
+  if (direction === 'one_way_evening') return _resolveTransportPrice(route, 'one_way', 'evening');
+  return null;
+}
+
 function onStuUsesTransportChange() {
   const chk = document.getElementById('se-uses-transport');
   if (chk && chk.checked) {
@@ -2521,7 +2536,7 @@ async function openStudentFeeStatement(studentId) {
 }
 
 function _renderStudentViewBody(d, activeTab) {
-  const TABS = ['Personal Data','Academic Background','Guardian/Family','Medical Information','Disciplinary'];
+  const TABS = ['Personal Data','Academic Background','Guardian/Family','Medical Information','Disciplinary','Transport'];
   const statusBadge = d.is_active
     ? '<span class="stu-status-badge stu-status-badge--active">Active</span>'
     : '<span class="stu-status-badge stu-status-badge--inactive">Inactive</span>';
@@ -2581,6 +2596,7 @@ function _svRow(label, value) {
 function switchStuViewTab(btn, tabName) {
   document.querySelectorAll('.stu-view-panel .stu-tab-btn').forEach(b => b.classList.remove('stu-tab-btn--active'));
   btn.classList.add('stu-tab-btn--active');
+  window._stuViewTab = tabName;
   const c = document.getElementById('stu-view-tab-content');
   if (c) c.innerHTML = _renderStuViewTab(tabName, window._stuViewData || {});
 }
@@ -2650,7 +2666,60 @@ function _renderStuViewTab(tabName, d) {
     </div>`;
   if (tabName === 'Disciplinary') return `
     <div style="padding:32px;text-align:center;color:#888;">No disciplinary records for this student.</div>`;
+  if (tabName === 'Transport') return _stuRenderTransportTab(d);
   return '';
+}
+
+// GET /students/{id}/transport returns only the single current assignment
+// (StudentRouteRead) — there is no backend endpoint for a student's
+// transport-assignment history (confirmed against openapi.json 2026-07-18,
+// see [[openapi-verification]] in memory). Don't invent one; the tab is
+// honest about that gap rather than faking an empty history list.
+let _stuTransportCurrentCache = {};
+async function _stuLoadTransportCurrent(studentId) {
+  if (studentId in _stuTransportCurrentCache) return _stuTransportCurrentCache[studentId];
+  const res = await apiFetch(`${API_BASE}/students/${studentId}/transport`);
+  if (res && res.ok) _stuTransportCurrentCache[studentId] = await res.json();
+  else if (res && res.status === 404) _stuTransportCurrentCache[studentId] = null;
+  else return null; // transient failure — don't cache, let the next tab switch retry
+  return _stuTransportCurrentCache[studentId];
+}
+
+function _stuRenderTransportTab(d) {
+  const studentId = d.id;
+  if (!(studentId in _stuTransportCurrentCache)) {
+    _stuLoadTransportCurrent(studentId).then(() => {
+      // Only repaint if the operator is still on this tab for this same student —
+      // avoids clobbering content after they've navigated away while this was in flight.
+      if (window._stuViewTab === 'Transport' && window._stuViewData === d) {
+        const c = document.getElementById('stu-view-tab-content');
+        if (c) c.innerHTML = _renderStuViewTab('Transport', d);
+      }
+    });
+    return '<p class="fin-loading">Loading transport assignment&#8230;</p>';
+  }
+  const current = _stuTransportCurrentCache[studentId];
+  if (!current) {
+    return `<div style="padding:32px;text-align:center;color:#888;">This student is not currently assigned to a transport route.</div>`;
+  }
+  const route = _findTransportRoute(current.route_id);
+  const routeName = route ? (route.name || route.title || `Route ${current.route_id}`) : `Route ${current.route_id}`;
+  const directionLabel = { two_way: 'Two-way', one_way_morning: 'One-way (Morning)', one_way_evening: 'One-way (Evening)' }[current.direction] || current.direction;
+  const price = _resolveTransportPriceForDirection(route, current.direction, current.use_daily_rate);
+  return `
+    <div class="stu-detail-grid">
+      ${_dRow('Route',      routeName)}
+      ${_dRow('Direction',  directionLabel)}
+      ${_dRow('Billing',    current.use_daily_rate ? 'Daily Rate' : 'Term Rate')}
+      ${_dRow('Price',      price != null ? formatKES(price) : '—')}
+      ${_dRow('Active',     current.active ? 'Yes' : 'No')}
+      ${_dRow('Start Date', current.start_date || '—')}
+      ${_dRow('End Date',   current.end_date || '—')}
+      ${_dRow('Term',       current.term_id ? _stuTermName(current.term_id) : '—')}
+    </div>
+    <div style="margin-top:20px;padding:12px 16px;background:#f7f7f7;border-radius:6px;color:#888;font-size:0.82rem;">
+      Assignment history isn't available yet — the backend currently only exposes this student's current transport assignment, not a full history.
+    </div>`;
 }
 function _dRow(label, value) {
   return `<div class="stu-detail-row">

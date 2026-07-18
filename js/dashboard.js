@@ -181,6 +181,7 @@ function showDashboard() {
                   <li id="sidebar-fin-tp-history"  class="sidebar-sub-sub" onclick="loadView('tendepay-import-history')">Import History</li>
                   <li id="sidebar-fin-tp-suspense" class="sidebar-sub-sub" onclick="loadView('tendepay-suspense')">Suspense</li>
                   <li id="sidebar-fin-tp-funds"    class="sidebar-sub-sub" onclick="loadView('tendepay-fund-loads')">Fund Loads</li>
+                  <li id="sidebar-fin-tp-funds-upload" class="sidebar-sub-sub" onclick="loadView('tendepay-fund-loads-upload')">Fund Loads Bulk Upload</li>
                   <li id="sidebar-fin-tp-recon"    class="sidebar-sub-sub" onclick="loadView('tendepay-reconciliation')">Reconciliation</li>
                 </ul>
               </li>
@@ -783,7 +784,7 @@ const FORM_VIEWS = new Set([
   'payables-imprest-warrants-add', 'payables-imprest-disbursements-add', 'payables-imprest-surrenders-add',
   'journal-entries-add', 'journal-entries-edit',
   // Tendepay
-  'tendepay-import', 'tendepay-fund-loads',
+  'tendepay-import', 'tendepay-fund-loads', 'tendepay-fund-loads-upload', 'tendepay-reconciliation',
   // HR / Payroll
   'hr-employee-directory', 'payroll-esp', 'payroll-fi', 'payroll-runs', 'payroll-payslips',
   // Procurement
@@ -1058,6 +1059,9 @@ async function loadView(view) {
     case 'tendepay-fund-loads':
       setActiveSidebarItem('sidebar-fin-tp-funds'); openFinTendepayDropdown();
       await loadTendepayFundLoadsView(main); break;
+    case 'tendepay-fund-loads-upload':
+      setActiveSidebarItem('sidebar-fin-tp-funds-upload'); openFinTendepayDropdown();
+      await loadTendepayFundLoadsUploadView(main); break;
     case 'tendepay-reconciliation':
       setActiveSidebarItem('sidebar-fin-tp-recon'); openFinTendepayDropdown();
       await loadTendepayReconciliationView(main); break;

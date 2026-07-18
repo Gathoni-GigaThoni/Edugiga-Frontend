@@ -9,6 +9,12 @@
 
 const _REP_BASE = `${API_BASE}/reports`;
 
+// Main -> Mini -> Suspense -> anything unrecognised, last.
+const _TP_WALLET_ROLE_ORDER = { main: 0, mini: 1, suspense: 2 };
+function _tpWalletRoleSort(a, b) {
+  return (_TP_WALLET_ROLE_ORDER[a.wallet_role] ?? 99) - (_TP_WALLET_ROLE_ORDER[b.wallet_role] ?? 99);
+}
+
 function _repHumanize(key) {
   return String(key).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
@@ -83,7 +89,8 @@ const REPORT_DEFS = {
     extra: [{ key: 'bank_account_id', label: 'Bank Account', type: 'account', required: true }] },
 
   'reports-tendepay-wallet-balances': { title: 'Tendepay Wallet Balances', api: 'tendepay-wallet-balances', dateMode: 'asof',
-    columns: [['wallet_name','WALLET'],['account_name','ACCOUNT'],['balance','BALANCE']] },
+    columns: [['wallet_role','ROLE'],['wallet_name','WALLET'],['account_name','ACCOUNT'],['balance','BALANCE']],
+    groupBy: 'wallet_role', sortBy: _tpWalletRoleSort },
   'reports-tendepay-transaction-history': { title: 'Tendepay Transaction History', api: 'tendepay-transaction-history', dateMode: 'range',
     extra: [{ key: 'wallet_account_id', label: 'Wallet Account', type: 'tendepaywallet' }],
     columns: [['transaction_date','DATE'],['tendepay_reference','REFERENCE'],['wallet_name','WALLET'],['payee_name','PAYEE'],['amount','AMOUNT'],['tendepay_status','STATUS']] },
@@ -219,16 +226,17 @@ function _repRenderTable(def, data) {
   const firstRow = rows[0];
   const knownKeysPresent = def.columns.some(([key]) => firstRow.hasOwnProperty(key));
   const cols = knownKeysPresent ? def.columns : Object.keys(firstRow).map(k => [k, _repHumanize(k)]);
+  const sortedRows = (def.sortBy && knownKeysPresent) ? [...rows].sort(def.sortBy) : rows;
 
   let bodyRows;
   if (def.groupBy && knownKeysPresent) {
     let lastGroup = null, toggle = false;
-    bodyRows = rows.map(r => {
+    bodyRows = sortedRows.map(r => {
       if (r[def.groupBy] !== lastGroup) { toggle = !toggle; lastGroup = r[def.groupBy]; }
       return `<tr style="${toggle ? 'background:#f5fafa;' : ''}">${cols.map(([k]) => `<td>${_repCell(r[k])}</td>`).join('')}</tr>`;
     }).join('');
   } else {
-    bodyRows = rows.map(r => `<tr>${cols.map(([k]) => `<td>${_repCell(r[k])}</td>`).join('')}</tr>`).join('');
+    bodyRows = sortedRows.map(r => `<tr>${cols.map(([k]) => `<td>${_repCell(r[k])}</td>`).join('')}</tr>`).join('');
   }
 
   let footRow = '';

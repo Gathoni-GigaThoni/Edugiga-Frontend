@@ -11,6 +11,14 @@ let _trnRouteFormDirty = false;
 // Drag-and-drop state for the Stops builder
 let _trnDragSrcIdx = null;
 
+// Migration p4e5f6g7h8i9 converted Bus.id to VARCHAR and backfilled existing
+// rows with 'BUS-0007'-style placeholders — these need renaming to the real
+// registration plate via PATCH /buses/{id}/plate (renaming isn't a plain
+// UPDATE since bus_route has no ON UPDATE CASCADE on the FK).
+function isPlaceholderPlate(busId) {
+  return /^BUS-\d{4}$/.test(busId || '');
+}
+
 // ── Placeholder for unrebuilt sub-modules ─────────────────────────────────────
 function loadTrnPlaceholderView(container, title) {
   container.innerHTML = `
@@ -501,8 +509,17 @@ window._currentEditBusId = null;
 let _trnBusFormDirty = false;
 
 async function loadBusesView(container) {
+  const res = await apiFetch(`${API_BASE}/buses/`);
+  const buses = (res && res.ok) ? _toArray(await res.json()) : [];
+  const placeholderCount = buses.filter(b => isPlaceholderPlate(b.id)).length;
+  const banner = placeholderCount ? `
+    <div style="background:var(--gold-100,#FAF2D3);border-left:3px solid var(--gold-500,#C9A227);padding:10px 14px;border-radius:6px;margin-bottom:12px;font-size:0.85rem;color:#6b5400;">
+      ${placeholderCount} bus${placeholderCount===1?'':'es'} still carry placeholder plates from the migration. Rename them to the real registration plates.
+    </div>` : '';
+  container.innerHTML = banner + '<div id="trn-buses-split"></div>';
+  const splitContainer = document.getElementById('trn-buses-split');
   await renderSplitView({
-    container,
+    container: splitContainer,
     title: 'Vehicles',
     moduleKey: 'transport_management',
     breadcrumb: [
@@ -524,6 +541,9 @@ async function loadBusesView(container) {
       {label:'Driver',      key:'driver_name'},
       {label:'Bus Minder',  key:'bus_minder_name'},
     ],
+    detailActions: bus => isPlaceholderPlate(bus.id)
+      ? `<button class="fin-btn-teal" style="background:var(--gold-500,#C9A227);" onclick="_trnOpenRenamePlateModal('${bus.id}')">Rename plate</button>`
+      : '',
     renderAdd: el => {
       el.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--grey-600)">
         <div style="font-size:2rem;margin-bottom:12px">&#128652;</div>
@@ -534,6 +554,51 @@ async function loadBusesView(container) {
     },
     onEdit: item => { window._currentEditBusId = item.id; loadView('transport-vehicles-edit'); },
   });
+}
+
+// Rename modal — only reachable from the "Rename plate" CTA, which only
+// renders on ^BUS-\d{4}$ placeholder ids. Hand-built inline modal, matching
+// the existing pattern in finance.js (no shared .modal class in this app).
+function _trnOpenRenamePlateModal(busId) {
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9999;display:flex;align-items:center;justify-content:center;';
+  wrap.innerHTML = `
+    <div style="background:#fff;border-radius:8px;padding:24px;max-width:420px;width:90%;">
+      <h3 style="margin:0 0 12px;font-size:1.05rem;">Rename Plate</h3>
+      <p style="font-size:0.85rem;color:#666;margin-bottom:12px;">Enter the plate as it appears on the registration, e.g. KAA 123A.</p>
+      <input type="text" id="trn-rename-plate-input" class="fin-search-input" style="width:100%;" minlength="2" maxlength="20" placeholder="e.g. KAA 123A">
+      <div id="trn-rename-plate-err" style="color:var(--coral-500,#D94040);font-size:0.82rem;margin-top:8px;"></div>
+      <div style="display:flex;gap:10px;margin-top:20px;">
+        <button class="fin-btn-teal" onclick="_trnSubmitRenamePlate('${busId}', this)">Rename</button>
+        <button class="fin-btn-cancel" onclick="this.closest('div[style*=fixed]').remove()">Cancel</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  document.getElementById('trn-rename-plate-input')?.focus();
+}
+
+async function _trnSubmitRenamePlate(busId, btn) {
+  const input = document.getElementById('trn-rename-plate-input');
+  const errEl = document.getElementById('trn-rename-plate-err');
+  const newId = (input?.value || '').trim();
+  if (errEl) errEl.textContent = '';
+  if (newId.length < 2 || newId.length > 20) {
+    if (errEl) errEl.textContent = 'Plate must be 2-20 characters.';
+    return;
+  }
+  const res = await apiFetch(`${API_BASE}/buses/${encodeURIComponent(busId)}/plate`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ new_id: newId }),
+  });
+  if (res && res.ok) {
+    btn.closest('div[style*="fixed"]')?.remove();
+    showToast('Plate renamed.', 'success');
+    loadView('transport-vehicles');
+  } else if (res) {
+    // 409 (duplicate plate) renders inline in the modal, not a toast — this
+    // is a data-entry retry, not a workflow error worth losing the modal over.
+    if (errEl) errEl.textContent = await parseApiError(res);
+  }
 }
 
 async function _fetchTrnBuses() {
