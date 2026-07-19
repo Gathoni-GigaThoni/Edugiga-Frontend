@@ -2670,25 +2670,25 @@ function _renderStuViewTab(tabName, d) {
   return '';
 }
 
-// GET /students/{id}/transport returns only the single current assignment
-// (StudentRouteRead) — there is no backend endpoint for a student's
-// transport-assignment history (confirmed against openapi.json 2026-07-18,
-// see [[openapi-verification]] in memory). Don't invent one; the tab is
-// honest about that gap rather than faking an empty history list.
-let _stuTransportCurrentCache = {};
-async function _stuLoadTransportCurrent(studentId) {
-  if (studentId in _stuTransportCurrentCache) return _stuTransportCurrentCache[studentId];
-  const res = await apiFetch(`${API_BASE}/students/${studentId}/transport`);
-  if (res && res.ok) _stuTransportCurrentCache[studentId] = await res.json();
-  else if (res && res.status === 404) _stuTransportCurrentCache[studentId] = null;
+// GET /students/{id}/transport/history returns every transport assignment
+// this student has ever had, newest first (StudentRouteRead[]) — replaces
+// the old GET /students/{id}/transport single-current-assignment call.
+// route_name is resolved server-side and is null if the route was since
+// deleted; [] means no history, 404 only if student_id itself is invalid.
+let _stuTransportHistoryCache = {};
+async function _stuLoadTransportHistory(studentId) {
+  if (studentId in _stuTransportHistoryCache) return _stuTransportHistoryCache[studentId];
+  const res = await apiFetch(`${API_BASE}/students/${studentId}/transport/history`);
+  if (res && res.ok) _stuTransportHistoryCache[studentId] = await res.json();
+  else if (res && res.status === 404) _stuTransportHistoryCache[studentId] = [];
   else return null; // transient failure — don't cache, let the next tab switch retry
-  return _stuTransportCurrentCache[studentId];
+  return _stuTransportHistoryCache[studentId];
 }
 
 function _stuRenderTransportTab(d) {
   const studentId = d.id;
-  if (!(studentId in _stuTransportCurrentCache)) {
-    _stuLoadTransportCurrent(studentId).then(() => {
+  if (!(studentId in _stuTransportHistoryCache)) {
+    _stuLoadTransportHistory(studentId).then(() => {
       // Only repaint if the operator is still on this tab for this same student —
       // avoids clobbering content after they've navigated away while this was in flight.
       if (window._stuViewTab === 'Transport' && window._stuViewData === d) {
@@ -2696,30 +2696,43 @@ function _stuRenderTransportTab(d) {
         if (c) c.innerHTML = _renderStuViewTab('Transport', d);
       }
     });
-    return '<p class="fin-loading">Loading transport assignment&#8230;</p>';
+    return '<p class="fin-loading">Loading transport history&#8230;</p>';
   }
-  const current = _stuTransportCurrentCache[studentId];
-  if (!current) {
-    return `<div style="padding:32px;text-align:center;color:#888;">This student is not currently assigned to a transport route.</div>`;
+  const history = _stuTransportHistoryCache[studentId] || [];
+  if (!history.length) {
+    return `<div style="padding:32px;text-align:center;color:#888;">This student has no transport assignment history.</div>`;
   }
-  const route = _findTransportRoute(current.route_id);
-  const routeName = route ? (route.name || route.title || `Route ${current.route_id}`) : `Route ${current.route_id}`;
-  const directionLabel = { two_way: 'Two-way', one_way_morning: 'One-way (Morning)', one_way_evening: 'One-way (Evening)' }[current.direction] || current.direction;
-  const price = _resolveTransportPriceForDirection(route, current.direction, current.use_daily_rate);
+  const directionLabels = { two_way: 'Two-way', one_way_morning: 'One-way (Morning)', one_way_evening: 'One-way (Evening)' };
+  const rows = history.map(a => {
+    const routeLabel = a.route_name ? _esc(a.route_name) : '<em style="color:#999;">(route deleted)</em>';
+    const directionLabel = directionLabels[a.direction] || a.direction || '—';
+    const isActive = !!a.active && !a.end_date;
+    const statusPill = isActive
+      ? '<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.78rem;font-weight:600;color:#7a6110;background:var(--gold-100,#fbe8b0);">Active</span>'
+      : '<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.78rem;font-weight:600;color:#666;background:#eee;">Ended</span>';
+    return `<tr style="${isActive ? '' : 'opacity:0.6;'}">
+      <td style="padding:8px 10px;">${routeLabel}</td>
+      <td style="padding:8px 10px;">${_esc(directionLabel)}</td>
+      <td style="padding:8px 10px;">${a.use_daily_rate ? 'Daily Rate' : 'Term Rate'}</td>
+      <td style="padding:8px 10px;">${_esc(a.start_date || '—')}</td>
+      <td style="padding:8px 10px;">${_esc(a.end_date || '—')}</td>
+      <td style="padding:8px 10px;">${a.term_id ? _esc(_stuTermName(a.term_id)) : '—'}</td>
+      <td style="padding:8px 10px;">${statusPill}</td>
+    </tr>`;
+  }).join('');
   return `
-    <div class="stu-detail-grid">
-      ${_dRow('Route',      routeName)}
-      ${_dRow('Direction',  directionLabel)}
-      ${_dRow('Billing',    current.use_daily_rate ? 'Daily Rate' : 'Term Rate')}
-      ${_dRow('Price',      price != null ? formatKES(price) : '—')}
-      ${_dRow('Active',     current.active ? 'Yes' : 'No')}
-      ${_dRow('Start Date', current.start_date || '—')}
-      ${_dRow('End Date',   current.end_date || '—')}
-      ${_dRow('Term',       current.term_id ? _stuTermName(current.term_id) : '—')}
-    </div>
-    <div style="margin-top:20px;padding:12px 16px;background:#f7f7f7;border-radius:6px;color:#888;font-size:0.82rem;">
-      Assignment history isn't available yet — the backend currently only exposes this student's current transport assignment, not a full history.
-    </div>`;
+    <table style="width:100%;border-collapse:collapse;font-size:0.88rem;">
+      <thead><tr style="text-align:left;border-bottom:1px solid #ddd;">
+        <th style="padding:8px 10px;">Route</th>
+        <th style="padding:8px 10px;">Direction</th>
+        <th style="padding:8px 10px;">Rate</th>
+        <th style="padding:8px 10px;">Start Date</th>
+        <th style="padding:8px 10px;">End Date</th>
+        <th style="padding:8px 10px;">Term</th>
+        <th style="padding:8px 10px;">Status</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
 }
 function _dRow(label, value) {
   return `<div class="stu-detail-row">
