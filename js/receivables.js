@@ -1135,6 +1135,20 @@ async function loadInvoiceDetailView(container, invoiceId) {
     }
     return `<tr><td colspan="${hasFull?4:1}">${_finEsc(li.description||'')}</td><td>KES ${_finFmt(parseFloat(li.amount||0))}</td></tr>`;
   }).join('') : '<tr><td colspan="5" class="fin-empty">No line items.</td></tr>';
+  // Accrual JE posted server-side on issue (reversed on cancel) — nullable,
+  // populated only going forward, so historical pre-fix rows render '—'.
+  // Mirrors the accrual_journal_entry_id link already shown on supplier
+  // invoices in js/payables.js.
+  let jeLinkHtml = '—';
+  if (inv.journal_entry_id) {
+    try {
+      const jeRes = await apiFetch(`${_JE_API}${inv.journal_entry_id}`);
+      if (jeRes && jeRes.ok) {
+        const je = await jeRes.json();
+        jeLinkHtml = `<a href="#" onclick="_jeOpenDetail(${inv.journal_entry_id});return false;">${_finEsc(je.jv_number || ('#'+inv.journal_entry_id))}</a>`;
+      }
+    } catch (_) {}
+  }
   const status = inv.status||'draft';
   let actions = '';
   if (status==='draft') {
@@ -1161,6 +1175,7 @@ async function loadInvoiceDetailView(container, invoiceId) {
         <div><span style="color:#888;font-size:0.82rem;">Term</span><br>${_finEsc(_rcvTermName(inv.term_id))}</div>
         <div><span style="color:#888;font-size:0.82rem;">Issue Date</span><br>${_finEsc((inv.issue_date||inv.created_at||'').split('T')[0]||'—')}</div>
         <div><span style="color:#888;font-size:0.82rem;">Due Date</span><br>${_finEsc((inv.due_date||'').split('T')[0]||'—')}</div>
+        <div><span style="color:#888;font-size:0.82rem;">Accrual Journal Entry</span><br>${jeLinkHtml}</div>
       </div>
       <div class="fin-table-wrap" style="max-width:820px;">
         <table class="fin-table">
