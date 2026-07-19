@@ -177,8 +177,17 @@ function _pvReadPayee(idPrefix, payeeType) {
 let _pvPvPage = 1, _pvPvPerPage = 10, _pvPvData = [];
 const _PV_PV_API = `${API_BASE}/payables/payment-vouchers/`;
 
+// Deep-link handoff, mirrors _pvSiOpenDetail — lets the invoice detail's
+// linked-vouchers table jump straight to a given voucher.
+function _pvPvOpenDetail(id) {
+  window._pvPvOpenId = id;
+  loadView('payables-payment-vouchers');
+}
+
 async function loadPayablesPaymentVouchersView(container) {
   await _pvLoadLookups();
+  const preselectId = window._pvPvOpenId ?? null;
+  window._pvPvOpenId = null;
   await renderSplitView({
     container,
     moduleKey: 'finance.payables',
@@ -190,6 +199,7 @@ async function loadPayablesPaymentVouchersView(container) {
     ],
     apiUrl: _PV_PV_API,
     searchFields: ['voucher_no','payee_type'],
+    preselectId,
     col1Label: 'Voucher No', col2Label: 'Status',
     col1: v => v.voucher_no || `#${v.id}`,
     col2: v => v.status || '—',
@@ -231,7 +241,129 @@ function _pvPvDetailActions(v) {
     html += `<div style="color:var(--grey-500,#666);font-size:0.9rem;">Queued for Tendepay. Payment will post automatically on the next Tendepay import.</div>`;
   }
   html += `<button class="fin-btn-outline" onclick="_pvPvPrint(${v.id})">View / Print</button>`;
+  html += `<div id="pv-link-msg" style="width:100%;"></div>`;
+  html += _pvPvLinkedInvoiceHtml(v);
   return `<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">${html}</div>`;
+}
+
+// ── PV <-> Supplier Invoice retroactive link (§4) ───────────────────────────
+// The AP team's only route to fix orphan/mis-linked historical PVs, or to
+// link a PV that was created without linked_supplier_invoice_id set.
+let _pvPvLinkedInvCache = {};   // invoice_id -> SupplierInvoiceRead | null
+let _pvAllSiCache = null;      // full supplier-invoice list, for the link picker
+async function _pvFetchAllSupplierInvoices() {
+  if (_pvAllSiCache) return _pvAllSiCache;
+  const res = await apiFetch(_PV_SI_API);
+  _pvAllSiCache = (res && res.ok) ? _toArray(await res.json()) : [];
+  return _pvAllSiCache;
+}
+
+function _pvPvLinkedInvoiceHtml(v) {
+  if (!v.linked_supplier_invoice_id) {
+    return `<div style="width:100%;margin-top:10px;">
+      <button class="fin-btn-outline" onclick="_pvPvOpenLinkModal(${v.id})">Link to Invoice</button>
+    </div>`;
+  }
+  const invId = v.linked_supplier_invoice_id;
+  if (!(invId in _pvPvLinkedInvCache)) {
+    (async () => {
+      try {
+        const res = await apiFetch(`${_PV_SI_API}/${invId}`);
+        _pvPvLinkedInvCache[invId] = (res && res.ok) ? await res.json() : null;
+      } catch (_) { _pvPvLinkedInvCache[invId] = null; }
+      const el = document.getElementById(`pv-linked-inv-${v.id}`);
+      if (el) el.outerHTML = _pvPvLinkedInvoiceHtml(v);
+    })();
+    return `<div id="pv-linked-inv-${v.id}" style="width:100%;margin-top:10px;font-size:0.9rem;color:var(--grey-600,#555);">Loading linked invoice&#8230;</div>`;
+  }
+  const inv = _pvPvLinkedInvCache[invId];
+  const label = inv ? (inv.invoice_number || `#${invId}`) : `#${invId}`;
+  return `<div id="pv-linked-inv-${v.id}" style="width:100%;margin-top:10px;font-size:0.9rem;color:var(--grey-600,#555);display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+    <span>Linked to Supplier Invoice <a href="#" onclick="_pvSiOpenDetail(${invId});return false;">${_finEsc(label)}</a></span>
+    <button class="fin-btn-cancel" style="padding:4px 10px;font-size:0.8rem;" onclick="_pvPvUnlinkInvoice(${v.id})">Unlink</button>
+    <button class="fin-btn-outline" style="padding:4px 10px;font-size:0.8rem;" onclick="_pvPvOpenLinkModal(${v.id})">Relink</button>
+  </div>`;
+}
+
+function _pvPvOpenLinkModal(voucherId) {
+  window._pvPvLinkVoucherId = voucherId;
+  const wrap = document.createElement('div');
+  wrap.id = 'pv-link-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;overflow:auto;padding:24px;';
+  wrap.innerHTML = `
+    <div style="background:white;border-radius:8px;padding:24px;width:520px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 14px;font-size:1.05rem;color:#2c3e50;">Link to Supplier Invoice</h3>
+      <input type="text" id="pv-link-search" class="fin-form-input" placeholder="Search by invoice number or supplier&#8230;" oninput="_pvPvLinkSearch(this.value)">
+      <div id="pv-link-results" style="max-height:280px;overflow:auto;margin-top:10px;border:1px solid #eee;border-radius:6px;"></div>
+      <div id="pv-link-modal-err" style="color:var(--coral-500);font-size:0.85rem;margin-top:8px;"></div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="document.getElementById('pv-link-modal-overlay').remove()">Cancel</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  _pvPvLinkSearch('');
+}
+
+async function _pvPvLinkSearch(term) {
+  const invoices = await _pvFetchAllSupplierInvoices();
+  const t = (term || '').toLowerCase().trim();
+  const filtered = invoices.filter(inv => {
+    if (inv.status === 'voided') return false;
+    if (!t) return true;
+    return (inv.invoice_number || '').toLowerCase().includes(t) || _pvSupplierName(inv.supplier_id).toLowerCase().includes(t);
+  }).slice(0, 30);
+  const el = document.getElementById('pv-link-results');
+  if (!el) return;
+  el.innerHTML = filtered.length
+    ? filtered.map(inv => `
+      <div style="padding:8px 12px;border-bottom:1px solid #f0f0f0;cursor:pointer;" onclick="_pvPvConfirmLink(${inv.id})">
+        <strong>${_finEsc(inv.invoice_number || ('#' + inv.id))}</strong> — ${_finEsc(_pvSupplierName(inv.supplier_id))}
+        <span style="float:right;color:#888;">${_pvMoney(inv.amount)}</span>
+      </div>`).join('')
+    : `<div style="padding:12px;color:#888;">No matching invoices.</div>`;
+}
+
+async function _pvPvConfirmLink(invoiceId) {
+  const voucherId = window._pvPvLinkVoucherId;
+  const res = await apiFetch(`${_PV_PV_API}${voucherId}/link-invoice`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ linked_supplier_invoice_id: invoiceId }),
+  });
+  if (res && res.ok) {
+    document.getElementById('pv-link-modal-overlay')?.remove();
+    delete _pvPvLinkedInvCache[invoiceId];
+    let msg = 'Voucher linked.';
+    try {
+      const invRes = await apiFetch(`${_PV_SI_API}/${invoiceId}`);
+      if (invRes && invRes.ok) {
+        const inv = await invRes.json();
+        if (inv.status === 'paid') msg += ` Invoice ${inv.invoice_number || ('#' + invoiceId)} is now fully settled.`;
+      }
+    } catch (_) {}
+    showToast(msg, 'success');
+    await window._splitRefreshSelected?.();
+  } else if (res && res.status === 409) {
+    const msg = await parseApiError(res);
+    const el = document.getElementById('pv-link-modal-err');
+    if (el) el.textContent = msg; else showToast(msg, 'error');
+  } else if (res) {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
+}
+
+async function _pvPvUnlinkInvoice(voucherId) {
+  const res = await apiFetch(`${_PV_PV_API}${voucherId}/link-invoice`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ linked_supplier_invoice_id: null }),
+  });
+  if (res && res.ok) {
+    showToast('Voucher unlinked.', 'success');
+    await window._splitRefreshSelected?.();
+  } else if (res) {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
 }
 
 async function _pvPvSubmitForApproval(id) {
@@ -728,51 +860,56 @@ function _siStatusBadge(status) {
   return `<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:0.78rem;font-weight:600;color:${color};background:${bg};">${_finEsc((status || '').replace(/_/g,' '))}</span>`;
 }
 
-// Voucher status cache (invoice_id -> voucher status string), warmed
-// on-demand by _pvSiWarmVoucherGate — used to decide Edit-button visibility
-// without an await inside the synchronous canEdit/detailFields callbacks
-// (see [[frontend-gotchas]]-style pattern already used for JE number below).
-let _pvSiVoucherStatusCache = {};
 // JE id -> jv_number, resolved on demand for the Accrual Journal Entry link.
 let _pvSiJeNumberCache = {};
+
+// invoice_id -> [PaymentVoucherRead, ...] linked to it (N:1 model — an
+// invoice may now have multiple vouchers, e.g. partial payments, so the
+// invoice's own `payment_voucher_id` field is no longer authoritative and
+// is not read anywhere below). GET /payables/payment-vouchers/ has no
+// linked_supplier_invoice_id filter, so this fetches the full list once per
+// Supplier Invoices view load and groups client-side.
+let _pvSiInvoiceVouchersMap = {};
+async function _pvSiFetchAllVouchers() {
+  const res = await apiFetch(_PV_PV_API);
+  return (res && res.ok) ? _toArray(await res.json()) : [];
+}
+async function _pvSiLoadVouchersMap() {
+  const vouchers = await _pvSiFetchAllVouchers();
+  const map = {};
+  vouchers.forEach(v => {
+    if (v.linked_supplier_invoice_id) {
+      (map[v.linked_supplier_invoice_id] ||= []).push(v);
+    }
+  });
+  _pvSiInvoiceVouchersMap = map;
+}
+// Sum of an invoice's linked vouchers that still count toward settlement —
+// a rejected voucher never happened, so it's excluded from both the
+// "Already Vouched" total and the over-vouch pre-check.
+function _pvSiVouchedTotal(vouchers) {
+  return (vouchers || []).filter(v => v.status !== 'rejected')
+    .reduce((s, v) => s + (parseFloat(v.amount) || 0), 0);
+}
 
 // Both edit gates from the accrual addendum, in one place, per its own
 // explicit ask (§5 refactor #1) — three call sites (detail pane, action
 // menu, edit form) drifting apart is how a "PAID invoice is editable" bug
-// ships. `voucher` may be null/undefined (no linked voucher, or not yet
-// fetched) — treated as non-blocking.
-function _pvSiIsEditable(inv, voucher) {
+// ships. `vouchers` is the array of PVs linked to this invoice (N:1 model),
+// possibly empty.
+function _pvSiIsEditable(inv, vouchers) {
   if (inv.status === 'paid')   return { ok: false, reason: 'Cannot edit a PAID invoice. Void it and issue a new one.' };
   if (inv.status === 'voided') return { ok: false, reason: 'Cannot edit a VOIDED invoice.' };
-  if (voucher && (voucher.status === 'awaiting_tendepay' || voucher.status === 'paid')) {
-    return { ok: false, reason: `Voucher ${voucher.voucher_no || ('#' + voucher.id)} is '${voucher.status}'. Cancel the voucher before editing the invoice.` };
+  const blocker = (vouchers || []).find(v => v.status === 'awaiting_tendepay' || v.status === 'paid');
+  if (blocker) {
+    return { ok: false, reason: `Voucher ${blocker.voucher_no || ('#' + blocker.id)} is '${blocker.status}'. Cancel the voucher before editing the invoice.` };
   }
   return { ok: true };
 }
 
-// Best-effort warm-up for the split-view Edit button: fetches the linked
-// voucher's status once per invoice, caches it, and — only if it turns out
-// to be actually blocking — refreshes the selected detail pane so the Edit
-// button (gated by canEdit below) disappears. Optimistic: the button stays
-// visible until proven otherwise, which is fine since the Edit *view* itself
-// re-checks authoritatively before rendering the form (see
-// loadPayablesSupplierInvoicesEditView).
-async function _pvSiWarmVoucherGate(inv) {
-  if (!inv.payment_voucher_id || inv.id in _pvSiVoucherStatusCache) return;
-  try {
-    const res = await apiFetch(`${_PV_PV_API}${inv.payment_voucher_id}`);
-    if (res && res.ok) {
-      const voucher = await res.json();
-      _pvSiVoucherStatusCache[inv.id] = voucher.status;
-      if (voucher.status === 'awaiting_tendepay' || voucher.status === 'paid') {
-        await window._splitRefreshSelected?.();
-      }
-    }
-  } catch (_) {}
-}
-
 async function loadPayablesSupplierInvoicesView(container) {
   await _pvLoadLookups();
+  await _pvSiLoadVouchersMap();
   const preselectId = window._pvSiOpenId ?? null;
   window._pvSiOpenId = null;
   await renderSplitView({
@@ -825,7 +962,7 @@ async function loadPayablesSupplierInvoicesView(container) {
     renderAdd: _pvAddPlaceholder('Supplier Invoice', 'payables-supplier-invoices-add', 'Record an invoice received from a supplier.'),
     onAdd:  () => loadView('payables-supplier-invoices-add'),
     onEdit: item => { window._pvEditSiId = item.id; loadView('payables-supplier-invoices-edit'); },
-    canEdit: item => _pvSiIsEditable(item, item.payment_voucher_id ? { status: _pvSiVoucherStatusCache[item.id] } : null).ok,
+    canEdit: item => _pvSiIsEditable(item, _pvSiInvoiceVouchersMap[item.id]).ok,
     detailActions: _pvSiDetailActions,
   });
 }
@@ -850,22 +987,24 @@ function _pvSiShowActionMsg(text, kind) {
 
 function _pvSiDetailActions(inv) {
   window._pvSiPendingInvoice = inv;
-  _pvSiWarmVoucherGate(inv);
+  const vouchers = _pvSiInvoiceVouchersMap[inv.id] || [];
+  const invoiceAmount = parseFloat(inv.amount) || 0;
+  const vouchedTotal = _pvSiVouchedTotal(vouchers);
+  const remaining = Math.max(invoiceAmount - vouchedTotal, 0);
   let html = '';
 
   if (inv.status === 'paid') {
-    html += `<div style="color:var(--grey-500,#666);font-size:0.9rem;">Linked to Payment Voucher #${inv.payment_voucher_id}. This invoice is PAID and immutable.</div>`;
+    html += `<div style="color:var(--grey-500,#666);font-size:0.9rem;">This invoice is fully settled and immutable.</div>`;
   } else if (inv.status === 'voided') {
     html += `<div style="color:var(--grey-500,#666);font-size:0.9rem;">This invoice was voided${inv.void_reason ? ': ' + _finEsc(inv.void_reason) : ''}.</div>`;
   } else {
     if (inv.status === 'pending') {
       html += `<button class="btn" onclick="_pvSiOpenApproveModal(${inv.id})">Approve</button>`;
-    } else if (inv.status === 'approved') {
-      if (inv.payment_voucher_id) {
-        html += `<div style="color:var(--grey-500,#666);font-size:0.9rem;">Linked to Payment Voucher #${inv.payment_voucher_id}.</div>`;
-      } else {
-        html += `<button class="btn" onclick="_pvSiOpenCreateVoucherModal(${inv.id})">Create Payment Voucher</button>`;
-      }
+    } else if (inv.status === 'approved' && remaining > 0.004) {
+      // An invoice may take multiple vouchers now (partial payments) — the
+      // button stays available as long as anything remains unvouched,
+      // instead of the old "only if no voucher yet" 1:1 gate.
+      html += `<button class="btn" onclick="_pvSiOpenCreateVoucherModal(${inv.id})">Create Payment Voucher</button>`;
     }
     // disputed: no lifecycle actions — informational only (§1.1)
     if (inv.status === 'pending' || inv.status === 'approved') {
@@ -873,7 +1012,36 @@ function _pvSiDetailActions(inv) {
     }
   }
   html += `<div id="si-action-msg" style="width:100%;"></div>`;
+  if (vouchers.length || inv.status === 'approved' || inv.status === 'paid') {
+    html += _pvSiVouchersSummaryHtml(vouchers, invoiceAmount, vouchedTotal, remaining);
+  }
   return `<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">${html}</div>`;
+}
+
+// Running settled/outstanding summary + the list of every PV linked to this
+// invoice (N:1 model — no more single "linked voucher" field).
+function _pvSiVouchersSummaryHtml(vouchers, invoiceAmount, vouchedTotal, remaining) {
+  const rows = vouchers.length
+    ? vouchers.map(v => `<tr>
+        <td style="padding:6px 10px;"><a href="#" onclick="_pvPvOpenDetail(${v.id});return false;">${_finEsc(v.voucher_no || ('#'+v.id))}</a></td>
+        <td style="padding:6px 10px;text-align:right;">${_pvMoney(v.amount)}</td>
+        <td style="padding:6px 10px;">${_pvBadge(v.status)}</td>
+      </tr>`).join('')
+    : `<tr><td colspan="3" style="padding:6px 10px;color:#888;">No payment vouchers linked yet.</td></tr>`;
+  return `
+    <div style="width:100%;margin-top:14px;border-top:1px solid #eee;padding-top:14px;">
+      <div style="display:flex;gap:28px;flex-wrap:wrap;font-size:0.85rem;margin-bottom:10px;">
+        <div><span style="color:#888;">Invoice Amount</span><br><strong>${_pvMoney(invoiceAmount)}</strong></div>
+        <div><span style="color:#888;">Already Vouched</span><br><strong>${_pvMoney(vouchedTotal)}</strong></div>
+        <div><span style="color:#888;">Remaining</span><br><strong style="color:${remaining > 0.004 ? 'var(--coral-500)' : 'var(--color-success)'};">${_pvMoney(remaining)}</strong></div>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
+        <thead><tr style="text-align:left;border-bottom:1px solid #ddd;">
+          <th style="padding:6px 10px;">Voucher No</th><th style="padding:6px 10px;text-align:right;">Amount</th><th style="padding:6px 10px;">Status</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
 }
 
 // ── Approve ──────────────────────────────────────────────────────────────
@@ -949,12 +1117,22 @@ async function _pvSiVoid(invoiceId) {
 
 function _pvSiOpenCreateVoucherModal(invoiceId) {
   const invoice = (window._pvSiPendingInvoice && String(window._pvSiPendingInvoice.id) === String(invoiceId)) ? window._pvSiPendingInvoice : {};
+  const vouchers = _pvSiInvoiceVouchersMap[invoiceId] || [];
+  const invoiceAmount = parseFloat(invoice.amount) || 0;
+  const vouchedTotal = _pvSiVouchedTotal(vouchers);
+  const remaining = Math.max(invoiceAmount - vouchedTotal, 0);
+  window._pvSiCreateVoucherRemaining = remaining;
   const wrap = document.createElement('div');
   wrap.id = 'pv-si-pv-modal-overlay';
   wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;overflow:auto;padding:24px;';
   wrap.innerHTML = `
     <div style="background:white;border-radius:8px;padding:24px;width:640px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
-      <h3 style="margin:0 0 14px;font-size:1.05rem;color:#2c3e50;">Create Payment Voucher</h3>
+      <h3 style="margin:0 0 10px;font-size:1.05rem;color:#2c3e50;">Create Payment Voucher</h3>
+      <div style="display:flex;gap:24px;flex-wrap:wrap;font-size:0.85rem;margin-bottom:14px;padding:10px 14px;background:#f7f7f7;border-radius:6px;">
+        <div><span style="color:#888;">Invoice Amount</span><br><strong>${_pvMoney(invoiceAmount)}</strong></div>
+        <div><span style="color:#888;">Already Vouched</span><br><strong>${_pvMoney(vouchedTotal)}</strong></div>
+        <div><span style="color:#888;">Remaining</span><br><strong style="color:var(--navy-700);">${_pvMoney(remaining)}</strong></div>
+      </div>
       <div class="fin-form-grid-2">
         <div class="fin-form-group">
           <label class="fin-form-label">Ledger <span class="fin-required">*</span></label>
@@ -978,13 +1156,15 @@ function _pvSiOpenCreateVoucherModal(invoiceId) {
         </div>
         <div class="fin-form-group">
           <label class="fin-form-label">Amount (KES) <span class="fin-required">*</span></label>
-          <input type="number" id="si-pv-amount" class="fin-form-input" step="0.01" min="0.01" value="${invoice.amount || ''}">
+          <input type="number" id="si-pv-amount" class="fin-form-input" step="0.01" min="0.01" max="${remaining || ''}" value="${remaining || ''}">
+          <span class="fin-field-error" id="si-pv-amount-err"></span>
         </div>
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Description <span class="fin-required">*</span></label>
         <textarea id="si-pv-description" class="fin-form-textarea" rows="3">${_finEsc(`Payment for supplier invoice ${invoice.invoice_number || ''}`.trim())}</textarea>
       </div>
+      <div id="si-pv-modal-err" style="width:100%;color:var(--coral-500);font-size:0.85rem;margin-top:4px;"></div>
       <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
         <button class="fin-btn-cancel" onclick="document.getElementById('pv-si-pv-modal-overlay').remove()">Cancel</button>
         <button class="fin-btn-teal" onclick="_pvSiSubmitCreateVoucher(${invoiceId}, ${invoice.supplier_id || 'null'})">Create</button>
@@ -1003,6 +1183,13 @@ async function _pvSiSubmitCreateVoucher(invoiceId, supplierId) {
     showToast('Ledger, Cost Center, Department, Amount and Description are all required.', 'error');
     return;
   }
+  const remaining = window._pvSiCreateVoucherRemaining ?? Infinity;
+  const errEl = document.getElementById('si-pv-amount-err');
+  if (amount > remaining + 0.004) {
+    if (errEl) errEl.textContent = `Amount exceeds the remaining balance of ${_pvMoney(remaining)} on this invoice.`;
+    return;
+  }
+  if (errEl) errEl.textContent = '';
   const debitAccountEl = document.getElementById('si-pv-debit-account');
   const walletEl = document.getElementById('si-pv-tendepay-wallet');
   const payload = {
@@ -1022,11 +1209,14 @@ async function _pvSiSubmitCreateVoucher(invoiceId, supplierId) {
   if (res && res.ok) {
     document.getElementById('pv-si-pv-modal-overlay')?.remove();
     showToast('Payment voucher created.', 'success');
+    await _pvSiLoadVouchersMap();
     await window._splitRefreshSelected?.();
   } else if (res && res.status === 409) {
-    // Covers both "already linked" and the newer "Approve it first" wrong-
-    // status message — surface whatever the backend actually says (§5.3).
-    showToast(await parseApiError(res), 'error');
+    // Covers "over-vouched" (amount pushes the sum past invoice.amount) and
+    // the "Approve it first" wrong-status message — surface whatever the
+    // backend actually says, inline in the modal rather than a toast.
+    const msg = await parseApiError(res);
+    if (errEl) errEl.textContent = msg; else showToast(msg, 'error');
   } else if (res) {
     showToast('Error: ' + await parseApiError(res), 'error');
   }
@@ -1250,14 +1440,13 @@ async function loadPayablesSupplierInvoicesEditView(container) {
 
   // Authoritative edit gate (§1.6, both gates) — the split-view Edit button
   // hides itself on a best-effort cache, but this is the real check: fetch
-  // the linked voucher (if any) and block navigation with the exact reason
-  // if either gate says no.
-  let voucher = null;
-  if (inv.payment_voucher_id) {
-    const vRes = await apiFetch(`${_PV_PV_API}${inv.payment_voucher_id}`);
-    if (vRes && vRes.ok) voucher = await vRes.json();
-  }
-  const gate = _pvSiIsEditable(inv, voucher);
+  // every voucher linked to this invoice (N:1 model, no query filter exists
+  // so the full list is fetched and filtered client-side — see
+  // _pvSiFetchAllVouchers) and block navigation with the exact reason if
+  // either gate says no.
+  const allVouchers = await _pvSiFetchAllVouchers();
+  const linkedVouchers = allVouchers.filter(v => String(v.linked_supplier_invoice_id) === String(inv.id));
+  const gate = _pvSiIsEditable(inv, linkedVouchers);
   if (!gate.ok) {
     showToast(gate.reason, 'error');
     loadView('payables-supplier-invoices');
