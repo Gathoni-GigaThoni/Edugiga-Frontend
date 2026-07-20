@@ -57,33 +57,36 @@ function _finToday() {
   return new Date().toISOString().split('T')[0];
 }
 
-// Build a transaction ledger from student-fees (debits) + payments (credits)
+// Build a transaction ledger from fee invoices (debits) + receipts (credits).
+// draft/cancelled invoices are excluded — they haven't posted an AR charge.
 async function _finBuildLedger(studentId) {
   try {
-    const [feesRes, pymtRes] = await Promise.all([
-      fetch(`${API_BASE}/finance/student-fees/${studentId}`, { headers: { Authorization: `Bearer ${token}` } }),
-      fetch(`${API_BASE}/finance/payments/student/${studentId}`, { headers: { Authorization: `Bearer ${token}` } })
+    const [invRes, rcptRes] = await Promise.all([
+      apiFetch(`${API_BASE}/receivables/fee-invoices?student_id=${studentId}`),
+      apiFetch(`${API_BASE}/receivables/receipts?student_id=${studentId}&voided=false`)
     ]);
-    if (!feesRes.ok || !pymtRes.ok) {
+    if (!invRes || !invRes.ok || !rcptRes || !rcptRes.ok) {
       showToast('Could not load full ledger data. Some entries may be missing.', 'error');
     }
-    const fees     = feesRes.ok ? await feesRes.json() : [];
-    const payments = pymtRes.ok ? await pymtRes.json() : [];
+    const invoices = invRes && invRes.ok ? await invRes.json() : [];
+    const receipts = rcptRes && rcptRes.ok ? await rcptRes.json() : [];
 
     const rows = [];
-    fees.forEach(f => rows.push({
-      date:        f.date_charged || '',
-      term:        f.term_id ? `Term ${f.term_id}` : '-',
-      description: 'Fee Charge',
-      debit:       parseFloat(f.amount) || 0,
-      credit:      0
-    }));
-    payments.forEach(p => rows.push({
-      date:        p.payment_date || '',
+    invoices
+      .filter(inv => inv.status !== 'draft' && inv.status !== 'cancelled')
+      .forEach(inv => rows.push({
+        date:        inv.issue_date || '',
+        term:        inv.term_id ? `Term ${inv.term_id}` : '-',
+        description: `Fee Invoice ${inv.invoice_number || ''}`.trim(),
+        debit:       parseFloat(inv.amount_due) || 0,
+        credit:      0
+      }));
+    receipts.forEach(r => rows.push({
+      date:        r.payment_date || '',
       term:        '-',
-      description: `Payment (${p.payment_method || 'N/A'})`,
+      description: `Payment (${r.payment_method || 'N/A'})`,
       debit:       0,
-      credit:      parseFloat(p.amount) || 0
+      credit:      parseFloat(r.amount) || 0
     }));
 
     rows.sort((a, b) => (a.date > b.date ? 1 : a.date < b.date ? -1 : 0));
