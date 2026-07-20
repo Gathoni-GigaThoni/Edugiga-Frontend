@@ -2000,7 +2000,7 @@ function _stuFlatPayload(d) {
 async function _stuResolveTransportPricingId(d) {
   const sel = d.transport_selection;
   if (!d.uses_school_transport || !sel || !sel.route_id || !sel.journey_type) return null;
-  const direction = sel.journey_type === 'two_way' ? 'two_way' : (sel.time_of_day === 'evening' ? 'one_way_evening' : 'one_way_morning');
+  const direction = sel.journey_type === 'two_way' ? 'TWO_WAY' : (sel.time_of_day === 'evening' ? 'ONE_WAY_EVENING' : 'ONE_WAY_MORNING');
   try {
     const res = await apiFetch(`${API_BASE}/routes/${sel.route_id}/pricing/`);
     if (res && res.ok) {
@@ -2025,8 +2025,8 @@ async function _stuSyncTransport(studentId, d) {
   const sel = d.transport_selection;
   if (d.uses_school_transport && sel && sel.route_id && sel.journey_type) {
     const direction = sel.journey_type === 'two_way'
-      ? 'two_way'
-      : (sel.time_of_day === 'evening' ? 'one_way_evening' : 'one_way_morning');
+      ? 'TWO_WAY'
+      : (sel.time_of_day === 'evening' ? 'ONE_WAY_EVENING' : 'ONE_WAY_MORNING');
     const body = { route_id: String(sel.route_id), direction, use_daily_rate: false };
     if (d.transport_term_override) body.term_id = d.transport_term_override;
     const res = await apiFetch(`${API_BASE}/students/${studentId}/transport`, {
@@ -2536,7 +2536,7 @@ async function openStudentFeeStatement(studentId) {
 }
 
 function _renderStudentViewBody(d, activeTab) {
-  const TABS = ['Personal Data','Academic Background','Guardian/Family','Medical Information','Disciplinary','Transport'];
+  const TABS = ['Personal Data','Academic Background','Guardian/Family','Medical Information','Disciplinary','Transport','Residence Plan'];
   const statusBadge = d.is_active
     ? '<span class="stu-status-badge stu-status-badge--active">Active</span>'
     : '<span class="stu-status-badge stu-status-badge--inactive">Inactive</span>';
@@ -2667,6 +2667,7 @@ function _renderStuViewTab(tabName, d) {
   if (tabName === 'Disciplinary') return `
     <div style="padding:32px;text-align:center;color:#888;">No disciplinary records for this student.</div>`;
   if (tabName === 'Transport') return _stuRenderTransportTab(d);
+  if (tabName === 'Residence Plan') return _stuRenderResidencePlanTab(d);
   return '';
 }
 
@@ -2702,7 +2703,7 @@ function _stuRenderTransportTab(d) {
   if (!history.length) {
     return `<div style="padding:32px;text-align:center;color:#888;">This student has no transport assignment history.</div>`;
   }
-  const directionLabels = { two_way: 'Two-way', one_way_morning: 'One-way (Morning)', one_way_evening: 'One-way (Evening)' };
+  const directionLabels = { TWO_WAY: 'Two-way', ONE_WAY_MORNING: 'One-way (Morning)', ONE_WAY_EVENING: 'One-way (Evening)' };
   const rows = history.map(a => {
     const routeLabel = a.route_name ? _esc(a.route_name) : '<em style="color:#999;">(route deleted)</em>';
     const directionLabel = directionLabels[a.direction] || a.direction || '—';
@@ -2734,6 +2735,224 @@ function _stuRenderTransportTab(d) {
       <tbody>${rows}</tbody>
     </table>`;
 }
+
+// ==================== RESIDENCE PLAN TAB (§BB.6 — split-custody overrides) ====================
+// Week × AM/PM grid consumed by Bus Schedules' generate-standing (js/transport.js)
+// when placing riders. Blank/grey = the student's primary residence (default);
+// a gold chip = an override plan exists for that day+timing.
+
+let _stuResidencePlansCache = {}; // studentId -> StudentResidenceScheduleRead[]
+const _STU_RP_DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+const _STU_RP_DIRECTION_LABELS = { TWO_WAY: 'Two-way', ONE_WAY_MORNING: 'One-way (Morning)', ONE_WAY_EVENING: 'One-way (Evening)' };
+
+async function _stuLoadResidencePlans(studentId) {
+  const res = await apiFetch(`${_BS_API}/residence-plans/${studentId}`);
+  _stuResidencePlansCache[studentId] = (res && res.ok) ? await res.json() : [];
+}
+
+function _stuRenderResidencePlanTab(d) {
+  const studentId = d.id;
+  if (!(studentId in _stuResidencePlansCache)) {
+    _stuLoadResidencePlans(studentId).then(() => {
+      // Same guard as the Transport tab (js/transport.js) — only repaint if
+      // the operator is still on this tab for this same student.
+      if (window._stuViewTab === 'Residence Plan' && window._stuViewData === d) {
+        const c = document.getElementById('stu-view-tab-content');
+        if (c) c.innerHTML = _renderStuViewTab('Residence Plan', d);
+      }
+    });
+    return '<p class="fin-loading">Loading residence plan&#8230;</p>';
+  }
+  const plans = (_stuResidencePlansCache[studentId] || []).filter(p => p.active !== false);
+  const lookup = {};
+  plans.forEach(p => { lookup[`${p.day_of_week}-${p.timing}`] = p; });
+
+  const rows = _STU_RP_DAYS.map((label, dow) => {
+    const cells = ['am', 'pm'].map(timing => {
+      const plan = lookup[`${dow}-${timing}`];
+      if (plan) {
+        return `<td style="padding:6px;text-align:center;">
+          <button type="button" onclick="_stuRpOpenRetireConfirm(${studentId},${plan.id})"
+            style="display:inline-block;padding:4px 12px;border-radius:12px;font-size:0.78rem;font-weight:600;color:#7a6110;background:var(--gold-100,#fbe8b0);border:none;cursor:pointer;"
+            title="Click to retire this override">${_esc(plan.parent_name || 'Override')}</button>
+        </td>`;
+      }
+      return `<td style="padding:6px;text-align:center;">
+        <button type="button" onclick="_stuRpOpenAddPopover(${studentId},${dow},'${timing}')"
+          style="display:inline-block;padding:4px 12px;border-radius:12px;font-size:0.78rem;color:#999;background:#f2f2f2;border:1px dashed #ccc;cursor:pointer;"
+          title="Click to add an override">Primary</button>
+      </td>`;
+    }).join('');
+    return `<tr><td style="padding:6px 10px;font-weight:600;color:#2c3e50;">${label}</td>${cells}</tr>`;
+  }).join('');
+
+  return `
+    <div>
+      <table style="width:100%;border-collapse:collapse;font-size:0.88rem;">
+        <thead><tr style="text-align:left;border-bottom:1px solid #ddd;">
+          <th style="padding:6px 10px;">Day</th><th style="padding:6px;text-align:center;">AM</th><th style="padding:6px;text-align:center;">PM</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <p style="color:#888;font-size:0.8rem;margin-top:14px;">Slots without an override use the student's primary residence. Overrides drive standing manifest generation.</p>
+    </div>`;
+}
+
+async function _stuRpOpenAddPopover(studentId, dayOfWeek, timing) {
+  await Promise.all([
+    _stuLoadTransportHistory(studentId),
+    (!_trnRoutesData || !_trnRoutesData.length) ? _fetchTrnRoutes() : Promise.resolve(),
+  ]);
+  const history = _stuTransportHistoryCache[studentId] || [];
+  // Auto-default route/direction from the student's active transport
+  // assignment — the addendum's own popover spec (§6.3) only asks for a
+  // Parent, but StudentResidenceScheduleCreate requires route_id + direction
+  // too (confirmed live, not in the spec text). Falls back to explicit
+  // pickers only when the student has no active assignment to default from.
+  const activeRoute = history.find(a => a.active && !a.end_date);
+  window._stuRpPending = {
+    studentId, dayOfWeek, timing,
+    routeId: activeRoute ? activeRoute.route_id : null,
+    direction: activeRoute ? activeRoute.direction : null,
+  };
+
+  const wrap = document.createElement('div');
+  wrap.id = 'stu-rp-add-modal';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:white;border-radius:8px;padding:24px;width:420px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 14px;font-size:1.05rem;color:#2c3e50;">Add Residence Override</h3>
+      <p style="font-size:0.85rem;color:#666;margin:0 0 14px;">${_STU_RP_DAYS[dayOfWeek]} &middot; ${timing.toUpperCase()}</p>
+      <div class="trn-form-group">
+        <label class="trn-form-label">Parent <span style="color:#e74c3c">*</span></label>
+        <select id="stu-rp-parent" class="fin-search-input"><option value="">Loading&#8230;</option></select>
+      </div>
+      ${activeRoute ? `
+        <div class="trn-form-group">
+          <label class="trn-form-label">Route / Direction</label>
+          <input type="text" class="fin-search-input" value="${_esc(activeRoute.route_name || activeRoute.route_id)} — ${_esc(_STU_RP_DIRECTION_LABELS[activeRoute.direction] || activeRoute.direction)}" readonly style="background:#f5f5f5;color:#666;cursor:not-allowed;">
+          <p style="color:#999;font-size:0.76rem;margin:4px 0 0;">From the student's active transport assignment.</p>
+        </div>` : `
+        <div class="trn-form-grid">
+          <div class="trn-form-group">
+            <label class="trn-form-label">Route <span style="color:#e74c3c">*</span></label>
+            <select id="stu-rp-route" class="fin-search-input" onchange="window._stuRpPending.routeId=this.value">
+              ${(_trnRoutesData||[]).map(r=>`<option value="${_esc(r.id)}">${_esc(r.name||r.id)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="trn-form-group">
+            <label class="trn-form-label">Direction <span style="color:#e74c3c">*</span></label>
+            <select id="stu-rp-direction" class="fin-search-input" onchange="window._stuRpPending.direction=this.value">
+              <option value="TWO_WAY">Two-way</option>
+              <option value="ONE_WAY_MORNING">One-way (Morning)</option>
+              <option value="ONE_WAY_EVENING">One-way (Evening)</option>
+            </select>
+          </div>
+        </div>
+        <p style="color:#999;font-size:0.76rem;margin:-6px 0 10px;">This student has no active transport assignment — pick a route and direction for this override.</p>`}
+      <div id="stu-rp-add-msg"></div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="document.getElementById('stu-rp-add-modal').remove()">Cancel</button>
+        <button class="fin-btn-teal" id="stu-rp-add-submit-btn" onclick="_stuRpSubmitAdd()">Add Override</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+
+  if (!activeRoute) {
+    const routeSel = document.getElementById('stu-rp-route');
+    const dirSel = document.getElementById('stu-rp-direction');
+    window._stuRpPending.routeId = routeSel ? routeSel.value : null;
+    window._stuRpPending.direction = dirSel ? dirSel.value : 'TWO_WAY';
+  }
+  _stuRpLoadParentOptions(studentId);
+}
+
+// Shared with the Bus Schedules daily-add form (js/transport.js) — one fetch
+// per student, cached while the view is open.
+async function _stuRpLoadParentOptions(studentId) {
+  const sel = document.getElementById('stu-rp-parent');
+  if (!sel) return;
+  let guardians = _bsGuardiansCache[studentId];
+  if (!guardians) {
+    const res = await apiFetch(`${API_BASE}/students/${studentId}/guardians`);
+    guardians = (res && res.ok) ? await res.json() : [];
+    _bsGuardiansCache[studentId] = guardians;
+  }
+  sel.innerHTML = guardians.length
+    ? `<option value="">Select a parent&#8230;</option>` + guardians.map(g => `<option value="${g.id}">${_esc(g.full_name)}${g.relationship?' ('+_esc(g.relationship)+')':''}</option>`).join('')
+    : '<option value="">No guardians on file</option>';
+}
+
+async function _stuRpSubmitAdd() {
+  const pending = window._stuRpPending;
+  const msg = document.getElementById('stu-rp-add-msg');
+  if (msg) msg.innerHTML = '';
+  const parentId = document.getElementById('stu-rp-parent')?.value;
+  if (!parentId) { if (msg) msg.innerHTML = `<p style="color:var(--coral-500,#D94040);font-size:0.85rem;margin-top:8px;">Pick a parent.</p>`; return; }
+  if (!pending.routeId || !pending.direction) { if (msg) msg.innerHTML = `<p style="color:var(--coral-500,#D94040);font-size:0.85rem;margin-top:8px;">Pick a route and direction.</p>`; return; }
+
+  // residence_source is omitted deliberately — the popover only exposes "which
+  // parent", not an A/B label (the spec's own §6.3 UI has no such control), so
+  // let the server's own default apply rather than fabricating a label here.
+  const payload = {
+    student_id: pending.studentId,
+    day_of_week: pending.dayOfWeek,
+    timing: pending.timing,
+    parent_info_id: parseInt(parentId, 10),
+    route_id: pending.routeId,
+    direction: pending.direction,
+  };
+
+  const btn = document.getElementById('stu-rp-add-submit-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
+  const res = await apiFetch(`${_BS_API}/residence-plans`, {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload),
+  });
+  if (btn) { btn.disabled = false; btn.textContent = 'Add Override'; }
+
+  if (res && res.ok) {
+    document.getElementById('stu-rp-add-modal')?.remove();
+    showToast('Residence override added.', 'success');
+    await _stuRpReloadTab(pending.studentId);
+  } else if (res) {
+    if (msg) msg.innerHTML = `<p style="color:var(--coral-500,#D94040);font-size:0.85rem;margin-top:8px;">${_esc(await parseApiError(res))}</p>`;
+  }
+}
+
+function _stuRpOpenRetireConfirm(studentId, planId) {
+  const wrap = document.createElement('div');
+  wrap.id = 'stu-rp-retire-modal';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:white;border-radius:8px;padding:24px;width:380px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 14px;font-size:1.05rem;color:#2c3e50;">Retire Override</h3>
+      <p style="font-size:0.9rem;color:#444;">Retire this residence override? The slot will revert to the student's primary residence.</p>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="document.getElementById('stu-rp-retire-modal').remove()">Cancel</button>
+        <button class="fin-btn-teal" onclick="_stuRpRetire(${studentId},${planId})">Retire</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+
+async function _stuRpRetire(studentId, planId) {
+  const res = await apiFetch(`${_BS_API}/residence-plans/${planId}`, { method: 'DELETE' });
+  document.getElementById('stu-rp-retire-modal')?.remove();
+  if (res && (res.ok || res.status === 204)) {
+    showToast('Override retired.', 'success');
+    await _stuRpReloadTab(studentId);
+  } else if (res) {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
+}
+
+async function _stuRpReloadTab(studentId) {
+  delete _stuResidencePlansCache[studentId];
+  await _stuLoadResidencePlans(studentId);
+  const c = document.getElementById('stu-view-tab-content');
+  if (c) c.innerHTML = _renderStuViewTab('Residence Plan', window._stuViewData || { id: studentId });
+}
+
 function _dRow(label, value) {
   return `<div class="stu-detail-row">
     <span class="stu-detail-label">${_esc(label)}</span>

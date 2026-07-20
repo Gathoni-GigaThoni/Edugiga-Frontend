@@ -135,6 +135,7 @@ function showDashboard() {
               <li id="sidebar-trn-servicings"  onclick="loadView('transport-vehicle-servicings')">Vehicle Servicings</li>
               <li id="sidebar-trn-fueling"     onclick="loadView('transport-fueling-record')">Fueling Record</li>
               <li id="sidebar-trn-schedules"   onclick="loadView('transport-bus-schedules')">Bus Schedules</li>
+              <li id="sidebar-trn-schedules-upload" class="sidebar-sub-sub" onclick="loadView('transport-bus-schedules-upload')">Bus Schedules Bulk Upload</li>
               <li id="sidebar-trn-routes"      onclick="loadView('transport-routes')">Routes</li>
               <li class="dropdown">
                 ${flyoutGroupHeader('Reports', 'transport-reports-dropdown')}
@@ -799,6 +800,7 @@ const FORM_VIEWS = new Set([
   // Transport
   'transport-routes-add', 'transport-routes-edit',
   'transport-vehicles-add', 'transport-vehicles-edit',
+  'transport-bus-schedules-upload',
 ]);
 
 async function loadView(view) {
@@ -919,7 +921,10 @@ async function loadView(view) {
       loadTrnPlaceholderView(main, 'Fueling Record'); break;
     case 'transport-bus-schedules':
       setActiveSidebarItem('sidebar-trn-schedules'); openTransportDropdown();
-      loadTrnPlaceholderView(main, 'Bus Schedules'); break;
+      await loadTrnBusSchedulesView(main); break;
+    case 'transport-bus-schedules-upload':
+      setActiveSidebarItem('sidebar-trn-schedules-upload'); openTransportDropdown();
+      await loadTrnBusSchedulesUploadView(main); break;
     case 'transport-routes':
       setActiveSidebarItem('sidebar-trn-routes'); openTransportDropdown();
       await loadTransportRoutesView(main); break;

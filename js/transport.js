@@ -259,9 +259,9 @@ function _renderTrnRouteForm(container, route, routeCode, isEdit) {
         ? `<div id="trn-pricing-list" class="trn-stops-list"></div>
            <div style="display:flex;gap:8px;margin-top:8px;">
              <select id="trn-pricing-direction" class="fin-search-input" style="flex:1;">
-               <option value="two_way">Two-way</option>
-               <option value="one_way_morning">One-way (Morning)</option>
-               <option value="one_way_evening">One-way (Evening)</option>
+               <option value="TWO_WAY">Two-way</option>
+               <option value="ONE_WAY_MORNING">One-way (Morning)</option>
+               <option value="ONE_WAY_EVENING">One-way (Evening)</option>
              </select>
              <input type="number" id="trn-pricing-price" class="fin-search-input" style="flex:1;" min="0.01" step="0.01" placeholder="Price">
              <button type="button" class="trn-add-stop-btn" onclick="trnAddPricing('${r.id}')">+ Add</button>
@@ -449,7 +449,7 @@ async function submitTrnRouteForm(routeId) {
 // Route itself — this is the newer /routes/{id}/pricing/ sub-resource that
 // student registration's transport_pricing_id references (js/students.js).
 let _trnPricingData = [];
-const _TRN_DIRECTION_LABELS = { two_way: 'Two-way', one_way_morning: 'One-way (Morning)', one_way_evening: 'One-way (Evening)' };
+const _TRN_DIRECTION_LABELS = { TWO_WAY: 'Two-way', ONE_WAY_MORNING: 'One-way (Morning)', ONE_WAY_EVENING: 'One-way (Evening)' };
 
 async function _loadTrnRoutePricing(routeId) {
   const list = document.getElementById('trn-pricing-list');
@@ -1097,4 +1097,1031 @@ function exportTrnSprCSV() {
     }),
     'student-report-per-route.csv'
   );
+}
+
+// ==================== BUS SCHEDULES (§BB manifest layer) ====================
+// A per-day, per-timing manifest on top of the static transport rules —
+// StudentRoute/TransportPricing answer "who is supposed to ride"; this
+// answers "who is actually on Bus X this Tuesday morning". Nothing here is
+// a billing driver: daily-adding a rider never creates a fee charge (§1.3).
+
+const _BS_API = `${API_BASE}/bus-schedules`;
+let _bsFilters = { service_date: '', bus_id: '', timing: '', status: '' };
+let _bsRidersCache = {};     // schedule id -> rider[]
+let _bsGuardiansCache = {};  // student id -> ParentInfoRead[] (also shared with residence plans, §6)
+let _bsStudentsCache = null;
+let _bsContainer = null;
+let _bsActiveScheduleId = null; // guards a slow riders fetch from clobbering a newer selection
+
+function _bsEsc(v) {
+  return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// One gate for locked — suppresses Edit, Delete, rider add and rider remove (§8.1).
+function isLocked(manifest) { return !!manifest && manifest.status === 'locked'; }
+
+function _bsStatusPill(status) {
+  const map = {
+    draft:     `<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:0.78rem;font-weight:600;color:#666;background:#eee;">Draft</span>`,
+    published: `<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:0.78rem;font-weight:600;color:#fff;background:var(--navy-700,#1B3057);">Published</span>`,
+    locked:    `<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:0.78rem;font-weight:600;color:#7a6110;background:var(--gold-100,#fbe8b0);">&#128274; Locked</span>`,
+  };
+  return map[status] || map.draft;
+}
+
+function _trnRouteName(routeId) {
+  const r = (_trnRoutesData || []).find(x => String(x.id) === String(routeId));
+  return r ? (r.name || routeId) : routeId;
+}
+
+// ── List ─────────────────────────────────────────────────────────────────
+
+function _bsBuildUrl() {
+  const p = new URLSearchParams();
+  if (_bsFilters.service_date) p.set('service_date', _bsFilters.service_date);
+  if (_bsFilters.bus_id)       p.set('bus_id', _bsFilters.bus_id);
+  if (_bsFilters.timing)       p.set('timing', _bsFilters.timing);
+  if (_bsFilters.status)       p.set('status', _bsFilters.status);
+  const qs = p.toString();
+  return `${_BS_API}/${qs ? '?' + qs : ''}`;
+}
+
+async function loadTrnBusSchedulesView(container) {
+  _bsContainer = container;
+  if (!_bsFilters.service_date) _bsFilters.service_date = new Date().toISOString().split('T')[0];
+  await Promise.all([_fetchTrnBuses(), _fetchTrnRoutes()]);
+  await _bsRenderSplit();
+}
+
+async function _bsRenderSplit(preselectId) {
+  if (!_bsContainer) return;
+  await renderSplitView({
+    container: _bsContainer,
+    moduleKey: 'transport_management',
+    title: 'Bus Schedules',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Transport Management',view:'transport-bus-schedules'},
+      {label:'Bus Schedules'}
+    ],
+    apiUrl: _bsBuildUrl(),
+    preselectId,
+    col1Label: 'Manifest', col2Label: 'Status',
+    col1: s => `${_bsEsc(s.bus_plate || s.bus_id)} &middot; ${(s.timing||'').toUpperCase()}`,
+    col2: s => _bsStatusPill(s.status),
+    rowLabel: s => `${_bsEsc(s.bus_plate || s.bus_id)} &middot; ${(s.timing||'').toUpperCase()}`,
+    rowSub: s => `${s.service_date} &middot; ${(s.route_ids||[]).length} route${(s.route_ids||[]).length===1?'':'s'} &middot; ${s.rider_count ?? 0}/${s.max_capacity} riders`,
+    idKey: 'id',
+    detailFields: [
+      {label:'Service Date', key:'service_date'},
+      {label:'Timing',       key:'timing', fmt:v=>(v||'').toUpperCase()},
+      {label:'Bus',          key:'bus_plate', fmt:(v,item)=>_bsEsc(v || item.bus_id)},
+      {label:'Max Capacity', key:'max_capacity'},
+      {label:'Riders',       key:'rider_count', fmt:(v,item)=>`${v ?? 0}/${item.max_capacity}`},
+      {label:'Routes',       key:'route_ids', fmt: v => (v&&v.length) ? `<ol style="margin:0;padding-left:18px;">${v.map(rid=>`<li>${_bsEsc(_trnRouteName(rid))}</li>`).join('')}</ol>` : '&mdash;'},
+      {label:'Notes',        key:'notes', fmt:v=>v?_bsEsc(v):'&mdash;'},
+    ],
+    renderAdd: _bsRenderAddForm,
+    canEdit: item => !isLocked(item),
+    renderEdit: _bsRenderEditForm,
+    detailActions: _bsDetailActions,
+  });
+  _bsInjectFilterBar();
+}
+
+// Filter row + "Generate for date" — injected under the split-left header
+// since renderSplitView's shared config has no dedicated filter-bar slot.
+function _bsInjectFilterBar() {
+  const root = _bsContainer;
+  if (!root) return;
+  const header = root.querySelector('.split-left-header');
+  if (!header) return;
+  const busOptions = (_trnBusesData||[]).map(b =>
+    `<option value="${_bsEsc(b.id)}" ${_bsFilters.bus_id===b.id?'selected':''}>${_bsEsc(b.id)}</option>`).join('');
+  const bar = document.createElement('div');
+  bar.id = 'bs-filter-bar';
+  bar.style = 'padding:10px 14px;border-bottom:1px solid var(--grey-100,#eee);';
+  bar.innerHTML = `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+      <div>
+        <label class="trn-form-label" style="font-size:0.72rem;">Service Date</label>
+        <input type="date" id="bs-f-date" class="fin-search-input" style="padding:6px 8px;" value="${_bsFilters.service_date}" onchange="_bsFilterDateChange(this.value)">
+      </div>
+      <div>
+        <label class="trn-form-label" style="font-size:0.72rem;">Bus</label>
+        <select id="bs-f-bus" class="fin-search-input" style="padding:6px 8px;" onchange="_bsFilterBusChange(this.value)">
+          <option value="">All</option>${busOptions}
+        </select>
+      </div>
+      <div>
+        <label class="trn-form-label" style="font-size:0.72rem;">Timing</label>
+        <div style="display:flex;gap:4px;">
+          ${['', 'am', 'pm'].map(t => `<button type="button" class="${_bsFilters.timing===t?'fin-btn-teal':'fin-btn-outline'}" style="padding:5px 10px;font-size:0.78rem;" onclick="_bsFilterTimingChange('${t}')">${t===''?'All':t.toUpperCase()}</button>`).join('')}
+        </div>
+      </div>
+      <div>
+        <label class="trn-form-label" style="font-size:0.72rem;">Status</label>
+        <select id="bs-f-status" class="fin-search-input" style="padding:6px 8px;" onchange="_bsFilterStatusChange(this.value)">
+          <option value="" ${!_bsFilters.status?'selected':''}>All</option>
+          <option value="draft" ${_bsFilters.status==='draft'?'selected':''}>Draft</option>
+          <option value="published" ${_bsFilters.status==='published'?'selected':''}>Published</option>
+          <option value="locked" ${_bsFilters.status==='locked'?'selected':''}>Locked</option>
+        </select>
+      </div>
+      <button class="fin-btn-teal" style="margin-left:auto;padding:7px 14px;" onclick="_bsOpenGenerateModal()">Generate for date</button>
+    </div>`;
+  header.insertAdjacentElement('afterend', bar);
+}
+
+function _bsFilterDateChange(v)   { _bsFilters.service_date = v; _bsRenderSplit(); }
+function _bsFilterBusChange(v)    { _bsFilters.bus_id = v; _bsRenderSplit(); }
+function _bsFilterStatusChange(v) { _bsFilters.status = v; _bsRenderSplit(); }
+function _bsFilterTimingChange(v) { _bsFilters.timing = v; _bsRenderSplit(); }
+
+// ── Ordered route picker — shared by the Add and Edit forms ────────────────
+// Mirrors the Routes screen's stops drag-reorder builder (trnAddStop et al.)
+// but picks from existing routes instead of free-text destination names.
+
+let _bsRouteDragSrcIdx = null;
+
+function _bsRenderFormRoutesList(targetId) {
+  const list = document.getElementById(targetId);
+  if (!list) return;
+  const routes = window._bsFormRoutes || [];
+  list.innerHTML = routes.length ? routes.map((rid, i) => `
+    <div class="trn-stop-row" draggable="true" data-idx="${i}"
+         ondragstart="_bsRouteDragStart(event,${i})"
+         ondragover="_bsRouteDragOver(event)"
+         ondrop="_bsRouteDrop(event,${i},'${targetId}')"
+         ondragend="_bsRouteDragEnd(event)">
+      <span class="trn-stop-handle" title="Drag to reorder">&#9776;</span>
+      <span style="flex:1;padding:6px 8px;">${i+1}. ${_bsEsc(_trnRouteName(rid))}</span>
+      <button type="button" class="trn-stop-remove" onclick="_bsRemoveFormRoute(${i},'${targetId}')" title="Remove">&#x2715;</button>
+    </div>`).join('') : `<p style="color:#999;font-size:0.85rem;padding:6px 0;">No routes added yet.</p>`;
+}
+
+function _bsRouteDragStart(e, idx) {
+  _bsRouteDragSrcIdx = idx;
+  e.dataTransfer.effectAllowed = 'move';
+  e.currentTarget.classList.add('trn-stop-dragging');
+}
+function _bsRouteDragOver(e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }
+function _bsRouteDrop(e, targetIdx, targetId) {
+  e.preventDefault();
+  if (_bsRouteDragSrcIdx === null || _bsRouteDragSrcIdx === targetIdx) return;
+  const routes = window._bsFormRoutes || [];
+  const [moved] = routes.splice(_bsRouteDragSrcIdx, 1);
+  routes.splice(targetIdx, 0, moved);
+  window._bsFormRoutes = routes;
+  _bsRouteDragSrcIdx = null;
+  _bsRenderFormRoutesList(targetId);
+}
+function _bsRouteDragEnd(e) { e.currentTarget.classList.remove('trn-stop-dragging'); _bsRouteDragSrcIdx = null; }
+
+function _bsAddRouteToForm(targetId) {
+  const pickId = targetId === 'bs-edit-routes-list' ? 'bs-edit-route-pick' : 'bs-add-route-pick';
+  const pick = document.getElementById(pickId);
+  if (!pick || !pick.value) return;
+  window._bsFormRoutes = window._bsFormRoutes || [];
+  if (!window._bsFormRoutes.includes(pick.value)) window._bsFormRoutes.push(pick.value);
+  _bsRenderFormRoutesList(targetId);
+}
+function _bsRemoveFormRoute(idx, targetId) {
+  (window._bsFormRoutes || []).splice(idx, 1);
+  _bsRenderFormRoutesList(targetId);
+}
+
+// ── Create manifest (§2.3) ──────────────────────────────────────────────────
+
+function _bsRenderAddForm(el) {
+  window._bsFormRoutes = [];
+  window._bsCapacityDirty = false;
+  window._bsFormTiming = 'am';
+  const busOptions = (_trnBusesData||[]).map(b =>
+    `<option value="${_bsEsc(b.id)}" data-cap="${b.capacity||''}">${_bsEsc(b.id)}${b.name?' — '+_bsEsc(b.name):''}</option>`).join('');
+  const routeOptions = (_trnRoutesData||[]).map(r => `<option value="${_bsEsc(r.id)}">${_bsEsc(r.name||r.id)}</option>`).join('');
+  el.innerHTML = `
+    <div style="padding:20px;">
+      <h3 style="margin:0 0 16px;font-size:1.05rem;color:#2c3e50;">Create Manifest</h3>
+      <div class="trn-form-group">
+        <label class="trn-form-label">Bus <span style="color:#e74c3c">*</span></label>
+        <select id="bs-add-bus" class="fin-search-input trn-form-input" onchange="_bsAddBusChange()">
+          <option value="">Select a bus&#8230;</option>${busOptions}
+        </select>
+      </div>
+      <div class="trn-form-grid">
+        <div class="trn-form-group">
+          <label class="trn-form-label">Service Date <span style="color:#e74c3c">*</span></label>
+          <input type="date" id="bs-add-date" class="fin-search-input trn-form-input" value="${_bsFilters.service_date}">
+        </div>
+        <div class="trn-form-group">
+          <label class="trn-form-label">Timing <span style="color:#e74c3c">*</span></label>
+          <div style="display:flex;gap:6px;">
+            <button type="button" id="bs-add-timing-am" class="fin-btn-teal" onclick="_bsSetAddTiming('am')">AM</button>
+            <button type="button" id="bs-add-timing-pm" class="fin-btn-outline" onclick="_bsSetAddTiming('pm')">PM</button>
+          </div>
+        </div>
+      </div>
+      <div class="trn-form-group">
+        <label class="trn-form-label">Max Capacity <span style="color:#e74c3c">*</span></label>
+        <input type="number" id="bs-add-capacity" class="fin-search-input trn-form-input" min="1" step="1" oninput="window._bsCapacityDirty=true;">
+      </div>
+      <div class="trn-form-group">
+        <label class="trn-form-label">Routes <span style="color:#e74c3c">*</span></label>
+        <p class="trn-stops-hint">Add routes in pickup order. Drag to reorder.</p>
+        <div style="display:flex;gap:8px;margin-bottom:8px;">
+          <select id="bs-add-route-pick" class="fin-search-input" style="flex:1;">${routeOptions}</select>
+          <button type="button" class="trn-add-stop-btn" onclick="_bsAddRouteToForm('bs-add-routes-list')">+ Add Route</button>
+        </div>
+        <div id="bs-add-routes-list" class="trn-stops-list"></div>
+        <span class="stu-field-error" id="err-bs-add-routes"></span>
+      </div>
+      <div class="trn-form-group">
+        <label class="trn-form-label">Notes</label>
+        <textarea id="bs-add-notes" class="fin-search-input trn-form-input" rows="2"></textarea>
+      </div>
+      <div style="display:flex;gap:12px;margin-top:20px;">
+        <button class="fin-btn-teal" id="bs-add-submit-btn" onclick="_bsSubmitCreate()">Save</button>
+        <button class="fin-btn-cancel" onclick="_bsRenderSplit()">Cancel</button>
+      </div>
+    </div>`;
+  _bsRenderFormRoutesList('bs-add-routes-list');
+}
+
+function _bsAddBusChange() {
+  const sel = document.getElementById('bs-add-bus');
+  const capInput = document.getElementById('bs-add-capacity');
+  if (!sel || !capInput) return;
+  const opt = sel.selectedOptions[0];
+  const cap = opt ? opt.dataset.cap : '';
+  if (!window._bsCapacityDirty && cap) capInput.value = cap;
+}
+
+function _bsSetAddTiming(t) {
+  window._bsFormTiming = t;
+  const am = document.getElementById('bs-add-timing-am'), pm = document.getElementById('bs-add-timing-pm');
+  if (am) am.className = t === 'am' ? 'fin-btn-teal' : 'fin-btn-outline';
+  if (pm) pm.className = t === 'pm' ? 'fin-btn-teal' : 'fin-btn-outline';
+}
+
+async function _bsSubmitCreate() {
+  const busId = document.getElementById('bs-add-bus')?.value;
+  const date = document.getElementById('bs-add-date')?.value;
+  const capacity = document.getElementById('bs-add-capacity')?.value;
+  const notes = (document.getElementById('bs-add-notes')?.value || '').trim();
+  const routes = window._bsFormRoutes || [];
+  const errRoutes = document.getElementById('err-bs-add-routes');
+  if (errRoutes) errRoutes.textContent = '';
+
+  if (!busId) { showToast('Please select a bus.', 'error'); return; }
+  if (!date)  { showToast('Please select a service date.', 'error'); return; }
+  if (!routes.length) { if (errRoutes) errRoutes.textContent = 'At least one route is required.'; return; }
+
+  const payload = {
+    bus_id: busId,
+    service_date: date,
+    timing: window._bsFormTiming || 'am',
+    route_ids: routes,
+    notes: notes || null,
+  };
+  if (capacity) payload.max_capacity = parseInt(capacity, 10);
+
+  const btn = document.getElementById('bs-add-submit-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  const res = await apiFetch(`${_BS_API}/`, {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload),
+  });
+  if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+
+  if (res && res.ok) {
+    const created = await res.json();
+    showToast('Manifest created.', 'success');
+    _bsFilters.service_date = date;
+    await _bsRenderSplit(created.id);
+  } else if (res) {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
+}
+
+// ── Edit manifest (§2.5) — identity fields (Bus/Date/Timing) read-only ────
+
+function _bsRenderEditForm(item, el) {
+  window._bsFormRoutes = (item.route_ids || []).slice();
+  const routeOptions = (_trnRoutesData||[]).map(r => `<option value="${_bsEsc(r.id)}">${_bsEsc(r.name||r.id)}</option>`).join('');
+  el.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Edit Manifest</h2>
+        <div class="fin-breadcrumb">
+          Dashboard &rsaquo; Transport Management &rsaquo;
+          <a href="#" class="fin-bc-link" onclick="_bsRenderSplit(${item.id});return false;">Bus Schedules</a>
+          &rsaquo; Edit
+        </div>
+      </div>
+      <div class="trn-form-grid">
+        <div class="trn-form-group">
+          <label class="trn-form-label">Bus</label>
+          <input type="text" class="fin-search-input trn-form-input" value="${_bsEsc(item.bus_plate || item.bus_id)}" readonly style="background:#f5f5f5;color:#666;cursor:not-allowed;">
+        </div>
+        <div class="trn-form-group">
+          <label class="trn-form-label">Service Date</label>
+          <input type="text" class="fin-search-input trn-form-input" value="${_bsEsc(item.service_date)}" readonly style="background:#f5f5f5;color:#666;cursor:not-allowed;">
+        </div>
+        <div class="trn-form-group">
+          <label class="trn-form-label">Timing</label>
+          <input type="text" class="fin-search-input trn-form-input" value="${(item.timing||'').toUpperCase()}" readonly style="background:#f5f5f5;color:#666;cursor:not-allowed;">
+        </div>
+      </div>
+      <div class="trn-form-group">
+        <label class="trn-form-label">Max Capacity <span style="color:#e74c3c">*</span></label>
+        <input type="number" id="bs-edit-capacity" class="fin-search-input trn-form-input" min="1" step="1" value="${_bsEsc(item.max_capacity)}">
+        <span class="stu-field-error" id="err-bs-edit-capacity"></span>
+      </div>
+      <div class="trn-form-group">
+        <label class="trn-form-label">Routes <span style="color:#e74c3c">*</span></label>
+        <p class="trn-stops-hint">Add routes in pickup order. Drag to reorder.</p>
+        <div style="display:flex;gap:8px;margin-bottom:8px;">
+          <select id="bs-edit-route-pick" class="fin-search-input" style="flex:1;">${routeOptions}</select>
+          <button type="button" class="trn-add-stop-btn" onclick="_bsAddRouteToForm('bs-edit-routes-list')">+ Add Route</button>
+        </div>
+        <div id="bs-edit-routes-list" class="trn-stops-list"></div>
+        <span class="stu-field-error" id="err-bs-edit-routes"></span>
+      </div>
+      <div class="trn-form-group">
+        <label class="trn-form-label">Notes</label>
+        <textarea id="bs-edit-notes" class="fin-search-input trn-form-input" rows="2">${_bsEsc(item.notes||'')}</textarea>
+      </div>
+      <div style="display:flex;gap:12px;margin-top:24px;">
+        <button class="fin-btn-teal" id="bs-edit-submit-btn" onclick="_bsSubmitEdit(${item.id})">Update</button>
+        <button class="fin-btn-cancel" onclick="_bsRenderSplit(${item.id})">Cancel</button>
+      </div>
+    </div>`;
+  _bsRenderFormRoutesList('bs-edit-routes-list');
+}
+
+async function _bsSubmitEdit(id) {
+  const capacity = document.getElementById('bs-edit-capacity')?.value;
+  const notes = (document.getElementById('bs-edit-notes')?.value || '').trim();
+  const routes = window._bsFormRoutes || [];
+  const errCap = document.getElementById('err-bs-edit-capacity');
+  const errRoutes = document.getElementById('err-bs-edit-routes');
+  if (errCap) errCap.textContent = '';
+  if (errRoutes) errRoutes.textContent = '';
+
+  if (!routes.length) { if (errRoutes) errRoutes.textContent = 'At least one route is required.'; return; }
+
+  // Client-side capacity guard mirrors the server's 409 (§2.5) — checked
+  // against whatever rider count we currently have cached for this manifest.
+  const riders = _bsRidersCache[id] || [];
+  const capNum = parseInt(capacity, 10);
+  if (riders.length && capNum < riders.length) {
+    if (errCap) errCap.textContent = `Capacity cannot be set below the current rider count (${riders.length}).`;
+    return;
+  }
+
+  const payload = { max_capacity: capNum, notes: notes || null, route_ids: routes };
+  const btn = document.getElementById('bs-edit-submit-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  const res = await apiFetch(`${_BS_API}/${id}`, {
+    method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload),
+  });
+  if (btn) { btn.disabled = false; btn.textContent = 'Update'; }
+
+  if (res && res.ok) {
+    showToast('Manifest updated.', 'success');
+    await _bsRenderSplit(id);
+  } else if (res && res.status === 409) {
+    if (errCap) errCap.textContent = await parseApiError(res);
+    else showToast('Error: ' + await parseApiError(res), 'error');
+  } else if (res) {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
+}
+
+// ── Detail panel: capacity gauge, lifecycle actions, riders (§2.4/§3) ──────
+
+function _bsShowDetailMsg(text, kind) {
+  const el = document.getElementById('bs-detail-msg');
+  const isConfig = kind === 'config';
+  const html = `<div style="margin-top:10px;padding:10px 14px;border-radius:6px;border-left:3px solid ${isConfig?'var(--gold-500,#C9A227)':'var(--coral-500,#D94040)'};background:${isConfig?'var(--gold-100,#fbe8b0)':'var(--coral-100,#fde0de)'};color:${isConfig?'#7a6110':'var(--coral-600,#c0392b)'};font-size:0.85rem;">${_bsEsc(text)}</div>`;
+  if (el) el.innerHTML = html; else showToast(text, 'error');
+}
+
+function _bsDetailActions(item) {
+  window._bsPendingSchedule = item;
+  _bsActiveScheduleId = item.id;
+  const cachedRiders = _bsRidersCache[item.id];
+  const riderCount = cachedRiders ? cachedRiders.length : (item.rider_count ?? 0);
+  const pct = item.max_capacity ? Math.min(100, Math.round((riderCount / item.max_capacity) * 100)) : 0;
+  const gaugeColor = pct >= 100 ? 'var(--coral-500,#D94040)' : pct >= 80 ? 'var(--gold-500,#C9A227)' : 'var(--navy-700,#1B3057)';
+
+  let lifecycle = '';
+  if (item.status === 'draft') {
+    lifecycle += `<button class="fin-btn-teal" onclick="_bsPublish(${item.id})">Publish</button>`;
+  } else if (item.status === 'published') {
+    lifecycle += `<button class="fin-btn-teal" onclick="_bsLock(${item.id})">Lock</button>`;
+  }
+  if (!isLocked(item)) {
+    lifecycle += `<button class="fin-btn-cancel" onclick="_bsOpenDeleteModal(${item.id})">Delete</button>`;
+  } else {
+    lifecycle = `<div style="color:#888;font-size:0.85rem;">Locked — view only.</div>`;
+  }
+
+  const html = `
+    <div style="width:100%;">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+        <div style="flex:1;height:10px;border-radius:6px;background:#eee;overflow:hidden;">
+          <div style="height:100%;width:${pct}%;background:${gaugeColor};"></div>
+        </div>
+        <span style="font-size:0.85rem;font-weight:600;color:${gaugeColor};white-space:nowrap;">${riderCount}/${item.max_capacity}</span>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;">${lifecycle}</div>
+      <div id="bs-detail-msg" style="width:100%;"></div>
+      <div style="margin-top:18px;padding-top:14px;border-top:1px solid #eee;">
+        <div class="fin-section-label" style="margin-bottom:8px;">Riders</div>
+        <div id="bs-riders-wrap">Loading riders&#8230;</div>
+      </div>
+    </div>`;
+
+  _bsLoadAndRenderRiders(item.id);
+  return html;
+}
+
+async function _bsPublish(id) {
+  const res = await apiFetch(`${_BS_API}/${id}`, {
+    method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({status:'published'}),
+  });
+  if (res && res.ok) { showToast('Manifest published.', 'success'); await _bsRenderSplit(id); }
+  else if (res) _bsShowDetailMsg(await parseApiError(res), 'workflow');
+}
+async function _bsLock(id) {
+  const res = await apiFetch(`${_BS_API}/${id}`, {
+    method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({status:'locked'}),
+  });
+  if (res && res.ok) { showToast('Manifest locked.', 'success'); await _bsRenderSplit(id); }
+  else if (res) _bsShowDetailMsg(await parseApiError(res), 'workflow');
+}
+
+function _bsOpenDeleteModal(id) {
+  const wrap = document.createElement('div');
+  wrap.id = 'bs-delete-modal';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:white;border-radius:8px;padding:24px;width:400px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 14px;font-size:1.05rem;color:#2c3e50;">Delete Manifest</h3>
+      <p style="font-size:0.9rem;color:#444;">Delete this manifest and its riders? This cannot be undone.</p>
+      <div id="bs-delete-msg"></div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="document.getElementById('bs-delete-modal').remove()">Cancel</button>
+        <button class="fin-btn-teal" onclick="_bsDeleteManifest(${id})">Delete</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+
+async function _bsDeleteManifest(id) {
+  const res = await apiFetch(`${_BS_API}/${id}`, { method: 'DELETE' });
+  if (res && (res.ok || res.status === 204)) {
+    document.getElementById('bs-delete-modal')?.remove();
+    delete _bsRidersCache[id];
+    showToast('Manifest deleted.', 'success');
+    await _bsRenderSplit();
+  } else if (res) {
+    const text = await parseApiError(res);
+    const m = document.getElementById('bs-delete-msg');
+    if (m) m.innerHTML = `<p style="color:var(--coral-500,#D94040);font-size:0.85rem;margin-top:8px;">${_bsEsc(text)}</p>`;
+    else showToast('Error: ' + text, 'error');
+  }
+}
+
+// ── Riders table + daily-add (§3) ───────────────────────────────────────────
+
+async function _bsEnsureStudentsCache() {
+  if (_bsStudentsCache) return _bsStudentsCache;
+  const res = await apiFetch(`${API_BASE}/students/`);
+  _bsStudentsCache = (res && res.ok) ? await res.json() : [];
+  return _bsStudentsCache;
+}
+
+async function _bsLoadAndRenderRiders(scheduleId) {
+  const cached = _bsRidersCache[scheduleId];
+  const ridersPromise = cached
+    ? Promise.resolve(cached)
+    : apiFetch(`${_BS_API}/${scheduleId}/riders`).then(async res => (res && res.ok) ? await res.json() : []);
+  const [riders, students] = await Promise.all([ridersPromise, _bsEnsureStudentsCache()]);
+  _bsRidersCache[scheduleId] = riders;
+  if (_bsActiveScheduleId !== scheduleId) return; // operator moved on while this was in flight
+  const wrap = document.getElementById('bs-riders-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = _bsRenderRidersSection(scheduleId, riders);
+  _bsPopulateStudentDatalist(students);
+}
+
+function _bsResidencePill(r) {
+  if (!r.residence_source || r.residence_source === 'primary') {
+    return `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.76rem;font-weight:600;color:#666;background:#eee;">Primary</span>`;
+  }
+  const label = r.residence_source === 'parent_a' ? 'Parent A' : 'Parent B';
+  return `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.76rem;font-weight:600;color:#7a6110;background:var(--gold-100,#fbe8b0);">${label}</span>`;
+}
+function _bsSourcePill(source) {
+  const styleMap = {
+    standing:     'color:#fff;background:var(--navy-700,#1B3057);',
+    daily_add:    'color:#7a6110;background:var(--gold-100,#fbe8b0);',
+    excel_upload: 'color:#666;background:#eee;',
+  };
+  const style = styleMap[source] || styleMap.standing;
+  return `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.76rem;font-weight:600;${style}">${_bsEsc((source||'').replace('_',' '))}</span>`;
+}
+function _bsAddedTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  const today = new Date().toISOString().split('T')[0];
+  return iso.startsWith(today) ? d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : d.toLocaleDateString();
+}
+
+function _bsRenderRidersSection(scheduleId, riders) {
+  const item = window._bsPendingSchedule || {};
+  const locked = isLocked(item);
+  const rows = riders.length ? riders.map(r => `
+    <tr>
+      <td style="padding:6px 8px;">${_bsEsc(r.student_name)}<br><span style="color:#999;font-size:0.78rem;">${_bsEsc(r.student_code)}</span></td>
+      <td style="padding:6px 8px;">${_bsEsc(r.route_name || r.route_id || '—')}</td>
+      <td style="padding:6px 8px;">${_bsResidencePill(r)}${(r.residence_source && r.residence_source !== 'primary' && r.parent_name) ? `<br><span style="color:#999;font-size:0.78rem;">${_bsEsc(r.parent_name)}</span>` : ''}</td>
+      <td style="padding:6px 8px;">${_bsSourcePill(r.source)}</td>
+      <td style="padding:6px 8px;">${_bsAddedTime(r.added_at)}</td>
+      <td style="padding:6px 8px;">${_bsEsc(r.notes || '')}</td>
+      <td style="padding:6px 8px;">${locked ? '' : `<button class="trn-stop-remove" onclick="_bsOpenRemoveRiderModal(${scheduleId},${r.id})" title="Remove">&#x2715;</button>`}</td>
+    </tr>`).join('') : `<tr><td colspan="7" class="fin-empty">No riders yet.</td></tr>`;
+
+  return `
+    ${locked ? '' : _bsDailyAddFormHtml(scheduleId, riders.length, item.max_capacity)}
+    <div class="fin-table-wrap" style="margin-top:10px;">
+      <table class="fin-table">
+        <thead><tr>
+          <th>STUDENT</th><th>ROUTE</th><th>RESIDENCE</th><th>SOURCE</th><th>ADDED</th><th>NOTES</th><th></th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+function _bsDailyAddFormHtml(scheduleId, riderCount, maxCapacity) {
+  const item = window._bsPendingSchedule || {};
+  const routeOptions = (item.route_ids||[]).map(rid => `<option value="${_bsEsc(rid)}">${_bsEsc(_trnRouteName(rid))}</option>`).join('');
+  const atCapacity = maxCapacity != null && riderCount >= maxCapacity;
+  window._bsRiderResidence = 'primary';
+  return `
+    <div style="background:#fafafa;border:1px solid #eee;border-radius:6px;padding:12px;">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+        <div style="flex:1;min-width:180px;">
+          <label class="trn-form-label">Student</label>
+          <input type="text" id="bs-radd-student-search" class="fin-search-input" list="bs-radd-student-list" placeholder="Search student&#8230;" oninput="_bsResolveRiderStudent(this.value)">
+          <datalist id="bs-radd-student-list"></datalist>
+          <input type="hidden" id="bs-radd-student-id">
+        </div>
+        <div style="min-width:140px;">
+          <label class="trn-form-label">Route</label>
+          <select id="bs-radd-route" class="fin-search-input">${routeOptions}</select>
+        </div>
+        <div>
+          <label class="trn-form-label">Residence</label>
+          <div style="display:flex;gap:4px;">
+            <button type="button" id="bs-radd-res-primary" class="fin-btn-teal" onclick="_bsSetRiderResidence('primary')">Primary</button>
+            <button type="button" id="bs-radd-res-parent_a" class="fin-btn-outline" onclick="_bsSetRiderResidence('parent_a')">Parent A</button>
+            <button type="button" id="bs-radd-res-parent_b" class="fin-btn-outline" onclick="_bsSetRiderResidence('parent_b')">Parent B</button>
+          </div>
+        </div>
+      </div>
+      <div id="bs-radd-parent-wrap" style="display:none;margin-top:8px;max-width:260px;">
+        <label class="trn-form-label">Parent</label>
+        <select id="bs-radd-parent" class="fin-search-input"></select>
+      </div>
+      <div style="margin-top:8px;">
+        <input type="text" id="bs-radd-notes" class="fin-search-input" placeholder="Notes (optional)">
+      </div>
+      <p style="color:#888;font-size:0.78rem;margin:8px 0 0;">Recording a rider does not charge a fee. Daily-rate billing for ad-hoc riders is coming later.</p>
+      <div id="bs-radd-msg" style="margin-top:6px;"></div>
+      <div style="margin-top:10px;">
+        ${atCapacity
+          ? `<button class="fin-btn-teal" disabled style="opacity:0.5;cursor:not-allowed;">Manifest is at capacity (${maxCapacity})</button>`
+          : `<button class="fin-btn-teal" id="bs-radd-submit-btn" onclick="_bsSubmitDailyAdd(${scheduleId})">Add Rider</button>`}
+      </div>
+    </div>`;
+}
+
+function _bsPopulateStudentDatalist(students) {
+  const dl = document.getElementById('bs-radd-student-list');
+  if (!dl) return;
+  window._bsStudentLabelMap = {};
+  dl.innerHTML = (students||[]).map(s => {
+    const label = `${s.first_name||''} ${s.last_name||''} (${s.student_id||s.id})`.trim();
+    window._bsStudentLabelMap[label] = s.id;
+    return `<option value="${_bsEsc(label)}"></option>`;
+  }).join('');
+}
+
+function _bsResolveRiderStudent(val) {
+  const id = (window._bsStudentLabelMap||{})[val];
+  const hidden = document.getElementById('bs-radd-student-id');
+  if (hidden) hidden.value = id || '';
+  if (window._bsRiderResidence && window._bsRiderResidence !== 'primary') _bsLoadParentOptions();
+}
+
+function _bsSetRiderResidence(mode) {
+  window._bsRiderResidence = mode;
+  ['primary','parent_a','parent_b'].forEach(m => {
+    const btn = document.getElementById(`bs-radd-res-${m}`);
+    if (btn) btn.className = m === mode ? 'fin-btn-teal' : 'fin-btn-outline';
+  });
+  const wrap = document.getElementById('bs-radd-parent-wrap');
+  if (!wrap) return;
+  if (mode === 'primary') { wrap.style.display = 'none'; return; }
+  wrap.style.display = 'block';
+  _bsLoadParentOptions();
+}
+
+// Shared with the residence-plan popover (§6) — one fetch per student, cached
+// while the view is open (§8.4: two pickers, one source).
+async function _bsLoadParentOptions() {
+  const studentId = document.getElementById('bs-radd-student-id')?.value;
+  const sel = document.getElementById('bs-radd-parent');
+  if (!sel) return;
+  if (!studentId) { sel.innerHTML = '<option value="">Pick a student first</option>'; return; }
+  let guardians = _bsGuardiansCache[studentId];
+  if (!guardians) {
+    const res = await apiFetch(`${API_BASE}/students/${studentId}/guardians`);
+    guardians = (res && res.ok) ? await res.json() : [];
+    _bsGuardiansCache[studentId] = guardians;
+  }
+  sel.innerHTML = guardians.length
+    ? guardians.map(g => `<option value="${g.id}">${_bsEsc(g.full_name)}${g.relationship?' ('+_bsEsc(g.relationship)+')':''}</option>`).join('')
+    : '<option value="">No guardians on file</option>';
+}
+
+async function _bsSubmitDailyAdd(scheduleId) {
+  const msg = document.getElementById('bs-radd-msg');
+  if (msg) msg.innerHTML = '';
+  const studentId = document.getElementById('bs-radd-student-id')?.value;
+  const routeId = document.getElementById('bs-radd-route')?.value;
+  const notes = (document.getElementById('bs-radd-notes')?.value || '').trim();
+  const residence = window._bsRiderResidence || 'primary';
+  const parentId = document.getElementById('bs-radd-parent')?.value;
+
+  if (!studentId) { if (msg) msg.innerHTML = `<span style="color:var(--coral-500,#D94040);font-size:0.85rem;">Pick a student from the list.</span>`; return; }
+  if ((residence === 'parent_a' || residence === 'parent_b') && !parentId) {
+    if (msg) msg.innerHTML = `<span style="color:var(--coral-500,#D94040);font-size:0.85rem;">Pick a parent for this residence.</span>`;
+    return;
+  }
+  // Client-side capacity/duplicate checks are UX; the server 409s are the
+  // boundary (races happen when two operators edit one manifest) — §8.2.
+  const riders = _bsRidersCache[scheduleId] || [];
+  if (riders.some(r => String(r.student_id) === String(studentId))) {
+    if (msg) msg.innerHTML = `<span style="color:var(--coral-500,#D94040);font-size:0.85rem;">This student is already on this manifest.</span>`;
+    return;
+  }
+
+  const payload = { student_id: parseInt(studentId, 10), route_id: routeId || null, residence_source: residence, notes: notes || null };
+  if (residence !== 'primary') payload.parent_info_id = parseInt(parentId, 10);
+
+  const btn = document.getElementById('bs-radd-submit-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
+  const res = await apiFetch(`${_BS_API}/${scheduleId}/riders`, {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload),
+  });
+  if (btn) { btn.disabled = false; btn.textContent = 'Add Rider'; }
+
+  if (res && res.ok) {
+    delete _bsRidersCache[scheduleId];
+    if (window._bsPendingSchedule) window._bsPendingSchedule.rider_count = (window._bsPendingSchedule.rider_count||0) + 1;
+    showToast('Rider added.', 'success');
+    await _bsLoadAndRenderRiders(scheduleId);
+  } else if (res && res.status === 409) {
+    if (msg) msg.innerHTML = `<span style="color:var(--coral-500,#D94040);font-size:0.85rem;">${_bsEsc(await parseApiError(res))}</span>`;
+  } else if (res) {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
+}
+
+function _bsOpenRemoveRiderModal(scheduleId, riderId) {
+  const wrap = document.createElement('div');
+  wrap.id = 'bs-remove-rider-modal';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:white;border-radius:8px;padding:24px;width:400px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 14px;font-size:1.05rem;color:#2c3e50;">Remove Rider</h3>
+      <p style="font-size:0.9rem;color:#444;">Remove this rider from the manifest?</p>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="document.getElementById('bs-remove-rider-modal').remove()">Cancel</button>
+        <button class="fin-btn-teal" onclick="_bsRemoveRider(${scheduleId},${riderId})">Remove</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+
+async function _bsRemoveRider(scheduleId, riderId) {
+  const res = await apiFetch(`${_BS_API}/${scheduleId}/riders/${riderId}`, { method: 'DELETE' });
+  document.getElementById('bs-remove-rider-modal')?.remove();
+  if (res && (res.ok || res.status === 204)) {
+    delete _bsRidersCache[scheduleId];
+    if (window._bsPendingSchedule) window._bsPendingSchedule.rider_count = Math.max(0, (window._bsPendingSchedule.rider_count||1) - 1);
+    showToast('Rider removed.', 'success');
+    await _bsLoadAndRenderRiders(scheduleId);
+  } else if (res) {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
+}
+
+// ── Generate Standing (§4) — idempotent, safe to rerun ─────────────────────
+
+function _bsOpenGenerateModal() {
+  const today = new Date().toISOString().split('T')[0];
+  const wrap = document.createElement('div');
+  wrap.id = 'bs-generate-modal';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:white;border-radius:8px;padding:24px;width:400px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 14px;font-size:1.05rem;color:#2c3e50;">Generate Standing Manifests</h3>
+      <div class="trn-form-group">
+        <label class="trn-form-label">Service Date</label>
+        <input type="date" id="bs-gen-date" class="fin-search-input trn-form-input" value="${_bsFilters.service_date || today}">
+      </div>
+      <div id="bs-gen-msg"></div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="document.getElementById('bs-generate-modal').remove()">Cancel</button>
+        <button class="fin-btn-teal" id="bs-gen-submit-btn" onclick="_bsGenerateStanding()">Generate</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+
+async function _bsGenerateStanding() {
+  const date = document.getElementById('bs-gen-date')?.value;
+  const msg = document.getElementById('bs-gen-msg');
+  if (msg) msg.innerHTML = '';
+  if (!date) { if (msg) msg.innerHTML = `<p style="color:var(--coral-500,#D94040);font-size:0.85rem;">Service date is required.</p>`; return; }
+
+  const btn = document.getElementById('bs-gen-submit-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+  const res = await apiFetch(`${_BS_API}/generate-standing`, {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({service_date: date}),
+  });
+  if (btn) { btn.disabled = false; btn.textContent = 'Generate'; }
+
+  if (res && res.ok) {
+    document.getElementById('bs-generate-modal')?.remove();
+    showToast(`Standing manifests generated for ${date}.`, 'success');
+    _bsFilters.service_date = date;
+    await _bsRenderSplit();
+  } else if (res) {
+    if (msg) msg.innerHTML = `<p style="color:var(--coral-500,#D94040);font-size:0.85rem;">${_bsEsc(await parseApiError(res))}</p>`;
+  }
+}
+
+// ==================== BUS SCHEDULES BULK UPLOAD (§5) ====================
+// Third sibling of the Tendepay Import / Fund Loads upload wizards — same
+// step badges, review-table chrome, banner styles, dry-run→commit flow
+// (see _tpFlWiz in finance.js, mirrored deliberately). Neither upload
+// response is typed in openapi.json (both routes return a bare `schema: {}`)
+// so field reads below are defensive/best-guess — verify against a live
+// dry-run the first time this actually runs and adjust the `??`/`||`
+// fallbacks if the real field names differ.
+
+let _bsUpWiz = null;
+function _bsUpNewWizState() {
+  return { step: 1, file: null, filename: null, postable: [], errors: [], skipped: [] };
+}
+
+async function loadTrnBusSchedulesUploadView(container) {
+  _bsUpWiz = _bsUpNewWizState();
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Bus Schedules Bulk Upload</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Transport Management &rsaquo; Bus Schedules Bulk Upload</div>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:16px;">
+        <span class="fin-wizard-step-badge" id="bs-up-badge-1">1. Upload</span>
+        <span class="fin-wizard-step-badge" id="bs-up-badge-2">2. Review</span>
+        <span class="fin-wizard-step-badge" id="bs-up-badge-3">3. Commit</span>
+      </div>
+      <div id="bs-up-body"></div>
+    </div>`;
+  _bsUpRenderStep();
+}
+
+function _bsUpRenderBadges() {
+  [1, 2, 3].forEach(n => {
+    const el = document.getElementById(`bs-up-badge-${n}`);
+    if (!el) return;
+    el.style.cssText = n === _bsUpWiz.step
+      ? 'padding:6px 14px;border-radius:14px;background:var(--navy-700,#1B3057);color:#fff;font-weight:600;font-size:0.85rem;'
+      : 'padding:6px 14px;border-radius:14px;background:#eee;color:#888;font-size:0.85rem;';
+  });
+}
+
+function _bsUpRenderStep() {
+  _bsUpRenderBadges();
+  if (_bsUpWiz.step === 1) _bsUpRenderStep1();
+  else if (_bsUpWiz.step === 2) _bsUpRenderStep2();
+  else _bsUpRenderStep3();
+}
+
+// ── Step 1 — column hints + template (§5.1) ────────────────────────────────
+
+async function _bsUpRenderStep1() {
+  const body = document.getElementById('bs-up-body');
+  body.innerHTML = '<p class="sa-loading">Loading column contract&#8230;</p>';
+  let cols = { columns: [], notes: '' };
+  try {
+    const res = await apiFetch(`${_BS_API}/upload/expected-columns`);
+    if (res && res.ok) cols = await res.json();
+  } catch (_) {}
+  const colList = cols.columns || [...(cols.required_columns || []), ...(cols.optional_columns || [])];
+  const colRows = colList.map(c => `
+    <tr><td>${_bsEsc(c.header || '')}</td><td>${_bsEsc(c.description || '')}</td><td>${_bsEsc(c.example ?? '')}</td></tr>`).join('');
+  const notesHtml = cols.notes ? `
+    <div style="background:#eef3fb;border-radius:8px;padding:12px 16px;margin:12px 0;font-size:0.85rem;color:#2c3e50;white-space:pre-wrap;">${_bsEsc(cols.notes)}</div>` : '';
+  body.innerHTML = `
+    <div class="fin-form-wrap">
+      <div class="fin-section-label">Expected File Format</div>
+      <p style="font-size:0.82rem;color:#888;margin:4px 0 10px;">
+        Headers match case-insensitive and space/underscore-insensitive. Required: SERVICE DATE, TIMING, BUS PLATE, ROUTE ID, STUDENT ID.
+        PARENT NAME is required when RESIDENCE is PARENT_A or PARENT_B, matched case-insensitively against the student's guardian names.
+      </p>
+      <div class="fin-table-wrap"><table class="fin-table">
+        <thead><tr><th>Column</th><th>Description</th><th>Example</th></tr></thead>
+        <tbody>${colRows || '<tr><td colspan="3" class="fin-empty">Could not load the column contract.</td></tr>'}</tbody>
+      </table></div>
+      ${notesHtml}
+      <div style="margin-top:16px;display:flex;gap:10px;align-items:center;">
+        <button class="fin-btn-outline" onclick="_bsUpDownloadTemplate()">Download Template</button>
+        <input type="file" id="bs-up-file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="_bsUpUploadFile(this)">
+        <button class="fin-btn-teal" onclick="document.getElementById('bs-up-file').click()">Choose File &amp; Preview</button>
+        <span id="bs-up-status" style="color:#888;font-size:0.85rem;"></span>
+      </div>
+    </div>`;
+}
+
+async function _bsUpDownloadTemplate() {
+  const res = await apiFetch(`${_BS_API}/upload/template`);
+  if (res && res.ok) {
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'bus_schedules_upload_template.xlsx';
+    document.body.appendChild(a); a.click(); a.remove();
+  } else if (res) {
+    showToast('Could not download template: ' + await parseApiError(res), 'error');
+  }
+}
+
+async function _bsUpUploadFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const statusEl = document.getElementById('bs-up-status');
+  if (statusEl) statusEl.textContent = 'Uploading…';
+  const fd = new FormData();
+  fd.append('file', file);
+  // dry_run=true — zero side effects.
+  const res = await apiFetch(`${_BS_API}/upload?dry_run=true`, { method: 'POST', body: fd });
+  if (!res || !res.ok) {
+    if (statusEl) statusEl.textContent = '';
+    showToast('Preview failed: ' + (res ? await parseApiError(res) : 'network error'), 'error');
+    return;
+  }
+  const data = await res.json();
+  _bsUpWiz.file = file;
+  _bsUpWiz.filename = file.name;
+  _bsUpWiz.postable = data.postable || [];
+  _bsUpWiz.errors = data.errors || data.resolution_errors || [];
+  _bsUpWiz.skipped = data.skipped_rows || data.skipped || [];
+  _bsUpWiz.step = 2;
+  _bsUpRenderStep();
+}
+
+// ── Step 2 — dry-run preview (§5.2) ─────────────────────────────────────────
+
+function _bsUpRenderStep2() {
+  const body = document.getElementById('bs-up-body');
+  const rows = _bsUpWiz.postable.map((r, i) => {
+    const rowNum = r.row ?? r.row_number ?? (i + 1);
+    return `<tr>
+      <td>${_bsEsc(String(rowNum))}</td>
+      <td>${_bsEsc(r.service_date || '')}</td>
+      <td>${_bsEsc((r.timing || '').toString().toUpperCase())}</td>
+      <td>${_bsEsc(r.bus_plate || r.bus_id || '')}</td>
+      <td>${_bsEsc(r.route_name || r.route_id || '')}</td>
+      <td>${_bsEsc(r.student_name || r.student_id || '')}</td>
+      <td>${_bsEsc((r.residence || r.residence_source || 'PRIMARY').toString().toUpperCase())}</td>
+      <td>${_bsEsc(r.parent_name || '')}</td>
+      <td>${_bsEsc(r.notes || '')}</td>
+    </tr>`;
+  }).join('');
+
+  const skippedHtml = _bsUpWiz.skipped.length ? `
+    <details style="margin-top:14px;">
+      <summary style="cursor:pointer;font-weight:600;color:#2c3e50;">Skipped rows (${_bsUpWiz.skipped.length})</summary>
+      <div class="fin-table-wrap"><table class="fin-table">
+        <thead><tr><th>Row</th><th>Reason</th></tr></thead>
+        <tbody>${_bsUpWiz.skipped.map(r => `<tr><td>${_bsEsc(String(r.row ?? r.row_number ?? ''))}</td><td>${_bsEsc(r.reason || '')}</td></tr>`).join('')}</tbody>
+      </table></div>
+    </details>` : '';
+
+  // The workflow test confirms a bad bus plate surfaces as a per-row error
+  // (§5.2) — always render row-level errors, not just a global failure.
+  const errorsHtml = _bsUpWiz.errors.length ? `
+    <div style="background:var(--coral-100,#fde0de);color:var(--coral-600,#c0392b);padding:12px 16px;border-radius:8px;margin-top:14px;font-size:0.85rem;">
+      <strong>Rows that can't be posted:</strong>
+      <ul style="margin:8px 0 0 18px;">
+        ${_bsUpWiz.errors.map(e => `<li>${(e.row != null || e.row_number != null) ? `<strong>Row ${_bsEsc(String(e.row ?? e.row_number))}:</strong> ` : ''}${_bsEsc(e.reason || e.msg || JSON.stringify(e))}</li>`).join('')}
+      </ul>
+    </div>` : '';
+
+  const commitBlocked = _bsUpWiz.errors.length > 0;
+
+  body.innerHTML = `
+    <div class="fin-form-wrap">
+      <div class="fin-controls-row">
+        <div class="fin-controls-left">${_bsUpWiz.postable.length} postable row${_bsUpWiz.postable.length === 1 ? '' : 's'}</div>
+      </div>
+      <div class="fin-table-wrap"><table class="fin-table">
+        <thead><tr><th>Row</th><th>Service Date</th><th>Timing</th><th>Bus</th><th>Route</th><th>Student</th><th>Residence</th><th>Parent</th><th>Notes</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="9" class="fin-empty">No postable rows in this file.</td></tr>'}</tbody>
+      </table></div>
+      ${errorsHtml}
+      ${skippedHtml}
+      <div class="fin-form-actions">
+        <button class="fin-btn-cancel" onclick="_bsUpWiz.step=1;_bsUpRenderStep();">Back</button>
+        <button class="fin-btn-teal" ${commitBlocked ? 'disabled title="Resolve the errors above before committing."' : ''} onclick="_bsUpWiz.step=3;_bsUpRenderStep();">Continue</button>
+      </div>
+    </div>`;
+}
+
+// ── Step 3 — commit (§5.3) ──────────────────────────────────────────────────
+
+function _bsUpRenderStep3() {
+  const body = document.getElementById('bs-up-body');
+  body.innerHTML = `
+    <div class="fin-form-wrap">
+      <p style="font-size:0.9rem;color:#444;">Ready to post ${_bsUpWiz.postable.length} row${_bsUpWiz.postable.length === 1 ? '' : 's'}, creating new manifests where needed. This cannot be undone from here.</p>
+      <div class="fin-form-actions">
+        <button class="fin-btn-cancel" onclick="_bsUpWiz.step=2;_bsUpRenderStep();">Back</button>
+        <button class="fin-btn-teal" id="bs-up-commit-btn" onclick="_bsUpCommit()">Commit</button>
+      </div>
+      <div id="bs-up-commit-result" style="margin-top:14px;"></div>
+    </div>`;
+}
+
+async function _bsUpCommit() {
+  const btn = document.getElementById('bs-up-commit-btn');
+  const resultEl = document.getElementById('bs-up-commit-result');
+  if (btn) { btn.disabled = true; btn.textContent = 'Committing…'; }
+  const fd = new FormData();
+  fd.append('file', _bsUpWiz.file);
+  // dry_run=false (default) — re-submits the same File object from Step 1,
+  // not a stored batch id: nothing in this contract returns one to resume from.
+  const res = await apiFetch(`${_BS_API}/upload?dry_run=false`, { method: 'POST', body: fd });
+
+  if (res && res.ok) {
+    const data = await res.json();
+    const manifestsCreated = data.manifests_created ?? 0;
+    const ridersAdded = data.riders_added ?? (data.posted_count ?? _bsUpWiz.postable.length);
+    if (resultEl) resultEl.innerHTML = `
+      <div style="background:#dcf3e2;border-left:3px solid #1e7e34;padding:12px 16px;border-radius:8px;color:#1e7e34;font-size:0.85rem;">
+        Created ${manifestsCreated} manifest${manifestsCreated === 1 ? '' : 's'}, added ${ridersAdded} rider${ridersAdded === 1 ? '' : 's'}.
+        <a href="#" onclick="_bsUpGoToDate();return false;" style="color:#1e7e34;font-weight:600;text-decoration:underline;">View schedules</a>
+      </div>`;
+    showToast('Bus schedules uploaded.', 'success');
+    if (btn) btn.textContent = 'Committed';
+    return;
+  }
+
+  if (btn) { btn.disabled = false; btn.textContent = 'Commit'; }
+  if (!res) { showToast('Network error.', 'error'); return; }
+  const body = await res.json().catch(() => null);
+  const detail = body?.detail;
+
+  if (res.status === 400) {
+    const errs = (typeof detail === 'object' && Array.isArray(detail?.errors)) ? detail.errors : [];
+    const hint = (typeof detail === 'object' && detail?.hint) || '';
+    if (resultEl) resultEl.innerHTML = `
+      <div style="background:var(--coral-100,#fde0de);color:var(--coral-600,#c0392b);padding:12px 16px;border-radius:8px;font-size:0.85rem;">
+        <strong>Could not post — nothing has been posted.</strong>
+        ${errs.length ? `<ul style="margin:8px 0 0 18px;">${errs.map(e => `<li>${e.row != null ? `Row ${_bsEsc(String(e.row))}: ` : ''}${_bsEsc(e.reason || e.msg || JSON.stringify(e))}</li>`).join('')}</ul>` : `<div style="margin-top:6px;">${_bsEsc(typeof detail === 'string' ? detail : JSON.stringify(detail))}</div>`}
+        ${hint ? `<div style="margin-top:8px;font-style:italic;">${_bsEsc(hint)}</div>` : ''}
+      </div>`;
+  } else if (res.status === 409 || res.status === 413) {
+    if (resultEl) resultEl.innerHTML = `<div style="background:var(--coral-100,#fde0de);color:var(--coral-600,#c0392b);padding:12px 16px;border-radius:8px;font-size:0.85rem;">${_bsEsc(typeof detail === 'string' ? detail : (detail?.message || 'Could not commit this upload.'))}</div>`;
+  } else {
+    showToast('Error: ' + (typeof detail === 'string' ? detail : (detail ? JSON.stringify(detail) : `HTTP ${res.status}`)), 'error');
+  }
+}
+
+function _bsUpGoToDate() {
+  // Jump the Bus Schedules list to the uploaded rows' service date, if every
+  // postable row shared one date; otherwise just open the list unfiltered.
+  const dates = [...new Set(_bsUpWiz.postable.map(r => r.service_date).filter(Boolean))];
+  if (dates.length === 1) _bsFilters.service_date = dates[0];
+  loadView('transport-bus-schedules');
 }
