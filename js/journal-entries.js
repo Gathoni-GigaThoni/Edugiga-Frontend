@@ -93,7 +93,7 @@ function _jeRenderListPage(container) {
 }
 
 function _jeLineTotal(je) {
-  return (je.lines || []).filter(l => l.line_type === 'debit').reduce((s, l) => s + parseFloat(l.amount || 0), 0);
+  return parseFloat(je.total_amount || 0);
 }
 
 function _jeRenderTable() {
