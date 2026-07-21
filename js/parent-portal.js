@@ -408,7 +408,7 @@ async function ppRenderDashboard() {
   listEl.innerHTML = `
     <div class="pp-children-grid">
       ${children.map(c => `
-        <div class="pp-child-card" onclick="ppRenderFees(${JSON.stringify(c.student_id ?? c.id)}, ${JSON.stringify(ppChildName(c))})">
+        <div class="pp-child-card" data-student-id="${ppEsc(c.student_id ?? c.id)}" data-student-name="${ppEsc(ppChildName(c))}">
           <div class="pp-child-avatar">${ppEsc(ppChildName(c).charAt(0).toUpperCase())}</div>
           <p class="pp-child-name">${ppEsc(ppChildName(c))}</p>
           <p class="pp-child-meta">${ppEsc(ppChildMeta(c))}</p>
@@ -417,6 +417,13 @@ async function ppRenderDashboard() {
       `).join('')}
     </div>
   `;
+  // Delegated click (not inline onclick+JSON.stringify) — a child's name is a
+  // string, and JSON.stringify wraps strings in double quotes that prematurely
+  // terminate the double-quoted onclick attribute, silently breaking the click
+  // handler for every card (same bug class fixed in dashboard.js renderSplitView).
+  listEl.querySelectorAll('.pp-child-card').forEach(card => {
+    card.addEventListener('click', () => ppRenderFees(card.dataset.studentId, card.dataset.studentName));
+  });
 }
 
 // ==================== FEES ====================
