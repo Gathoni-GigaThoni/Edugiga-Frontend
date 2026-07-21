@@ -790,7 +790,7 @@ function _fmtAgeMonths(totalMonths) {
   return `${Math.floor(totalMonths / 12)}y ${totalMonths % 12}m`;
 }
 
-// Suggests a Level of Academics per the strict Acorn/Maple/Willow/Oak age
+// Suggests a Level of Academics per the strict Acorns/Willows/Maples/Oaks age
 // windows in ACADEMIC_LEVEL_RULES (config.js), based on age at Joining Date
 // (placement is about which class the student starts in, not their age
 // today) — falls back to today if no Joining Date has been entered yet.
@@ -827,7 +827,7 @@ function _suggestLevelFromAge(dobValue) {
   if (nextYearMonths > rule.maxMonths) {
     const nextRule = ACADEMIC_LEVEL_RULES[idx + 1];
     if (!nextRule) {
-      msg += ` Note: this student will be too old for Oak by next academic year (age will be ~${_fmtAgeMonths(nextYearMonths)}) — confirm progression plan.`;
+      msg += ` Note: this student will be too old for Oaks by next academic year (age will be ~${_fmtAgeMonths(nextYearMonths)}) — confirm progression plan.`;
     } else if (!(nextYearMonths >= nextRule.minMonths && nextYearMonths <= nextRule.maxMonths)) {
       msg += ` Note: by next academic year (age ~${_fmtAgeMonths(nextYearMonths)}) this student won't cleanly fit ${nextRule.label.split('(')[0]} either — please verify next year's placement.`;
     }

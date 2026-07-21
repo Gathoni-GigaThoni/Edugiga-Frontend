@@ -154,7 +154,8 @@ async function populateTermDropdown(selectId, selectedId = null) {
   } catch (_) {}
 }
 
-// Canonical "Level of Academics" placement rules, youngest to oldest.
+// Canonical "Level of Academics" placement rules, youngest to oldest:
+// Acorns (Playgroup) -> Willows (Foundation 1) -> Maples (Foundation 2) -> Oaks (Reception).
 // minMonths/maxMonths are the strict age-in-whole-months eligibility window
 // per school policy (ranges deliberately overlap ~5 months at each boundary
 // to allow borderline placement judgement). Used to (a) force the dropdown
@@ -162,10 +163,10 @@ async function populateTermDropdown(selectId, selectedId = null) {
 // backend record's own name/sort_order/description, and (b) drive the
 // age-based suggestion in students.js (_suggestLevelFromAge).
 const ACADEMIC_LEVEL_RULES = [
-  { key: 'acorn',  label: 'Acorn(Aged 2-3 Years)',  minMonths: 1 * 12 + 10, maxMonths: 3 * 12 + 3 },
-  { key: 'maple',  label: 'Maple(Aged 3-4 Years)',   minMonths: 2 * 12 + 10, maxMonths: 4 * 12 + 3 },
-  { key: 'willow', label: 'Willow(Aged 4-5 Years)',  minMonths: 3 * 12 + 10, maxMonths: 5 * 12 + 3 },
-  { key: 'oak',    label: 'Oak(Aged 5-6 Years)',     minMonths: 4 * 12 + 10, maxMonths: 6 * 12 + 3 },
+  { key: 'acorn',  label: '🌱 Acorns — Playgroup (Aged 2-3 Years)',    minMonths: 1 * 12 + 10, maxMonths: 3 * 12 + 3 },
+  { key: 'willow', label: '🌿 Willows — Foundation 1 (Aged 3-4 Years)', minMonths: 2 * 12 + 10, maxMonths: 4 * 12 + 3 },
+  { key: 'maple',  label: '🍁 Maples — Foundation 2 (Aged 4-5 Years)',  minMonths: 3 * 12 + 10, maxMonths: 5 * 12 + 3 },
+  { key: 'oak',    label: '🌳 Oaks — Reception (Aged 5-6 Years)',      minMonths: 4 * 12 + 10, maxMonths: 6 * 12 + 3 },
 ];
 
 // Fetch academic levels from the API and populate a <select> element.
@@ -184,14 +185,14 @@ async function populateAcademicLevelsDropdown(selectId, selectedId = null) {
     const placeholder = select.options[0]?.value === '' ? select.options[0].textContent : '-- Select Level --';
 
     // Match backend records to the canonical rules by name substring (case
-    // insensitive), then display Oak, Willow, Maple, Acorn in that fixed
+    // insensitive), then display Acorns, Willows, Maples, Oaks in that fixed
     // order with the fixed labels above — not whatever order/wording the
     // backend happens to return. Anything that doesn't match one of the
     // four known names falls back to its own raw name (kept, appended after,
     // so a future/unexpected level doesn't just vanish from the dropdown).
     const matchedIds = new Set();
     const ordered = [];
-    [...ACADEMIC_LEVEL_RULES].reverse().forEach(rule => {
+    ACADEMIC_LEVEL_RULES.forEach(rule => {
       const rec = levels.find(l => (l.name || '').toLowerCase().includes(rule.key));
       if (rec) {
         matchedIds.add(rec.id);
