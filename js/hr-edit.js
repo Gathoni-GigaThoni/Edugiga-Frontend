@@ -363,26 +363,30 @@ async function updateHrEditBasic() {
   if (nameEl) nameEl.textContent = (other_names + ' ' + surname).trim();
 
   const empId = hrEditRecord.id || hrEditRecord.employee_code;
+  const ec = hrEditRecord.emergency_contact || null;
   const payload = {
     employment_terms:  hrEditRecord.employment_terms,
     last_name:         hrEditRecord.last_name,
     first_name:        hrEditRecord.first_name,
     department_id:     hrEditRecord.department_id ? parseInt(hrEditRecord.department_id, 10) : null,
     email:             hrEditRecord.email,
-    phone_code:        hrEditRecord.phone_code,
-    phone:             hrEditRecord.phone,
+    phone_country_code: hrEditRecord.phone_code,
+    phone_number:      hrEditRecord.phone,
     birth_date:        hrEditRecord.birth_date,
     gender:            hrEditRecord.gender,
     joining_date:      hrEditRecord.joining_date,
-    probation_period:  hrEditRecord.probation_period,
+    probation_days:    hrEditRecord.probation_period ? parseInt(hrEditRecord.probation_period, 10) : null,
     address:           hrEditRecord.address,
     nationality:       hrEditRecord.nationality,
-    national_id:       hrEditRecord.national_id,
+    national_id_no:    hrEditRecord.national_id,
     is_director:       hrEditRecord.is_director,
-    emergency_contact: hrEditRecord.emergency_contact || null,
+    emergency_contact_name:         ec?.name || null,
+    emergency_contact_country_code: ec?.phone_code || null,
+    emergency_contact_number:       ec?.phone || null,
+    emergency_contact_relationship: ec?.relationship || null,
   };
 
-  const res = await apiFetch(`${API_BASE}/employees/${empId}/`, {
+  const res = await apiFetch(`${API_BASE}/hr/employees/${empId}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -468,7 +472,7 @@ async function updateHrEditMedical() {
   hrEditRecord.medical_info    = document.getElementById('hr-edit-medical-info')?.value || '';
 
   const empId = hrEditRecord.id || hrEditRecord.employee_code;
-  const res = await apiFetch(`${API_BASE}/employees/${empId}/`, {
+  const res = await apiFetch(`${API_BASE}/hr/employees/${empId}/medical`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -477,8 +481,11 @@ async function updateHrEditMedical() {
     }),
   });
   if (res && res.ok) {
+    // Only lift disability_type/medical_info — this endpoint's response is the
+    // medical sub-record (its own id/employee_id), not the employee, so a blind
+    // Object.assign would clobber hrEditRecord.id with the wrong row id.
     const updated = await res.json().catch(() => null);
-    if (updated) Object.assign(hrEditRecord, updated);
+    if (updated) { hrEditRecord.disability_type = updated.disability_type; hrEditRecord.medical_info = updated.medical_info; }
     showToast('Medical information updated successfully.', 'success');
     showHrEditSuccess('hr-edit-status-medical', 'Medical information updated successfully.');
   } else {
@@ -634,20 +641,26 @@ async function updateHrEditIdentity() {
   hrEditRecord.identity_docs = hrEditRecord.identity_docs || [];
 
   const empId = hrEditRecord.id || hrEditRecord.employee_code;
-  const res = await apiFetch(`${API_BASE}/employees/${empId}/`, {
+  const res = await apiFetch(`${API_BASE}/hr/employees/${empId}/identity`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      kra_pin:       hrEditRecord.kra_pin,
-      nssf_number:   hrEditRecord.nssf_number,
-      nhif_number:   hrEditRecord.nhif_number,
-      shif_number:   hrEditRecord.shif_number,
-      identity_docs: hrEditRecord.identity_docs,
+      kra_pin:     hrEditRecord.kra_pin,
+      nssf_number: hrEditRecord.nssf_number,
+      nhif_number: hrEditRecord.nhif_number,
+      shif_number: hrEditRecord.shif_number,
     }),
   });
   if (res && res.ok) {
+    // Same reasoning as updateHrEditMedical — this is the identity sub-record,
+    // not the employee, so only lift its own fields onto hrEditRecord.
     const updated = await res.json().catch(() => null);
-    if (updated) Object.assign(hrEditRecord, updated);
+    if (updated) {
+      hrEditRecord.kra_pin     = updated.kra_pin;
+      hrEditRecord.nssf_number = updated.nssf_number;
+      hrEditRecord.nhif_number = updated.nhif_number;
+      hrEditRecord.shif_number = updated.shif_number;
+    }
     showToast('Identity information updated successfully.', 'success');
     showHrEditSuccess('hr-edit-status-identity', 'Identity information updated successfully.');
   } else {

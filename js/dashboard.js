@@ -635,8 +635,7 @@ async function renderSplitView(cfg) {
     listEl.innerHTML = filtered.map(item => {
       const isSel = selectedItem && String(selectedItem[idKey]) === String(item[idKey]);
       return `
-        <div class="split-list-row${isSel ? ' active' : ''}"
-             data-id="${item[idKey]}" onclick="window._splitSelectItem(${JSON.stringify(item[idKey])})">
+        <div class="split-list-row${isSel ? ' active' : ''}" data-id="${item[idKey]}">
           <div class="split-col1">${col1Fn(item)}</div>
           <div class="split-col2">${col2Fn(item)}</div>
         </div>`;
@@ -708,6 +707,15 @@ async function renderSplitView(cfg) {
     renderList();
     renderRight();
   };
+  // Delegated click (not inline onclick+JSON.stringify) — string ids like a bus
+  // plate ("KAA 123A") break inline onclick, since JSON.stringify wraps them in
+  // double quotes that prematurely terminate the double-quoted onclick attribute.
+  // The listener is bound once to this container node, which renderList() only
+  // ever refills via innerHTML (never replaces), so it survives re-renders.
+  document.getElementById('split-list-items')?.addEventListener('click', e => {
+    const row = e.target.closest('.split-list-row');
+    if (row) window._splitSelectItem(row.dataset.id);
+  });
   window._splitEditItem = function() {
     if (!_canEditHere) return; // defense in depth — the Edit button is already hidden when this is false
     if (typeof cfg.canEdit === 'function' && !cfg.canEdit(selectedItem)) return; // ditto, per-item gate

@@ -151,15 +151,48 @@ function hrAddEmployee() {
   renderHrAddPage(document.getElementById('main-content'));
 }
 
-function hrEditEmployee(empKey) {
+// employeesData (from GET /hr/employees, the list endpoint) is EmployeeRead —
+// it has the flat emergency_contact_* fields but no medical/identity/education/
+// dependents data, that only comes back on the single-record GET (EmployeeReadFull).
+// So opening Edit re-fetches by id and maps the backend's field names onto the
+// internal shape the rest of hr-edit.js already reads/writes (phone_code/phone,
+// probation_period, national_id, nested emergency_contact, flat medical/identity fields).
+function _hrMapEditRecord(full, listRecord) {
+  const r = Object.assign({}, listRecord, full);
+  r.phone_code       = full.phone_country_code || '';
+  r.phone            = full.phone_number || '';
+  r.probation_period = full.probation_days ?? '';
+  r.national_id      = full.national_id_no || '';
+  r.emergency_contact = full.emergency_contact_name ? {
+    name:         full.emergency_contact_name,
+    phone_code:   full.emergency_contact_country_code || '',
+    phone:        full.emergency_contact_number || '',
+    relationship: full.emergency_contact_relationship || '',
+  } : null;
+  r.disability_type = full.medical?.disability_type || '';
+  r.medical_info     = full.medical?.medical_info || '';
+  r.kra_pin          = full.identity?.kra_pin || '';
+  r.nssf_number      = full.identity?.nssf_number || '';
+  r.nhif_number      = full.identity?.nhif_number || '';
+  r.shif_number      = full.identity?.shif_number || '';
+  r.identity_docs    = full.identity?.documents || [];
+  r.education        = full.education || [];
+  r.dependents       = full.dependents || [];
+  return r;
+}
+
+async function hrEditEmployee(empKey) {
   document.querySelectorAll('[id^="hr-dd-"]').forEach(d => d.style.display = 'none');
-  const record = employeesData.find(e =>
+  const listRecord = employeesData.find(e =>
     String(e.id) === String(empKey) || String(e.employee_code) === String(empKey)
   );
-  if (!record) { showPlaceholder(document.getElementById('main-content'), 'Employee not found'); return; }
-  hrEditRecord = record;
+  if (!listRecord) { showPlaceholder(document.getElementById('main-content'), 'Employee not found'); return; }
+  const res = await apiFetch(`${API_BASE}/hr/employees/${listRecord.id}`);
+  if (!res || !res.ok) { showToast('Could not load employee details.', 'error'); return; }
+  const full = await res.json();
+  hrEditRecord = _hrMapEditRecord(full, listRecord);
   hrEditActiveTab = 'basic';
-  renderHrEditPage(document.getElementById('main-content'), record);
+  renderHrEditPage(document.getElementById('main-content'), hrEditRecord);
 }
 
 // ---- Add Employee page ----

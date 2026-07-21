@@ -3234,7 +3234,7 @@ function _coaFormHtml(acct, opts = {}) {
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Account Type <span class="fin-required">*</span></label>
-        <select id="coa-f-type" class="fin-form-select" ${acct?'disabled title="Account type cannot be changed after creation"':''}>
+        <select id="coa-f-type" class="fin-form-select">
           <option value="">Please Select</option>
           ${['Asset','Liability','Equity','Income','Expense'].map(t=>`<option value="${t}" ${acct?.account_type===t?'selected':''}>${t}</option>`).join('')}
         </select>
@@ -3413,12 +3413,14 @@ async function submitCoaEdit(id, returnView) {
   const cfg  = document.getElementById('coa-f-cf-group').value;
   const ordering = document.getElementById('coa-f-ordering').value;
   const parentId = document.getElementById('coa-f-parent').value;
+  document.getElementById('coa-f-type-err').textContent = type ? '' : 'This field is required.';
   document.getElementById('coa-f-name-err').textContent = name ? '' : 'This field is required.';
   document.getElementById('coa-f-cfg-err').textContent  = '';
-  if (!name) return;
+  if (!name || !type) return;
   const payload = {
-    // account_type is fixed at creation — not part of AccountUpdate, intentionally omitted.
-    account_name: name, cash_flow_group: cfg || null,
+    // account_type: backend AccountUpdate doesn't accept this field yet (as of
+    // this writing) — sent anyway so this is ready the moment that lands.
+    account_name: name, account_type: type, cash_flow_group: cfg || null,
     payment_ordering:       ordering ? parseInt(ordering) : null,
     parent_id:              parentId ? parseInt(parentId) : null,
     is_student_fees_related: document.getElementById('coa-f-fees-related').checked,
