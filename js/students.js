@@ -4763,11 +4763,15 @@ async function loadStudentGuardianReportView(container) {
 }
 
 // GET /reports/student-guardians doesn't exist on the backend (confirmed 404).
-// The real resource is GET /students/guardians/ (ParentInfoRead[] — id, student_id
-// [int FK], full_name, email, phone, relationship, pickup_authorized, no student
-// name/admission number on the record itself), so it's joined here against
-// GET /students/ (StudentReadFull[]) by student_id === student.id to get the
-// admission number, student name, and class for display/filtering.
+// The real resource, GET /students/guardians/, is already a flattened report row
+// per guardian — confirmed live (2026-07-21) shape: { admission_number,
+// student_name, contact_name, relationship, phone, email, pickup_authorized,
+// sibling_admission_numbers } — no id/student_id on it at all (this is a report
+// row, not an editable entity), and student_name/admission_number are already
+// present, so no join is needed for those. Class isn't on the row at all though,
+// so it's still joined here against GET /students/ (StudentReadFull[]), matching
+// admission_number === student.student_id, purely to recover class_id/class_name
+// for the Class filter.
 async function _fetchStuGuaReport() {
   const [guaRes, stuRes, clsRes] = await Promise.all([
     apiFetch(`${API_BASE}/students/guardians/`),
@@ -4777,16 +4781,14 @@ async function _fetchStuGuaReport() {
   const guardians = (guaRes && guaRes.ok) ? _toArray(await guaRes.json()) : [];
   const students  = (stuRes && stuRes.ok) ? _toArray(await stuRes.json()) : [];
   _stuGuaClasses  = (clsRes && clsRes.ok) ? _toArray(await clsRes.json()) : [];
-  const stuById = new Map(students.map(s => [s.id, s]));
+  const stuByAdmissionNo = new Map(students.map(s => [s.student_id, s]));
 
   _stuGuaData = guardians.map(g => {
-    const s = stuById.get(g.student_id);
+    const s = stuByAdmissionNo.get(g.admission_number);
     return {
       ...g,
-      admission_no: s?.student_id || '',
-      student_name: s ? `${s.first_name||''} ${s.last_name||''}`.trim() : '',
-      class_id:     s?.class_id ?? s?.school_class_id ?? null,
-      class_name:   s?.school_class_name || '',
+      class_id:   s?.class_id ?? s?.school_class_id ?? null,
+      class_name: s?.school_class_name || '',
     };
   });
 
@@ -4869,9 +4871,9 @@ function _stuGuaFiltered() {
   if (_stuGuaSearch) {
     const q = _stuGuaSearch;
     d = d.filter(g =>
-      (g.admission_no||'').toLowerCase().includes(q) ||
+      (g.admission_number||'').toLowerCase().includes(q) ||
       (g.student_name||'').toLowerCase().includes(q) ||
-      (g.full_name||'').toLowerCase().includes(q)
+      (g.contact_name||'').toLowerCase().includes(q)
     );
   }
   return d;
@@ -4889,9 +4891,9 @@ function _renderStuGuaTable() {
 
   let rows = paged.length
     ? paged.map(g => `<tr>
-        <td>${_esc(g.admission_no||'')}</td>
+        <td>${_esc(g.admission_number||'')}</td>
         <td>${_esc(g.student_name||'')}</td>
-        <td>${_esc(g.full_name||'')}</td>
+        <td>${_esc(g.contact_name||'')}</td>
         <td>${_esc(_STU_GUA_RELATIONSHIP_LABEL[g.relationship]||g.relationship||'')}</td>
         <td>${_esc(g.phone||'')}</td>
         <td>${_esc(g.email||'')}</td>
@@ -4911,7 +4913,7 @@ function exportStuGuaReportCSV() {
   exportTableCSV(
     ['Student ID','Student Name','Guardian Name','Relationship','Phone','Email'],
     _stuGuaFiltered().map(g => [
-      g.admission_no||'', g.student_name||'', g.full_name||'',
+      g.admission_number||'', g.student_name||'', g.contact_name||'',
       _STU_GUA_RELATIONSHIP_LABEL[g.relationship]||g.relationship||'', g.phone||'', g.email||''
     ]),
     'student-guardian-report.csv'
