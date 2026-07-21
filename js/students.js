@@ -1548,10 +1548,10 @@ function _stuTabPrevEdu(d) {
 
 function _stuTabGuardian(d) {
   const allParents = d.parents || [];
-  const nonGuardian = allParents.filter(p => p.relationship !== 'guardian');
+  const nonGuardian = allParents.filter(p => p.relationship !== 'GUARDIAN');
   const p1 = nonGuardian[0] || {};
   const p2 = nonGuardian[1] || {};
-  const g  = allParents.find(p => p.relationship === 'guardian') || {};
+  const g  = allParents.find(p => p.relationship === 'GUARDIAN') || {};
   return `
     <div class="stu-form-grid">
       <!-- First Parent -->
@@ -1566,9 +1566,9 @@ function _stuTabGuardian(d) {
         <label>First Parent Relationship <span style="color:#e74c3c">*</span></label>
         <select id="se-p1-relationship" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
           <option value="">Please Select</option>
-          <option value="father"${p1.relationship==='father'?' selected':''}>Father</option>
-          <option value="mother"${p1.relationship==='mother'?' selected':''}>Mother</option>
-          <option value="guardian"${p1.relationship==='guardian'?' selected':''}>Guardian</option>
+          <option value="FATHER"${p1.relationship==='FATHER'?' selected':''}>Father</option>
+          <option value="MOTHER"${p1.relationship==='MOTHER'?' selected':''}>Mother</option>
+          <option value="GUARDIAN"${p1.relationship==='GUARDIAN'?' selected':''}>Guardian</option>
         </select>
         <span class="stu-field-error" id="err-se-p1-relationship"></span>
       </div>
@@ -1604,9 +1604,9 @@ function _stuTabGuardian(d) {
         <label>Second Parent Relationship</label>
         <select id="se-p2-relationship" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
           <option value="">Please Select</option>
-          <option value="father"${p2.relationship==='father'?' selected':''}>Father</option>
-          <option value="mother"${p2.relationship==='mother'?' selected':''}>Mother</option>
-          <option value="guardian"${p2.relationship==='guardian'?' selected':''}>Guardian</option>
+          <option value="FATHER"${p2.relationship==='FATHER'?' selected':''}>Father</option>
+          <option value="MOTHER"${p2.relationship==='MOTHER'?' selected':''}>Mother</option>
+          <option value="GUARDIAN"${p2.relationship==='GUARDIAN'?' selected':''}>Guardian</option>
         </select>
         <span class="stu-field-error" id="err-se-p2-relationship"></span>
       </div>
@@ -1901,8 +1901,8 @@ function _harvestStuGuardianTab() {
   // Preserve any `.id` already assigned by a prior guardian-endpoint POST — rebuilding
   // this array from scratch on every harvest would otherwise wipe it and cause a
   // duplicate POST (instead of the intended PATCH) on the next save.
-  const prevNonGuardian = (d.parents || []).filter(p => p.relationship !== 'guardian');
-  const prevGuardian     = (d.parents || []).find(p => p.relationship === 'guardian');
+  const prevNonGuardian = (d.parents || []).filter(p => p.relationship !== 'GUARDIAN');
+  const prevGuardian     = (d.parents || []).find(p => p.relationship === 'GUARDIAN');
 
   const parents = [];
   const p1 = _fv('se-p1-name').trim();
@@ -1913,7 +1913,7 @@ function _harvestStuGuardianTab() {
   // Backend has no separate "guardian" field on the student record — a non-parent
   // guardian is just another `parents` entry with relationship: 'guardian'.
   const gName = _fv('se-guardian-name').trim();
-  if (gName) parents.push({ id: prevGuardian?.id, full_name: gName, relationship: 'guardian', phone: _fv('se-guardian-phone'), email: _fv('se-guardian-email'), is_primary: false });
+  if (gName) parents.push({ id: prevGuardian?.id, full_name: gName, relationship: 'GUARDIAN', phone: _fv('se-guardian-phone'), email: _fv('se-guardian-email'), is_primary: false });
 
   d.parents = parents;
 }
@@ -2629,8 +2629,8 @@ function _renderStuViewTab(tabName, d) {
     </div>`;
   if (tabName === 'Guardian/Family') {
     const allParents  = d.parents || [];
-    const nonGuardian = allParents.filter(p => p.relationship !== 'guardian');
-    const guardian     = allParents.find(p => p.relationship === 'guardian');
+    const nonGuardian = allParents.filter(p => p.relationship !== 'GUARDIAN');
+    const guardian     = allParents.find(p => p.relationship === 'GUARDIAN');
     return `
     <div>
       ${nonGuardian.map((p, i) => `

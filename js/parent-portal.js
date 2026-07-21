@@ -301,6 +301,9 @@ function ppRenderSetNewPassword(resetToken) {
             <p class="login-success-msg" id="pp-new-pwd-success" hidden></p>
             <button type="submit" class="login-submit-btn" id="pp-new-pwd-submit">Set New Password</button>
           </form>
+          <p class="login-footer-note" style="margin-top:16px;">
+            Already set your password? <a href="#" onclick="window.history.replaceState({}, '', window.location.pathname); ppRenderLogin(); return false;">Back to login</a>
+          </p>
         </div>
       </div>
       <p class="login-footer-note">&copy; ${new Date().getFullYear()} Seven Oaks International School &middot; Parent portal</p>

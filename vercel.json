@@ -1,0 +1,5 @@
+{
+  "rewrites": [
+    { "source": "/parent-login", "destination": "/parent-portal.html" }
+  ]
+}
