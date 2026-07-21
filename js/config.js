@@ -169,6 +169,18 @@ const ACADEMIC_LEVEL_RULES = [
   { key: 'oak',    label: '🌳 Oaks — Reception (Aged 5-6 Years)',      minMonths: 4 * 12 + 10, maxMonths: 6 * 12 + 3 },
 ];
 
+// Canonical display name for an academic level, for every place in the app that
+// shows one outside the age-suggestion dropdown (other dropdowns, tables, detail
+// views) — matches ACADEMIC_LEVEL_RULES by substring against the raw stored name
+// (case insensitive) and returns the icon+plural+stage label; falls back to the
+// raw name for anything that isn't one of the four known levels. Accepts either
+// a level record ({name: ...}) or a raw name string directly.
+function academicLevelDisplayName(levelOrName) {
+  const raw = (typeof levelOrName === 'string' ? levelOrName : levelOrName?.name) || '';
+  const rule = ACADEMIC_LEVEL_RULES.find(r => raw.toLowerCase().includes(r.key));
+  return rule ? rule.label : raw;
+}
+
 // Fetch academic levels from the API and populate a <select> element.
 async function populateAcademicLevelsDropdown(selectId, selectedId = null) {
   const select = document.getElementById(selectId);

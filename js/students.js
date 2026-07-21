@@ -3616,7 +3616,7 @@ async function loadSportsHousesView(container) {
 function _shScopePlain(h) {
   if (h.level_id) {
     const lvl = (_shLevelsCache || []).find(l => String(l.id) === String(h.level_id));
-    return `Level: ${lvl ? lvl.name : `#${h.level_id}`}`;
+    return `Level: ${lvl ? academicLevelDisplayName(lvl) : `#${h.level_id}`}`;
   }
   if (h.class_id) {
     const cls = (_shClassesCache || []).find(c => String(c.id) === String(h.class_id));
@@ -3647,7 +3647,7 @@ function _shSplitForm(item, el) {
         <label>Level of Academics</label>
         <select id="sh-level" style="max-width:none;width:100%">
           <option value="">Please Select</option>
-          ${(_shLevelsCache||[]).map(l=>`<option value="${l.id}"${String(item?.level_id)===String(l.id)?' selected':''}>${_esc(l.name)}</option>`).join('')}
+          ${(_shLevelsCache||[]).map(l=>`<option value="${l.id}"${String(item?.level_id)===String(l.id)?' selected':''}>${_esc(academicLevelDisplayName(l))}</option>`).join('')}
         </select>
       </div>
       <div class="stu-form-group" id="sh-class-wrap" style="margin-bottom:16px;display:${scope==='class'?'block':'none'}">
@@ -3684,7 +3684,7 @@ async function _stuLoadShLookups() {
 function _shScopeLabel(h) {
   if (h.level_id) {
     const lvl = (_shLevelsCache || []).find(l => String(l.id) === String(h.level_id));
-    return `Level: ${_esc(lvl ? lvl.name : `#${h.level_id}`)}`;
+    return `Level: ${_esc(lvl ? academicLevelDisplayName(lvl) : `#${h.level_id}`)}`;
   }
   if (h.class_id) {
     const cls = (_shClassesCache || []).find(c => String(c.id) === String(h.class_id));
@@ -3753,7 +3753,7 @@ function showSportsHouseForm(id) {
           <label>Level of Academics</label>
           <select id="sh-level" class="fin-search-input" style="width:100%!important;">
             <option value="">Please Select</option>
-            ${(_shLevelsCache||[]).map(l => `<option value="${l.id}"${String(house?.level_id)===String(l.id)?' selected':''}>${_esc(l.name)}</option>`).join('')}
+            ${(_shLevelsCache||[]).map(l => `<option value="${l.id}"${String(house?.level_id)===String(l.id)?' selected':''}>${_esc(academicLevelDisplayName(l))}</option>`).join('')}
           </select>
         </div>
         <div class="stu-form-group" id="sh-class-wrap" style="margin-bottom:16px;display:${scope==='class'?'block':'none'};">
@@ -4939,7 +4939,7 @@ async function loadStudentClassesView(container) {
 
   const _lvlName = c => {
     const l = _clsLevels.find(l => String(l.id) === String(c.academic_level_id || c.academic_level));
-    return l ? l.name : (c.level || c.level_name || '—');
+    return l ? academicLevelDisplayName(l) : (c.level || c.level_name || '—');
   };
 
   await renderSplitView({
@@ -4978,7 +4978,7 @@ function _clsSplitForm(item, el) {
     `<option value="${y.id}"${String(item?.academic_year_id||item?.academic_year)===String(y.id)?' selected':''}>${_esc(y.title||y.name)}</option>`
   ).join('');
   const lvlOpts = _clsLevels.map(l =>
-    `<option value="${l.id}"${String(item?.academic_level_id||item?.academic_level)===String(l.id)?' selected':''}>${_esc(l.name)}</option>`
+    `<option value="${l.id}"${String(item?.academic_level_id||item?.academic_level)===String(l.id)?' selected':''}>${_esc(academicLevelDisplayName(l))}</option>`
   ).join('');
   el.innerHTML = `
     <div style="max-width:560px">
@@ -5053,7 +5053,7 @@ function _renderClsTable() {
         const ay  = _clsAcademicYears.find(y => String(y.id) === String(c.academic_year_id || c.academic_year));
         const lvl = _clsLevels.find(l => String(l.id) === String(c.academic_level_id || c.academic_level));
         const ayName  = ay  ? (ay.title || ay.name) : (c.academic_year_name  || '-');
-        const lvlName = lvl ? lvl.name : (c.level || c.level_name || '-');
+        const lvlName = lvl ? academicLevelDisplayName(lvl) : (c.level || c.level_name || '-');
         const statusColor = c.is_active !== false ? '#27ae60' : '#e74c3c';
         const statusText  = c.is_active !== false ? 'Active'  : 'Inactive';
         return `<tr>
@@ -5113,7 +5113,7 @@ async function showClassForm(id) {
 
   const currentLevelId = String(item?.academic_level_id || item?.academic_level || '');
   const levelOpts = _levels.map(l =>
-    `<option value="${_esc(String(l.id))}"${String(l.id) === currentLevelId ? ' selected' : ''}>${_esc(l.name)}</option>`
+    `<option value="${_esc(String(l.id))}"${String(l.id) === currentLevelId ? ' selected' : ''}>${_esc(academicLevelDisplayName(l))}</option>`
   ).join('');
 
   const main = document.getElementById('main-content');
@@ -5692,7 +5692,7 @@ function _renderCspClassTable(preCheckedIds = [], academicYearId = null) {
   const rows = filtered.map(c => {
     const checked  = preCheckedIds.map(String).includes(String(c.id)) ? 'checked' : '';
     const lvl      = _cspLevels.find(l => String(l.id) === String(c.academic_level_id || c.academic_level));
-    const lvlName  = lvl ? lvl.name : (c.level || c.level_name || '-');
+    const lvlName  = lvl ? academicLevelDisplayName(lvl) : (c.level || c.level_name || '-');
     return `<tr class="csp-class-row${checked ? ' csp-row-checked' : ''}">
       <td style="width:40px;"><input type="checkbox" class="csp-cls-cb" value="${c.id}"
           data-id="${c.id}" onchange="cspRowCheck(this)" ${checked}></td>

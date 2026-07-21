@@ -41,7 +41,7 @@ function _rcvTermName(id) {
 }
 function _rcvLevelName(id) {
   const l = (_rcvLevelsCache||[]).find(x => String(x.id) === String(id));
-  return l ? (l.name || '-') : (id ? `#${id}` : '—');
+  return l ? academicLevelDisplayName(l) : (id ? `#${id}` : '—');
 }
 function _rcvClassName(id) {
   const c = (_rcvClassesCache||[]).find(x => String(x.id) === String(id));
@@ -101,7 +101,7 @@ function _rcvFeeItemOptions(selectedId) {
   return (_rcvFeeItemsCache||[]).map(f => `<option value="${f.id}" ${String(f.id)===String(selectedId)?'selected':''}>${_finEsc(f.name||'')}</option>`).join('');
 }
 function _rcvLevelOptions(selectedId) {
-  return (_rcvLevelsCache||[]).map(l => `<option value="${l.id}" ${String(l.id)===String(selectedId)?'selected':''}>${_finEsc(l.name||'')}</option>`).join('');
+  return (_rcvLevelsCache||[]).map(l => `<option value="${l.id}" ${String(l.id)===String(selectedId)?'selected':''}>${_finEsc(academicLevelDisplayName(l))}</option>`).join('');
 }
 function _rcvClassOptions(selectedId, filteredClasses) {
   return (filteredClasses || _rcvClassesCache||[]).map(c => `<option value="${c.id}" ${String(c.id)===String(selectedId)?'selected':''}>${_finEsc(c.name||c.class_name||'')}</option>`).join('');
