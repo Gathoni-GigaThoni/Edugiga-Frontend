@@ -3066,7 +3066,7 @@ async function _coaLoadCache() {
 
 async function loadChartOfAccountsView(container) {
   await _coaLoadCache();
-  await renderSplitView({
+  const cfg = {
     container,
     moduleKey: 'finance.utilities',
     title: 'Chart of Accounts',
@@ -3076,10 +3076,10 @@ async function loadChartOfAccountsView(container) {
       {label:'Chart of Accounts'}
     ],
     apiUrl: `${API_BASE}/accounts/`,
-    searchFields: ['account_name','number','account_type'],
-    col1Label: 'Account Name', col2Label: 'Type',
+    searchFields: ['account_name','number','account_type','account_subtype'],
+    col1Label: 'Account Name', col2Label: 'Type / Subtype',
     col1: a => a.account_name || '—',
-    col2: a => a.account_type || '—',
+    col2: a => `${a.account_type||'—'} · ${a.account_subtype||'Unclassified'}`,
     rowLabel: a => a.account_name || '—',
     rowSub:   a => `#${a.number||''}`,
     idKey: 'id',
@@ -3087,6 +3087,7 @@ async function loadChartOfAccountsView(container) {
       {label:'Number',       key:'number'},
       {label:'Account Name', key:'account_name'},
       {label:'Account Type', key:'account_type'},
+      {label:'Account Subtype', key:'account_subtype', fmt:v=>v||'Unclassified'},
       {label:'Parent',       key:'parent_id', fmt:(_,a)=>_coaParentName(a)},
       {label:'Cash Flow Grp',key:'cash_flow_group', fmt:v=>v||'—'},
       {label:'Wallet Role',  key:'wallet_role', fmt:v=>_coaWalletRolePill(v)},
@@ -3095,7 +3096,36 @@ async function loadChartOfAccountsView(container) {
     renderAdd: _finAddPlaceholder('Account', "renderCoaAddPage(document.getElementById('main-content'))", 'Add a new Chart of Accounts entry.'),
     onAdd:  () => renderCoaAddPage(document.getElementById('main-content')),
     onEdit: item => openCoaEdit(item.id),
+    detailActions: _coaDetailActions,
     bulkUpload: { module: 'chart-of-accounts' },
+  };
+  await renderSplitView(cfg);
+  _coaInjectSubtypeFilter(cfg);
+}
+
+// No first-class filter-row concept in renderSplitView beyond free-text
+// search (confirmed: only cfg.searchFields exists) — this injects a Subtype
+// dropdown next to the search box and drives it by mutating cfg.apiUrl then
+// calling the reload hook renderSplitView already exposes on window, exactly
+// the same mechanism _splitReload itself uses. The injected node survives
+// _splitReload since that only repaints #split-list-items/#split-right-panel.
+function _coaInjectSubtypeFilter(cfg) {
+  const searchBox = document.querySelector('.split-left-search');
+  if (!searchBox) return;
+  const allSubtypes = Object.values(ACCOUNT_SUBTYPES_BY_TYPE).flat().sort();
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'padding:0 16px 10px;';
+  wrap.innerHTML = `
+    <select id="coa-subtype-filter" class="fin-form-select" style="width:100%;font-size:12px;">
+      <option value="">All Subtypes</option>
+      <option value="Unclassified">Unclassified</option>
+      ${allSubtypes.map(s=>`<option value="${s}">${s}</option>`).join('')}
+    </select>`;
+  searchBox.insertAdjacentElement('afterend', wrap);
+  document.getElementById('coa-subtype-filter').addEventListener('change', async e => {
+    const v = e.target.value;
+    cfg.apiUrl = v ? `${API_BASE}/accounts/?account_subtype=${encodeURIComponent(v)}` : `${API_BASE}/accounts/`;
+    await window._splitReload?.();
   });
 }
 
@@ -3209,6 +3239,51 @@ const _COA_CASH_FLOW_GROUPS = [
   'Cashflow from Financing Activities',
 ];
 
+// The 48-value account_subtype axis (2026-07-21 addendum §1.2). One copy —
+// the Add/Edit form picker, the Reclassify dialog, and the Fixed Asset
+// Register's Asset Class picker all read from this same constant so a
+// diverging local copy can never send a value the backend rejects.
+// Asset's first 7 entries are exactly the "non-current" subset (order
+// matters — Fixed Assets slices this array for its Asset Class dropdown).
+const ACCOUNT_SUBTYPES_BY_TYPE = {
+  Asset: [
+    'Land and Buildings', 'Motor Vehicles', 'Furniture and Fittings',
+    'Computers and Equipment', 'Kitchen Equipment', 'Playground Equipment',
+    'Intangible Asset',
+    'Cash and Bank', 'Student Receivable', 'Other Receivable', 'Inventory', 'Prepayment',
+  ],
+  Liability: [
+    'Long-term Loan',
+    'Trade Payable', 'Student Prepayment', 'Statutory Payable', 'Tax Payable',
+    'Salary Accrual', 'Accrued Expense', 'Short-term Loan',
+  ],
+  Equity: ['Shareholder Funds', 'Revaluation Reserve', 'Retained Surplus'],
+  Income: [
+    'Tuition Revenue', 'Transport Revenue', 'Meals Revenue', 'Extra-Curricular Revenue',
+    'Admission Revenue', 'Uniform Sales', 'Other Student Fees', 'Other Income',
+  ],
+  Expense: [
+    'Cost of Uniforms Sold', 'Teaching Staff Costs', 'Non-Teaching Staff Costs',
+    'Teaching Supplies', 'Meals and Kitchen', 'Transport Operating',
+    'Repairs and Maintenance', 'Utilities', 'Rent and Rates', 'Insurance and Licences',
+    'Staff Welfare', 'Depreciation', 'Marketing and Admissions', 'Professional Fees',
+    'Office Admin', 'Financial Charge', 'Tax Expense',
+  ],
+};
+// Non-current asset subtypes only — the seven that can hold Fixed Assets (§5).
+const ACCOUNT_SUBTYPES_NON_CURRENT_ASSET = ACCOUNT_SUBTYPES_BY_TYPE.Asset.slice(0, 7);
+
+function _coaSubtypeOptions(accountType, selected) {
+  const opts = ACCOUNT_SUBTYPES_BY_TYPE[accountType] || [];
+  const placeholder = accountType ? 'Please Select' : 'Select Account Type first';
+  return `<option value="">${placeholder}</option>` +
+    opts.map(s => `<option value="${s}" ${selected===s?'selected':''}>${s}</option>`).join('');
+}
+function _coaRepopulateSubtype(accountType) {
+  const sel = document.getElementById('coa-f-subtype');
+  if (sel) sel.innerHTML = _coaSubtypeOptions(accountType, null);
+}
+
 function _coaFormHtml(acct, opts = {}) {
   const parentId = acct?.parent_id;
   const parentOpts = chartOfAccountsData
@@ -3234,11 +3309,19 @@ function _coaFormHtml(acct, opts = {}) {
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Account Type <span class="fin-required">*</span></label>
-        <select id="coa-f-type" class="fin-form-select">
+        <select id="coa-f-type" class="fin-form-select" ${acct?'disabled':''} onchange="_coaRepopulateSubtype(this.value)">
           <option value="">Please Select</option>
           ${['Asset','Liability','Equity','Income','Expense'].map(t=>`<option value="${t}" ${acct?.account_type===t?'selected':''}>${t}</option>`).join('')}
         </select>
         <span class="fin-field-error" id="coa-f-type-err"></span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Subtype <span class="fin-required">*</span></label>
+        <select id="coa-f-subtype" class="fin-form-select" ${acct?'disabled':''}>
+          ${_coaSubtypeOptions(acct?.account_type, acct?.account_subtype)}
+        </select>
+        <span class="fin-field-error" id="coa-f-subtype-err"></span>
+        ${acct ? `<span style="font-size:12px;color:var(--grey-600)">Type and Subtype move only via Reclassify (Super_Admin) once an account exists.</span>` : ''}
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Payment Ordering</label>
@@ -3346,16 +3429,18 @@ async function submitCoaAdd(returnView) {
   const num  = (document.getElementById('coa-f-number').value||'').trim();
   const name = (document.getElementById('coa-f-name').value||'').trim();
   const type = document.getElementById('coa-f-type').value;
+  const subtype = document.getElementById('coa-f-subtype').value;
   const cfg  = document.getElementById('coa-f-cf-group').value;
   const ordering = document.getElementById('coa-f-ordering').value;
   const parentId = document.getElementById('coa-f-parent').value;
   let valid=true;
   document.getElementById('coa-f-name-err').textContent   = name ? '' : 'This field is required.'; if(!name) valid=false;
   document.getElementById('coa-f-type-err').textContent   = type ? '' : 'This field is required.'; if(!type) valid=false;
+  document.getElementById('coa-f-subtype-err').textContent = subtype ? '' : 'This field is required.'; if(!subtype) valid=false;
   document.getElementById('coa-f-cfg-err').textContent    = '';
   if (!valid) return;
   const payload = {
-    number: num || null, account_name: name, account_type: type,
+    number: num || null, account_name: name, account_type: type, account_subtype: subtype,
     payment_ordering:      ordering ? parseInt(ordering) : null,
     cash_flow_group:       cfg || null,
     parent_id:             parentId ? parseInt(parentId) : null,
@@ -3409,18 +3494,17 @@ async function submitCoaEdit(id, returnView) {
   const idx  = chartOfAccountsData.findIndex(a=>String(a.id)===String(id));
   if (idx===-1) return;
   const name = (document.getElementById('coa-f-name').value||'').trim();
-  const type = document.getElementById('coa-f-type').value;
   const cfg  = document.getElementById('coa-f-cf-group').value;
   const ordering = document.getElementById('coa-f-ordering').value;
   const parentId = document.getElementById('coa-f-parent').value;
-  document.getElementById('coa-f-type-err').textContent = type ? '' : 'This field is required.';
   document.getElementById('coa-f-name-err').textContent = name ? '' : 'This field is required.';
   document.getElementById('coa-f-cfg-err').textContent  = '';
-  if (!name || !type) return;
+  if (!name) return;
   const payload = {
-    // account_type: backend AccountUpdate doesn't accept this field yet (as of
-    // this writing) — sent anyway so this is ready the moment that lands.
-    account_name: name, account_type: type, cash_flow_group: cfg || null,
+    // account_type / account_subtype: AccountUpdate is silent on both per the
+    // 2026-07-21 addendum — those two axes move only via reclassification
+    // (submitCoaReclassify below), never via this form.
+    account_name: name, cash_flow_group: cfg || null,
     payment_ordering:       ordering ? parseInt(ordering) : null,
     parent_id:              parentId ? parseInt(parentId) : null,
     is_student_fees_related: document.getElementById('coa-f-fees-related').checked,
@@ -3434,6 +3518,142 @@ async function submitCoaEdit(id, returnView) {
   if (res && res.ok) { showToast('Account updated!', 'success'); }
   else if (res) { showToast('Error: ' + await parseApiError(res), 'error'); }
   loadView(returnView);
+}
+
+// ── Reclassification + Classification History (§2, Super_Admin only) ───────
+// No account detail *page* exists for CoA (split-view's own detail pane is
+// the closest thing) — these hang off cfg.detailActions the same way
+// Payables' Approve/Void buttons hang off its detail pane.
+function _coaDetailActions(item) {
+  if (!_isSuperAdmin()) return '';
+  return `
+    <button class="fin-btn-outline" onclick="_coaOpenReclassifyModal(${item.id})">Reclassify</button>
+    <button class="fin-btn-outline" onclick="_coaOpenHistoryModal(${item.id})">Classification History</button>`;
+}
+
+function _coaCloseModal(id) { document.getElementById(id)?.remove(); }
+
+function _coaReclassifyRepopulateSubtype(accountType) {
+  const sel = document.getElementById('coa-rc-subtype');
+  if (sel) sel.innerHTML = _coaSubtypeOptions(accountType, null);
+}
+
+function _coaReasonCounter() {
+  const val = document.getElementById('coa-rc-reason')?.value || '';
+  const el = document.getElementById('coa-rc-reason-count');
+  if (el) el.textContent = `${val.length}/500`;
+}
+
+function _coaOpenReclassifyModal(id) {
+  const acct = chartOfAccountsData.find(a => String(a.id) === String(id));
+  if (!acct) return;
+  const wrap = document.createElement('div');
+  wrap.id = 'coa-reclassify-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:var(--white);border-radius:8px;padding:24px;width:480px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 8px;font-size:1.05rem;color:var(--navy-700,#2c3e50);">Reclassify ${_finEsc(acct.account_name||'')}</h3>
+      <div style="padding:10px 12px;border-radius:6px;background:var(--gold-100,#FAF2D3);color:#6b5400;font-size:0.82rem;margin-bottom:14px;">
+        Reclassifying will re-render historical Balance Sheet and P&amp;L reports under the new classification. Prior classifications remain visible in the history panel below.
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Type <span class="fin-required">*</span></label>
+        <select id="coa-rc-type" class="fin-form-select" onchange="_coaReclassifyRepopulateSubtype(this.value)">
+          ${['Asset','Liability','Equity','Income','Expense'].map(t=>`<option value="${t}" ${acct.account_type===t?'selected':''}>${t}</option>`).join('')}
+        </select>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Subtype <span class="fin-required">*</span></label>
+        <select id="coa-rc-subtype" class="fin-form-select">${_coaSubtypeOptions(acct.account_type, acct.account_subtype)}</select>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Reason <span class="fin-required">*</span></label>
+        <textarea id="coa-rc-reason" class="fin-form-textarea" rows="3" maxlength="500" placeholder="3-500 characters..." oninput="_coaReasonCounter()"></textarea>
+        <span style="font-size:11px;color:var(--grey-400,#999);float:right;" id="coa-rc-reason-count">0/500</span>
+      </div>
+      <div id="coa-rc-error" style="display:none;padding:10px 12px;border-radius:6px;background:var(--coral-100);color:var(--coral-600);font-size:0.82rem;margin-top:6px;white-space:pre-wrap;"></div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="_coaCloseModal('coa-reclassify-modal-overlay')">Cancel</button>
+        <button class="fin-btn-teal" onclick="_coaSubmitReclassify(${id})">Confirm</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+
+async function _coaSubmitReclassify(id) {
+  const account_type    = document.getElementById('coa-rc-type').value;
+  const account_subtype = document.getElementById('coa-rc-subtype').value;
+  const reason = (document.getElementById('coa-rc-reason').value || '').trim();
+  const errEl = document.getElementById('coa-rc-error');
+  errEl.style.display = 'none';
+  if (reason.length < 3 || reason.length > 500) {
+    errEl.textContent = 'Reason must be 3-500 characters.';
+    errEl.style.display = 'block';
+    return;
+  }
+  const res = await apiFetch(`${API_BASE}/accounts/${id}/classification`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ account_type, account_subtype, reason })
+  });
+  if (res && res.ok) {
+    _coaCloseModal('coa-reclassify-modal-overlay');
+    showToast('Account reclassified.', 'success');
+    await _coaLoadCache();
+    await window._splitRefreshSelected?.();
+  } else if (res) {
+    // Surfaced inline, not as a toast — the 422 lists every valid subtype for
+    // the chosen type and a 3.5s toast isn't long enough to read that list.
+    errEl.textContent = await parseApiError(res);
+    errEl.style.display = 'block';
+  }
+}
+
+function _coaHistoryRow(h) {
+  return `<tr>
+    <td>${_finEsc(new Date(h.changed_at).toLocaleString())}</td>
+    <td>${_finEsc(h.old_type||'—')} / ${_finEsc(h.old_subtype||'Unclassified')}</td>
+    <td>${_finEsc(h.new_type||'—')} / ${_finEsc(h.new_subtype||'Unclassified')}</td>
+    <td>${_finEsc(h.reason||'')}</td>
+    <td>${h.changed_by != null ? `Staff #${_finEsc(String(h.changed_by))}` : '—'}</td>
+  </tr>`;
+}
+
+async function _coaOpenHistoryModal(id) {
+  const wrap = document.createElement('div');
+  wrap.id = 'coa-history-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:var(--white);border-radius:8px;padding:24px;width:640px;max-width:95vw;max-height:80vh;overflow:auto;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 14px;font-size:1.05rem;color:var(--navy-700,#2c3e50);">Classification History</h3>
+      <div id="coa-history-body"><p class="fin-empty">Loading&#8230;</p></div>
+      <div style="display:flex;justify-content:flex-end;margin-top:16px;">
+        <button class="fin-btn-cancel" onclick="_coaCloseModal('coa-history-modal-overlay')">Close</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  const res = await apiFetch(`${API_BASE}/accounts/${id}/classification-history`);
+  const body = document.getElementById('coa-history-body');
+  if (!body) return;
+  if (!res || !res.ok) { body.innerHTML = `<p class="fin-empty">Could not load history.</p>`; return; }
+  const rows = _toArray(await res.json());
+  if (!rows.length) { body.innerHTML = `<p class="fin-empty">No prior classifications.</p>`; return; }
+  body.innerHTML = `
+    <div class="fin-table-wrap"><table class="fin-table">
+      <thead><tr><th>WHEN</th><th>OLD</th><th>NEW</th><th>REASON</th><th>BY</th></tr></thead>
+      <tbody>${rows.map(_coaHistoryRow).join('')}</tbody>
+    </table></div>`;
+}
+
+// One-time diagnostic (§9.4) — not a runtime check, a manual post-deploy
+// sanity call. Confirms the backend's Unclassified backfill ran cleanly;
+// a non-empty result means a leaf account was missed and should go to
+// backend, not be papered over here.
+async function coaCheckUnclassifiedBacklog() {
+  const res = await apiFetch(`${API_BASE}/accounts/?account_subtype=Unclassified`);
+  if (!res || !res.ok) { showToast('Could not run the Unclassified check.', 'error'); return; }
+  const rows = _toArray(await res.json());
+  if (!rows.length) { showToast('No Unclassified accounts — backfill is clean.', 'success'); return; }
+  showToast(`${rows.length} account(s) still Unclassified: ${rows.map(a=>a.number||a.id).join(', ')}`, 'error');
 }
 
 // ==================== FEE ACCOUNTS ====================
