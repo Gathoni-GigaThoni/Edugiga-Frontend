@@ -98,6 +98,23 @@ const REPORT_DEFS = {
     columns: [['transaction_date','DATE'],['tendepay_reference','REFERENCE'],['wallet_name','WALLET'],['payee_name','PAYEE'],['amount','AMOUNT']] },
 };
 
+// School-shaped SoFP/SoCI views (2026-07-21 addendum §3, §4) — additive
+// alongside the classic flat render, never replacing it. Toggle choice is
+// remembered per report so switching reports doesn't reset the operator's
+// preference on this one.
+const _REP_SCHOOL_VIEW_TYPES = new Set(['bs', 'sfp']);
+function _repViewMode(routeKey) {
+  return localStorage.getItem(`repViewMode:${routeKey}`) || 'schools';
+}
+function _repSetViewMode(routeKey, mode) {
+  localStorage.setItem(`repViewMode:${routeKey}`, mode);
+  const classicBtn = document.getElementById('rep-view-btn-classic');
+  const schoolsBtn = document.getElementById('rep-view-btn-schools');
+  if (classicBtn) classicBtn.className = mode === 'classic' ? 'fin-btn-teal' : 'fin-btn-outline';
+  if (schoolsBtn) schoolsBtn.className = mode === 'schools' ? 'fin-btn-teal' : 'fin-btn-outline';
+  _repGenerate(routeKey);
+}
+
 async function loadFinanceReportView(container, routeKey) {
   const def = REPORT_DEFS[routeKey];
   if (!def) { container.innerHTML = '<p>Unknown report.</p>'; return; }
@@ -126,6 +143,15 @@ async function loadFinanceReportView(container, routeKey) {
     return '';
   }).join('');
 
+  const showViewToggle = def.layout === 'statement' && _REP_SCHOOL_VIEW_TYPES.has(def.statementType);
+  const viewMode = showViewToggle ? _repViewMode(routeKey) : null;
+  const viewToggleHtml = showViewToggle ? `
+    <div class="fin-filter-actions" style="margin-top:10px;">
+      <span style="font-size:12px;color:var(--grey-600);align-self:center;margin-right:4px;">View:</span>
+      <button id="rep-view-btn-classic" class="${viewMode==='classic'?'fin-btn-teal':'fin-btn-outline'}" onclick="_repSetViewMode('${routeKey}','classic')">Classic</button>
+      <button id="rep-view-btn-schools" class="${viewMode==='schools'?'fin-btn-teal':'fin-btn-outline'}" onclick="_repSetViewMode('${routeKey}','schools')">Schools View</button>
+    </div>` : '';
+
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -139,6 +165,7 @@ async function loadFinanceReportView(container, routeKey) {
           <button class="fin-btn-outline" onclick="_repExport('${routeKey}','excel')">Export Excel</button>
           <button class="fin-btn-outline" onclick="_repExport('${routeKey}','csv')">Export CSV</button>
         </div>
+        ${viewToggleHtml}
       </div>
       <div id="rep-output"></div>
     </div>`;
@@ -195,7 +222,11 @@ async function _repGenerate(routeKey) {
     const res = await apiFetch(_repUrl(def, params));
     if (!res || !res.ok) { showToast(`Could not generate report: ${res ? await parseApiError(res) : 'network error'}`, 'error'); document.getElementById('rep-output').innerHTML = ''; return; }
     const data = await res.json();
-    if (def.layout === 'statement') _repRenderStatement(def, data);
+    if (def.layout === 'statement' && _REP_SCHOOL_VIEW_TYPES.has(def.statementType) && _repViewMode(routeKey) === 'schools') {
+      if (def.statementType === 'bs') _repRenderSchoolSoFP(data);
+      else _repRenderSchoolSoCI(data);
+    }
+    else if (def.layout === 'statement') _repRenderStatement(def, data);
     else if (def.layout === 'notes') _repRenderNotes(def, data);
     else if (def.layout === 'ap-reconciliation') _repRenderApReconciliation(def, data);
     else if (routeKey === 'reports-supplier-statements') _repRenderSupplierStatement(def, data);
@@ -371,6 +402,129 @@ function _repRenderStatement(def, data) {
         </div>
       </div>`;
   }
+}
+
+// ── School-shaped SoFP / SoCI (2026-07-21 addendum §3, §4) ──────────────────
+// Additive alongside _repRenderStatement's 'bs'/'sfp' branches above, which
+// stay untouched — this only runs when the operator has the Schools View
+// toggle selected. Groups arrive pre-sorted and pre-subtotaled server-side;
+// rendered in server order, never resorted or re-summed client-side.
+function _repGroupLine(a) {
+  return `<div style="display:flex;justify-content:space-between;padding:2px 0 2px 32px;border-bottom:1px solid #f5f5f5;">
+    <span>${_finEsc(a.name || a.account_name || a.label || '')}</span><span>${_pvMoney(a.amount ?? a.balance ?? a.value)}</span>
+  </div>`;
+}
+function _repGroups(groups) {
+  return (groups || []).map(g => `
+    <div style="margin-bottom:6px;">
+      <div style="font-weight:600;color:#2c3e50;padding:4px 0 4px 16px;">
+        ${_finEsc(g.subtype)}
+        ${g.subtype === 'Unclassified' ? '<span style="font-size:0.75rem;font-weight:400;color:#8a6d00;"> — Awaiting classification, ask ops to run the backfill.</span>' : ''}
+      </div>
+      ${(g.accounts || []).map(_repGroupLine).join('')}
+      <div style="display:flex;justify-content:space-between;padding:4px 0 4px 16px;font-weight:600;border-top:1px solid #eee;">
+        <span>Subtotal</span><span>${_pvMoney(g.subtotal)}</span>
+      </div>
+    </div>`).join('');
+}
+function _repSchoolSectionTotal(label, value, navy) {
+  return `<div style="display:flex;justify-content:space-between;padding:6px 0;font-weight:700;${navy?'font-size:1.02rem;color:#2c3e50;border-top:2px solid #2c3e50;':'border-top:1px solid #ddd;'}margin-top:2px;">
+    <span>${_finEsc(label)}</span><span>${_pvMoney(value)}</span>
+  </div>`;
+}
+
+function _repRenderSchoolSoFP(data) {
+  const out = document.getElementById('rep-output');
+  if (!data || typeof data !== 'object') { out.innerHTML = '<p class="fin-empty">No data for the selected criteria.</p>'; return; }
+  const totalAssets = parseFloat(data.total_assets || 0);
+  const totalLiabEq = parseFloat(data.total_liabilities_equity || 0);
+  const diff = totalAssets - totalLiabEq;
+  const balanced = data.is_balanced === true;
+
+  out.innerHTML = `
+    <div class="fin-form-wrap" style="max-width:720px;">
+      <div style="font-weight:700;color:#2c3e50;margin:4px 0 6px;">Non-current assets</div>
+      ${_repGroups(data.non_current_asset_groups)}
+      ${_repSchoolSectionTotal('Total non-current assets', data.total_non_current_assets)}
+
+      <div style="font-weight:700;color:#2c3e50;margin:14px 0 6px;">Current assets</div>
+      ${_repGroups(data.current_asset_groups)}
+      ${_repSchoolSectionTotal('Total current assets', data.total_current_assets)}
+
+      <div style="font-weight:700;color:#2c3e50;margin:14px 0 6px;">Current liabilities</div>
+      ${_repGroups(data.current_liability_groups)}
+      ${_repSchoolSectionTotal('Total current liabilities', data.total_current_liabilities)}
+
+      ${_repSchoolSectionTotal('Net working capital', data.net_working_capital, true)}
+
+      <div style="font-weight:700;color:#2c3e50;margin:14px 0 6px;">Non-current liabilities</div>
+      ${_repGroups(data.non_current_liability_groups)}
+      ${_repSchoolSectionTotal('Total non-current liabilities', data.total_non_current_liabilities)}
+
+      ${_repSchoolSectionTotal('Net assets', data.total_net_assets, true)}
+
+      <div style="font-weight:700;color:#2c3e50;margin:14px 0 6px;">Financed by</div>
+      ${_repGroups(data.equity_groups)}
+      <div style="display:flex;justify-content:space-between;padding:4px 0 4px 16px;">
+        <span>Retained Surplus</span><span>${_pvMoney(data.retained_surplus)}</span>
+      </div>
+      ${_repSchoolSectionTotal('Total', data.total_liabilities_equity)}
+
+      <div class="balance-check" style="display:flex;justify-content:space-between;padding:10px 0;font-weight:700;margin-top:6px;color:${balanced ? '#1e7e34' : 'var(--coral-600)'};">
+        <span>${balanced ? 'Balances' : `Out of balance by ${_pvMoney(Math.abs(diff))}`}</span>
+      </div>
+    </div>`;
+}
+
+function _repRenderSchoolSoCI(data) {
+  const out = document.getElementById('rep-output');
+  if (!data || typeof data !== 'object') { out.innerHTML = '<p class="fin-empty">No data for the selected criteria.</p>'; return; }
+
+  const OPEX_SECTION_ORDER = ['Staff Costs', 'Direct Academic Costs', 'Premises Costs', 'Administrative Costs', 'Depreciation', 'Other Operating'];
+  const opexGroups = data.operating_expense_groups || [];
+  const bySection = new Map();
+  opexGroups.forEach(g => {
+    const section = g.section || 'Other Operating';
+    if (!bySection.has(section)) bySection.set(section, []);
+    bySection.get(section).push(g);
+  });
+  const opexHtml = OPEX_SECTION_ORDER
+    .filter(section => bySection.has(section))
+    .map(section => `
+      <div style="margin:10px 0 6px 16px;font-weight:600;color:#2c3e50;">${_finEsc(section)}</div>
+      ${_repGroups(bySection.get(section))}`)
+    .join('');
+
+  const grossSurplus = parseFloat(data.gross_surplus || 0);
+  const totalOpex = parseFloat(data.total_operating_expenses || 0);
+  const netSurplusFromOps = grossSurplus - totalOpex;
+
+  out.innerHTML = `
+    <div class="fin-form-wrap" style="max-width:720px;">
+      <div style="font-weight:700;color:#2c3e50;margin:4px 0 6px;">Revenue</div>
+      ${_repGroups(data.revenue_groups)}
+      ${_repSchoolSectionTotal('Total revenue', data.total_revenue, true)}
+
+      <div style="font-weight:700;color:#2c3e50;margin:14px 0 6px;">Cost of sales</div>
+      ${_repGroups(data.cost_of_sales_groups)}
+      ${_repSchoolSectionTotal('Total cost of sales', data.total_cost_of_sales)}
+      ${_repSchoolSectionTotal('Gross surplus', data.gross_surplus, true)}
+
+      <div style="font-weight:700;color:#2c3e50;margin:14px 0 6px;">Operating expenses</div>
+      ${opexHtml}
+      ${_repSchoolSectionTotal('Total operating expenses', data.total_operating_expenses)}
+      ${_repSchoolSectionTotal('Net surplus from operations', netSurplusFromOps, true)}
+
+      <div style="font-weight:700;color:#2c3e50;margin:14px 0 6px;">Financial charges</div>
+      ${_repGroups(data.financial_charge_groups)}
+      ${_repSchoolSectionTotal('Total financial charges', data.total_financial_charges)}
+      ${_repSchoolSectionTotal('Net surplus before tax', data.net_surplus_before_tax, true)}
+
+      <div style="font-weight:700;color:#2c3e50;margin:14px 0 6px;">Tax expense</div>
+      ${_repGroups(data.tax_expense_groups)}
+      ${_repSchoolSectionTotal('Total tax expense', data.total_tax_expense)}
+      ${_repSchoolSectionTotal('Net surplus after tax', data.net_surplus_after_tax, true)}
+    </div>`;
 }
 
 // ── AP Reconciliation (§2 of the 2026-07-16 addendum) ──────────────────────
