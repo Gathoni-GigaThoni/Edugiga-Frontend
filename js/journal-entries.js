@@ -46,10 +46,13 @@ async function loadJournalEntriesView(container) {
       {label:'Ledger',     key:'ledger_id', fmt:v=>_pvLedgerName(v)},
       {label:'Reference',  key:'reference', fmt:v=>v||'—'},
       {label:'Date',       key:'entry_date', fmt:v=>_pvDate(v)},
-      {label:'Amount',     key:'lines', fmt:v=>{
-        const total=(v||[]).filter(l=>l.line_type==='debit').reduce((s,l)=>s+parseFloat(l.amount||0),0);
-        return _pvMoney(total);
-      }},
+      // GET /journal-entries/ returns JournalEntryListItem — it carries a
+      // pre-computed total_amount Decimal string but no lines[] at all
+      // (lines[] only exists on the single-entry JournalEntryRead returned
+      // by GET /journal-entries/{id}, used by View Detail/Edit). Reading
+      // `key: 'lines'` here always summed an undefined array to 0 regardless
+      // of the real total the backend sent in the same response.
+      {label:'Amount',     key:'total_amount', fmt:v=>_pvMoney(v)},
       {label:'Status',     key:'status', fmt:v=>v||'—'},
     ],
     renderAdd: el => {
