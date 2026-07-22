@@ -96,6 +96,8 @@ const REPORT_DEFS = {
     columns: [['transaction_date','DATE'],['tendepay_reference','REFERENCE'],['wallet_name','WALLET'],['payee_name','PAYEE'],['amount','AMOUNT'],['tendepay_status','STATUS']] },
   'reports-unmatched-tendepay-transactions': { title: 'Unmatched Tendepay Transactions', api: 'unmatched-tendepay-transactions',
     columns: [['transaction_date','DATE'],['tendepay_reference','REFERENCE'],['wallet_name','WALLET'],['payee_name','PAYEE'],['amount','AMOUNT']] },
+
+  'reports-fixed-assets-schedule': { title: 'Fixed Assets Schedule', api: 'fixed-assets-schedule', dateMode: 'range', layout: 'fixed-assets-schedule' },
 };
 
 // School-shaped SoFP/SoCI views (2026-07-21 addendum §3, §4) — additive
@@ -228,6 +230,7 @@ async function _repGenerate(routeKey) {
     }
     else if (def.layout === 'statement') _repRenderStatement(def, data);
     else if (def.layout === 'notes') _repRenderNotes(def, data);
+    else if (def.layout === 'fixed-assets-schedule') _repRenderFixedAssetsSchedule(data);
     else if (def.layout === 'ap-reconciliation') _repRenderApReconciliation(def, data);
     else if (routeKey === 'reports-supplier-statements') _repRenderSupplierStatement(def, data);
     else _repRenderTable(def, data);
@@ -525,6 +528,63 @@ function _repRenderSchoolSoCI(data) {
       ${_repSchoolSectionTotal('Total tax expense', data.total_tax_expense)}
       ${_repSchoolSectionTotal('Net surplus after tax', data.net_surplus_after_tax, true)}
     </div>`;
+}
+
+// ── Fixed Assets Schedule (2026-07-21 addendum §6) ──────────────────────────
+// Response schema is unconfirmed beyond the prose ("cost_opening / additions
+// / disposals / closing" and "accum_dep_opening / charge / disposals /
+// closing") — read literally each group's fields are prefixed to avoid a key
+// collision (cost_additions vs accum_dep_charge etc.), so that's the primary
+// guess; a nested {cost:{...}, accum_dep:{...}} shape is tried as a fallback,
+// same defensive convention as the rest of this file.
+function _repFaSchedVal(obj, flatKey, group, field) {
+  if (obj[flatKey] !== undefined) return obj[flatKey];
+  if (obj[group] && obj[group][field] !== undefined) return obj[group][field];
+  return 0;
+}
+function _repRenderFixedAssetsSchedule(data) {
+  const out = document.getElementById('rep-output');
+  const cols = (data && (data.columns || data.rows)) || [];
+  if (!cols.length) { out.innerHTML = '<div class="fin-table-wrap"><table class="fin-table"><tbody><tr><td class="fin-empty">No data for the selected criteria.</td></tr></tbody></table></div>'; return; }
+
+  const rows = cols.map(c => `<tr>
+    <td>${_finEsc(c.asset_class || '')}</td>
+    <td>${_pvMoney(_repFaSchedVal(c,'cost_opening','cost','opening'))}</td>
+    <td>${_pvMoney(_repFaSchedVal(c,'cost_additions','cost','additions'))}</td>
+    <td>${_pvMoney(_repFaSchedVal(c,'cost_disposals','cost','disposals'))}</td>
+    <td>${_pvMoney(_repFaSchedVal(c,'cost_closing','cost','closing'))}</td>
+    <td>${_pvMoney(_repFaSchedVal(c,'accum_dep_opening','accum_dep','opening'))}</td>
+    <td>${_pvMoney(_repFaSchedVal(c,'accum_dep_charge','accum_dep','charge'))}</td>
+    <td>${_pvMoney(_repFaSchedVal(c,'accum_dep_disposals','accum_dep','disposals'))}</td>
+    <td>${_pvMoney(_repFaSchedVal(c,'accum_dep_closing','accum_dep','closing'))}</td>
+    <td>${_pvMoney(c.nbv_closing)}</td>
+  </tr>`).join('');
+
+  const t = data.totals || data;
+  const totalsRow = `<tr class="fin-tfoot-total">
+    <td><strong>TOTALS</strong></td>
+    <td><strong>${_pvMoney(_repFaSchedVal(t,'total_cost_opening','cost','opening'))}</strong></td>
+    <td><strong>${_pvMoney(_repFaSchedVal(t,'total_cost_additions','cost','additions'))}</strong></td>
+    <td><strong>${_pvMoney(_repFaSchedVal(t,'total_cost_disposals','cost','disposals'))}</strong></td>
+    <td><strong>${_pvMoney(_repFaSchedVal(t,'total_cost_closing','cost','closing'))}</strong></td>
+    <td><strong>${_pvMoney(_repFaSchedVal(t,'total_accum_dep_opening','accum_dep','opening'))}</strong></td>
+    <td><strong>${_pvMoney(_repFaSchedVal(t,'total_accum_dep_charge','accum_dep','charge'))}</strong></td>
+    <td><strong>${_pvMoney(_repFaSchedVal(t,'total_accum_dep_disposals','accum_dep','disposals'))}</strong></td>
+    <td><strong>${_pvMoney(_repFaSchedVal(t,'total_accum_dep_closing','accum_dep','closing'))}</strong></td>
+    <td><strong>${_pvMoney(data.total_nbv_closing)}</strong></td>
+  </tr>`;
+
+  out.innerHTML = `
+    <div class="fin-table-wrap"><table class="fin-table">
+      <thead><tr>
+        <th>ASSET CLASS</th>
+        <th>COST — OPENING</th><th>+ ADDITIONS</th><th>− DISPOSALS</th><th>= COST CLOSING</th>
+        <th>ACCUM DEP — OPENING</th><th>+ CHARGE</th><th>− DISPOSALS</th><th>= ACCUM DEP CLOSING</th>
+        <th>NBV CLOSING</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+      <tfoot>${totalsRow}</tfoot>
+    </table></div>`;
 }
 
 // ── AP Reconciliation (§2 of the 2026-07-16 addendum) ──────────────────────

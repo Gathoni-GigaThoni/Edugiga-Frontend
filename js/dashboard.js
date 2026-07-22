@@ -213,6 +213,7 @@ function showDashboard() {
               </li>
               <li onclick="loadView('cancellations')">Cancellations</li>
               <li onclick="loadView('journal-entries')">Journal Entries</li>
+              <li id="sidebar-fin-fixed-assets" onclick="loadView('finance-fixed-assets')">Fixed Assets</li>
               <li class="dropdown">
                 ${flyoutGroupHeader('Utilities', 'fin-utilities-dropdown')}
                 <ul id="fin-utilities-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('fin-utilities-dropdown')}">
@@ -266,6 +267,7 @@ function showDashboard() {
                   <li class="sidebar-sub-sub" onclick="loadView('reports-tendepay-wallet-balances')">Tendepay Wallet Balances</li>
                   <li class="sidebar-sub-sub" onclick="loadView('reports-tendepay-transaction-history')">Tendepay Transaction History</li>
                   <li class="sidebar-sub-sub" onclick="loadView('reports-unmatched-tendepay-transactions')">Unmatched Tendepay Transactions</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-fixed-assets-schedule')">Fixed Assets Schedule</li>
                 </ul>
               </li>
             </ul>
@@ -784,6 +786,7 @@ const FORM_VIEWS = new Set([
   'fin-fee-schedules', 'fin-fee-setup-class', 'fin-fee-assignments',
   'fin-fee-invoices', 'fin-invoice-detail', 'fin-invoice-generate', 'fin-invoices-bulk',
   'fin-chart-of-accounts', 'fin-fee-accounts', 'fin-fee-items', 'fin-general-items', 'finance-discount-setup',
+  'finance-fixed-assets',
   'finance-sibling-groups-add',
   // Payables
   'payables-payment-vouchers-add', 'payables-payment-vouchers-edit',
@@ -1151,6 +1154,9 @@ async function loadView(view) {
       await loadJournalEntryAddView(main); break;
     case 'journal-entries-edit':
       await loadJournalEntryEditView(main); break;
+    case 'finance-fixed-assets':
+      setActiveSidebarItem('sidebar-fin-fixed-assets');
+      await loadFixedAssetsView(main); break;
     case 'utilities': showPlaceholder(main, 'Utilities'); break;
     case 'finance-setup':
       setActiveSidebarItem('sidebar-fin-setup-main'); openFinSetupDropdown();
@@ -1194,6 +1200,7 @@ async function loadView(view) {
     case 'reports-tendepay-wallet-balances':
     case 'reports-tendepay-transaction-history':
     case 'reports-unmatched-tendepay-transactions':
+    case 'reports-fixed-assets-schedule':
       openFinReportsDropdown();
       await loadFinanceReportView(main, view); break;
     // Reports (hidden from sidebar but kept)
