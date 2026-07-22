@@ -480,7 +480,7 @@ function _repRenderSchoolSoFP(data) {
       <div style="display:flex;justify-content:space-between;padding:4px 0 4px 16px;">
         <span>Retained Surplus</span><span>${_pvMoney(data.retained_surplus)}</span>
       </div>
-      ${_repSchoolSectionTotal('Total', data.total_liabilities_equity)}
+      ${_repSchoolSectionTotal('Total Liabilities + Equity', data.total_liabilities_equity)}
 
       <div class="balance-check" style="display:flex;justify-content:space-between;padding:10px 0;font-weight:700;margin-top:6px;color:${balanced ? '#1e7e34' : 'var(--coral-600)'};">
         <span>${balanced ? 'Balances' : `Out of balance by ${_pvMoney(Math.abs(diff))}`}</span>
