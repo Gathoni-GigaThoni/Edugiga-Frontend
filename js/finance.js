@@ -3756,7 +3756,7 @@ async function loadFeeItemsView(container) {
     ],
     renderAdd: _finAddPlaceholder('Fee Item', "renderFeeItemAddPage(document.getElementById('main-content'))", 'Add a new billable fee item.'),
     onAdd:  () => renderFeeItemAddPage(document.getElementById('main-content')),
-    onEdit: item => renderFeeItemAddPage(document.getElementById('main-content'), item.id),
+    onEdit: item => renderFeeItemAddPage(document.getElementById('main-content'), item),
   });
 }
 
@@ -3841,8 +3841,7 @@ function changeFiPerPage(v){ _feeItemPerPage=parseInt(v); _feeItemPage=1; _rende
 function onFiSearch(v)     { _feeItemSearch=v.trim().toLowerCase(); _feeItemPage=1; _renderFeeItemsTable(); }
 function fiGoPage(p)       { _feeItemPage=p; _renderFeeItemsTable(); }
 
-async function renderFeeItemAddPage(container, editId) {
-  const item = editId ? feeItemsData.find(f => String(f.id) === String(editId)) : null;
+async function renderFeeItemAddPage(container, item) {
   if (!_fiAccountsCache.length) await _fiLoadLookups();
   container.innerHTML = `
     <div class="fin-page">
@@ -4060,7 +4059,7 @@ async function loadGeneralItemsView(container) {
     ],
     renderAdd: _finAddPlaceholder('General Item', "renderGeneralItemForm(document.getElementById('main-content'))", 'Add a new general (non-fee) item.'),
     onAdd:  () => renderGeneralItemForm(document.getElementById('main-content')),
-    onEdit: item => renderGeneralItemForm(document.getElementById('main-content'), item.id),
+    onEdit: item => renderGeneralItemForm(document.getElementById('main-content'), item),
   });
 }
 
@@ -4150,9 +4149,8 @@ function _giSubtypeOpts(selectedType, selectedVal) {
   return opts.map(s=>`<option value="${s}" ${selectedVal===s?'selected':''}>${s}</option>`).join('');
 }
 
-async function renderGeneralItemForm(container, editId) {
+async function renderGeneralItemForm(container, item) {
   await _giLoadAccounts();
-  const item = editId ? generalItemsData.find(g => String(g.id) === String(editId)) : null;
   const code = item ? (item.code||'') : _genGeneralItemCode();
   const acctOpts = _giAccountsCache.map(a=>
     `<option value="${a.id}" ${String(item?.account_id)===String(a.id)?'selected':''}>${_finEsc(a.number||'')} — ${_finEsc(a.account_name||'')}</option>`).join('');
