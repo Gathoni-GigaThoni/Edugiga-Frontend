@@ -362,7 +362,7 @@ function ppChildName(c) {
 }
 function ppChildMeta(c) {
   const parts = [];
-  if (c.admission_number) parts.push(`Adm. No. ${c.admission_number}`);
+  if (c.student_id) parts.push(`Adm. No. ${c.student_id}`);
   const cls = c.class_name || c.school_class_name || c.class || null;
   if (cls) parts.push(cls);
   return parts.join(' • ') || '—';
@@ -408,7 +408,7 @@ async function ppRenderDashboard() {
   listEl.innerHTML = `
     <div class="pp-children-grid">
       ${children.map(c => `
-        <div class="pp-child-card" data-student-id="${ppEsc(c.student_id ?? c.id)}" data-student-name="${ppEsc(ppChildName(c))}">
+        <div class="pp-child-card" data-student-id="${ppEsc(c.id)}" data-student-name="${ppEsc(ppChildName(c))}">
           <div class="pp-child-avatar">${ppEsc(ppChildName(c).charAt(0).toUpperCase())}</div>
           <p class="pp-child-name">${ppEsc(ppChildName(c))}</p>
           <p class="pp-child-meta">${ppEsc(ppChildMeta(c))}</p>

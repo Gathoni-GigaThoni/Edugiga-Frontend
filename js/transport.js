@@ -976,7 +976,7 @@ function exportTrnBoardingCSV() {
 
 // ==================== STUDENT REPORT PER ROUTE ====================
 
-let _trnSprData = [], _trnSprPage = 1, _trnSprPerPage = 10, _trnSprRoutes = [], _trnSprRouteId = '';
+let _trnSprData = [], _trnSprPage = 1, _trnSprPerPage = 10, _trnSprRoutes = [], _trnSprRouteId = '', _trnSprTermId = '';
 
 async function loadTrnStudentPerRouteReportView(container) {
   container.innerHTML = `
@@ -992,10 +992,15 @@ async function loadTrnStudentPerRouteReportView(container) {
           </select> entries &nbsp;|&nbsp; Total <span id="trn-spr-total">0</span> entries
         </div>
         <div class="fin-controls-right">
+          <label style="font-size:0.88rem;color:#555;margin-right:6px;">Term:</label>
+          <select id="trn-spr-term-sel" class="fin-search-input" onchange="onTrnSprTermChange(this.value)"
+                  style="min-width:160px;margin-right:10px;">
+            <option value="">— Select Term —</option>
+          </select>
           <label style="font-size:0.88rem;color:#555;margin-right:6px;">Route:</label>
           <select id="trn-spr-route-sel" class="fin-search-input" onchange="onTrnSprRouteChange(this.value)"
                   style="min-width:200px;">
-            <option value="">— Select Route —</option>
+            <option value="">— All Routes —</option>
           </select>
           <button class="fin-export-btn" title="Export CSV" onclick="exportTrnSprCSV()">&#128202;</button>
         </div>
@@ -1019,30 +1024,44 @@ async function loadTrnStudentPerRouteReportView(container) {
       sel.appendChild(opt);
     });
   }
+  await populateTermDropdown('trn-spr-term-sel');
 
   _trnSprData = [];
   _trnSprPage = 1;
   _renderTrnSprTable();
 }
 
-async function onTrnSprRouteChange(routeId) {
-  _trnSprRouteId = routeId;
-  if (!routeId) { _trnSprData = []; _trnSprPage = 1; _renderTrnSprTable(); return; }
+// term_id is a required query param on GET /student-routes/report (confirmed
+// live via openapi.json) — omitting it is what caused the 422. route_id is
+// optional and filters within the term; response rows are StudentRouteReportRow
+// (student_id, student_name, student_code, route_id, route_name, direction,
+// use_daily_rate, charge_amount) — confirmed live, no class/journey_type/
+// time_of_day fields exist on it at all.
+async function _trnSprFetchReport() {
+  if (!_trnSprTermId) { _trnSprData = []; _trnSprPage = 1; _renderTrnSprTable(); return; }
   renderSkeletonRows('trn-spr-table', 5);
-  // Contract only documents the path GET /api/student-routes/report with no
-  // query-param/response schema; route_id is a best-effort guess matching this
-  // report's existing per-route filtering — confirm against the backend if it
-  // doesn't return the expected rows.
-  const res = await apiFetch(`${API_BASE}/student-routes/report?route_id=${routeId}`);
+  const params = new URLSearchParams({ term_id: _trnSprTermId });
+  if (_trnSprRouteId) params.set('route_id', _trnSprRouteId);
+  const res = await apiFetch(`${API_BASE}/student-routes/report?${params.toString()}`);
   if (res && res.ok) {
     const raw = await res.json();
     _trnSprData = Array.isArray(raw) ? raw : (raw.data || raw.results || []);
   } else {
     _trnSprData = [];
-    console.warn('[EduGiga] Student per Route Report: GET /student-routes/report may not behave as expected.');
+    if (res) showToast('Error: ' + await parseApiError(res), 'error');
   }
   _trnSprPage = 1;
   _renderTrnSprTable();
+}
+
+async function onTrnSprTermChange(termId) {
+  _trnSprTermId = termId;
+  await _trnSprFetchReport();
+}
+
+async function onTrnSprRouteChange(routeId) {
+  _trnSprRouteId = routeId;
+  await _trnSprFetchReport();
 }
 
 function _renderTrnSprTable() {
@@ -1055,26 +1074,22 @@ function _renderTrnSprTable() {
   const _e = v => String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
   const rows = paged.length
-    ? paged.map(s => {
-        const sel = s.transport_selection || {};
-        const jt  = sel.journey_type === 'two_way' ? 'Two-way' : sel.journey_type === 'one_way' ? 'One-way' : (s.journey_type || '—');
-        const tod = sel.time_of_day ? (sel.time_of_day === 'morning' ? 'Morning' : 'Evening') : (s.time_of_day || '—');
-        return `<tr>
-          <td>${_e(s.student_id || s.admission_no || '')}</td>
-          <td>${_e(`${s.first_name||''} ${s.last_name||''}`.trim() || s.full_name || '')}</td>
-          <td>${_e(s.class_name || s.level_of_academics || '—')}</td>
-          <td>${_e(jt)}</td>
-          <td>${_e(tod)}</td>
-        </tr>`;
-      }).join('')
-    : `<tr><td colspan="5" class="fin-empty">${_trnSprRouteId ? 'No students found for this route.' : 'Select a route to view students.'}</td></tr>`;
+    ? paged.map(s => `<tr>
+          <td>${_e(s.student_code || '')}</td>
+          <td>${_e(s.student_name || '')}</td>
+          <td>${_e(s.route_name || '')}</td>
+          <td>${_e(_TRN_DIRECTION_LABELS[s.direction] || s.direction || '—')}</td>
+          <td>${_e(s.use_daily_rate ? 'Daily' : 'Termly')}</td>
+          <td>KES ${_e(parseFloat(s.charge_amount || 0).toLocaleString('en-KE',{minimumFractionDigits:2}))}</td>
+        </tr>`).join('')
+    : `<tr><td colspan="6" class="fin-empty">${_trnSprTermId ? 'No students found.' : 'Select a term to view students.'}</td></tr>`;
 
   const tbl = document.getElementById('trn-spr-table');
   if (tbl) tbl.innerHTML = `
     <div class="fin-table-wrap">
       <table class="fin-table">
         <thead><tr>
-          <th>STUDENT ID</th><th>STUDENT NAME</th><th>CLASS</th><th>JOURNEY TYPE</th><th>TIME OF DAY</th>
+          <th>STUDENT ID</th><th>STUDENT NAME</th><th>ROUTE</th><th>DIRECTION</th><th>RATE TYPE</th><th>CHARGE AMOUNT</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
@@ -1087,14 +1102,13 @@ function changeTrnSprPerPage(v) { _trnSprPerPage = parseInt(v); _trnSprPage = 1;
 function trnSprGoPage(p) { _trnSprPage = p; _renderTrnSprTable(); }
 function exportTrnSprCSV() {
   exportTableCSV(
-    ['Student ID', 'Student Name', 'Class', 'Journey Type', 'Time of Day'],
-    _trnSprData.map(s => {
-      const sel = s.transport_selection || {};
-      const jt  = sel.journey_type === 'two_way' ? 'Two-way' : sel.journey_type === 'one_way' ? 'One-way' : '';
-      const tod = sel.time_of_day ? (sel.time_of_day === 'morning' ? 'Morning' : 'Evening') : '';
-      return [s.student_id||'', `${s.first_name||''} ${s.last_name||''}`.trim()||'',
-              s.class_name||'', jt, tod];
-    }),
+    ['Student ID', 'Student Name', 'Route', 'Direction', 'Rate Type', 'Charge Amount'],
+    _trnSprData.map(s => [
+      s.student_code || '', s.student_name || '', s.route_name || '',
+      _TRN_DIRECTION_LABELS[s.direction] || s.direction || '',
+      s.use_daily_rate ? 'Daily' : 'Termly',
+      parseFloat(s.charge_amount || 0).toFixed(2),
+    ]),
     'student-report-per-route.csv'
   );
 }
