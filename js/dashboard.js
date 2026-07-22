@@ -268,6 +268,8 @@ function showDashboard() {
                   <li class="sidebar-sub-sub" onclick="loadView('reports-tendepay-transaction-history')">Tendepay Transaction History</li>
                   <li class="sidebar-sub-sub" onclick="loadView('reports-unmatched-tendepay-transactions')">Unmatched Tendepay Transactions</li>
                   <li class="sidebar-sub-sub" onclick="loadView('reports-fixed-assets-schedule')">Fixed Assets Schedule</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-consolidated-student-debtors')">Consolidated Student Debtors</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-student-fee-analysis')">Student Fee Analysis</li>
                 </ul>
               </li>
             </ul>
@@ -1201,6 +1203,8 @@ async function loadView(view) {
     case 'reports-tendepay-transaction-history':
     case 'reports-unmatched-tendepay-transactions':
     case 'reports-fixed-assets-schedule':
+    case 'reports-consolidated-student-debtors':
+    case 'reports-student-fee-analysis':
       openFinReportsDropdown();
       await loadFinanceReportView(main, view); break;
     // Reports (hidden from sidebar but kept)

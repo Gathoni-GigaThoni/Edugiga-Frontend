@@ -98,6 +98,11 @@ const REPORT_DEFS = {
     columns: [['transaction_date','DATE'],['tendepay_reference','REFERENCE'],['wallet_name','WALLET'],['payee_name','PAYEE'],['amount','AMOUNT']] },
 
   'reports-fixed-assets-schedule': { title: 'Fixed Assets Schedule', api: 'fixed-assets-schedule', dateMode: 'range', layout: 'fixed-assets-schedule' },
+
+  'reports-consolidated-student-debtors': { title: 'Consolidated Student Debtors', api: 'consolidated-student-debtors', dateMode: 'asof',
+    extra: [{ key: 'class_id', label: 'Class', type: 'class' }], layout: 'consolidated-student-debtors' },
+  'reports-student-fee-analysis': { title: 'Student Fee Analysis', api: 'student-fee-analysis', dateMode: 'range',
+    extra: [{ key: 'class_id', label: 'Class', type: 'class' }], layout: 'student-fee-analysis' },
 };
 
 // School-shaped SoFP/SoCI views (2026-07-21 addendum §3, §4) — additive
@@ -121,6 +126,7 @@ async function loadFinanceReportView(container, routeKey) {
   const def = REPORT_DEFS[routeKey];
   if (!def) { container.innerHTML = '<p>Unknown report.</p>'; return; }
   await _pvLoadLookups();
+  if ((def.extra || []).some(f => f.type === 'class')) await _rcvLoadLookups({ classes: true });
 
   let dateInputsHtml = '';
   if (def.dateMode === 'range') {
@@ -142,6 +148,7 @@ async function loadFinanceReportView(container, routeKey) {
     if (f.type === 'taxtype') return `<div class="fin-filter-field"><label class="fin-filter-label">${f.label}</label><select id="rep-x-${f.key}" class="fin-filter-select"><option value="">All</option>${_PV_TAX_TYPES.map(t=>`<option value="${t}">${t}</option>`).join('')}</select></div>`;
     if (f.type === 'jestatus') return `<div class="fin-filter-field"><label class="fin-filter-label">${f.label}</label><select id="rep-x-${f.key}" class="fin-filter-select"><option value="">All</option><option value="draft">Draft</option><option value="posted">Posted</option><option value="reversed">Reversed</option></select></div>`;
     if (f.type === 'number') return `<div class="fin-filter-field"><label class="fin-filter-label">${f.label}</label><input type="number" id="rep-x-${f.key}" class="fin-filter-input" value="${f.default ?? ''}"></div>`;
+    if (f.type === 'class') return `<div class="fin-filter-field"><label class="fin-filter-label">${f.label}</label><select id="rep-x-${f.key}" class="fin-filter-select"><option value="">All</option>${_rcvClassOptions('')}</select></div>`;
     return '';
   }).join('');
 
@@ -231,6 +238,8 @@ async function _repGenerate(routeKey) {
     else if (def.layout === 'statement') _repRenderStatement(def, data);
     else if (def.layout === 'notes') _repRenderNotes(def, data);
     else if (def.layout === 'fixed-assets-schedule') _repRenderFixedAssetsSchedule(data);
+    else if (def.layout === 'consolidated-student-debtors') _repRenderConsolidatedDebtors(data);
+    else if (def.layout === 'student-fee-analysis') _repRenderStudentFeeAnalysis(data);
     else if (def.layout === 'ap-reconciliation') _repRenderApReconciliation(def, data);
     else if (routeKey === 'reports-supplier-statements') _repRenderSupplierStatement(def, data);
     else _repRenderTable(def, data);
@@ -584,6 +593,83 @@ function _repRenderFixedAssetsSchedule(data) {
       </tr></thead>
       <tbody>${rows}</tbody>
       <tfoot>${totalsRow}</tfoot>
+    </table></div>`;
+}
+
+// ── Consolidated Student Debtors (2026-07-21 addendum §8.1) ─────────────────
+// The one wire-shape trap the addendum calls out by name: aging bucket keys
+// start with a digit ("30_days", "90_plus"), so they must be read with
+// bracket access — row.30_days is not valid JS and would silently be undefined.
+function _repRenderConsolidatedDebtors(data) {
+  const out = document.getElementById('rep-output');
+  const rows = (data && data.rows) || [];
+  if (!rows.length) { out.innerHTML = '<div class="fin-table-wrap"><table class="fin-table"><tbody><tr><td class="fin-empty">No debtors for the selected criteria.</td></tr></tbody></table></div>'; return; }
+  const bodyRows = rows.map(r => { const c = r.contact || {}; return `<tr>
+    <td>${_finEsc(r.student_display_id||'')}</td>
+    <td>${_finEsc(r.student_name||'')}</td>
+    <td>${_finEsc(r.class_name||'—')}</td>
+    <td>${_finEsc(c.parent_name||'—')}<br><span style="font-size:0.78rem;color:#888;">${_finEsc(c.phone||'')}</span></td>
+    <td>${_pvMoney(r.total_invoiced)}</td>
+    <td>${_pvMoney(r.total_paid)}</td>
+    <td>${_pvMoney(r.current_balance)}</td>
+    <td>${_pvMoney(r.current)}</td>
+    <td>${_pvMoney(r['30_days'])}</td>
+    <td style="color:var(--gold-500,#C9A227);font-weight:600;">${_pvMoney(r['60_days'])}</td>
+    <td style="color:var(--coral-600);font-weight:600;">${_pvMoney(r['90_plus'])}</td>
+  </tr>`; }).join('');
+  const totalsRow = `<tr class="fin-tfoot-total">
+    <td colspan="4"><strong>TOTALS</strong></td>
+    <td><strong>${_pvMoney(data.total_invoiced)}</strong></td>
+    <td><strong>${_pvMoney(data.total_paid)}</strong></td>
+    <td><strong>${_pvMoney(data.total_current_balance)}</strong></td>
+    <td><strong>${_pvMoney(data.total_current)}</strong></td>
+    <td><strong>${_pvMoney(data.total_30_days)}</strong></td>
+    <td style="color:var(--gold-500,#C9A227);"><strong>${_pvMoney(data.total_60_days)}</strong></td>
+    <td style="color:var(--coral-600);"><strong>${_pvMoney(data.total_90_plus)}</strong></td>
+  </tr>`;
+  out.innerHTML = `
+    <div class="fin-table-wrap"><table class="fin-table">
+      <thead><tr>
+        <th>STUDENT ID</th><th>NAME</th><th>CLASS</th><th>CONTACT</th>
+        <th>INVOICED</th><th>PAID</th><th>BALANCE</th>
+        <th>CURRENT</th><th>30 DAYS</th><th>60 DAYS</th><th>90+</th>
+      </tr></thead>
+      <tbody>${bodyRows}</tbody>
+      <tfoot>${totalsRow}</tfoot>
+    </table></div>`;
+}
+
+// ── Student Fee Analysis (2026-07-21 addendum §8.2) ──────────────────────────
+// One row per invoice, payments[] inlined as indented sub-rows directly
+// beneath it (server-ordered by payment_date — not resorted here).
+function _repRenderStudentFeeAnalysis(data) {
+  const out = document.getElementById('rep-output');
+  const rows = (data && data.rows) || [];
+  if (!rows.length) { out.innerHTML = '<div class="fin-table-wrap"><table class="fin-table"><tbody><tr><td class="fin-empty">No data for the selected criteria.</td></tr></tbody></table></div>'; return; }
+  const bodyRows = rows.map(r => {
+    const paymentsHtml = (r.payments || []).map(p => `
+      <tr style="background:#fafafa;">
+        <td colspan="2" style="padding-left:24px;color:#666;font-size:0.85rem;">&#8618; ${_finEsc(p.payment_date||'')} &middot; ${p.payment_method ? _finEsc(p.payment_method) : '—'} &middot; ${_finEsc(p.reference||'—')}</td>
+        <td></td><td style="font-size:0.85rem;color:#666;">${_pvMoney(p.amount)}</td><td></td>
+      </tr>`).join('');
+    return `<tr>
+        <td>${_finEsc(r.student_display_id||'')}<br><span style="font-size:0.8rem;color:#888;">${_finEsc(r.student_name||'')} &middot; ${_finEsc(r.class_name||'—')}</span></td>
+        <td>${_finEsc(r.invoice_number||'')}<br><span style="font-size:0.8rem;color:#888;">${_finEsc(r.invoice_date||'')} &middot; ${r.term_name ? _finEsc(r.term_name) : '—'}</span></td>
+        <td>${_pvMoney(r.amount_due)}</td>
+        <td>${_pvMoney(r.total_paid)}</td>
+        <td>${_pvMoney(r.balance)}</td>
+      </tr>${paymentsHtml}`;
+  }).join('');
+  out.innerHTML = `
+    <div class="fin-table-wrap"><table class="fin-table">
+      <thead><tr><th>STUDENT</th><th>INVOICE</th><th>AMOUNT DUE</th><th>TOTAL PAID</th><th>BALANCE</th></tr></thead>
+      <tbody>${bodyRows}</tbody>
+      <tfoot><tr class="fin-tfoot-total">
+        <td colspan="2"><strong>TOTALS</strong></td>
+        <td><strong>${_pvMoney(data.total_invoiced)}</strong></td>
+        <td><strong>${_pvMoney(data.total_paid)}</strong></td>
+        <td><strong>${_pvMoney(data.total_balance)}</strong></td>
+      </tr></tfoot>
     </table></div>`;
 }
 

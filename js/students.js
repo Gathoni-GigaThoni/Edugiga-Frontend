@@ -2536,7 +2536,7 @@ async function openStudentFeeStatement(studentId) {
 }
 
 function _renderStudentViewBody(d, activeTab) {
-  const TABS = ['Personal Data','Academic Background','Guardian/Family','Medical Information','Disciplinary','Transport','Residence Plan'];
+  const TABS = ['Personal Data','Academic Background','Guardian/Family','Medical Information','Disciplinary','Transport','Residence Plan','Statement of Account'];
   const statusBadge = d.is_active
     ? '<span class="stu-status-badge stu-status-badge--active">Active</span>'
     : '<span class="stu-status-badge stu-status-badge--inactive">Inactive</span>';
@@ -2668,7 +2668,115 @@ function _renderStuViewTab(tabName, d) {
     <div style="padding:32px;text-align:center;color:#888;">No disciplinary records for this student.</div>`;
   if (tabName === 'Transport') return _stuRenderTransportTab(d);
   if (tabName === 'Residence Plan') return _stuRenderResidencePlanTab(d);
+  if (tabName === 'Statement of Account') return _stuRenderSoaTab(d);
   return '';
+}
+
+// ── Statement of Account (2026-07-21 addendum §7) ───────────────────────────
+// Distinct from the older "View Fee Statement" link on this same page
+// (openStudentFeeStatement, above — charges only, printable layout, hits
+// /finance/student-fees/{id}). This is the full AR ledger: opening balance,
+// invoices+receipts with a running balance, from /reports/student-statement.
+// Mirrors _repRenderSupplierStatement's shape (js/finance-reports.js) since
+// the wire contract is deliberately the same as the Supplier Statement.
+function _stuSoaDefaultDates() {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const term = _stuTermsCache.find(t => t.start_date && t.end_date && t.start_date <= todayStr && todayStr <= t.end_date);
+  return { start: term?.start_date || todayStr, end: todayStr };
+}
+
+function _stuRenderSoaTab(d) {
+  const { start, end } = _stuSoaDefaultDates();
+  return `
+    <div class="fin-filter-section" style="margin-bottom:16px;">
+      <div class="fin-filter-grid">
+        <div class="fin-filter-field"><label class="fin-filter-label">Start Date</label><input type="date" id="stu-soa-start" class="fin-filter-input" value="${start}"></div>
+        <div class="fin-filter-field"><label class="fin-filter-label">End Date</label><input type="date" id="stu-soa-end" class="fin-filter-input" value="${end}"></div>
+      </div>
+      <div class="fin-filter-actions">
+        <button class="fin-btn-teal" onclick="_stuGenerateSoa(${d.id})">Generate</button>
+        <button class="fin-btn-outline" onclick="_stuExportSoa(${d.id},'excel')">Export Excel</button>
+        <button class="fin-btn-outline" onclick="_stuExportSoa(${d.id},'csv')">Export CSV</button>
+      </div>
+    </div>
+    <div id="stu-soa-output"></div>`;
+}
+
+function _stuSoaUrl(studentId, extraFormat) {
+  const start = document.getElementById('stu-soa-start').value;
+  const end   = document.getElementById('stu-soa-end').value;
+  const params = new URLSearchParams({ start_date: start, end_date: end });
+  if (extraFormat) params.set('format', extraFormat);
+  return { url: `${API_BASE}/reports/student-statement/${studentId}?${params.toString()}`, start };
+}
+
+async function _stuGenerateSoa(studentId) {
+  const out = document.getElementById('stu-soa-output');
+  if (!out) return;
+  out.innerHTML = '<p class="fin-loading">Loading&#8230;</p>';
+  const { url, start } = _stuSoaUrl(studentId);
+  const res = await apiFetch(url);
+  if (!res || !res.ok) {
+    out.innerHTML = `<p class="fin-empty">${_esc(res ? await parseApiError(res) : 'Network error.')}</p>`;
+    return;
+  }
+  _stuRenderSoaResult(await res.json(), start);
+}
+
+async function _stuExportSoa(studentId, format) {
+  const { url } = _stuSoaUrl(studentId, format);
+  const res = await apiFetch(url);
+  if (!res || !res.ok) { showToast('Export failed: ' + (res ? await parseApiError(res) : 'network error'), 'error'); return; }
+  const blob = await res.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `student-statement.${format === 'excel' ? 'xlsx' : 'csv'}`;
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+function _stuSoaLineTypePill(type) {
+  if (type === 'invoice') return '<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.75rem;font-weight:600;color:var(--white);background:var(--navy-700);">Invoice</span>';
+  if (type === 'receipt') return '<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.75rem;font-weight:600;color:#7a6110;background:var(--gold-100);">Receipt</span>';
+  return _esc(type || '');
+}
+
+function _stuRenderSoaResult(data, startDate) {
+  const out = document.getElementById('stu-soa-output');
+  if (!out) return;
+  if (!data || typeof data !== 'object') { out.innerHTML = '<p class="fin-empty">No data for the selected criteria.</p>'; return; }
+  const contact = data.contact || {};
+  const lines = data.lines || [];
+  const lineRows = lines.map(l => `<tr>
+    <td>${_esc(l.entry_date || '')}</td>
+    <td>${_stuSoaLineTypePill(l.entry_type)}</td>
+    <td>${_esc(l.reference || '—')}</td>
+    <td>${_esc(l.description || '')}</td>
+    <td>${l.debit ? formatKES(l.debit) : '—'}</td>
+    <td>${l.credit ? formatKES(l.credit) : '—'}</td>
+    <td>${formatKES(l.running_balance)}</td>
+  </tr>`).join('');
+
+  out.innerHTML = `
+    <div style="margin-bottom:12px;font-size:0.88rem;">
+      <div><strong>${_esc(data.student_name || '')}</strong> (${_esc(data.student_display_id || '')}) — ${_esc(data.class_name || '—')}</div>
+      <div style="color:#666;margin-top:2px;">Parent: ${_esc(contact.parent_name || '—')} &middot; Phone: ${_esc(contact.phone || '—')} &middot; Email: ${_esc(contact.email || '—')}${contact.relationship ? ` (${_esc(contact.relationship)})` : ''}</div>
+    </div>
+    <div class="fin-table-wrap"><table class="fin-table">
+      <thead><tr><th>DATE</th><th>TYPE</th><th>REFERENCE</th><th>DESCRIPTION</th><th>DEBIT</th><th>CREDIT</th><th>RUNNING BALANCE</th></tr></thead>
+      <tbody>
+        <tr style="font-weight:600;background:#f7f7f7;">
+          <td colspan="6">Balance brought forward as at ${_esc(startDate || '')}</td>
+          <td>${formatKES(data.opening_balance)}</td>
+        </tr>
+        ${lineRows || `<tr><td colspan="7" class="fin-empty">No activity in this period.</td></tr>`}
+        <tr class="fin-tfoot-total">
+          <td colspan="4"><strong>Totals</strong></td>
+          <td><strong>${formatKES(data.total_invoiced)}</strong></td>
+          <td><strong>${formatKES(data.total_paid)}</strong></td>
+          <td><strong>${formatKES(data.closing_balance)}</strong></td>
+        </tr>
+      </tbody>
+    </table></div>`;
 }
 
 // GET /students/{id}/transport/history returns every transport assignment
