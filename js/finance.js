@@ -571,7 +571,7 @@ let _invStudentsCache = [], _invFeeItemsCache = [];
 async function _invLoadLookups() {
   const [stuRes, fiRes, termsRes] = await Promise.all([
     apiFetch(`${API_BASE}/students/`),
-    apiFetch(`${API_BASE}/finance/fee-items`),
+    apiFetch(`${API_BASE}/receivables/setup/fee-items`),
     _stuTermsCache && _stuTermsCache.length ? Promise.resolve(null) : apiFetch(`${API_BASE}/terms/`),
   ]);
   _invStudentsCache = (stuRes && stuRes.ok) ? _toArray(await stuRes.json()) : [];
@@ -2553,7 +2553,7 @@ async function _fsLoadLookups() {
     _fsTermsCache = res.ok ? await res.json() : [];
   }
   if (!_fsFeeItemsCache) {
-    const res = await fetch(`${API_BASE}/finance/fee-items`, { headers: { Authorization: `Bearer ${token}` } });
+    const res = await fetch(`${API_BASE}/receivables/setup/fee-items`, { headers: { Authorization: `Bearer ${token}` } });
     _fsFeeItemsCache = res.ok ? await res.json() : [];
   }
 }
@@ -3738,7 +3738,7 @@ async function loadFeeItemsView(container) {
       {label:'Finance',view:'fin-fee-items'},
       {label:'Fee Items'}
     ],
-    apiUrl: `${API_BASE}/finance/fee-items`,
+    apiUrl: `${API_BASE}/receivables/setup/fee-items`,
     searchFields: ['name','code'],
     col1Label: 'Name', col2Label: 'Category',
     col1: f => f.name || '—',
@@ -3961,7 +3961,7 @@ function _fiPayload() {
 async function submitFeeItemAdd() {
   if (!_fiValidate()) return;
   try {
-    const res = await apiFetch(`${API_BASE}/finance/fee-items`, {
+    const res = await apiFetch(`${API_BASE}/receivables/setup/fee-items`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(_fiPayload())
     });
     if (res && res.ok) { showToast('Fee item added!', 'success'); _fsFeeItemsCache = null; } // invalidate so Class Fee Setup picks it up
@@ -3973,7 +3973,7 @@ async function submitFeeItemAdd() {
 async function submitFeeItemEdit(id) {
   if (!_fiValidate()) return;
   try {
-    const res = await apiFetch(`${API_BASE}/finance/fee-items/${id}`, {
+    const res = await apiFetch(`${API_BASE}/receivables/setup/fee-items/${id}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(_fiPayload())
     });
     if (res && res.ok) { showToast('Fee item updated!', 'success'); _fsFeeItemsCache = null; }
@@ -3985,7 +3985,7 @@ async function submitFeeItemEdit(id) {
 async function deleteFeeItem(id) {
   if (!confirm('Delete this fee item? This cannot be undone.')) return;
   try {
-    const res = await apiFetch(`${API_BASE}/finance/fee-items/${id}`, { method: 'DELETE' });
+    const res = await apiFetch(`${API_BASE}/receivables/setup/fee-items/${id}`, { method: 'DELETE' });
     if (res && res.ok) { showToast('Fee item deleted.', 'success'); _fsFeeItemsCache = null; loadView('fin-fee-items'); }
     else if (res) showToast('Error: ' + await parseApiError(res), 'error');
   } catch (_) { showToast('Network error.', 'error'); }

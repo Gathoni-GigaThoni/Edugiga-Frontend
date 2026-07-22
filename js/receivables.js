@@ -20,7 +20,7 @@ let _rcvStudentsCache  = null;
 
 async function _rcvLoadLookups({ items=false, terms=false, levels=false, classes=false, routes=false, accounts=false, ledgers=false, students=false } = {}) {
   const reqs = [];
-  if (items    && !_rcvFeeItemsCache)  reqs.push(apiFetch(`${API_BASE}/finance/fee-items`).then(r => r&&r.ok ? r.json() : []).then(d => { _rcvFeeItemsCache  = _toArray(d); }));
+  if (items    && !_rcvFeeItemsCache)  reqs.push(apiFetch(`${API_BASE}/receivables/setup/fee-items`).then(r => r&&r.ok ? r.json() : []).then(d => { _rcvFeeItemsCache  = _toArray(d); }));
   if (terms    && !_rcvTermsCache)     reqs.push(apiFetch(`${API_BASE}/terms`).then(r => r&&r.ok ? r.json() : []).then(d => { _rcvTermsCache     = _toArray(d); }));
   if (levels   && !_rcvLevelsCache)    reqs.push(apiFetch(`${API_BASE}/academic-levels/`).then(r => r&&r.ok ? r.json() : []).then(d => { _rcvLevelsCache    = _toArray(d); }));
   if (classes  && !_rcvClassesCache)   reqs.push(apiFetch(`${API_BASE}/classes/`).then(r => r&&r.ok ? r.json() : []).then(d => { _rcvClassesCache   = _toArray(d); }));
