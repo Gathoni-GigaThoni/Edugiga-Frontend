@@ -951,7 +951,7 @@ function _rcvRenderInvTable() {
   const start=(_rcvInvPage-1)*_rcvInvPerPage;
   const paged=_rcvInvData.slice(start,start+_rcvInvPerPage);
   const rows=paged.map(inv=>{
-    const due=parseFloat(inv.total_amount||0);
+    const due=parseFloat(inv.amount_due||0);
     const paid=parseFloat(inv.amount_paid||0);
     const bal=due-paid;
     return `<tr style="cursor:pointer;" onclick="loadInvoiceDetailView(document.getElementById('main-content'),${inv.id})">
@@ -1113,7 +1113,7 @@ async function loadInvoiceDetailView(container, invoiceId) {
   const inv = await res.json();
   await _rcvLoadLookups({ terms:true, students:true, accounts:true });
   const lineItems = _toArray(inv.line_items||inv.lineItems||[]);
-  const due  = parseFloat(inv.total_amount||0);
+  const due  = parseFloat(inv.amount_due||0);
   const paid = parseFloat(inv.amount_paid||0);
   const bal  = due - paid;
   const hasFull = lineItems.some(li => li.base_unit_price!=null);

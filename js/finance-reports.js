@@ -34,7 +34,7 @@ const REPORT_DEFS = {
     extra: [{ key: 'account_id', label: 'Account', type: 'account' }],
     columns: [['date','DATE'],['jv_number','JV NUMBER'],['description','DESCRIPTION'],['debit','DEBIT'],['credit','CREDIT'],['running_balance','RUNNING BALANCE']] },
   'reports-trial-balance': { title: 'Trial Balance', api: 'trial-balance', dateMode: 'range',
-    columns: [['account_name','ACCOUNT NAME'],['debit_total','DEBIT TOTAL'],['credit_total','CREDIT TOTAL']], totals: true },
+    columns: [['number','NUMBER'],['account_name','ACCOUNT NAME'],['account_type','TYPE'],['debits','DEBIT'],['credits','CREDIT']], totals: true },
   'reports-cash-book': { title: 'Cash Book', api: 'cash-book', dateMode: 'range',
     extra: [{ key: 'bank_account_id', label: 'Bank Account', type: 'account' }],
     columns: [['date','DATE'],['description','DESCRIPTION'],['reference','REFERENCE'],['debit','DEBIT'],['credit','CREDIT'],['balance','BALANCE']] },
@@ -105,22 +105,10 @@ const REPORT_DEFS = {
     extra: [{ key: 'class_id', label: 'Class', type: 'class' }], layout: 'student-fee-analysis' },
 };
 
-// School-shaped SoFP/SoCI views (2026-07-21 addendum §3, §4) — additive
-// alongside the classic flat render, never replacing it. Toggle choice is
-// remembered per report so switching reports doesn't reset the operator's
-// preference on this one.
+// School-shaped SoFP/SoCI views (2026-07-21 addendum §3, §4) — now the only
+// render for Balance Sheet/SoFP/SoFI; the Classic flat statement toggle was
+// removed 2026-07-23 (user request) in favour of always showing this view.
 const _REP_SCHOOL_VIEW_TYPES = new Set(['bs', 'sfp']);
-function _repViewMode(routeKey) {
-  return localStorage.getItem(`repViewMode:${routeKey}`) || 'schools';
-}
-function _repSetViewMode(routeKey, mode) {
-  localStorage.setItem(`repViewMode:${routeKey}`, mode);
-  const classicBtn = document.getElementById('rep-view-btn-classic');
-  const schoolsBtn = document.getElementById('rep-view-btn-schools');
-  if (classicBtn) classicBtn.className = mode === 'classic' ? 'fin-btn-teal' : 'fin-btn-outline';
-  if (schoolsBtn) schoolsBtn.className = mode === 'schools' ? 'fin-btn-teal' : 'fin-btn-outline';
-  _repGenerate(routeKey);
-}
 
 async function loadFinanceReportView(container, routeKey) {
   const def = REPORT_DEFS[routeKey];
@@ -152,15 +140,6 @@ async function loadFinanceReportView(container, routeKey) {
     return '';
   }).join('');
 
-  const showViewToggle = def.layout === 'statement' && _REP_SCHOOL_VIEW_TYPES.has(def.statementType);
-  const viewMode = showViewToggle ? _repViewMode(routeKey) : null;
-  const viewToggleHtml = showViewToggle ? `
-    <div class="fin-filter-actions" style="margin-top:10px;">
-      <span style="font-size:12px;color:var(--grey-600);align-self:center;margin-right:4px;">View:</span>
-      <button id="rep-view-btn-classic" class="${viewMode==='classic'?'fin-btn-teal':'fin-btn-outline'}" onclick="_repSetViewMode('${routeKey}','classic')">Classic</button>
-      <button id="rep-view-btn-schools" class="${viewMode==='schools'?'fin-btn-teal':'fin-btn-outline'}" onclick="_repSetViewMode('${routeKey}','schools')">Schools View</button>
-    </div>` : '';
-
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -174,7 +153,6 @@ async function loadFinanceReportView(container, routeKey) {
           <button class="fin-btn-outline" onclick="_repExport('${routeKey}','excel')">Export Excel</button>
           <button class="fin-btn-outline" onclick="_repExport('${routeKey}','csv')">Export CSV</button>
         </div>
-        ${viewToggleHtml}
       </div>
       <div id="rep-output"></div>
     </div>`;
@@ -231,7 +209,7 @@ async function _repGenerate(routeKey) {
     const res = await apiFetch(_repUrl(def, params));
     if (!res || !res.ok) { showToast(`Could not generate report: ${res ? await parseApiError(res) : 'network error'}`, 'error'); document.getElementById('rep-output').innerHTML = ''; return; }
     const data = await res.json();
-    if (def.layout === 'statement' && _REP_SCHOOL_VIEW_TYPES.has(def.statementType) && _repViewMode(routeKey) === 'schools') {
+    if (def.layout === 'statement' && _REP_SCHOOL_VIEW_TYPES.has(def.statementType)) {
       if (def.statementType === 'bs') _repRenderSchoolSoFP(data);
       else _repRenderSchoolSoCI(data);
     }
@@ -242,6 +220,7 @@ async function _repGenerate(routeKey) {
     else if (def.layout === 'student-fee-analysis') _repRenderStudentFeeAnalysis(data);
     else if (def.layout === 'ap-reconciliation') _repRenderApReconciliation(def, data);
     else if (routeKey === 'reports-supplier-statements') _repRenderSupplierStatement(def, data);
+    else if (routeKey === 'reports-trial-balance') _repRenderTrialBalance(def, data);
     else _repRenderTable(def, data);
   } catch (e) { showToast('Network error generating report.', 'error'); }
 }
@@ -300,6 +279,40 @@ function _repRenderTable(def, data) {
     </table></div>`;
 }
 
+// ── Trial Balance ────────────────────────────────────────────────────────
+// Confirmed live shape (openapi.json, 2026-07-23): the response is an object
+// { start_date, end_date, accounts: [...], total_debits, total_credits,
+// is_balanced }, not a bare array — _repRenderTable's generic data.data/
+// data.items/data.results/data.rows fallback doesn't reach `accounts`, and
+// each row uses `debits`/`credits`, not the `debit_total`/`credit_total`
+// guess in def.columns above. Totals come straight from the backend rather
+// than being re-summed client-side from the row list.
+function _repRenderTrialBalance(def, data) {
+  const out = document.getElementById('rep-output');
+  const rows = (data && Array.isArray(data.accounts)) ? data.accounts : [];
+  if (!rows.length) { out.innerHTML = '<div class="fin-table-wrap"><table class="fin-table"><tbody><tr><td class="fin-empty">No data for the selected criteria.</td></tr></tbody></table></div>'; return; }
+
+  const cols = def.columns;
+  const bodyRows = rows.map(r => `<tr>${cols.map(([k]) => `<td>${_repCell(r[k])}</td>`).join('')}</tr>`).join('');
+  const totalsRow = cols.map(([k], i) => {
+    if (i === 0) return `<td><strong>TOTAL</strong></td>`;
+    if (k === 'debits') return `<td><strong>${_pvMoney(data.total_debits)}</strong></td>`;
+    if (k === 'credits') return `<td><strong>${_pvMoney(data.total_credits)}</strong></td>`;
+    return `<td></td>`;
+  }).join('');
+
+  const balanced = data.is_balanced === true;
+  out.innerHTML = `
+    <div class="fin-table-wrap"><table class="fin-table">
+      <thead><tr>${cols.map(([,label]) => `<th>${_finEsc(label)}</th>`).join('')}</tr></thead>
+      <tbody>${bodyRows}</tbody>
+      <tfoot><tr class="fin-tfoot-total">${totalsRow}</tr></tfoot>
+    </table></div>
+    <div class="balance-check" style="display:flex;justify-content:flex-end;padding:10px 4px;font-weight:700;color:${balanced ? '#1e7e34' : 'var(--coral-600)'};">
+      <span>${balanced ? 'Balances' : 'Out of balance'}</span>
+    </div>`;
+}
+
 // ── Notes of Financial Statement — labelled schedule cards ──────────────────
 function _repRenderNotes(def, data) {
   const notes = Array.isArray(data) ? data : (data.notes || data.data || data.items || []);
@@ -317,7 +330,7 @@ function _repRenderNotes(def, data) {
   }).join('');
 }
 
-// ── Statement layout (Balance Sheet / SFP / SFPos / Cashflow / SCNA / Bank Reconciliation) ──
+// ── Statement layout (Cashflow / SCNA / Bank Reconciliation) ──
 function _repSection(title, items) {
   if (!items || !items.length) return '';
   const total = items.reduce((s, it) => s + (parseFloat(it.amount ?? it.value ?? 0) || 0), 0);
@@ -341,32 +354,7 @@ function _repRenderStatement(def, data) {
   const out = document.getElementById('rep-output');
   if (!data || typeof data !== 'object') { out.innerHTML = '<p class="fin-empty">No data for the selected criteria.</p>'; return; }
 
-  if (def.statementType === 'bs') {
-    const assets = data.assets || [], liabilities = data.liabilities || [], equity = data.equity || [];
-    if (!assets.length && !liabilities.length && !equity.length) { out.innerHTML = `<pre style="white-space:pre-wrap;">${_finEsc(JSON.stringify(data, null, 2))}</pre>`; return; }
-    const totalAssets = data.total_assets ?? assets.reduce((s,i)=>s+(parseFloat(i.amount||0)),0);
-    const totalLiab = data.total_liabilities ?? liabilities.reduce((s,i)=>s+(parseFloat(i.amount||0)),0);
-    const totalEquity = data.total_equity ?? equity.reduce((s,i)=>s+(parseFloat(i.amount||0)),0);
-    out.innerHTML = `
-      <div class="fin-form-wrap" style="max-width:680px;">
-        ${_repSection('Assets', assets)}
-        ${_repSection('Liabilities', liabilities)}
-        ${_repSection('Equity', equity)}
-        ${_repGrandTotal('Total Liabilities + Equity', totalLiab + totalEquity)}
-        <div style="color:#888;font-size:0.85rem;margin-top:4px;">Total Assets: ${_pvMoney(totalAssets)}</div>
-      </div>`;
-  } else if (def.statementType === 'sfp') {
-    const income = data.income || [], expenses = data.expenses || [];
-    if (!income.length && !expenses.length) { out.innerHTML = `<pre style="white-space:pre-wrap;">${_finEsc(JSON.stringify(data, null, 2))}</pre>`; return; }
-    const totalIncome = data.total_income ?? income.reduce((s,i)=>s+(parseFloat(i.amount||0)),0);
-    const totalExpenses = data.total_expenses ?? expenses.reduce((s,i)=>s+(parseFloat(i.amount||0)),0);
-    out.innerHTML = `
-      <div class="fin-form-wrap" style="max-width:680px;">
-        ${_repSection('Income', income)}
-        ${_repSection('Expenses', expenses)}
-        ${_repGrandTotal('Surplus / (Deficit)', totalIncome - totalExpenses)}
-      </div>`;
-  } else if (def.statementType === 'cf') {
+  if (def.statementType === 'cf') {
     const op = data.operating || [], inv = data.investing || [], fin = data.financing || [];
     if (!op.length && !inv.length && !fin.length) { out.innerHTML = `<pre style="white-space:pre-wrap;">${_finEsc(JSON.stringify(data, null, 2))}</pre>`; return; }
     const netOp = data.net_operating ?? op.reduce((s,i)=>s+(parseFloat(i.amount||0)),0);

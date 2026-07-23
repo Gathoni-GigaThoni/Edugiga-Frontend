@@ -2427,11 +2427,18 @@ async function openStudentFeeStatement(studentId) {
 
   const termId  = d.term_id || null;
   const classId = d.class_id || d.school_class_id || null;
-  let charges = [];
+  // /finance/student-fees/{id} and /finance/trigger-termly-fees (the old Class Fee
+  // Setup "Generate Fees for Term" pathway) no longer exist on the live backend —
+  // confirmed 404 via openapi.json. Fee charges now live on Fee Invoices
+  // (/receivables/fee-invoices, generated via Fee Invoices > Generate Invoice),
+  // which is also what posts the accrual Journal Entry shown on the invoice detail
+  // page — pulling from there is what makes an issued invoice with a JE actually
+  // show up here instead of a permanently-empty statement.
+  let invoices = [];
   try {
-    const url = `${API_BASE}/finance/student-fees/${studentId}` + (termId ? `?term_id=${termId}` : '');
+    const url = `${API_BASE}/receivables/fee-invoices?student_id=${studentId}` + (termId ? `&term_id=${termId}` : '');
     const res = await apiFetch(url);
-    if (res && res.ok) charges = await res.json();
+    if (res && res.ok) invoices = _toArray(await res.json());
   } catch (_) {}
 
   const feeItemName = id => (typeof _fsFeeItemName === 'function') ? _fsFeeItemName(id) : `#${id}`;
@@ -2439,19 +2446,27 @@ async function openStudentFeeStatement(studentId) {
   const yearName      = cid => (typeof _fsAcademicYearName === 'function') ? _fsAcademicYearName(cid) : '-';
   const className       = cid => (typeof _fsClassName === 'function') ? _fsClassName(cid) : '-';
 
-  const total   = charges.reduce((s,c)=>s+(parseFloat(c.amount)||0), 0);
-  const balance = charges.reduce((s,c)=>s+(parseFloat(c.balance_due)||0), 0);
+  const lineItems = invoices.flatMap(inv => _toArray(inv.line_items).map(li => ({
+    description: li.description || feeItemName(li.fee_item_id),
+    amount: parseFloat(li.net_amount ?? li.amount ?? 0) || 0,
+  })));
+
+  // Totals come from the invoice header (amount_due/amount_paid), which the backend
+  // computes authoritatively, rather than re-summed from line_items client-side.
+  const total   = invoices.reduce((s,inv)=>s+(parseFloat(inv.amount_due)||0), 0);
+  const paid    = invoices.reduce((s,inv)=>s+(parseFloat(inv.amount_paid)||0), 0);
+  const balance = total - paid;
   // Overpayments are now held as a prepayment credit (GL 20-01-000) rather than
   // assumed impossible — a negative summed balance means credit/prepaid, not arrears.
   const arrearsLabel   = balance > 0 ? 'FEES ARREARS' : (balance < 0 ? 'PREPAID / CREDIT BALANCE' : 'FEES ARREARS / PREPAID');
   const arrearsDisplay = Math.abs(balance).toLocaleString();
 
-  const rows = charges.length
-    ? charges.map((c,i)=>`<tr style="background:${i%2?'#f4f1ea':'#fff'}">
-        <td style="padding:10px 16px;">${_esc(feeItemName(c.fee_item_id))}</td>
-        <td style="padding:10px 16px;text-align:right;">${(parseFloat(c.amount)||0).toLocaleString()}</td>
+  const rows = lineItems.length
+    ? lineItems.map((li,i)=>`<tr style="background:${i%2?'#f4f1ea':'#fff'}">
+        <td style="padding:10px 16px;">${_esc(li.description)}</td>
+        <td style="padding:10px 16px;text-align:right;">${li.amount.toLocaleString()}</td>
       </tr>`).join('')
-    : `<tr><td colspan="2" style="padding:18px;text-align:center;color:#888;">No fees have been generated for this term yet. Use "Generate Fees for Term" on Class Fee Setup first.</td></tr>`;
+    : `<tr><td colspan="2" style="padding:18px;text-align:center;color:#888;">No invoices have been issued for this student in this term yet. Use "Generate Invoice" on Fee Invoices first.</td></tr>`;
 
   const admissionNo = d.student_id || '-';
   const studentName  = `${d.first_name||''} ${d.last_name||''}`.trim() || '-';
