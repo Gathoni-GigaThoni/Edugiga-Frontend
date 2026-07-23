@@ -3525,10 +3525,43 @@ async function submitCoaEdit(id, returnView) {
 // the closest thing) — these hang off cfg.detailActions the same way
 // Payables' Approve/Void buttons hang off its detail pane.
 function _coaDetailActions(item) {
-  if (!_isSuperAdmin()) return '';
-  return `
+  const superAdminActions = _isSuperAdmin() ? `
     <button class="fin-btn-outline" onclick="_coaOpenReclassifyModal(${item.id})">Reclassify</button>
-    <button class="fin-btn-outline" onclick="_coaOpenHistoryModal(${item.id})">Classification History</button>`;
+    <button class="fin-btn-outline" onclick="_coaOpenHistoryModal(${item.id})">Classification History</button>` : '';
+  return `${superAdminActions}
+    <button class="fin-btn-outline" style="color:#c0392b;border-color:#c0392b;" onclick="_coaDeleteAccount(${item.id})">Delete</button>`;
+}
+
+// No backend "in use" check on DELETE /accounts/{id} (confirmed via openapi.json —
+// only 204/422 declared, unlike Fee Items' delete which returns a downstream-reference
+// summary). Guard client-side against Fee Item / General Item account_id references
+// before calling it, since a hard-delete of a referenced account is otherwise unguarded.
+async function _coaCheckAccountReferences(accountId) {
+  const [fiRes, giRes] = await Promise.all([
+    apiFetch(`${API_BASE}/receivables/setup/fee-items`),
+    apiFetch(`${API_BASE}/finance/general-items/`),
+  ]);
+  const feeItems     = (fiRes && fiRes.ok) ? _toArray(await fiRes.json()) : [];
+  const generalItems = (giRes && giRes.ok) ? _toArray(await giRes.json()) : [];
+  const refs = [];
+  feeItems.forEach(f     => { if (String(f.account_id) === String(accountId)) refs.push(`Fee Item "${f.name}"`); });
+  generalItems.forEach(g => { if (String(g.account_id) === String(accountId)) refs.push(`General Item "${g.name}"`); });
+  return refs;
+}
+
+async function _coaDeleteAccount(id) {
+  const acct = chartOfAccountsData.find(a => String(a.id) === String(id));
+  if (!confirm(`Delete account "${acct ? (acct.account_name||'') : id}"? This cannot be undone.`)) return;
+  const refs = await _coaCheckAccountReferences(id);
+  if (refs.length) {
+    showToast(`Cannot delete — still linked to ${refs.join(', ')}. Unlink or reassign these first.`, 'error');
+    return;
+  }
+  try {
+    const res = await apiFetch(`${API_BASE}/accounts/${id}`, { method: 'DELETE' });
+    if (res && res.ok) { showToast('Account deleted.', 'success'); loadView('fin-chart-of-accounts'); }
+    else if (res) { showToast('Error: ' + await parseApiError(res), 'error'); }
+  } catch (_) { showToast('Network error.', 'error'); }
 }
 
 function _coaCloseModal(id) { document.getElementById(id)?.remove(); }
