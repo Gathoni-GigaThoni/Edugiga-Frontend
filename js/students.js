@@ -2438,7 +2438,9 @@ async function openStudentFeeStatement(studentId) {
   try {
     const url = `${API_BASE}/receivables/fee-invoices?student_id=${studentId}` + (termId ? `&term_id=${termId}` : '');
     const res = await apiFetch(url);
-    if (res && res.ok) invoices = _toArray(await res.json());
+    // The endpoint returns invoices in every status; cancelled ones never posted
+    // an AR charge and must not be summed into the statement.
+    if (res && res.ok) invoices = _toArray(await res.json()).filter(inv => inv.status !== 'cancelled');
   } catch (_) {}
 
   const feeItemName = id => (typeof _fsFeeItemName === 'function') ? _fsFeeItemName(id) : `#${id}`;

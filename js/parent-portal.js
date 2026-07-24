@@ -465,7 +465,9 @@ async function ppRenderFees(studentId, studentName) {
     contentEl.innerHTML = `<p style="color:var(--color-danger)">Failed to load fee invoices. Please try again.</p>`;
     return;
   }
-  const invoices = ppToArray(await res.json());
+  // /parent/fees/{id} returns invoices in every status, including cancelled —
+  // parents should never see or be billed for a cancelled invoice.
+  const invoices = ppToArray(await res.json()).filter(i => i.status !== 'cancelled');
   if (invoices.length === 0) {
     contentEl.innerHTML = `
       <div class="pp-empty-state">

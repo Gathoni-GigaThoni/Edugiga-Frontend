@@ -238,38 +238,38 @@ function showDashboard() {
               <li class="dropdown">
                 ${flyoutGroupHeader('Reports', 'fin-reports-dropdown')}
                 <ul id="fin-reports-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('fin-reports-dropdown')}">
-                  <li class="sidebar-sub-sub" onclick="loadView('reports-general-ledger')">General Ledger</li>
-                  <li class="sidebar-sub-sub" onclick="loadView('reports-trial-balance')">Trial Balance</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-aged-payables')">Aged Payables</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-aged-student-debtors')">Aged Student Debtors</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-ap-reconciliation')">AP Reconciliation</li>
                   <li class="sidebar-sub-sub" onclick="loadView('reports-balance-sheet')">Balance Sheet</li>
-                  <li class="sidebar-sub-sub" onclick="loadView('reports-statement-of-financial-performance')">Statement of Financial Performance</li>
-                  <li class="sidebar-sub-sub" onclick="loadView('reports-statement-of-financial-position')">Statement of Financial Position</li>
-                  <li class="sidebar-sub-sub" onclick="loadView('reports-notes-of-financial-statement')">Notes of Financial Statement</li>
-                  <li class="sidebar-sub-sub" onclick="loadView('reports-cashflow-statement')">Cashflow Statement</li>
-                  <li class="sidebar-sub-sub" onclick="loadView('reports-daily-cash-return')">Daily Cash Return</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-balances-report')">Balances Report</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-bank-reconciliation')">Bank Reconciliation Report</li>
                   <li class="sidebar-sub-sub" onclick="loadView('reports-cash-book')">Cash Book</li>
-                  <li class="sidebar-sub-sub" onclick="loadView('reports-petty-cash-report')">Petty Cash Report</li>
-                  <li class="sidebar-sub-sub" onclick="loadView('reports-supplier-statements')">Supplier Statements</li>
-                  <li class="sidebar-sub-sub" onclick="loadView('reports-tax-schedules')">Tax Schedules</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-cashflow-statement')">Cashflow Statement</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-consolidated-student-debtors')">Consolidated Student Debtors</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-customer-aging-analysis')">Customer Aging Analysis</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-daily-cash-return')">Daily Cash Return</li>
                   <li class="sidebar-sub-sub" onclick="loadView('reports-fee-reminder')">Fee Reminder</li>
                   <li class="sidebar-sub-sub" onclick="loadView('reports-fees-invoiced-per-gl-account')">Fees invoiced per GL Account</li>
                   <li class="sidebar-sub-sub" onclick="loadView('reports-fees-paid-per-gl-account')">Fees Paid per GL Account</li>
-                  <li class="sidebar-sub-sub" onclick="loadView('reports-balances-report')">Balances Report</li>
-                  <li class="sidebar-sub-sub" onclick="loadView('reports-aged-student-debtors')">Aged Student Debtors</li>
-                  <li class="sidebar-sub-sub" onclick="loadView('reports-students-arrears-analysis')">Students Arrears Analysis</li>
-                  <li class="sidebar-sub-sub" onclick="loadView('reports-student-prepayment-analysis')">Student Prepayment Analysis</li>
-                  <li class="sidebar-sub-sub" onclick="loadView('reports-customer-aging-analysis')">Customer Aging Analysis</li>
-                  <li class="sidebar-sub-sub" onclick="loadView('reports-aged-payables')">Aged Payables</li>
-                  <li class="sidebar-sub-sub" onclick="loadView('reports-ap-reconciliation')">AP Reconciliation</li>
-                  <li class="sidebar-sub-sub" onclick="loadView('reports-bank-reconciliation')">Bank Reconciliation Report</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-fixed-assets-schedule')">Fixed Assets Schedule</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-general-ledger')">General Ledger</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-journal-entry')">Journal Entry Report</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-notes-of-financial-statement')">Notes of Financial Statement</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-petty-cash-report')">Petty Cash Report</li>
                   <li class="sidebar-sub-sub" onclick="loadView('reports-budget-vs-actual')">Statement of Budget vs Actual Comparison</li>
                   <li class="sidebar-sub-sub" onclick="loadView('reports-statement-of-changes-in-net-assets')">Statement of Changes in Net Assets</li>
-                  <li class="sidebar-sub-sub" onclick="loadView('reports-journal-entry')">Journal Entry Report</li>
-                  <li class="sidebar-sub-sub" onclick="loadView('reports-tendepay-wallet-balances')">Tendepay Wallet Balances</li>
-                  <li class="sidebar-sub-sub" onclick="loadView('reports-tendepay-transaction-history')">Tendepay Transaction History</li>
-                  <li class="sidebar-sub-sub" onclick="loadView('reports-unmatched-tendepay-transactions')">Unmatched Tendepay Transactions</li>
-                  <li class="sidebar-sub-sub" onclick="loadView('reports-fixed-assets-schedule')">Fixed Assets Schedule</li>
-                  <li class="sidebar-sub-sub" onclick="loadView('reports-consolidated-student-debtors')">Consolidated Student Debtors</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-statement-of-financial-performance')">Statement of Financial Performance</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-statement-of-financial-position')">Statement of Financial Position</li>
                   <li class="sidebar-sub-sub" onclick="loadView('reports-student-fee-analysis')">Student Fee Analysis</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-student-prepayment-analysis')">Student Prepayment Analysis</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-students-arrears-analysis')">Students Arrears Analysis</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-supplier-statements')">Supplier Statements</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-tax-schedules')">Tax Schedules</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-tendepay-transaction-history')">Tendepay Transaction History</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-tendepay-wallet-balances')">Tendepay Wallet Balances</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-trial-balance')">Trial Balance</li>
+                  <li class="sidebar-sub-sub" onclick="loadView('reports-unmatched-tendepay-transactions')">Unmatched Tendepay Transactions</li>
                 </ul>
               </li>
             </ul>

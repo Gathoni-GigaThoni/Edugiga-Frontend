@@ -40,9 +40,11 @@ const REPORT_DEFS = {
     columns: [['date','DATE'],['description','DESCRIPTION'],['reference','REFERENCE'],['debit','DEBIT'],['credit','CREDIT'],['balance','BALANCE']] },
   'reports-petty-cash-report': { title: 'Petty Cash Report', api: 'petty-cash-report', dateMode: 'range',
     columns: [['date','DATE'],['applicant','APPLICANT'],['purpose','PURPOSE'],['amount','AMOUNT'],['type','TYPE'],['status','STATUS']] },
+  // SupplierStatementRow (openapi.json) has no "type" field — every row is an
+  // AP invoice — and uses invoice_date/invoice_number, not date/reference.
   'reports-supplier-statements': { title: 'Supplier Statements', api: 'supplier-statements', dateMode: 'range', pathParam: 'supplier_id',
     extra: [{ key: 'supplier_id', label: 'Supplier', type: 'supplier', required: true }],
-    columns: [['date','DATE'],['type','TYPE'],['reference','REFERENCE'],['amount','AMOUNT'],['running_balance','RUNNING BALANCE']] },
+    columns: [['invoice_date','DATE'],['invoice_number','REFERENCE'],['amount','AMOUNT'],['running_balance','RUNNING BALANCE']] },
   'reports-tax-schedules': { title: 'Tax Schedules', api: 'tax-schedules', dateMode: 'range',
     extra: [{ key: 'tax_type', label: 'Tax Type', type: 'taxtype' }],
     columns: [['tax_type','TAX TYPE'],['period','PERIOD'],['amount_deducted','AMOUNT DEDUCTED'],['amount_remitted','AMOUNT REMITTED'],['variance','VARIANCE']] },
