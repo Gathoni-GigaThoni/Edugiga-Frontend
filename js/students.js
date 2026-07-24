@@ -518,6 +518,13 @@ async function loadStudentFormView(container) {
   // the level_id/class_id/academic_year_id names used internally throughout this form.
   if (data.academic_level_id != null && data.level_id == null) data.level_id = data.academic_level_id;
   if (data.school_class_id   != null && data.class_id == null) data.class_id = data.school_class_id;
+  // Neither /full-profile nor the flat student record returns a uses_school_transport
+  // flag — only transport_route_id. Leaving it undefined made _stuSyncTransport's
+  // "!d.uses_school_transport" branch treat every untouched edit as an explicit
+  // opt-out and fire a DELETE against the student's real transport assignment on
+  // every save (surfaced as a 400 "Referenced record does not exist" here, but would
+  // silently wipe the assignment if the backend ever accepted it instead).
+  if (data.uses_school_transport == null) data.uses_school_transport = !!data.transport_route_id;
   window._stuFormData = data;
   _stuEditDirty = false;
   // Tracks which tabs the user actually edited this session, via a single
