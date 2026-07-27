@@ -1162,9 +1162,26 @@ function _bsBuildUrl() {
 
 async function loadTrnBusSchedulesView(container) {
   _bsContainer = container;
-  if (!_bsFilters.service_date) _bsFilters.service_date = new Date().toISOString().split('T')[0];
+  const preselectId = window._bsOpenId ?? null;
+  window._bsOpenId = null;
+  if (preselectId) {
+    // Deep-linked from Casual Bus's "View Manifest" cross-link — the target
+    // manifest's date is unknown up front, so clear filters rather than risk
+    // it falling outside whatever date/status filter was left from last visit.
+    _bsFilters = { service_date: '', bus_id: '', timing: '', status: '' };
+  } else if (!_bsFilters.service_date) {
+    _bsFilters.service_date = new Date().toISOString().split('T')[0];
+  }
   await Promise.all([_fetchTrnBuses(), _fetchTrnRoutes()]);
-  await _bsRenderSplit();
+  await _bsRenderSplit(preselectId);
+}
+
+// Deep-link handoff (mirrors js/journal-entries.js's _jeOpenDetail) — lets
+// Casual Bus Assignment's "View Manifest" cross-link jump straight to a
+// specific manifest's detail pane instead of the bare list.
+function _bsOpenDetail(id) {
+  window._bsOpenId = id;
+  loadView('transport-bus-schedules');
 }
 
 async function _bsRenderSplit(preselectId) {
@@ -2138,4 +2155,389 @@ function _bsUpGoToDate() {
   const dates = [...new Set(_bsUpWiz.postable.map(r => r.service_date).filter(Boolean))];
   if (dates.length === 1) _bsFilters.service_date = dates[0];
   loadView('transport-bus-schedules');
+}
+
+// ==================== TRANSPORT — CASUAL BUS ASSIGNMENTS ====================
+// New sub-section, distinct from StudentRoute (term-standing) — books specific
+// dates without a term commitment. Confirmed live against openapi.json
+// 2026-07-27: POST/GET /api/transport/casual-assignments/, GET .../{id}.
+// No PATCH/DELETE/cancel exists — cancellation is intentionally not built in
+// this shipment (§4.8): the finance team cancels/credits the linked invoice
+// instead, and the booking record stays as the source of truth.
+
+function _cbEsc(v) {
+  return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+let _cbStudentsCache = null;
+let _cbTermsCache = null;
+let _cbStaffCache = null;
+let _cbRouteBusesCache = {}; // route_id -> linked BusRead[] (no reverse-lookup endpoint exists; derived by checking every bus's own .routes)
+let _cbDates = [];
+
+async function _cbEnsureStudentsCache() {
+  if (_cbStudentsCache) return;
+  const res = await apiFetch(`${API_BASE}/students/`);
+  _cbStudentsCache = (res && res.ok) ? _toArray(await res.json()) : [];
+}
+async function _cbEnsureTermsCache() {
+  if (_cbTermsCache) return;
+  const res = await apiFetch(`${API_BASE}/terms`);
+  _cbTermsCache = (res && res.ok) ? _toArray(await res.json()) : [];
+}
+async function _cbEnsureStaffCache() {
+  if (_cbStaffCache) return;
+  const res = await apiFetch(`${API_BASE}/hr/employees`);
+  const raw = (res && res.ok) ? await res.json() : null;
+  _cbStaffCache = raw ? (raw.items || _toArray(raw)) : [];
+}
+function _cbTermLabel(t) { return t.title || t.name || `Term ${t.id}`; }
+function _cbStudentLabel(id) {
+  const s = (_cbStudentsCache||[]).find(x => String(x.id) === String(id));
+  if (!s) return `#${id}`;
+  return `${s.first_name||''} ${s.last_name||''}`.trim() || (s.student_id || `#${id}`);
+}
+function _cbBusLabel(id) {
+  const b = (_trnBusesData||[]).find(x => String(x.id) === String(id));
+  return b ? (b.name ? `${b.name} (${b.id})` : b.id) : id;
+}
+function _cbStaffLabel(id) {
+  const e = (_cbStaffCache||[]).find(x => String(x.id) === String(id));
+  if (!e) return `#${id}`;
+  return `${e.first_name||''} ${e.last_name||''}`.trim() || `#${id}`;
+}
+function _cbStatusPill(status) {
+  if (status === 'cancelled') return `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.75rem;font-weight:600;color:#888;background:#eee;text-decoration:line-through;">Cancelled</span>`;
+  return `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.75rem;font-weight:600;color:#fff;background:var(--navy-700,#1B3057);">Active</span>`;
+}
+function _cbTimingPill(timing) {
+  return `<span style="display:inline-block;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:700;background:#eee;color:#555;">${(timing||'').toUpperCase()}</span>`;
+}
+
+// ── Listing (split-view) ─────────────────────────────────────────────────────
+async function loadCasualBusAssignmentsView(container) {
+  await Promise.all([_fetchTrnRoutes(), _fetchTrnBuses(), _cbEnsureStudentsCache(), _cbEnsureTermsCache(), _cbEnsureStaffCache()]);
+  const cfg = {
+    container,
+    title: 'Casual Bus Assignments',
+    moduleKey: 'transport_management',
+    breadcrumb: [
+      {label:'Dashboard',view:null},
+      {label:'Transport Management',view:'transport-bus-schedules'},
+      {label:'Casual Bus Assignments'},
+    ],
+    apiUrl: `${API_BASE}/transport/casual-assignments/`,
+    searchFields: [],
+    col1Label: 'Student', col2Label: 'Status',
+    col1: a => `<strong>${_cbEsc(_cbStudentLabel(a.student_id))}</strong><br><span style="font-weight:400;font-size:12px;color:#888;">${_cbEsc(_trnRouteName(a.route_id))} &middot; ${_cbEsc(_cbBusLabel(a.bus_id))} &middot; ${_cbTimingPill(a.timing)}</span>`,
+    col2: a => `${_cbStatusPill(a.status)}<br><span style="font-size:12px;color:#555;">${formatKES(a.total_amount)} &middot; ${a.num_dates} date${a.num_dates===1?'':'s'}</span>`,
+    rowLabel: a => _cbStudentLabel(a.student_id),
+    rowSub: a => `${(a.status||'').replace(/_/g,' ')} &middot; ${_cbEsc(_trnRouteName(a.route_id))} &middot; ${(a.timing||'').toUpperCase()}`,
+    idKey: 'id',
+    detailFields: [
+      {label:'Student',             key:'student_id', fmt:v=>_cbStudentLabel(v)},
+      {label:'Route',               key:'route_id', fmt:v=>_trnRouteName(v)},
+      {label:'Bus',                 key:'bus_id', fmt:v=>_cbBusLabel(v)},
+      {label:'Timing',              key:'timing', fmt:v=>(v||'').toUpperCase()},
+      {label:'Dates Booked',        key:'num_dates'},
+      {label:'Daily Rate Snapshot', key:'daily_rate_snapshot', fmt:v=>formatKES(v)},
+      {label:'Total Amount',        key:'total_amount', fmt:v=>formatKES(v)},
+      {label:'Notes',               key:'notes', fmt:v=>v||'—'},
+      {label:'Created By',          key:'created_by', fmt:v=>_cbStaffLabel(v)},
+      {label:'Created At',          key:'created_at', fmt:v=>v?new Date(v).toLocaleString():'—'},
+    ],
+    renderAdd: el => _cbRenderAddForm(el),
+    detailActions: item => _cbDetailActionsHtml(item),
+  };
+  await renderSplitView(cfg);
+  _cbInjectStudentFilter(cfg);
+}
+
+function _cbInjectStudentFilter(cfg) {
+  const listEl = document.querySelector('.split-list');
+  if (!listEl) return;
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'padding:0 16px 10px;';
+  wrap.innerHTML = `
+    <select id="cb-filter-student" class="fin-form-select" style="width:100%;font-size:12px;">
+      <option value="">All Students</option>
+      ${(_cbStudentsCache||[]).map(s=>`<option value="${s.id}">${_cbEsc(_cbStudentLabel(s.id))}</option>`).join('')}
+    </select>`;
+  listEl.insertAdjacentElement('beforebegin', wrap);
+  document.getElementById('cb-filter-student').addEventListener('change', e => {
+    const sid = e.target.value;
+    cfg.apiUrl = `${API_BASE}/transport/casual-assignments/` + (sid ? `?student_id=${sid}` : '');
+    window._splitReload && window._splitReload();
+  });
+}
+
+// ── Detail pane: cross-links (Invoice / Accrual JE / Manifests, deduped),
+// dates table, and the "cancel via FeeInvoice" helper note (§4.8) ──────────
+function _cbDetailActionsHtml(item) {
+  const uniqueScheduleIds = [...new Set((item.dates||[]).map(d => d.bus_schedule_id))];
+  const datesRows = (item.dates||[]).map(d => `
+    <tr>
+      <td>${_cbEsc(d.service_date)}</td>
+      <td><a href="#" onclick="_bsOpenDetail(${d.bus_schedule_id});return false;">#${d.bus_schedule_id}</a></td>
+      <td>#${d.bus_schedule_rider_id}</td>
+    </tr>`).join('') || `<tr><td colspan="3" class="fin-empty">No dates.</td></tr>`;
+
+  return `
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
+      ${item.fee_invoice_id ? `<button class="fin-btn-outline" onclick="window._rcvCurrentInvoiceId=${item.fee_invoice_id};loadView('fin-invoice-detail');">View Invoice</button>` : ''}
+      ${item.journal_entry_id ? `<button class="fin-btn-outline" onclick="_jeOpenDetail(${item.journal_entry_id})">View Accrual JE</button>` : ''}
+      ${uniqueScheduleIds.map(sid => `<button class="fin-btn-outline" onclick="_bsOpenDetail(${sid})">View Manifest #${sid}</button>`).join('')}
+    </div>
+    <div class="fin-section-label">Dates</div>
+    <div class="fin-table-wrap"><table class="fin-li-table">
+      <thead><tr><th>Service Date</th><th>Bus Schedule</th><th>Rider ID</th></tr></thead>
+      <tbody>${datesRows}</tbody>
+    </table></div>
+    <div class="fin-field-hint fin-field-hint-info" style="margin-top:12px;">To cancel a trip, cancel or credit the linked fee invoice from the Finance module. The booking record stays on file.</div>`;
+}
+
+// ── Add ("Book") ──────────────────────────────────────────────────────────────
+function _cbPrereqPanelHtml() {
+  return `
+    <details style="margin-bottom:14px;background:var(--navy-50,#EEF3FA);border:1px solid var(--navy-100,#DCE6F5);border-radius:8px;padding:10px 14px;">
+      <summary style="cursor:pointer;font-weight:600;color:var(--navy-700,#1B3057);font-size:0.88rem;">Before you book</summary>
+      <ul style="margin:8px 0 0;padding-left:18px;font-size:0.82rem;color:#555;">
+        <li>The Route exists and has a daily rate greater than 0.</li>
+        <li>The Bus exists.</li>
+        <li>The Bus is linked to the Route (via the Transport module).</li>
+        <li>The school's AR control account is configured (ops task).</li>
+        <li>An active Transport Revenue account exists in the Chart of Accounts.</li>
+      </ul>
+    </details>`;
+}
+function _cbDatesChipsHtml() {
+  if (_cbDates.length === 0) return `<p style="color:#888;font-size:12px;margin:6px 0;">No dates selected yet.</p>`;
+  return `<div style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0;">
+    ${_cbDates.map((d, i) => `<span style="display:inline-flex;align-items:center;gap:6px;background:var(--navy-50,#EEF3FA);color:var(--navy-700,#1B3057);padding:4px 10px;border-radius:14px;font-size:12px;">${_cbEsc(d)}<button type="button" style="background:none;border:none;color:#c0392b;cursor:pointer;font-weight:700;" onclick="_cbRemoveDate(${i})">&times;</button></span>`).join('')}
+  </div>`;
+}
+function _cbAddDate() {
+  const input = document.getElementById('cb-f-date-picker');
+  const val = input.value;
+  if (!val) return;
+  if (!_cbDates.includes(val)) { _cbDates.push(val); _cbDates.sort(); }
+  input.value = '';
+  _cbRenderDatesArea();
+}
+function _cbRemoveDate(idx) {
+  _cbDates.splice(idx, 1);
+  _cbRenderDatesArea();
+}
+function _cbRenderDatesArea() {
+  const chipsEl = document.getElementById('cb-f-dates-chips');
+  if (chipsEl) chipsEl.innerHTML = _cbDatesChipsHtml();
+  const countEl = document.getElementById('cb-f-dates-count');
+  if (countEl) countEl.textContent = `${_cbDates.length} date(s) selected`;
+  _cbRecalcTotal();
+}
+function _cbRecalcTotal() {
+  const rate = window._cbSelectedDailyRate || 0;
+  const total = rate * _cbDates.length;
+  const el = document.getElementById('cb-f-total-preview');
+  if (el) el.textContent = formatKES(total);
+}
+function _cbSetTiming(t) {
+  window._cbTiming = t;
+  const amBtn = document.getElementById('cb-f-timing-am');
+  const pmBtn = document.getElementById('cb-f-timing-pm');
+  if (amBtn) amBtn.className = t === 'am' ? 'fin-btn-teal' : 'fin-btn-outline';
+  if (pmBtn) pmBtn.className = t === 'pm' ? 'fin-btn-teal' : 'fin-btn-outline';
+}
+async function _cbLoadBusesForRoute(routeId) {
+  const busSelect = document.getElementById('cb-f-bus');
+  const warnEl = document.getElementById('cb-f-bus-warning');
+  if (!busSelect) return;
+  if (!routeId) { busSelect.innerHTML = '<option value="">Select a route first</option>'; if (warnEl) warnEl.style.display = 'none'; return; }
+  busSelect.innerHTML = '<option value="">Loading buses&#8230;</option>';
+  if (!_cbRouteBusesCache[routeId]) {
+    const buses = _trnBusesData || [];
+    const linked = [];
+    // No "buses linked to this route" endpoint exists — only the reverse
+    // (POST/DELETE /buses/{bus_id}/routes/{route_id} to manage the link, and
+    // GET /buses/{bus_id} returning that bus's own .routes). Derive the set
+    // by checking every bus once per route, cached thereafter.
+    await Promise.all(buses.map(async b => {
+      const r = await apiFetch(`${API_BASE}/buses/${encodeURIComponent(b.id)}`);
+      const full = (r && r.ok) ? await r.json() : null;
+      const routeIds = (full?.routes || []).map(x => String(x.id));
+      if (routeIds.includes(String(routeId))) linked.push(b);
+    }));
+    _cbRouteBusesCache[routeId] = linked;
+  }
+  const linked = _cbRouteBusesCache[routeId];
+  if (linked.length === 0) {
+    busSelect.innerHTML = '<option value="">No bus linked to this route</option>';
+    if (warnEl) warnEl.style.display = 'block';
+  } else {
+    if (warnEl) warnEl.style.display = 'none';
+    busSelect.innerHTML = `<option value="">Please Select</option>${linked.map(b=>`<option value="${b.id}">${_cbEsc(_cbBusLabel(b.id))}</option>`).join('')}`;
+  }
+}
+function _cbOnRouteChange(routeId) {
+  const route = (_trnRoutesData||[]).find(r => String(r.id) === String(routeId));
+  const rateEl = document.getElementById('cb-f-daily-rate-hint');
+  const dailyRate = route ? (parseFloat(route.daily_rate) || 0) : 0;
+  if (rateEl) rateEl.textContent = route ? `Daily rate: ${formatKES(dailyRate)}` : '';
+  window._cbSelectedDailyRate = dailyRate;
+  _cbLoadBusesForRoute(routeId);
+  _cbRecalcTotal();
+}
+function _cbPopulateStudentDatalist() {
+  const dl = document.getElementById('cb-f-student-list');
+  if (!dl) return;
+  window._cbStudentMap = {};
+  dl.innerHTML = (_cbStudentsCache||[]).map(s => {
+    const label = `${s.first_name||''} ${s.last_name||''} (${s.student_id||s.id})`.trim();
+    window._cbStudentMap[label] = s.id;
+    return `<option value="${_cbEsc(label)}"></option>`;
+  }).join('');
+}
+function _cbResolveStudentInput(val) {
+  const id = (window._cbStudentMap||{})[val];
+  const hidden = document.getElementById('cb-f-student-id');
+  if (hidden) hidden.value = id || '';
+}
+
+function _cbRenderAddForm(el) {
+  _cbDates = [];
+  window._cbSelectedDailyRate = 0;
+  window._cbTiming = 'am';
+  const todayStr = new Date().toISOString().slice(0,10);
+  el.innerHTML = `
+    <div class="fin-form-wrap" style="max-width:100%;">
+      <h3 class="fin-title" style="font-size:1rem;">Book a Casual Bus Trip</h3>
+      ${_cbPrereqPanelHtml()}
+      <div class="fin-form-group">
+        <label class="fin-form-label">Student <span class="fin-required">*</span></label>
+        <input type="text" id="cb-f-student-search" class="fin-search-input" list="cb-f-student-list" placeholder="Search student&#8230;" oninput="_cbResolveStudentInput(this.value)">
+        <datalist id="cb-f-student-list"></datalist>
+        <input type="hidden" id="cb-f-student-id">
+        <span class="fin-field-error" id="cb-f-student-err"></span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Route <span class="fin-required">*</span></label>
+        <select id="cb-f-route" class="fin-form-select" onchange="_cbOnRouteChange(this.value)">
+          <option value="">Please Select</option>
+          ${(_trnRoutesData||[]).map(r=>`<option value="${r.id}">${_cbEsc(r.name||r.id)}</option>`).join('')}
+        </select>
+        <span class="fin-field-hint fin-field-hint-info" id="cb-f-daily-rate-hint"></span>
+        <span class="fin-field-error" id="cb-f-route-err"></span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Bus <span class="fin-required">*</span></label>
+        <select id="cb-f-bus" class="fin-form-select"><option value="">Select a route first</option></select>
+        <div id="cb-f-bus-warning" class="fin-field-hint fin-field-hint-warning" style="display:none;">No bus is linked to this route. Link one via the transport module first.</div>
+        <span class="fin-field-error" id="cb-f-bus-err"></span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Timing <span class="fin-required">*</span></label>
+        <div style="display:flex;gap:6px;">
+          <button type="button" id="cb-f-timing-am" class="fin-btn-teal" onclick="_cbSetTiming('am')">AM</button>
+          <button type="button" id="cb-f-timing-pm" class="fin-btn-outline" onclick="_cbSetTiming('pm')">PM</button>
+        </div>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Dates <span class="fin-required">*</span></label>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="date" id="cb-f-date-picker" class="fin-form-input" style="max-width:180px;">
+          <button type="button" class="fin-btn-outline" onclick="_cbAddDate()">+ Add Date</button>
+        </div>
+        <div id="cb-f-dates-chips">${_cbDatesChipsHtml()}</div>
+        <span id="cb-f-dates-count" style="font-size:12px;color:#888;">0 date(s) selected</span>
+        <span class="fin-field-error" id="cb-f-dates-err"></span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Term</label>
+        <select id="cb-f-term" class="fin-form-select">
+          <option value="">— Server resolves current term —</option>
+          ${(_cbTermsCache||[]).map(t=>`<option value="${t.id}">${_cbEsc(_cbTermLabel(t))}</option>`).join('')}
+        </select>
+        <span class="fin-field-error" id="cb-f-term-err"></span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Due Date</label>
+        <input type="date" id="cb-f-due-date" class="fin-form-input" value="${todayStr}">
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Notes</label>
+        <textarea id="cb-f-notes" class="fin-form-textarea" rows="2"></textarea>
+      </div>
+      <div style="background:var(--navy-700,#1B3057);color:#fff;border-radius:8px;padding:14px 16px;margin:12px 0;">
+        <div style="font-size:11px;opacity:.75;text-transform:uppercase;letter-spacing:.05em;">Total</div>
+        <div style="font-size:1.3rem;font-weight:700;margin-top:4px;" id="cb-f-total-preview">${formatKES(0)}</div>
+      </div>
+      <div id="cb-f-msg"></div>
+      <div class="fin-form-actions">
+        <button class="fin-btn-teal" onclick="_cbSubmitBooking()">Book</button>
+        <button class="fin-btn-cancel" onclick="window._splitReload && window._splitReload()">Cancel</button>
+      </div>
+    </div>`;
+  _cbPopulateStudentDatalist();
+}
+
+async function _cbSubmitBooking() {
+  ['student','route','bus','dates','term'].forEach(f => { const e = document.getElementById(`cb-f-${f}-err`); if (e) e.textContent = ''; });
+  document.getElementById('cb-f-msg').innerHTML = '';
+  const studentId = document.getElementById('cb-f-student-id').value;
+  const routeId   = document.getElementById('cb-f-route').value;
+  const busId     = document.getElementById('cb-f-bus').value;
+  const termId    = document.getElementById('cb-f-term').value;
+  const dueDate   = document.getElementById('cb-f-due-date').value;
+  const notes     = document.getElementById('cb-f-notes').value.trim();
+
+  let valid = true;
+  if (!studentId) { document.getElementById('cb-f-student-err').textContent = 'Select a student.'; valid = false; }
+  if (!routeId)   { document.getElementById('cb-f-route-err').textContent  = 'This field is required.'; valid = false; }
+  if (!busId)     { document.getElementById('cb-f-bus-err').textContent    = 'Select a bus.'; valid = false; }
+  if (_cbDates.length === 0) { document.getElementById('cb-f-dates-err').textContent = 'Add at least one date.'; valid = false; }
+  if (!valid) return;
+
+  const payload = {
+    student_id: parseInt(studentId),
+    route_id: routeId,
+    bus_id: busId,
+    timing: window._cbTiming || 'am',
+    dates: _cbDates.slice(),
+    term_id: termId ? parseInt(termId) : null,
+    notes: notes || null,
+    due_date: dueDate || null,
+  };
+  const res = await apiFetch(`${API_BASE}/transport/casual-assignments/`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+  });
+  if (res && res.ok) {
+    showToast('Casual bus trip booked.', 'success');
+    window._splitReload && await window._splitReload();
+    return;
+  }
+  if (!res) return;
+  const detail = await parseApiError(res);
+  _cbHandleBookingError(res.status, detail);
+}
+
+// Classifies every failure mode in §4.7: 404/400/409 are workflow guidance
+// (coral, inline on the relevant field), the two 500s are setup/config
+// signals (gold callout, "ask ops") — never dumped into one generic toast.
+function _cbHandleBookingError(status, detail) {
+  if (status === 404 && /student/i.test(detail)) { document.getElementById('cb-f-student-err').textContent = detail; return; }
+  if (status === 400 && /student/i.test(detail) && /inactive/i.test(detail)) { document.getElementById('cb-f-student-err').textContent = detail; return; }
+  if (status === 404 && /route/i.test(detail)) { document.getElementById('cb-f-route-err').textContent = detail; return; }
+  if (status === 404 && /bus/i.test(detail)) { document.getElementById('cb-f-bus-err').textContent = detail; return; }
+  if (status === 400 && /does not serve route/i.test(detail)) {
+    document.getElementById('cb-f-msg').innerHTML = `<div class="fin-field-error">${_cbEsc(detail)} — <a href="#" onclick="loadView('transport-routes');return false;">Open the Transport module</a></div>`;
+    return;
+  }
+  if (status === 400 && /cannot resolve a term/i.test(detail)) { document.getElementById('cb-f-term-err').textContent = detail; return; }
+  if (status === 404 && /term/i.test(detail)) { document.getElementById('cb-f-term-err').textContent = detail; return; }
+  if (status === 409) { document.getElementById('cb-f-msg').innerHTML = `<div class="fin-field-error">${_cbEsc(detail)}</div>`; return; }
+  if (status === 500 && /(AR_CONTROL_ACCOUNT_ID|Transport Revenue account)/i.test(detail)) {
+    document.getElementById('cb-f-msg').innerHTML = `<div class="fin-field-hint fin-field-hint-warning">${_cbEsc(detail)} — this is a setup task; ask ops to configure it.</div>`;
+    return;
+  }
+  document.getElementById('cb-f-msg').innerHTML = `<div class="fin-field-error">${_cbEsc(detail)}</div>`;
 }
