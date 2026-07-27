@@ -86,9 +86,15 @@ function _rcvScopeTarget(s) {
 function _rcvCloseModal() { document.getElementById('fin-gen-modal-overlay')?.remove(); }
 
 function _rcvAccountOptions(filterType, selectedId) {
+  // _rcvAccountsCache stays unfiltered (elsewhere in this file a saved
+  // income account_id is resolved straight off it regardless of active
+  // state) — active-only filtering happens here, at the picker, with the
+  // selected-but-now-inactive id kept visible and labeled so a stale
+  // selection never renders blank (§5.4).
   return (_rcvAccountsCache||[])
     .filter(a => !filterType || (a.account_type||'').toLowerCase() === filterType.toLowerCase())
-    .map(a => `<option value="${a.id}" ${String(a.id)===String(selectedId)?'selected':''}>${_finEsc(a.number||'')} — ${_finEsc(a.account_name||'')}</option>`)
+    .filter(a => a.is_active !== false || String(a.id) === String(selectedId))
+    .map(a => `<option value="${a.id}" ${String(a.id)===String(selectedId)?'selected':''}>${_finEsc(a.number||'')} — ${_finEsc(a.account_name||'')}${a.is_active===false?' (inactive)':''}</option>`)
     .join('');
 }
 function _rcvLedgerOptions(selectedId) {

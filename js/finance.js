@@ -3286,9 +3286,14 @@ function _coaRepopulateSubtype(accountType) {
 
 function _coaFormHtml(acct, opts = {}) {
   const parentId = acct?.parent_id;
+  // chartOfAccountsData stays unfiltered (it's also the lookup cache for
+  // _coaParentName()/wallet-role pills elsewhere) — active-only filtering
+  // happens only in this picker's own option list, keeping a stale-but-
+  // currently-set parent visible and labeled rather than rendering blank (§5.4).
   const parentOpts = chartOfAccountsData
     .filter(a=> !acct || a.id!==acct.id)
-    .map(a=>`<option value="${a.id}" ${String(parentId)===String(a.id)?'selected':''}>${_finEsc(a.account_name||'')}</option>`).join('');
+    .filter(a=> a.is_active !== false || String(a.id) === String(parentId))
+    .map(a=>`<option value="${a.id}" ${String(parentId)===String(a.id)?'selected':''}>${_finEsc(a.account_name||'')}${a.is_active===false?' (inactive)':''}</option>`).join('');
   // Fee Accounts is not a separate backend resource — it's Chart of Accounts
   // filtered to is_student_fees_related:true (confirmed live, GET /accounts/
   // takes that as a query param) — see loadFeeAccountsView. Adding from that
@@ -3367,7 +3372,14 @@ function _coaFormHtml(acct, opts = {}) {
       <div id="coa-f-wallet-role-warn" style="display:none;background:var(--gold-100,#FAF2D3);border-left:3px solid var(--gold-500,#C9A227);padding:8px 12px;border-radius:6px;margin-top:8px;font-size:0.82rem;color:#6b5400;">
         This account looks like a Tendepay wallet but has no wallet role. It will be invisible to the Tendepay import and reconciliation.
       </div>
-    </div>`;
+    </div>
+    ${acct ? `
+    <div class="fin-form-group">
+      <label class="fin-form-check-label" style="display:flex;align-items:center;gap:8px;font-size:0.9rem;cursor:pointer;">
+        <input type="checkbox" id="coa-f-inactive" class="fin-cb" ${acct.is_active===false?'checked':''}> Inactive
+      </label>
+      <span class="fin-field-hint fin-field-hint-info">Inactive accounts are removed from every Account dropdown across the application. Existing postings and reports are unaffected. Untick to reactivate.</span>
+    </div>` : ''}`;
 }
 
 // Only Tendepay wallet accounts carry a tendepay_wallet_code — show the field
@@ -3500,6 +3512,8 @@ async function submitCoaEdit(id, returnView) {
   document.getElementById('coa-f-name-err').textContent = name ? '' : 'This field is required.';
   document.getElementById('coa-f-cfg-err').textContent  = '';
   if (!name) return;
+  const wasActive = chartOfAccountsData[idx].is_active !== false;
+  const nowActive = !document.getElementById('coa-f-inactive')?.checked;
   const payload = {
     // account_type / account_subtype: AccountUpdate is silent on both per the
     // 2026-07-21 addendum — those two axes move only via reclassification
@@ -3510,12 +3524,15 @@ async function submitCoaEdit(id, returnView) {
     is_student_fees_related: document.getElementById('coa-f-fees-related').checked,
     is_budget_item:         document.getElementById('coa-f-budget-item').checked,
     tendepay_wallet_code:   document.getElementById('coa-f-wallet-code')?.value.trim() || null,
-    wallet_role:            document.getElementById('coa-f-wallet-role')?.value || null
+    wallet_role:            document.getElementById('coa-f-wallet-role')?.value || null,
+    is_active:              nowActive,
   };
   const res = await apiFetch(`${API_BASE}/accounts/${id}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
   });
-  if (res && res.ok) { showToast('Account updated!', 'success'); }
+  if (res && res.ok) {
+    showToast(nowActive !== wasActive ? `Account marked ${nowActive ? 'active' : 'inactive'}.` : 'Account updated!', 'success');
+  }
   else if (res) { showToast('Error: ' + await parseApiError(res), 'error'); }
   loadView(returnView);
 }
@@ -3874,8 +3891,24 @@ function changeFiPerPage(v){ _feeItemPerPage=parseInt(v); _feeItemPage=1; _rende
 function onFiSearch(v)     { _feeItemSearch=v.trim().toLowerCase(); _feeItemPage=1; _renderFeeItemsTable(); }
 function fiGoPage(p)       { _feeItemPage=p; _renderFeeItemsTable(); }
 
+// §5.4 — the account_id caches this reads from (_fiAccountsCache,
+// _giAccountsCache) are fetched active-only at the source, so a record whose
+// account was since deactivated would otherwise vanish from its own picker
+// and render blank. Fetch that one stale id and append it labeled
+// "(inactive)" instead, so the operator sees the truth rather than a blank
+// field.
+async function _finAccountOptionsWithStaleFallback(cache, selectedId) {
+  let list = cache;
+  if (selectedId != null && !list.some(a => String(a.id) === String(selectedId))) {
+    const res = await apiFetch(`${API_BASE}/accounts/${selectedId}`);
+    if (res && res.ok) list = [...list, await res.json()];
+  }
+  return list.map(a => `<option value="${a.id}" ${String(selectedId)===String(a.id)?'selected':''}>${_finEsc(a.number||'')} — ${_finEsc(a.account_name||'')}${a.is_active===false?' (inactive)':''}</option>`).join('');
+}
+
 async function renderFeeItemAddPage(container, item) {
   if (!_fiAccountsCache.length) await _fiLoadLookups();
+  const accountOptsHtml = await _finAccountOptionsWithStaleFallback(_fiAccountsCache, item?.account_id);
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -3908,7 +3941,7 @@ async function renderFeeItemAddPage(container, item) {
           <label class="fin-form-label">Account</label>
           <select id="fi-f-account" class="fin-form-select">
             <option value="">Please Select</option>
-            ${_fiAccountsCache.map(a=>`<option value="${a.id}" ${String(item?.account_id)===String(a.id)?'selected':''}>${_finEsc(a.number)} — ${_finEsc(a.account_name||'')}</option>`).join('')}
+            ${accountOptsHtml}
           </select>
         </div>
         <div class="fin-form-group" style="margin-bottom:16px;">
@@ -4185,8 +4218,7 @@ function _giSubtypeOpts(selectedType, selectedVal) {
 async function renderGeneralItemForm(container, item) {
   await _giLoadAccounts();
   const code = item ? (item.code||'') : _genGeneralItemCode();
-  const acctOpts = _giAccountsCache.map(a=>
-    `<option value="${a.id}" ${String(item?.account_id)===String(a.id)?'selected':''}>${_finEsc(a.number||'')} — ${_finEsc(a.account_name||'')}</option>`).join('');
+  const acctOpts = await _finAccountOptionsWithStaleFallback(_giAccountsCache, item?.account_id);
   const incomeSubOpts = _giSubtypeOpts('INCOME', item?.type==='INCOME'?item?.sub_type:'');
   const expSubOpts    = _giSubtypeOpts('EXPENSE', item?.type==='EXPENSE'?item?.sub_type:'');
   container.innerHTML = `
