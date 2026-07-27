@@ -88,6 +88,25 @@
 }
 .pp-logout-btn:hover { background: var(--gold-400); }
 
+.pp-topbar-nav {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 22px;
+}
+.pp-topbar-nav-link {
+  font-family: 'Inter', Arial, sans-serif;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.65);
+  cursor: pointer;
+  padding-bottom: 4px;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+}
+.pp-topbar-nav-link:hover { color: var(--white); }
+.pp-topbar-nav-link.active { color: var(--white); border-bottom-color: var(--gold-500); }
+
 /* ── Content shell ── */
 .pp-container {
   flex: 1;

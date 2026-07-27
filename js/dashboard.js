@@ -73,7 +73,7 @@ function showDashboard() {
         ${access['human-resource'] ? `<button class="rail-item" data-module="human-resource" title="Human Resource" onclick="handleRailClick('human-resource')"><span class="rail-label-full">Human Resource</span><span class="rail-label-short">HR</span></button>` : ''}
         ${access['payroll'] ? `<button class="rail-item" data-module="payroll" title="Payroll" onclick="handleRailClick('payroll')"><span class="rail-label-full">Payroll</span><span class="rail-label-short">PAY</span></button>` : ''}
         ${access['asset-management'] ? `<button class="rail-item" title="Asset Management" onclick="loadView('asset-management')"><span class="rail-label-full">Assets</span><span class="rail-label-short">AST</span></button>` : ''}
-        ${access['communication'] ? `<button class="rail-item" title="Communication" onclick="loadView('communication')"><span class="rail-label-full">Communication</span><span class="rail-label-short">COM</span></button>` : ''}
+        ${access['communication'] ? `<button class="rail-item" data-module="communication" title="Communication" onclick="handleRailClick('communication')"><span class="rail-label-full">Communication</span><span class="rail-label-short">COM</span></button>` : ''}
         ${(isSuperAdmin || access['administration']) ? `<button class="rail-item" data-module="administration" title="Administration" onclick="handleRailClick('administration')"><span class="rail-label-full">Administration</span><span class="rail-label-short">ADM</span></button>` : ''}
         <button class="rail-item" title="Logout" onclick="logout()"><span class="rail-label-full">Log Out</span><span class="rail-label-short">OUT</span></button>
       </div>
@@ -320,6 +320,12 @@ function showDashboard() {
           <div class="flyout-module-body" id="flyout-body-procurement" data-label="Procurement" hidden>
             <ul id="procurement-dropdown" class="dropdown-menu">
               <li id="sidebar-prc-suppliers" onclick="loadView('procurement-suppliers')">Suppliers</li>
+            </ul>
+          </div>
+
+          <div class="flyout-module-body" id="flyout-body-communication" data-label="Communication" hidden>
+            <ul id="communication-dropdown" class="dropdown-menu">
+              <li id="sidebar-com-parent-docs" onclick="loadView('communication-parent-documents')">Parent Documents</li>
             </ul>
           </div>
 
@@ -806,6 +812,8 @@ const FORM_VIEWS = new Set([
   'hr-employee-directory', 'payroll-esp', 'payroll-fi', 'payroll-runs', 'payroll-payslips',
   // Procurement
   'procurement-suppliers-add', 'procurement-suppliers-edit',
+  // Communication
+  'communication-parent-documents',
   // Administration
   'user-management', 'admin-roles', 'admin-role-edit', 'admin-role-permissions',
   // Academic setup
@@ -1268,10 +1276,14 @@ async function loadView(view) {
     case 'procurement-suppliers-edit':
       setActiveSidebarItem('sidebar-prc-suppliers');
       await loadSupplierFormView(main, _supEditId); break;
+    // Communication
+    case 'communication':
+    case 'communication-parent-documents':
+      setActiveSidebarItem('sidebar-com-parent-docs');
+      await loadParentDocumentsView(main); break;
     // Empty modules
     case 'inventory-management':
     case 'asset-management':
-    case 'communication':
       main.innerHTML = `<h2>${view.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</h2><p>This module is under construction.</p>`;
       break;
     default: main.innerHTML = "<p>Module not found.</p>";

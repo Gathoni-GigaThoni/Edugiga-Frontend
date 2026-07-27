@@ -108,7 +108,7 @@ function ppLogoMarkup(eyebrow) {
   `;
 }
 
-function ppTopbarMarkup() {
+function ppTopbarMarkup(active) {
   return `
     <div class="pp-topbar">
       <div class="pp-topbar-brand">
@@ -118,6 +118,10 @@ function ppTopbarMarkup() {
         </div>
         <div class="pp-topbar-title">Parent Portal<span>Seven Oaks International School</span></div>
       </div>
+      <nav class="pp-topbar-nav">
+        <a class="pp-topbar-nav-link${active!=='documents'?' active':''}" onclick="ppRenderDashboard()">My Children</a>
+        <a class="pp-topbar-nav-link${active==='documents'?' active':''}" onclick="ppRenderDocuments()">Documents</a>
+      </nav>
       <div class="pp-topbar-right">
         <span class="pp-topbar-email">${ppEsc(ppCurrentEmail)}</span>
         <button class="pp-logout-btn" onclick="ppLogout()">Log Out</button>
@@ -525,6 +529,116 @@ async function ppRenderFees(studentId, studentName) {
       </table>
     </div>
   `;
+}
+
+// ==================== DOCUMENTS ====================
+// GET /parent/documents — server-side filters to is_active=true and the union
+// of is_global=true OR any level one of the parent's children sits in, already
+// ordered uploaded_at DESC (ParentDocumentRow shape — no student linkage on
+// the row itself).
+
+const PP_DOC_TYPE_LABELS = { newsletter: 'Newsletter', term_calendar: 'Term Calendar', general: 'General' };
+const PP_DOC_TYPE_COLORS = {
+  newsletter:    'color:#8a6d00;background:#f5e6a8;',
+  term_calendar: 'color:#1a5fb4;background:#dce8fb;',
+  general:       'color:#555;background:#eee;',
+};
+function ppDocTypeBadge(type) {
+  const label = PP_DOC_TYPE_LABELS[type] || type || '—';
+  const style = PP_DOC_TYPE_COLORS[type] || 'color:#555;background:#eee;';
+  return `<span class="pp-status-badge" style="${style}">${ppEsc(label)}</span>`;
+}
+
+async function ppRenderDocuments() {
+  const root = document.getElementById('pp-root');
+  root.innerHTML = `
+    <div class="pp-shell">
+      ${ppTopbarMarkup('documents')}
+      <div class="pp-container">
+        <div class="pp-page-header">
+          <h1 class="pp-page-title">Documents</h1>
+          <p class="pp-page-subtitle">Newsletters, term calendars and general documents from the school.</p>
+        </div>
+        <div id="pp-documents-content">
+          <div class="pp-table-wrap">
+            ${[1,2,3].map(() => `<div class="pp-skeleton-row"><div class="shimmer"></div><div class="shimmer"></div></div>`).join('')}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const res = await ppApiFetch('/parent/documents');
+  const contentEl = document.getElementById('pp-documents-content');
+  if (!contentEl) return;
+  if (!res || !res.ok) {
+    contentEl.innerHTML = `<p style="color:var(--color-danger)">Failed to load documents. Please try again.</p>`;
+    return;
+  }
+  const docs = ppToArray(await res.json());
+  if (docs.length === 0) {
+    contentEl.innerHTML = `
+      <div class="pp-empty-state">
+        <div class="pp-empty-state-icon">&#128196;</div>
+        <p>No documents from the school yet.</p>
+      </div>`;
+    return;
+  }
+
+  window._ppDocMap = {};
+  docs.forEach(d => { window._ppDocMap[d.id] = d; });
+  contentEl.innerHTML = `
+    <div class="pp-table-wrap">
+      <table class="pp-table">
+        <thead>
+          <tr><th>Title</th><th>Type</th><th>Uploaded</th><th></th></tr>
+        </thead>
+        <tbody>
+          ${docs.map(d => `
+            <tr>
+              <td>${ppEsc(d.title || '—')}</td>
+              <td>${ppDocTypeBadge(d.document_type)}</td>
+              <td>${ppDate(d.uploaded_at)}</td>
+              <td><a class="pp-back-link" style="margin:0;" onclick="ppDownloadDocument(${d.id})">Download &darr;</a></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+// file_path may come back as either an absolute URL or a path relative to the
+// API's own origin (not the frontend's) — normalize before fetching either way.
+function ppResolveFileUrl(filePath) {
+  if (/^https?:\/\//i.test(filePath)) return filePath;
+  const origin = PP_API_BASE.replace(/\/api\/?$/, '');
+  return filePath.startsWith('/') ? origin + filePath : `${origin}/${filePath}`;
+}
+
+// Authenticated blob download (not a raw <a href>) — a plain anchor sends no
+// Authorization header, so an auth-gated file route would 401 on click.
+async function ppDownloadDocument(id) {
+  const doc = (window._ppDocMap || {})[id];
+  if (!doc) return;
+  const fileUrl = ppResolveFileUrl(doc.file_path);
+  try {
+    const res = await fetch(fileUrl, { headers: { Authorization: `Bearer ${ppToken}` } });
+    if (!res.ok) { showToast('Could not download this document.', 'error'); return; }
+    const blob = await res.blob();
+    const cd = res.headers.get('Content-Disposition') || '';
+    const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
+    const filename = match ? decodeURIComponent(match[1]) : (doc.title || 'document');
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (_) {
+    showToast('Could not download this document.', 'error');
+  }
 }
 
 // ==================== BOOTSTRAP ====================
