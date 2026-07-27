@@ -320,6 +320,7 @@ function showDashboard() {
           <div class="flyout-module-body" id="flyout-body-procurement" data-label="Procurement" hidden>
             <ul id="procurement-dropdown" class="dropdown-menu">
               <li id="sidebar-prc-suppliers" onclick="loadView('procurement-suppliers')">Suppliers</li>
+              <li id="sidebar-prc-requisitions" onclick="loadView('procurement-requisitions')">Requisitions</li>
             </ul>
           </div>
 
@@ -811,7 +812,7 @@ const FORM_VIEWS = new Set([
   // HR / Payroll
   'hr-employee-directory', 'payroll-esp', 'payroll-fi', 'payroll-runs', 'payroll-payslips',
   // Procurement
-  'procurement-suppliers-add', 'procurement-suppliers-edit',
+  'procurement-suppliers-add', 'procurement-suppliers-edit', 'procurement-requisitions',
   // Communication
   'communication-parent-documents',
   // Administration
@@ -1276,6 +1277,9 @@ async function loadView(view) {
     case 'procurement-suppliers-edit':
       setActiveSidebarItem('sidebar-prc-suppliers');
       await loadSupplierFormView(main, _supEditId); break;
+    case 'procurement-requisitions':
+      setActiveSidebarItem('sidebar-prc-requisitions');
+      await loadRequisitionsView(main); break;
     // Communication
     case 'communication':
     case 'communication-parent-documents':
