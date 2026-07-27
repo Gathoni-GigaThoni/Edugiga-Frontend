@@ -92,6 +92,8 @@ function showDashboard() {
               <li id="sidebar-stu-classes"       onclick="loadView('student-classes')">Classes</li>
               <li id="sidebar-stu-close-records" onclick="loadView('close-records-per-class')">Close Records Per Class</li>
               <li id="sidebar-stu-parent-portal" onclick="loadView('student-parent-portal')">Parent Portal Access</li>
+              <li id="sidebar-stu-supplies" onclick="loadView('student-supplies')">Student Supplies</li>
+              <li id="sidebar-stu-my-class-supplies" onclick="loadView('student-supplies-my-class')">My Class Supplies</li>
               <li class="dropdown">
                 ${flyoutGroupHeader('Utilities', 'stu-utilities-dropdown')}
                 <ul id="stu-utilities-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('stu-utilities-dropdown')}">
@@ -780,6 +782,7 @@ const FORM_VIEWS = new Set([
   'students-add', 'students-edit', 'students-view',
   'cohort-term-planner-add', 'cohort-term-planner-edit',
   'close-records-per-class',
+  'student-supplies', 'student-supplies-my-class',
   'student-reporting-add', 'student-reporting-bulk',
   // Finance
   'fin-student-invoices', 'fin-student-invoices-add', 'fin-student-bulk-invoicing',
@@ -878,6 +881,12 @@ async function loadView(view) {
     case 'student-parent-portal':
       setActiveSidebarItem('sidebar-stu-parent-portal'); openStuMgmtDropdowns();
       await loadParentPortalAccessView(main); break;
+    case 'student-supplies':
+      setActiveSidebarItem('sidebar-stu-supplies'); openStuMgmtDropdowns();
+      await loadStudentSuppliesView(main); break;
+    case 'student-supplies-my-class':
+      setActiveSidebarItem('sidebar-stu-my-class-supplies'); openStuMgmtDropdowns();
+      await loadMyClassSuppliesView(main); break;
     // Student Management – Utilities
     case 'utilities-streams':
     case 'stu-streams':
