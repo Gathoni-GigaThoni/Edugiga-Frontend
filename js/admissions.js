@@ -141,16 +141,19 @@ function _admInjectFilters(cfg) {
   if (!anchor) return;
 
   const wrap = document.createElement('div');
-  wrap.style.cssText = 'padding:0 16px 10px;display:flex;flex-direction:column;gap:8px;';
+  wrap.style.cssText = 'padding:2px 16px 12px;display:flex;flex-direction:column;gap:10px;border-bottom:1px solid var(--grey-100,#ECEEF2);margin-bottom:4px;';
   wrap.innerHTML = `
     <input type="text" id="adm-filter-search" class="fin-form-input" placeholder="Search first/last name…" style="width:100%;font-size:12px;">
-    <div id="adm-filter-status-pills" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+    <div>
+      <div style="font-size:10px;font-weight:700;color:var(--grey-400,#9AA3B2);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:5px;">Status</div>
+      <div id="adm-filter-status-pills" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+    </div>
     <select id="adm-filter-level" class="fin-form-select" style="width:100%;font-size:12px;">
       <option value="">All Interested Levels</option>
       ${_admLevels.map(l => `<option value="${l.id}">${_admEsc(typeof academicLevelDisplayName === 'function' ? academicLevelDisplayName(l) : l.name)}</option>`).join('')}
     </select>
     ${_isSuperAdmin() ? `
-    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--grey-600,#666);">
+    <label class="stu-checkbox-row" style="font-size:12px;color:var(--grey-600,#666);">
       <input type="checkbox" id="adm-filter-include-deleted"> Include archived (soft-deleted)
     </label>` : ''}
     <div id="adm-pagination" style="display:flex;align-items:center;justify-content:space-between;font-size:12px;margin-top:4px;"></div>`;
@@ -282,8 +285,17 @@ function _admRenderAddForm(el) {
 function _admRenderParentRows() {
   const el = document.getElementById('adm-f-parents-list');
   if (!el) return;
-  el.innerHTML = _admParents.map((p, i) => `
-    <div style="border:1px solid var(--grey-100,#e5e5e5);border-radius:8px;padding:12px;margin-bottom:10px;">
+  el.innerHTML = _admParents.map((p, i) => {
+    const isPrimary = _admPrimaryIdx() === i;
+    return `
+    <div class="fin-repeat-card${isPrimary ? ' is-primary' : ''}">
+      <div class="fin-repeat-card-header">
+        <label class="stu-checkbox-row" style="font-weight:700;font-size:13px;color:var(--navy-900,#0D2137);">
+          <input type="radio" name="adm-primary-parent" value="${i}" ${isPrimary ? 'checked' : ''} onchange="_admSetPrimary(${i})">
+          Parent ${i + 1}${isPrimary ? '<span class="fin-primary-badge">Primary</span>' : ''}
+        </label>
+        ${_admParents.length > 1 ? `<button type="button" class="fin-repeat-card-remove" title="Remove parent ${i + 1}" onclick="_admRemoveParentRow(${i})">&times;</button>` : ''}
+      </div>
       <div class="fin-form-grid-2">
         <div class="fin-form-group">
           <label class="fin-form-label">Full Name <span class="fin-required">*</span></label>
@@ -304,17 +316,12 @@ function _admRenderParentRows() {
           </select>
         </div>
       </div>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;">
-        <label style="display:flex;align-items:center;gap:6px;font-size:13px;">
-          <input type="radio" name="adm-primary-parent" value="${i}" ${_admPrimaryIdx()===i?'checked':''} onchange="_admSetPrimary(${i})"> Primary
-        </label>
-        ${_admParents.length > 1 ? `<button type="button" class="fin-btn-cancel" style="padding:2px 10px;" onclick="_admRemoveParentRow(${i})">&times; Remove</button>` : ''}
-      </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 let _admPrimaryParentIdx = null;
 function _admPrimaryIdx() { return _admPrimaryParentIdx; }
-function _admSetPrimary(i) { _admPrimaryParentIdx = i; }
+function _admSetPrimary(i) { _admPrimaryParentIdx = i; _admRenderParentRows(); }
 function _admAddParentRow() {
   _admParents.push(_admBlankParent());
   _admRenderParentRows();
@@ -452,7 +459,7 @@ function _admDetailActionsHtml(item) {
   const others = parents.filter(p => p !== primary);
   const parentBlockHtml = p => `
     <div>
-      <div style="font-weight:700;">${_admEsc(p.full_name)} ${p.is_primary ? `<span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:0.68rem;font-weight:600;background:var(--gold-500,#C9A227);color:#3a2f00;margin-left:4px;">Primary</span>` : ''}</div>
+      <div style="font-weight:700;">${_admEsc(p.full_name)} ${p.is_primary ? `<span class="fin-primary-badge">Primary</span>` : ''}</div>
       <div style="font-size:13px;color:var(--grey-600,#666);margin-top:2px;">
         ${_admEsc(p.phone)}${p.email ? ' &middot; ' + _admEsc(p.email) : ''} &middot; ${p.relationship[0]}${p.relationship.slice(1).toLowerCase()}
       </div>
@@ -757,16 +764,16 @@ async function _admOpenConvertModal(id) {
     </div>
     <div class="fin-form-group">
       <label class="fin-form-label">Gender</label>
-      <div style="display:flex;gap:8px;" id="adm-cv-gender-group">
-        <button type="button" class="fin-btn-outline" onclick="_admSetConvertGender('F')">F</button>
-        <button type="button" class="fin-btn-outline" onclick="_admSetConvertGender('M')">M</button>
+      <div class="fin-segmented" id="adm-cv-gender-group">
+        <button type="button" data-value="F" onclick="_admSetConvertGender('F')">Female</button>
+        <button type="button" data-value="M" onclick="_admSetConvertGender('M')">Male</button>
       </div>
     </div>
     <div class="fin-form-group">
       <label class="fin-form-label">Student Type</label>
-      <div style="display:flex;gap:8px;" id="adm-cv-type-group">
-        <button type="button" class="fin-btn-teal" onclick="_admSetConvertType('Full Day')">Full Day</button>
-        <button type="button" class="fin-btn-outline" onclick="_admSetConvertType('Half Day')">Half Day</button>
+      <div class="fin-segmented" id="adm-cv-type-group">
+        <button type="button" data-value="Full Day" class="active" onclick="_admSetConvertType('Full Day')">Full Day</button>
+        <button type="button" data-value="Half Day" onclick="_admSetConvertType('Half Day')">Half Day</button>
       </div>
     </div>
     <div class="fin-form-group">
@@ -787,13 +794,13 @@ async function _admOpenConvertModal(id) {
 function _admSetConvertGender(g) {
   _admConvertGender = _admConvertGender === g ? null : g;
   document.querySelectorAll('#adm-cv-gender-group button').forEach(b => {
-    b.className = (b.textContent === _admConvertGender) ? 'fin-btn-teal' : 'fin-btn-outline';
+    b.classList.toggle('active', b.dataset.value === _admConvertGender);
   });
 }
 function _admSetConvertType(t) {
   _admConvertStudentType = t;
   document.querySelectorAll('#adm-cv-type-group button').forEach(b => {
-    b.className = (b.textContent === t) ? 'fin-btn-teal' : 'fin-btn-outline';
+    b.classList.toggle('active', b.dataset.value === t);
   });
 }
 async function _admConvertYearChanged(interestedLevelId) {

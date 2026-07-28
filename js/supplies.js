@@ -7,6 +7,7 @@
 
 let _suppTermsCache = null;
 let _suppStudentsCache = null;
+let _suppClassesCache = null;
 
 function _suppEsc(v) {
   return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -67,7 +68,7 @@ function _suppBuildCfg(mount, opts) {
   return {
     container: mount,
     title: opts.title,
-    moduleKey: 'student_management',
+    moduleKey: 'student_management.supplies',
     breadcrumb: opts.breadcrumb,
     apiUrl: opts.apiUrl,
     searchFields: ['item_name','notes'],
@@ -125,6 +126,7 @@ function _suppReapplyFilters(cfg, opts) {
   const includeReturned = document.getElementById('supp-include-returned')?.checked;
   opts.termId = termId; opts.includeReturned = includeReturned;
   const params = new URLSearchParams();
+  if (opts.classId) params.set('class_id', opts.classId);
   if (termId) params.set('term_id', termId);
   if (!includeReturned) params.set('include_returned', 'false');
   const qs = params.toString();
@@ -204,36 +206,54 @@ async function _suppOpenStudentSplit(studentId) {
   _suppInjectFilters(cfg, opts);
 }
 
-// ── Entry point 2: homeroom-teacher aggregate ────────────────────────────────────
+// ── Entry point 2: class aggregate (own homerooms by default, or any class
+// via the picker — the backend removed the homeroom-only 403 and now scopes
+// this purely on the student_management.supplies permission). ─────────────
 async function loadMyClassSuppliesView(container) {
   await _suppEnsureCaches();
+  if (!_suppClassesCache) {
+    const res = await apiFetch(`${API_BASE}/classes/`);
+    _suppClassesCache = res && res.ok ? _toArray(await res.json()) : [];
+  }
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
         <h2 class="fin-title">My Class Supplies</h2>
         <div class="fin-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; My Class Supplies</div>
       </div>
-      <div id="supp-myclass-mount"><p class="fin-loading">Loading…</p></div>
+      <div class="fin-form-wrap" style="max-width:320px;margin-bottom:16px;">
+        <label class="fin-form-label">Class</label>
+        <select id="supp-class-picker" class="fin-form-select">
+          <option value="">My homeroom classes</option>
+          ${_suppClassesCache.map(c => `<option value="${c.id}">${_suppEsc(c.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div id="supp-myclass-mount"></div>
     </div>`;
+  document.getElementById('supp-class-picker').addEventListener('change', e => _suppLoadClassSupplies(e.target.value));
+  await _suppLoadClassSupplies('');
+}
+
+async function _suppLoadClassSupplies(classId) {
   const mount = document.getElementById('supp-myclass-mount');
-  const baseUrl = `${API_BASE}/supplies/my-class-supplies`;
-  const check = await apiFetch(baseUrl);
-  if (check && check.status === 403) {
-    const detail = await parseApiError(check);
-    mount.innerHTML = `<div style="padding:24px;text-align:center;border-radius:8px;background:var(--coral-100,#fde0de);color:var(--coral-600,#842029);">${_suppEsc(detail || 'You are not the homeroom teacher for any class, so this view is empty.')}</div>`;
-    return;
-  }
+  if (!mount) return;
+  mount.innerHTML = `<p class="fin-loading">Loading…</p>`;
+  const baseUrl = `${API_BASE}/supplies/class-supplies`;
   const termId = _suppCurrentTermId();
-  const opts = { baseUrl, termId, includeReturned: true };
-  const qs = termId ? `?term_id=${termId}` : '';
+  const opts = { baseUrl, termId, includeReturned: true, classId };
+  const params = new URLSearchParams();
+  if (classId) params.set('class_id', classId);
+  if (termId) params.set('term_id', termId);
+  const qs = params.toString();
+  const selectedClass = classId ? _suppClassesCache.find(c => String(c.id) === String(classId)) : null;
   const cfg = _suppBuildCfg(mount, {
-    title: 'My Class Supplies',
+    title: selectedClass ? `Supplies — ${selectedClass.name}` : 'My Class Supplies',
     breadcrumb: [
       {label:'Dashboard',view:null},
       {label:'Student Management',view:'students-list'},
       {label:'My Class Supplies'},
     ],
-    apiUrl: baseUrl + qs,
+    apiUrl: baseUrl + (qs ? `?${qs}` : ''),
     showStudentCol: true,
     contextStudentId: null,
   });
