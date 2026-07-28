@@ -418,6 +418,13 @@ function _suppOpenEditModal(item) {
         <input type="text" id="supp-e-qty" class="fin-form-input" maxlength="200" value="${_suppEsc(item.quantity||'')}">
       </div>
       <div class="fin-form-group">
+        <label class="fin-form-label">Term</label>
+        <select id="supp-e-term" class="fin-form-select">
+          <option value="">— No term —</option>
+          ${(_suppTermsCache||[]).map(t=>`<option value="${t.id}" ${String(t.id)===String(item.term_id||'')?'selected':''}>${_suppEsc(_suppTermLabel(t))}</option>`).join('')}
+        </select>
+      </div>
+      <div class="fin-form-group">
         <label class="fin-form-label">Received Date</label>
         <input type="date" id="supp-e-received" class="fin-form-input" value="${item.received_date||''}">
       </div>
@@ -436,9 +443,11 @@ function _suppOpenEditModal(item) {
 function _suppCloseModal(id) { document.getElementById(id)?.remove(); }
 
 async function _suppSubmitEdit(id) {
+  const termId = document.getElementById('supp-e-term').value;
   const payload = {
     item_name:     document.getElementById('supp-e-item').value.trim(),
     quantity:      document.getElementById('supp-e-qty').value.trim(),
+    term_id:       termId ? parseInt(termId) : null,
     received_date: document.getElementById('supp-e-received').value || null,
     notes:         document.getElementById('supp-e-notes').value.trim(),
   };
