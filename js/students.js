@@ -75,6 +75,11 @@ function openStuUtilitiesDropdown() {
   const d = document.getElementById('stu-utilities-dropdown');
   if (d) d.style.display = 'block';
 }
+function openStuAdmissionsDropdown() {
+  openStuMgmtDropdowns();
+  const d = document.getElementById('stu-admissions-dropdown');
+  if (d) d.style.display = 'block';
+}
 
 document.addEventListener('click', () => {
   document.querySelectorAll('[id^="stu-dd-"]').forEach(d => d.style.display = 'none');

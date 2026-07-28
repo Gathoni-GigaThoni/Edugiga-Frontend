@@ -95,6 +95,12 @@ function showDashboard() {
               <li id="sidebar-stu-supplies" onclick="loadView('student-supplies')">Student Supplies</li>
               <li id="sidebar-stu-my-class-supplies" onclick="loadView('student-supplies-my-class')">My Class Supplies</li>
               <li class="dropdown">
+                ${flyoutGroupHeader('Admissions', 'stu-admissions-dropdown')}
+                <ul id="stu-admissions-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('stu-admissions-dropdown')}">
+                  <li id="sidebar-stu-admissions-applicants" class="sa-sub-sub" onclick="loadView('admissions-applicants')">Applicants</li>
+                </ul>
+              </li>
+              <li class="dropdown">
                 ${flyoutGroupHeader('Utilities', 'stu-utilities-dropdown')}
                 <ul id="stu-utilities-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('stu-utilities-dropdown')}">
                   <li id="sidebar-stu-streams" class="sa-sub-sub" onclick="loadView('utilities-streams')">Streams</li>
@@ -627,6 +633,7 @@ async function renderSplitView(cfg) {
     if (!resp || !resp.ok) throw new Error('fetch failed');
     const data = await resp.json();
     allItems = _toArray(data);
+    if (typeof cfg.onFetched === 'function') cfg.onFetched(data);
   } catch (_) {
     container.innerHTML = `<p style="color:var(--color-danger);padding:20px">Failed to load data.</p>`;
     return;
@@ -753,7 +760,11 @@ async function renderSplitView(cfg) {
   window._splitReload = async function() {
     try {
       const resp = await apiFetch(cfg.apiUrl);
-      if (resp && resp.ok) { allItems = _toArray(await resp.json()); }
+      if (resp && resp.ok) {
+        const data = await resp.json();
+        allItems = _toArray(data);
+        if (typeof cfg.onFetched === 'function') cfg.onFetched(data);
+      }
     } catch(_) {}
     selectedItem = null; mode = 'add';
     renderList(); renderRight();
@@ -792,6 +803,7 @@ const FORM_VIEWS = new Set([
   'close-records-per-class',
   'student-supplies', 'student-supplies-my-class',
   'student-reporting-add', 'student-reporting-bulk',
+  'admissions-applicants',
   // Finance
   'fin-student-invoices', 'fin-student-invoices-add', 'fin-student-bulk-invoicing',
   'fin-invoice-adjustments', 'fin-sponsorship-allocations', 'fin-student-fee-assignments',
@@ -874,6 +886,9 @@ async function loadView(view) {
     case 'student-applicants':
       setActiveSidebarItem('sidebar-stu-applicants'); openStuMgmtDropdowns();
       showPlaceholder(main, 'Applicants'); break;
+    case 'admissions-applicants':
+      setActiveSidebarItem('sidebar-stu-admissions-applicants'); openStuAdmissionsDropdown();
+      await loadAdmissionsApplicantsView(main); break;
     case 'cohort-term-planner':
       setActiveSidebarItem('sidebar-stu-cohort'); openStuMgmtDropdowns();
       await loadCohortTermPlannerView(main); break;
