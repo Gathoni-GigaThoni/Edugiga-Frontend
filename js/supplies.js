@@ -261,13 +261,20 @@ async function _suppLoadClassSupplies(classId) {
   _suppInjectFilters(cfg, opts);
 }
 
-// ── Add form ──────────────────────────────────────────────────────────────────
+// ── Add form — a student typically hands over several different items at
+// once (e.g. exercise books + a ruler + erasers, each its own quantity), and
+// there is no bulk-create endpoint, so the form manages a repeatable list of
+// item rows and fires one POST /supplies/ per row on submit. ────────────────
+let _suppItems = [];
+function _suppBlankItem() { return { item_name: '', quantity: '' }; }
+
 function _suppRenderAddForm(el, contextStudentId) {
   const todayStr = new Date().toISOString().slice(0,10);
   const prefillLabel = contextStudentId ? _suppEsc(_suppStudentLabel(contextStudentId)) : '';
+  _suppItems = [_suppBlankItem()];
   el.innerHTML = `
     <div class="fin-form-wrap">
-      <h3 class="fin-title" style="font-size:1rem;">Record a Supply</h3>
+      <h3 class="fin-title" style="font-size:1rem;">Record Supplies</h3>
       <div class="fin-form-group">
         <label class="fin-form-label">Student <span class="fin-required">*</span></label>
         <input type="text" id="supp-f-student-search" class="fin-search-input" list="supp-f-student-list"
@@ -276,16 +283,6 @@ function _suppRenderAddForm(el, contextStudentId) {
         <datalist id="supp-f-student-list"></datalist>
         <input type="hidden" id="supp-f-student-id" value="${contextStudentId||''}">
         <span class="fin-field-error" id="supp-f-student-err"></span>
-      </div>
-      <div class="fin-form-group">
-        <label class="fin-form-label">Item Name <span class="fin-required">*</span></label>
-        <input type="text" id="supp-f-item" class="fin-form-input" maxlength="200" placeholder="e.g. Coloured Pencils">
-        <span class="fin-field-error" id="supp-f-item-err"></span>
-      </div>
-      <div class="fin-form-group">
-        <label class="fin-form-label">Quantity <span class="fin-required">*</span></label>
-        <input type="text" id="supp-f-qty" class="fin-form-input" maxlength="200" placeholder="e.g. A packet of 12 coloured pencils, 2 black erasers">
-        <span class="fin-field-error" id="supp-f-qty-err"></span>
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Term</label>
@@ -302,58 +299,106 @@ function _suppRenderAddForm(el, contextStudentId) {
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Notes</label>
-        <textarea id="supp-f-notes" class="fin-form-textarea" rows="3"></textarea>
+        <textarea id="supp-f-notes" class="fin-form-textarea" rows="2" placeholder="Optional — applies to every item recorded below."></textarea>
       </div>
-      <div id="supp-f-msg"></div>
+
+      <div class="fin-section-label" style="margin-top:16px;">Items</div>
+      <div id="supp-f-items-list"></div>
+      <button type="button" class="fin-btn-outline" style="margin-top:6px;" onclick="_suppAddItemRow()">+ Add Item</button>
+
+      <div id="supp-f-msg" style="margin-top:12px;"></div>
       <div class="fin-form-actions">
         <button class="fin-btn-teal" onclick="_suppSubmitAdd()">Save</button>
         <button class="fin-btn-cancel" onclick="window._splitReload && window._splitReload()">Cancel</button>
       </div>
     </div>`;
   _suppPopulateStudentDatalist('supp-f-student-list','_suppFormMap');
+  _suppRenderItemRows();
+}
+
+function _suppRenderItemRows() {
+  const el = document.getElementById('supp-f-items-list');
+  if (!el) return;
+  el.innerHTML = _suppItems.map((it, i) => `
+    <div class="fin-repeat-card">
+      <div class="fin-repeat-card-header">
+        <span style="font-weight:700;font-size:13px;color:var(--navy-900,#0D2137);">Item ${i + 1}</span>
+        ${_suppItems.length > 1 ? `<button type="button" class="fin-repeat-card-remove" title="Remove item ${i + 1}" onclick="_suppRemoveItemRow(${i})">&times;</button>` : ''}
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Item Name <span class="fin-required">*</span></label>
+        <input type="text" class="fin-form-input" maxlength="200" placeholder="e.g. Coloured Pencils" value="${_suppEsc(it.item_name)}" oninput="_suppItems[${i}].item_name=this.value">
+      </div>
+      <div class="fin-form-group" style="margin-bottom:0;">
+        <label class="fin-form-label">Quantity <span class="fin-required">*</span></label>
+        <input type="text" class="fin-form-input" maxlength="200" placeholder="e.g. A packet of 12" value="${_suppEsc(it.quantity)}" oninput="_suppItems[${i}].quantity=this.value">
+      </div>
+      <span class="fin-field-error" id="supp-item-err-${i}"></span>
+    </div>`).join('');
+}
+function _suppAddItemRow() { _suppItems.push(_suppBlankItem()); _suppRenderItemRows(); }
+function _suppRemoveItemRow(i) {
+  if (_suppItems.length <= 1) return;
+  _suppItems.splice(i, 1);
+  _suppRenderItemRows();
 }
 
 async function _suppSubmitAdd() {
   const studentId = document.getElementById('supp-f-student-id').value;
-  const itemName  = (document.getElementById('supp-f-item').value||'').trim();
-  const qty       = (document.getElementById('supp-f-qty').value||'').trim();
   const termId    = document.getElementById('supp-f-term').value;
   const received  = document.getElementById('supp-f-received').value;
   const notes     = (document.getElementById('supp-f-notes').value||'').trim();
 
-  ['student','item','qty','term'].forEach(f => { const e = document.getElementById(`supp-f-${f}-err`); if (e) e.textContent = ''; });
+  document.getElementById('supp-f-student-err').textContent = '';
+  document.getElementById('supp-f-term-err').textContent = '';
   document.getElementById('supp-f-msg').innerHTML = '';
+  _suppItems.forEach((_, i) => { const e = document.getElementById(`supp-item-err-${i}`); if (e) e.textContent = ''; });
+
   let valid = true;
   if (!studentId) { document.getElementById('supp-f-student-err').textContent = 'Select a student.'; valid = false; }
-  if (!itemName)  { document.getElementById('supp-f-item-err').textContent = 'This field is required.'; valid = false; }
-  if (!qty)       { document.getElementById('supp-f-qty-err').textContent = 'This field is required.'; valid = false; }
+  _suppItems.forEach((it, i) => {
+    if (!it.item_name.trim() || !it.quantity.trim()) {
+      const e = document.getElementById(`supp-item-err-${i}`);
+      if (e) e.textContent = 'Item name and quantity are both required.';
+      valid = false;
+    }
+  });
   if (!valid) return;
 
-  const payload = {
+  const basePayload = {
     student_id: parseInt(studentId),
-    item_name: itemName,
-    quantity: qty,
     term_id: termId ? parseInt(termId) : null,
     received_date: received || null,
     notes: notes || null,
   };
-  const res = await apiFetch(`${API_BASE}/supplies/`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-  });
-  if (res && res.ok) {
-    showToast('Supply recorded.', 'success');
-    window._splitReload && await window._splitReload();
+
+  // Fire one POST per row, in order. On a failure, drop the rows that already
+  // saved (so a retry can't recreate them) and leave the failing/remaining
+  // rows in place with their data intact.
+  let savedCount = 0;
+  for (let i = 0; i < _suppItems.length; i++) {
+    const it = _suppItems[i];
+    const res = await apiFetch(`${API_BASE}/supplies/`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...basePayload, item_name: it.item_name.trim(), quantity: it.quantity.trim() }),
+    });
+    if (res && res.ok) { savedCount++; continue; }
+    if (!res) return;
+    const detail = await parseApiError(res);
+    _suppItems.splice(0, i);
+    _suppRenderItemRows();
+    if (res.status === 400 && /cannot resolve a term/i.test(detail)) {
+      document.getElementById('supp-f-term-err').textContent = detail;
+    } else {
+      const errEl = document.getElementById('supp-item-err-0');
+      if (errEl) errEl.textContent = detail; else document.getElementById('supp-f-msg').innerHTML = `<div class="fin-field-error">${_suppEsc(detail)}</div>`;
+    }
+    if (savedCount) showToast(`${savedCount} item(s) recorded before an error — fix the remaining row(s) and save again.`, 'error');
     return;
   }
-  if (!res) return;
-  const detail = await parseApiError(res);
-  if (res.status === 400 && /cannot resolve a term/i.test(detail)) {
-    document.getElementById('supp-f-term-err').textContent = detail;
-  } else if (res.status === 404 || res.status === 403) {
-    showToast(detail, 'error');
-  } else {
-    document.getElementById('supp-f-msg').innerHTML = `<div class="fin-field-error">${_suppEsc(detail)}</div>`;
-  }
+
+  showToast(`${savedCount} ${savedCount === 1 ? 'item' : 'items'} recorded.`, 'success');
+  window._splitReload && await window._splitReload();
 }
 
 // ── Edit modal (PATCH — in_hand only) ────────────────────────────────────────────

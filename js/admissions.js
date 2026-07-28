@@ -52,6 +52,28 @@ function _admStatusPill(status) {
   return `<span style="display:inline-block;padding:2px 9px;border-radius:10px;font-size:0.72rem;font-weight:600;background:${s.bg};color:${s.fg};${strike}">${s.label}</span>`;
 }
 function _admIsTerminal(status) { return status === 'CONVERTED' || status === 'WITHDRAWN'; }
+
+// The backend has no "set status" field anywhere (confirmed live: neither
+// ApplicantCreate nor ApplicantUpdate carries `status`) — it's a one-way
+// state machine that only moves through the four action endpoints below,
+// each with its own required data (dates/reason/class). This maps the
+// current status to whichever of those are actually valid from here, for
+// the Edit form's Status control (§5).
+function _admStatusOptionsFor(status) {
+  const rules = ADM_ACTIONS_BY_STATUS[status] || {};
+  const opts = [];
+  if (rules.primary === 'markToured') opts.push({ value: 'markToured', label: 'Toured' });
+  if (rules.primary === 'markAccepted') opts.push({ value: 'markAccepted', label: 'Accepted' });
+  if (rules.primary === 'convert') opts.push({ value: 'convert', label: 'Converted…' });
+  if (rules.canWithdraw) opts.push({ value: 'withdraw', label: 'Withdrawn…' });
+  return opts;
+}
+function _admHandleStatusAction(id, action) {
+  if (action === 'markToured') _admOpenMarkTouredModal(id);
+  else if (action === 'markAccepted') _admOpenMarkAcceptedModal(id);
+  else if (action === 'convert') _admOpenConvertModal(id);
+  else if (action === 'withdraw') _admOpenWithdrawModal(id);
+}
 function _admDim(html, status) {
   return _admIsTerminal(status) ? `<span style="opacity:0.6;">${html}</span>` : html;
 }
@@ -527,6 +549,8 @@ function _admDetailActionsHtml(item) {
 
 // ==================== SECTION 5 — EDIT ====================
 function _admRenderEditForm(item, el) {
+  window._admCurrentItem = item; // the status-action modals below read this
+  const statusOpts = _admStatusOptionsFor(item.status);
   el.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -562,6 +586,18 @@ function _admRenderEditForm(item, el) {
           <div class="fin-form-group fin-span-2">
             <label class="fin-form-label">Notes</label>
             <textarea id="adm-e-notes" class="fin-form-textarea" rows="3">${_admEsc(item.notes || '')}</textarea>
+          </div>
+          <div class="fin-form-group fin-span-2">
+            <label class="fin-form-label">Status</label>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+              ${_admStatusPill(item.status)}
+              ${statusOpts.length ? `
+              <select id="adm-e-status-action" class="fin-form-select" style="max-width:220px;" onchange="_admHandleStatusAction(${item.id}, this.value); this.value='';">
+                <option value="">Change status to…</option>
+                ${statusOpts.map(o => `<option value="${o.value}">${_admEsc(o.label)}</option>`).join('')}
+              </select>` : ''}
+            </div>
+            <span class="fin-field-hint fin-field-hint-info">Opens the matching confirmation dialog — status changes need extra details (dates, reason, class assignment) and go through the same action as the buttons on the Applicant's detail page. Unsaved edits above are not kept if you follow through.</span>
           </div>
         </div>
         <div id="adm-e-msg" style="margin-top:8px;"></div>
