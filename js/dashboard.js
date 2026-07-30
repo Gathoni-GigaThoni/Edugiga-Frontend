@@ -68,11 +68,11 @@ function showDashboard() {
         ${access['transport-management'] ? `<button class="rail-item" data-module="transport-management" title="Transport Management" onclick="handleRailClick('transport-management')"><span class="rail-label-full">Transport</span><span class="rail-label-short">TRN</span></button>` : ''}
         ${access['finance'] ? `<button class="rail-item" data-module="finance" title="Finance" onclick="handleRailClick('finance')"><span class="rail-label-full">Finance</span><span class="rail-label-short">FIN</span></button>` : ''}
         ${access['document-approvals'] ? `<button class="rail-item" data-module="document-approvals" title="Document Approvals" onclick="handleRailClick('document-approvals')"><span class="rail-label-full">Document Approvals</span><span class="rail-label-short">DAS</span></button>` : ''}
-        ${access['inventory-management'] ? `<button class="rail-item" title="Inventory Management" onclick="loadView('inventory-management')"><span class="rail-label-full">Inventory</span><span class="rail-label-short">INV</span></button>` : ''}
+        ${access['inventory-management'] ? `<button class="rail-item" title="Inventory" onclick="loadView('inventory-management')"><span class="rail-label-full">Inventory</span><span class="rail-label-short">INV</span></button>` : ''}
         ${access['procurement'] ? `<button class="rail-item" data-module="procurement" title="Procurement" onclick="handleRailClick('procurement')"><span class="rail-label-full">Procurement</span><span class="rail-label-short">PRC</span></button>` : ''}
         ${access['human-resource'] ? `<button class="rail-item" data-module="human-resource" title="Human Resource" onclick="handleRailClick('human-resource')"><span class="rail-label-full">Human Resource</span><span class="rail-label-short">HR</span></button>` : ''}
         ${access['payroll'] ? `<button class="rail-item" data-module="payroll" title="Payroll" onclick="handleRailClick('payroll')"><span class="rail-label-full">Payroll</span><span class="rail-label-short">PAY</span></button>` : ''}
-        ${access['asset-management'] ? `<button class="rail-item" title="Asset Management" onclick="loadView('asset-management')"><span class="rail-label-full">Assets</span><span class="rail-label-short">AST</span></button>` : ''}
+        ${access['asset-management'] ? `<button class="rail-item" data-module="asset-management" title="Assets" onclick="handleRailClick('asset-management')"><span class="rail-label-full">Assets</span><span class="rail-label-short">AST</span></button>` : ''}
         ${access['communication'] ? `<button class="rail-item" data-module="communication" title="Communication" onclick="handleRailClick('communication')"><span class="rail-label-full">Communication</span><span class="rail-label-short">COM</span></button>` : ''}
         ${(isSuperAdmin || access['administration']) ? `<button class="rail-item" data-module="administration" title="Administration" onclick="handleRailClick('administration')"><span class="rail-label-full">Administration</span><span class="rail-label-short">ADM</span></button>` : ''}
         <button class="rail-item" title="Logout" onclick="logout()"><span class="rail-label-full">Log Out</span><span class="rail-label-short">OUT</span></button>
@@ -222,7 +222,6 @@ function showDashboard() {
               </li>
               <li onclick="loadView('cancellations')">Cancellations</li>
               <li onclick="loadView('journal-entries')">Journal Entries</li>
-              <li id="sidebar-fin-fixed-assets" onclick="loadView('finance-fixed-assets')">Fixed Assets</li>
               <li class="dropdown">
                 ${flyoutGroupHeader('Utilities', 'fin-utilities-dropdown')}
                 <ul id="fin-utilities-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('fin-utilities-dropdown')}">
@@ -328,6 +327,12 @@ function showDashboard() {
             <ul id="procurement-dropdown" class="dropdown-menu">
               <li id="sidebar-prc-suppliers" onclick="loadView('procurement-suppliers')">Suppliers</li>
               <li id="sidebar-prc-requisitions" onclick="loadView('procurement-requisitions')">Requisitions</li>
+            </ul>
+          </div>
+
+          <div class="flyout-module-body" id="flyout-body-asset-management" data-label="Assets" hidden>
+            <ul id="asset-management-dropdown" class="dropdown-menu">
+              <li id="sidebar-asset-fixed-assets" onclick="loadView('finance-fixed-assets')">Fixed Asset Register</li>
             </ul>
           </div>
 
@@ -1195,7 +1200,7 @@ async function loadView(view) {
     case 'journal-entries-edit':
       await loadJournalEntryEditView(main); break;
     case 'finance-fixed-assets':
-      setActiveSidebarItem('sidebar-fin-fixed-assets');
+      setActiveSidebarItem('sidebar-asset-fixed-assets');
       await loadFixedAssetsView(main); break;
     case 'utilities': showPlaceholder(main, 'Utilities'); break;
     case 'finance-setup':

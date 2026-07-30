@@ -34,7 +34,7 @@ function _faDetailActions(item) {
 async function loadFixedAssetsView(container) {
   const cfg = {
     container,
-    moduleKey: 'finance.setup',
+    moduleKey: 'asset_management.fixed_assets',
     title: 'Fixed Assets',
     breadcrumb: [
       {label:'Dashboard',view:null},
