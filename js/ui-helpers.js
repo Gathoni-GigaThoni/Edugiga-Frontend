@@ -8,6 +8,21 @@ function formatKES(v) {
   return 'KES ' + n.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+// ── Inventory quantity/cost formatting (BE/FE Contract Addendum 2026-07-29) ──
+// Quantities are 3 DP, unit costs 4 DP — distinct from money's 2 DP, so never
+// reuse formatKES() for either; raw .toFixed() also rounds inconsistently for
+// large numbers, hence centralising here.
+function formatQty(v) {
+  const n = parseFloat(v);
+  if (isNaN(n)) return '0.000';
+  return n.toLocaleString('en-KE', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+}
+function formatUnitCost(v) {
+  const n = parseFloat(v);
+  if (isNaN(n)) return 'KES 0.0000';
+  return 'KES ' + n.toLocaleString('en-KE', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+}
+
 // ── Shared Department picker (BE/FE Contract 2026-07-15 §1.4) ──────────────
 // Departments is a single shared lookup used by Employee, PaymentVoucher and
 // PettyCash. This is the canonical picker for NEW consumers (Employee

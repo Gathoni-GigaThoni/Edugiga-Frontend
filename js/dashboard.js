@@ -68,7 +68,7 @@ function showDashboard() {
         ${access['transport-management'] ? `<button class="rail-item" data-module="transport-management" title="Transport Management" onclick="handleRailClick('transport-management')"><span class="rail-label-full">Transport</span><span class="rail-label-short">TRN</span></button>` : ''}
         ${access['finance'] ? `<button class="rail-item" data-module="finance" title="Finance" onclick="handleRailClick('finance')"><span class="rail-label-full">Finance</span><span class="rail-label-short">FIN</span></button>` : ''}
         ${access['document-approvals'] ? `<button class="rail-item" data-module="document-approvals" title="Document Approvals" onclick="handleRailClick('document-approvals')"><span class="rail-label-full">Document Approvals</span><span class="rail-label-short">DAS</span></button>` : ''}
-        ${access['inventory-management'] ? `<button class="rail-item" title="Inventory" onclick="loadView('inventory-management')"><span class="rail-label-full">Inventory</span><span class="rail-label-short">INV</span></button>` : ''}
+        ${access['inventory-management'] ? `<button class="rail-item" data-module="inventory-management" title="Inventory" onclick="handleRailClick('inventory-management')"><span class="rail-label-full">Inventory</span><span class="rail-label-short">INV</span></button>` : ''}
         ${access['procurement'] ? `<button class="rail-item" data-module="procurement" title="Procurement" onclick="handleRailClick('procurement')"><span class="rail-label-full">Procurement</span><span class="rail-label-short">PRC</span></button>` : ''}
         ${access['human-resource'] ? `<button class="rail-item" data-module="human-resource" title="Human Resource" onclick="handleRailClick('human-resource')"><span class="rail-label-full">Human Resource</span><span class="rail-label-short">HR</span></button>` : ''}
         ${access['payroll'] ? `<button class="rail-item" data-module="payroll" title="Payroll" onclick="handleRailClick('payroll')"><span class="rail-label-full">Payroll</span><span class="rail-label-short">PAY</span></button>` : ''}
@@ -288,6 +288,12 @@ function showDashboard() {
               <li id="sidebar-da-queue" onclick="loadView('document-approvals-queue')">Approval Queue</li>
               <li id="sidebar-da-all" onclick="loadView('document-approvals-all')">All Approvals</li>
               <li id="sidebar-da-surcharge" onclick="loadView('document-approvals-surcharge-policy')">Surcharge Policy</li>
+            </ul>
+          </div>
+
+          <div class="flyout-module-body" id="flyout-body-inventory-management" data-label="Inventory" hidden>
+            <ul id="inventory-management-dropdown" class="dropdown-menu">
+              <li id="sidebar-inv-stores" onclick="loadView('inventory-stores')">Stores</li>
             </ul>
           </div>
 
@@ -833,6 +839,8 @@ const FORM_VIEWS = new Set([
   'procurement-suppliers-add', 'procurement-suppliers-edit', 'procurement-requisitions',
   // Communication
   'communication-parent-documents',
+  // Inventory
+  'inventory-stores',
   // Administration
   'user-management', 'admin-roles', 'admin-role-edit', 'admin-role-permissions',
   // Academic setup
@@ -1310,11 +1318,10 @@ async function loadView(view) {
     case 'communication-parent-documents':
       setActiveSidebarItem('sidebar-com-parent-docs');
       await loadParentDocumentsView(main); break;
-    // Empty modules
-    case 'inventory-management':
-    case 'asset-management':
-      main.innerHTML = `<h2>${view.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</h2><p>This module is under construction.</p>`;
-      break;
+    // Inventory
+    case 'inventory-stores':
+      setActiveSidebarItem('sidebar-inv-stores');
+      await loadInventoryStoresView(main); break;
     default: main.innerHTML = "<p>Module not found.</p>";
   }
   closeAllSidebarDropdowns();
