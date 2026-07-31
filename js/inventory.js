@@ -2368,3 +2368,434 @@ async function _adjSubmitCancel(id) {
   const { message } = await _invParseError(res);
   errEl.textContent = message; errEl.style.display = 'block';
 }
+
+// ==================== STOCK-TAKES (§8) ====================
+// Snapshot -> count -> commit. Draft/counted status is server-driven (every
+// line has counted_qty or not) — never toggled from the FE. The count-entry
+// screen lives inside detailActions like every other Inventory doc's lines
+// table, but with autosave-on-blur instead of a Save button (§8.5 picks
+// option 1 explicitly: no full-save requirement mid-count).
+
+const _INV_STK_STATUS_STYLE = {
+  draft:     'color:#666;background:#eee;',
+  counted:   'color:#8a6d00;background:var(--gold-100,#fdf3d6);',
+  committed: 'color:#1e7e34;background:#dcf3e2;',
+  cancelled: 'color:#888;background:#eee;text-decoration:line-through;',
+};
+function _stkStatusPill(status) {
+  const style = _INV_STK_STATUS_STYLE[status] || 'color:#666;background:#eee;';
+  const label = status === 'counted' ? 'All lines counted — ready to commit' : ((status || '').replace(/_/g, ' ') || '—');
+  return `<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.75rem;font-weight:600;white-space:nowrap;${style}">${_invEsc(label)}</span>`;
+}
+function _invOpenAdjustment(id) {
+  window._invAdjustmentOpenId = id;
+  loadView('inventory-adjustments');
+}
+
+let _stkCurrentId = null;
+let _stkCurrentLines = []; // working copy of the selected stock-take's lines
+
+// ── List (split-view) ────────────────────────────────────────────────────
+async function loadInventoryStocktakesView(container) {
+  await Promise.all([_invEnsureStoresCache(), _invEnsureItemsCache()]);
+  const preselectId = window._invStocktakeOpenId ?? null;
+  window._invStocktakeOpenId = null;
+  const cfg = {
+    container,
+    title: 'Stock-Takes',
+    moduleKey: 'inventory_management.stocktakes',
+    breadcrumb: [
+      { label: 'Dashboard', view: null },
+      { label: 'Inventory', view: 'inventory-stocktakes' },
+      { label: 'Stock-Takes' },
+    ],
+    apiUrl: `${_INV_API}/stocktakes`,
+    searchFields: ['stocktake_number'],
+    col1Label: 'Stock-Take', col2Label: 'Status',
+    col1: s => `<strong>${_invEsc(s.stocktake_number || '—')}</strong><br><span style="font-weight:400;font-size:12px;color:#888;">${_invEsc(_invStoreLabel(s.store_id))} &middot; ${s.count_date || ''}</span>`,
+    col2: s => _stkStatusPill(s.status),
+    rowLabel: s => s.stocktake_number || '—',
+    rowSub: s => `${_invStoreLabel(s.store_id)} · ${s.count_date || ''}`,
+    idKey: 'id',
+    preselectId,
+    detailFields: [
+      { label: 'Store', key: 'store_id', fmt: v => _invStoreLabel(v) },
+      { label: 'Count Date', key: 'count_date', fmt: v => v || '—' },
+      { label: 'Notes', key: 'notes', fmt: v => v || '—' },
+      { label: 'Status', key: 'status', fmt: v => _stkStatusPill(v) },
+    ],
+    // No renderEdit/onEdit — the count grid below IS the edit surface;
+    // there's no separate header-edit form to gate an Edit button behind.
+    renderAdd: el => _stkRenderAddForm(el),
+    detailActions: item => _stkDetailActionsHtml(item),
+  };
+  await renderSplitView(cfg);
+  _stkInjectFilters(cfg);
+}
+
+function _stkInjectFilters(cfg) {
+  const searchBox = document.querySelector('.split-left-search');
+  if (!searchBox) return;
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'padding:0 16px 10px;display:flex;gap:8px;flex-wrap:wrap;';
+  wrap.innerHTML = `
+    <select id="stk-filter-status" class="fin-form-select" style="flex:1;min-width:110px;font-size:12px;">
+      <option value="">All Statuses</option>
+      ${['draft', 'counted', 'committed', 'cancelled'].map(s => `<option value="${s}">${s[0].toUpperCase() + s.slice(1)}</option>`).join('')}
+    </select>
+    <select id="stk-filter-store" class="fin-form-select" style="flex:1;min-width:130px;font-size:12px;">
+      <option value="">All Stores</option>${_invStoreOptionsHtml(null)}
+    </select>
+    <input type="date" id="stk-filter-start" class="fin-form-input" style="flex:1;min-width:110px;font-size:12px;" title="Start date">
+    <input type="date" id="stk-filter-end" class="fin-form-input" style="flex:1;min-width:110px;font-size:12px;" title="End date">`;
+  searchBox.insertAdjacentElement('afterend', wrap);
+  ['stk-filter-status', 'stk-filter-store', 'stk-filter-start', 'stk-filter-end'].forEach(id => {
+    document.getElementById(id).addEventListener('change', () => _stkReapplyFilters(cfg));
+  });
+}
+function _stkReapplyFilters(cfg) {
+  const status = document.getElementById('stk-filter-status')?.value || '';
+  const storeId = document.getElementById('stk-filter-store')?.value || '';
+  const start = document.getElementById('stk-filter-start')?.value || '';
+  const end = document.getElementById('stk-filter-end')?.value || '';
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (storeId) params.set('store_id', storeId);
+  if (start) params.set('start_date', start);
+  if (end) params.set('end_date', end);
+  const qs = params.toString();
+  cfg.apiUrl = `${_INV_API}/stocktakes` + (qs ? `?${qs}` : '');
+  window._splitReload && window._splitReload();
+}
+
+// ── Create — snapshot happens server-side on POST; the form is deliberately
+// minimal (§8.3). Lands directly on the count-entry screen on success. ─────
+function _stkRenderAddForm(el) {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  el.innerHTML = `
+    <div style="max-width:460px;">
+      <h3 class="split-right-add-title">Start Stock-Take</h3>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Store <span class="fin-required">*</span></label>
+        <select id="stk-f-store" class="fin-form-select"><option value="">Please Select</option>${_invStoreOptionsHtml(null)}</select>
+        <span class="fin-field-error" id="stk-f-store-err"></span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Count Date <span class="fin-required">*</span></label>
+        <input type="date" id="stk-f-date" class="fin-form-input" value="${todayStr}">
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Notes</label>
+        <textarea id="stk-f-notes" class="fin-form-textarea" rows="3"></textarea>
+      </div>
+      <div id="stk-f-msg" style="margin-top:12px;"></div>
+      <div style="display:flex;gap:12px;margin-top:20px;">
+        <button class="fin-btn-teal" onclick="_stkSubmitAdd()">Start Stock-Take</button>
+        <button class="fin-btn-cancel" onclick="window._splitGoAdd?.()">Cancel</button>
+      </div>
+    </div>`;
+}
+async function _stkSubmitAdd() {
+  document.getElementById('stk-f-store-err').textContent = '';
+  document.getElementById('stk-f-msg').innerHTML = '';
+  const storeId = document.getElementById('stk-f-store').value;
+  const date = document.getElementById('stk-f-date').value;
+  if (!storeId) { document.getElementById('stk-f-store-err').textContent = 'This field is required.'; return; }
+  const payload = {
+    store_id: parseInt(storeId),
+    count_date: date || null,
+    notes: (document.getElementById('stk-f-notes').value || '').trim() || null,
+  };
+  const res = await apiFetch(`${_INV_API}/stocktakes`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  if (res && res.ok) {
+    const created = await res.json();
+    showToast('Stock-take started.', 'success');
+    await window._splitReload?.();
+    window._splitSelectItem?.(created.id);
+    return;
+  }
+  if (!res) return;
+  const { fieldErrors, message } = await _invParseError(res);
+  if (fieldErrors.store_id) document.getElementById('stk-f-store-err').textContent = fieldErrors.store_id;
+  else document.getElementById('stk-f-msg').innerHTML = `<div class="fin-field-error">${_invEsc(message)}</div>`;
+}
+
+// ── Count-entry screen (draft/counted) ───────────────────────────────────
+function _stkLineVariance(line) {
+  if (line.counted_qty == null || line.counted_qty === '') return null;
+  return parseFloat(line.counted_qty) - (parseFloat(line.expected_qty) || 0);
+}
+function _stkVarianceCellsHtml(line) {
+  const variance = _stkLineVariance(line);
+  if (variance == null) return { varCell: '—', varValCell: '—' };
+  const color = variance > 0 ? 'var(--navy-700,#1B3057)' : (variance < 0 ? 'var(--coral-600,#B03030)' : '#666');
+  return {
+    varCell: `<span style="color:${color};font-weight:600;">${_invSignedQty(variance)}</span>`,
+    varValCell: `<span style="color:${color};">${_invSignedMoney(variance * (parseFloat(line.unit_cost_snapshot) || 0))}</span>`,
+  };
+}
+function _stkProgressBarHtml(lines) {
+  const total = lines.length;
+  const counted = lines.filter(l => l.counted_qty != null && l.counted_qty !== '').length;
+  const pct = total > 0 ? Math.round((counted / total) * 100) : 0;
+  return `
+    <div style="margin:10px 0 18px;">
+      <div style="font-size:0.82rem;color:#555;margin-bottom:4px;">${counted}/${total} lines counted</div>
+      <div style="height:8px;border-radius:4px;background:var(--grey-100,#eee);overflow:hidden;">
+        <div style="height:100%;width:${pct}%;background:var(--navy-700,#1B3057);transition:width .2s;"></div>
+      </div>
+    </div>`;
+}
+function _stkCountsTotalsHtml(lines) {
+  const counted = lines.filter(l => l.counted_qty != null && l.counted_qty !== '');
+  const varianceLines = counted.filter(l => { const v = _stkLineVariance(l); return v != null && v !== 0; });
+  const netValue = counted.reduce((sum, l) => { const v = _stkLineVariance(l); return v ? sum + v * (parseFloat(l.unit_cost_snapshot) || 0) : sum; }, 0);
+  const netColor = netValue > 0 ? '#8FD19E' : (netValue < 0 ? '#FF8A80' : '#fff');
+  return `
+    <div style="margin-top:16px;max-width:360px;margin-left:auto;padding:14px 16px;border-radius:8px;background:var(--navy-700,#1B3057);color:#fff;">
+      <div style="display:flex;justify-content:space-between;font-size:0.82rem;margin-bottom:6px;"><span>Lines with variance</span><span>${varianceLines.length} of ${lines.length}</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:1.05rem;font-weight:700;"><span>Net variance value</span><span style="color:${netColor};">${_invSignedMoney(netValue)}</span></div>
+    </div>`;
+}
+function _stkLineRowHtml(line) {
+  const { varCell, varValCell } = _stkVarianceCellsHtml(line);
+  return `
+    <tr>
+      <td>${_invEsc(_invItemLabel(line.item_id))}</td>
+      <td style="text-align:right;">${formatQty(line.expected_qty)}</td>
+      <td><input type="number" class="fin-li-input" step="0.001" min="0" style="width:100px;" value="${line.counted_qty ?? ''}" onblur="_stkCountBlur(${line.id}, this.value)"></td>
+      <td style="text-align:right;">${formatUnitCost(line.unit_cost_snapshot)}</td>
+      <td id="stk-line-var-${line.id}" style="text-align:right;">${varCell}</td>
+      <td id="stk-line-varval-${line.id}" style="text-align:right;">${varValCell}</td>
+      <td><input type="text" class="fin-li-input" placeholder="Notes" value="${_invEsc(line.notes || '')}" onblur="_stkNotesBlur(${line.id}, this.value)"></td>
+      <td id="stk-line-check-${line.id}"></td>
+    </tr>`;
+}
+// Autosave on blur (§8.5, option 1) — debounce isn't needed since blur only
+// fires once per field per visit, not per keystroke.
+async function _stkCountBlur(lineId, val) {
+  const line = _stkCurrentLines.find(l => l.id === lineId);
+  if (!line) return;
+  const trimmed = String(val ?? '').trim();
+  const prev = line.counted_qty;
+  if (trimmed === '') { if (prev == null || prev === '') return; }
+  else if (String(prev ?? '') === trimmed) return;
+  line.counted_qty = trimmed === '' ? null : trimmed;
+  await _stkSaveCounts([{ id: lineId, counted_qty: line.counted_qty, notes: line.notes || null }]);
+}
+async function _stkNotesBlur(lineId, val) {
+  const line = _stkCurrentLines.find(l => l.id === lineId);
+  if (!line) return;
+  const trimmed = (val || '').trim();
+  if ((line.notes || '') === trimmed) return;
+  line.notes = trimmed;
+  await _stkSaveCounts([{ id: lineId, counted_qty: line.counted_qty, notes: trimmed || null }]);
+}
+async function _stkSaveCounts(counts) {
+  const res = await apiFetch(`${_INV_API}/stocktakes/${_stkCurrentId}/counts`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ counts }),
+  });
+  if (res && res.ok) {
+    const updated = await res.json();
+    // Server is authoritative for status (draft<->counted auto-toggle, §8.2)
+    // — merge the returned lines back in and patch only the cells that
+    // changed, never the whole pane (a full re-render mid-count drops focus
+    // and loses the operator's place in a long count sheet).
+    _stkCurrentLines = (updated.lines || []).map(l => ({ ...l }));
+    window._stkCurrentItem = { ...window._stkCurrentItem, ...updated, lines: _stkCurrentLines };
+    counts.forEach(c => {
+      const line = _stkCurrentLines.find(l => l.id === c.id);
+      if (!line) return;
+      const { varCell, varValCell } = _stkVarianceCellsHtml(line);
+      const varEl = document.getElementById(`stk-line-var-${c.id}`);
+      const varValEl = document.getElementById(`stk-line-varval-${c.id}`);
+      if (varEl) varEl.innerHTML = varCell;
+      if (varValEl) varValEl.innerHTML = varValCell;
+      const checkEl = document.getElementById(`stk-line-check-${c.id}`);
+      if (checkEl) {
+        checkEl.innerHTML = '<span style="color:var(--navy-700,#1B3057);">&#10003;</span>';
+        setTimeout(() => { if (checkEl) checkEl.innerHTML = ''; }, 2000);
+      }
+    });
+    const progressWrap = document.getElementById('stk-progress-wrap');
+    if (progressWrap) progressWrap.innerHTML = _stkProgressBarHtml(_stkCurrentLines);
+    const totalsWrap = document.getElementById('stk-count-totals');
+    if (totalsWrap) totalsWrap.innerHTML = _stkCountsTotalsHtml(_stkCurrentLines);
+    const statusPillWrap = document.getElementById('stk-status-pill');
+    if (statusPillWrap) statusPillWrap.innerHTML = _stkStatusPill(updated.status);
+    const commitBtn = document.getElementById('stk-commit-btn');
+    if (commitBtn) commitBtn.disabled = updated.status !== 'counted';
+    return;
+  }
+  if (!res) return;
+  const { message } = await _invParseError(res);
+  showToast('Error saving count: ' + message, 'error');
+}
+
+// §8.2 annotates "(includes lines)" only on the singular GET, not the list
+// endpoint — unlike GRN/Issues/Transfers/Adjustments, list rows here may
+// come back without a lines array. Hydrate from the singular GET whenever
+// that's the case rather than silently rendering an empty count sheet.
+async function _stkFetchFullAndRerender(id) {
+  const res = await apiFetch(`${_INV_API}/stocktakes/${id}`);
+  if (!res || !res.ok) return;
+  const full = await res.json();
+  const actionsRow = document.querySelector('.detail-actions-row');
+  if (actionsRow) actionsRow.innerHTML = _stkDetailActionsHtml(full);
+}
+function _stkDetailActionsHtml(item) {
+  window._stkCurrentItem = item;
+  _stkCurrentId = item.id;
+
+  if (!Array.isArray(item.lines)) {
+    _stkFetchFullAndRerender(item.id);
+    return `<div class="fin-loading">Loading count sheet…</div>`;
+  }
+  _stkCurrentLines = item.lines.map(l => ({ ...l }));
+
+  if (item.status === 'committed') return _stkCommittedDetailHtml(item);
+  if (item.status === 'cancelled') return _stkCancelledDetailHtml(item);
+
+  const rows = _stkCurrentLines.map(_stkLineRowHtml).join('') || `<tr><td colspan="8" class="fin-empty">No lines.</td></tr>`;
+  return `
+    <div id="stk-status-pill">${_stkStatusPill(item.status)}</div>
+    <div id="stk-progress-wrap">${_stkProgressBarHtml(_stkCurrentLines)}</div>
+    <div class="fin-section-label">Count Sheet</div>
+    <div class="fin-table-wrap"><table class="fin-li-table">
+      <thead><tr><th>Item</th><th>Expected Qty</th><th>Counted Qty</th><th>Unit Cost</th><th>Variance</th><th>Variance Value</th><th>Notes</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+    <div id="stk-count-totals">${_stkCountsTotalsHtml(_stkCurrentLines)}</div>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:14px;align-items:center;">
+      <button class="fin-btn-teal" id="stk-commit-btn" ${item.status === 'counted' ? '' : 'disabled'} onclick="_stkOpenCommitModal(${item.id})">Commit</button>
+      <button class="fin-btn-outline" style="color:#c0392b;border-color:#c0392b;" onclick="_stkOpenCancelModal(${item.id})">Cancel Stock-Take</button>
+    </div>
+    <div id="stk-action-msg-${item.id}" style="margin-top:8px;"></div>`;
+}
+
+// ── Committed / cancelled — read-only count sheet (§8.7, §8.8) ───────────
+function _stkCommittedDetailHtml(item) {
+  const rows = (item.lines || []).map(l => {
+    const { varCell, varValCell } = _stkVarianceCellsHtml(l);
+    return `
+      <tr>
+        <td>${_invEsc(_invItemLabel(l.item_id))}</td>
+        <td style="text-align:right;">${formatQty(l.expected_qty)}</td>
+        <td style="text-align:right;">${l.counted_qty != null ? formatQty(l.counted_qty) : '—'}</td>
+        <td style="text-align:right;">${formatUnitCost(l.unit_cost_snapshot)}</td>
+        <td style="text-align:right;">${varCell}</td>
+        <td style="text-align:right;">${varValCell}</td>
+        <td>${_invEsc(l.notes || '—')}</td>
+      </tr>`;
+  }).join('') || `<tr><td colspan="7" class="fin-empty">No lines.</td></tr>`;
+  const resultBanner = item.resulting_adjustment_id
+    ? `<div style="padding:12px 14px;border-radius:6px;background:var(--gold-100,#fdf3d6);color:#8a6d00;font-size:0.88rem;margin-bottom:14px;">&rarr; <a href="#" onclick="_invOpenAdjustment(${item.resulting_adjustment_id});return false;" style="color:#8a6d00;font-weight:700;">View resulting adjustment #${item.resulting_adjustment_id}</a></div>`
+    : `<div style="padding:12px 14px;border-radius:6px;background:var(--navy-100,#e4e9f3);color:#1B3057;font-size:0.88rem;margin-bottom:14px;">No variance — no adjustment was posted.</div>`;
+  return `
+    ${resultBanner}
+    <div class="fin-section-label">Count Sheet</div>
+    <div class="fin-table-wrap"><table class="fin-li-table">
+      <thead><tr><th>Item</th><th>Expected Qty</th><th>Counted Qty</th><th>Unit Cost</th><th>Variance</th><th>Variance Value</th><th>Notes</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+}
+function _stkCancelledDetailHtml(item) {
+  const rows = (item.lines || []).map(l => {
+    const { varCell, varValCell } = _stkVarianceCellsHtml(l);
+    return `
+      <tr>
+        <td>${_invEsc(_invItemLabel(l.item_id))}</td>
+        <td style="text-align:right;">${formatQty(l.expected_qty)}</td>
+        <td style="text-align:right;">${l.counted_qty != null ? formatQty(l.counted_qty) : '—'}</td>
+        <td style="text-align:right;">${formatUnitCost(l.unit_cost_snapshot)}</td>
+        <td style="text-align:right;">${varCell}</td>
+        <td style="text-align:right;">${varValCell}</td>
+        <td>${_invEsc(l.notes || '—')}</td>
+      </tr>`;
+  }).join('') || `<tr><td colspan="7" class="fin-empty">No lines.</td></tr>`;
+  return `
+    <div class="fin-section-label">Count Sheet (cancelled — counts preserved for audit)</div>
+    <div class="fin-table-wrap"><table class="fin-li-table">
+      <thead><tr><th>Item</th><th>Expected Qty</th><th>Counted Qty</th><th>Unit Cost</th><th>Variance</th><th>Variance Value</th><th>Notes</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+}
+
+// ── Commit — the terminal action (§8.6) ──────────────────────────────────
+function _stkOpenCommitModal(id) {
+  const lines = _stkCurrentLines;
+  const varianceLines = lines.filter(l => { const v = _stkLineVariance(l); return v != null && v !== 0; });
+  const surplusCount = varianceLines.filter(l => _stkLineVariance(l) > 0).length;
+  const shortageCount = varianceLines.filter(l => _stkLineVariance(l) < 0).length;
+  const netValue = lines.reduce((sum, l) => { const v = _stkLineVariance(l); return v ? sum + v * (parseFloat(l.unit_cost_snapshot) || 0) : sum; }, 0);
+  const wrap = document.createElement('div');
+  wrap.id = 'stk-commit-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:var(--white);border-radius:8px;padding:24px;width:520px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 12px;font-size:1.05rem;color:var(--navy-700,#2c3e50);">Commit Stock-Take</h3>
+      <div style="font-size:0.85rem;color:#444;margin-bottom:10px;">
+        <div>Lines with variance: <strong>${varianceLines.length}</strong> (${surplusCount} surplus, ${shortageCount} shortage)</div>
+        <div>Net variance value: <strong style="color:${_invSignedColor(netValue)};">${_invSignedMoney(netValue)}</strong></div>
+      </div>
+      <div style="padding:10px 12px;border-radius:6px;background:var(--gold-100,#fdf3d6);color:#8a6d00;font-size:0.82rem;margin-bottom:8px;">
+        A single Adjustment (STA…) will be created, posting all variance lines and any journal entry required. The adjustment will be locked — to correct it, post a manual counter-adjustment.
+      </div>
+      <div style="padding:10px 12px;border-radius:6px;background:var(--navy-100,#e4e9f3);color:#1B3057;font-size:0.82rem;margin-bottom:10px;">
+        Stock-take history is preserved — the count sheet stays visible in this record after commit.
+      </div>
+      <div id="stk-commit-err" style="display:none;padding:10px 12px;border-radius:6px;background:var(--coral-100);color:var(--coral-600);font-size:0.82rem;margin-bottom:10px;"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="_coaCloseModal('stk-commit-modal-overlay')">Cancel</button>
+        <button class="fin-btn-teal" onclick="_stkSubmitCommit(${id})">Commit</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+async function _stkSubmitCommit(id) {
+  const errEl = document.getElementById('stk-commit-err');
+  errEl.style.display = 'none';
+  const res = await apiFetch(`${_INV_API}/stocktakes/${id}/commit`, { method: 'POST' });
+  if (res && res.ok) {
+    const data = await res.json();
+    _coaCloseModal('stk-commit-modal-overlay');
+    showToast(data.resulting_adjustment_id ? `Stock-take committed. Adjustment #${data.resulting_adjustment_id} posted.` : 'Stock-take committed. No variance.', 'success');
+    await window._splitRefreshSelected?.();
+    return;
+  }
+  if (!res) return;
+  const { message } = await _invParseError(res);
+  errEl.textContent = message; errEl.style.display = 'block';
+}
+
+// ── Cancel — draft or counted only (§8.7) ────────────────────────────────
+function _stkOpenCancelModal(id) {
+  const wrap = document.createElement('div');
+  wrap.id = 'stk-cancel-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:var(--white);border-radius:8px;padding:24px;width:440px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 12px;font-size:1.05rem;color:var(--navy-700,#2c3e50);">Cancel Stock-Take</h3>
+      <p style="font-size:0.88rem;color:#444;">Cancel this stock-take? Counted quantities will be preserved for audit but no adjustment will be posted.</p>
+      <div id="stk-cancel-err" style="display:none;padding:10px 12px;border-radius:6px;background:var(--coral-100);color:var(--coral-600);font-size:0.82rem;margin-top:6px;"></div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-outline" onclick="_coaCloseModal('stk-cancel-modal-overlay')">Keep Stock-Take</button>
+        <button class="fin-btn-cancel" onclick="_stkSubmitCancel(${id})">Cancel Stock-Take</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+async function _stkSubmitCancel(id) {
+  const errEl = document.getElementById('stk-cancel-err');
+  errEl.style.display = 'none';
+  const res = await apiFetch(`${_INV_API}/stocktakes/${id}/cancel`, { method: 'POST' });
+  if (res && res.ok) {
+    _coaCloseModal('stk-cancel-modal-overlay');
+    showToast('Stock-take cancelled.', 'success');
+    await window._splitRefreshSelected?.();
+    return;
+  }
+  if (!res) return;
+  const { message } = await _invParseError(res);
+  errEl.textContent = message; errEl.style.display = 'block';
+}
