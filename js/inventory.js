@@ -1884,3 +1884,487 @@ async function _transferSubmitCancel(id) {
   const { message } = await _invParseError(res);
   errEl.textContent = message; errEl.style.display = 'block';
 }
+
+// ==================== STOCK ADJUSTMENTS (§7) ====================
+
+const INV_ADJUSTMENT_TYPES = [
+  { value: 'variance',  label: 'Variance' },
+  { value: 'write_off', label: 'Write-off' },
+  { value: 'damage',    label: 'Damage' },
+  { value: 'expiry',    label: 'Expiry' },
+  { value: 'other',     label: 'Other' },
+];
+function _adjTypeLabel(v) { return (INV_ADJUSTMENT_TYPES.find(t => t.value === v) || {}).label || v || '—'; }
+
+// §7.7 / §9.5 — a stock-take-sourced adjustment is read-only: PATCH and
+// cancel both 409 server-side. Computed once, consumed from every surface
+// that might offer Edit/Cancel so none of them drift out of sync.
+function isStocktakeSourcedAdjustment(adj) {
+  return !!(adj && adj.source_stocktake_id != null);
+}
+// Same window._xOpenId + loadView() convention as _grnOpen — resolves once
+// §8 (Stock-Takes) lands; until then it falls through to "Module not found".
+function _invOpenStocktake(id) {
+  window._invStocktakeOpenId = id;
+  loadView('inventory-stocktakes');
+}
+
+let _adjLines = [];
+
+// ── List (split-view) ────────────────────────────────────────────────────
+async function loadInventoryAdjustmentsView(container) {
+  await Promise.all([_invEnsureStoresCache(), _invEnsureItemsCache(), _invEnsureTermsCache()]);
+  const preselectId = window._invAdjustmentOpenId ?? null;
+  window._invAdjustmentOpenId = null;
+  const cfg = {
+    container,
+    title: 'Adjustments',
+    moduleKey: 'inventory_management.adjustments',
+    breadcrumb: [
+      { label: 'Dashboard', view: null },
+      { label: 'Inventory', view: 'inventory-adjustments' },
+      { label: 'Adjustments' },
+    ],
+    apiUrl: `${_INV_API}/adjustments`,
+    searchFields: ['adjustment_number', 'reason'],
+    col1Label: 'Adjustment', col2Label: 'Status',
+    col1: a => `<strong>${_invEsc(a.adjustment_number || '—')}</strong><br><span style="font-weight:400;font-size:12px;color:#888;">${_invEsc(_invStoreLabel(a.store_id))} &middot; ${_adjTypeLabel(a.adjustment_type)}</span>`,
+    col2: a => `${_invStatusPill(a.status)}<br><span style="font-size:12px;color:${_invSignedColor(a.net_delta_value)};font-weight:600;">${_invSignedMoney(a.net_delta_value)}</span>`,
+    rowLabel: a => a.adjustment_number || '—',
+    rowSub: a => `${_invStoreLabel(a.store_id)} · ${_adjTypeLabel(a.adjustment_type)}`,
+    idKey: 'id',
+    preselectId,
+    detailFields: [
+      { label: 'Store', key: 'store_id', fmt: v => _invStoreLabel(v) },
+      { label: 'Adjustment Date', key: 'adjustment_date', fmt: v => v || '—' },
+      { label: 'Type', key: 'adjustment_type', fmt: v => _adjTypeLabel(v) },
+      { label: 'Reason', key: 'reason', fmt: v => v || '—' },
+      { label: 'Notes', key: 'notes', fmt: v => v || '—' },
+      { label: 'Net Delta Value', key: 'net_delta_value', fmt: v => `<span style="color:${_invSignedColor(v)};font-weight:600;">${_invSignedMoney(v)}</span>` },
+      { label: 'Term', key: 'term_id', fmt: v => v ? _invTermLabel(v) : '—' },
+      { label: 'Journal Entry', key: 'journal_entry_id', fmt: (v, item) => v ? `<a href="#" onclick="_jeViewDetail(${v});return false;">JE #${v}</a>` : (item.status === 'approved' ? _invAuditOnlyBadge() : '—') },
+      { label: 'Source Stock-Take', key: 'source_stocktake_id', fmt: v => v ? `<a href="#" onclick="_invOpenStocktake(${v});return false;">STK #${v}</a>` : '—' },
+      { label: 'Status', key: 'status', fmt: v => _invStatusPill(v) },
+      { label: 'Approved At', key: 'approved_at', fmt: v => v ? new Date(v).toLocaleString() : '—' },
+    ],
+    canEdit: item => item.status === 'draft' && !isStocktakeSourcedAdjustment(item),
+    renderAdd: el => _adjRenderAddForm(el),
+    renderEdit: (item, el) => _adjRenderEditForm(item, el),
+    detailActions: item => _adjDetailActionsHtml(item),
+  };
+  await renderSplitView(cfg);
+  _adjInjectFilters(cfg);
+}
+
+function _adjInjectFilters(cfg) {
+  const searchBox = document.querySelector('.split-left-search');
+  if (!searchBox) return;
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'padding:0 16px 10px;display:flex;gap:8px;flex-wrap:wrap;';
+  wrap.innerHTML = `
+    <select id="adj-filter-status" class="fin-form-select" style="flex:1;min-width:110px;font-size:12px;">
+      <option value="">All Statuses</option>
+      ${['draft', 'approved', 'cancelled'].map(s => `<option value="${s}">${s[0].toUpperCase() + s.slice(1)}</option>`).join('')}
+    </select>
+    <select id="adj-filter-type" class="fin-form-select" style="flex:1;min-width:110px;font-size:12px;">
+      <option value="">All Types</option>
+      ${INV_ADJUSTMENT_TYPES.map(t => `<option value="${t.value}">${t.label}</option>`).join('')}
+    </select>
+    <select id="adj-filter-store" class="fin-form-select" style="flex:1;min-width:130px;font-size:12px;">
+      <option value="">All Stores</option>${_invStoreOptionsHtml(null)}
+    </select>
+    <input type="date" id="adj-filter-start" class="fin-form-input" style="flex:1;min-width:110px;font-size:12px;" title="Start date">
+    <input type="date" id="adj-filter-end" class="fin-form-input" style="flex:1;min-width:110px;font-size:12px;" title="End date">`;
+  searchBox.insertAdjacentElement('afterend', wrap);
+  ['adj-filter-status', 'adj-filter-type', 'adj-filter-store', 'adj-filter-start', 'adj-filter-end'].forEach(id => {
+    document.getElementById(id).addEventListener('change', () => _adjReapplyFilters(cfg));
+  });
+}
+function _adjReapplyFilters(cfg) {
+  const status = document.getElementById('adj-filter-status')?.value || '';
+  const type = document.getElementById('adj-filter-type')?.value || '';
+  const storeId = document.getElementById('adj-filter-store')?.value || '';
+  const start = document.getElementById('adj-filter-start')?.value || '';
+  const end = document.getElementById('adj-filter-end')?.value || '';
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (type) params.set('adjustment_type', type);
+  if (storeId) params.set('store_id', storeId);
+  if (start) params.set('start_date', start);
+  if (end) params.set('end_date', end);
+  const qs = params.toString();
+  cfg.apiUrl = `${_INV_API}/adjustments` + (qs ? `?${qs}` : '');
+  window._splitReload && window._splitReload();
+}
+
+// ── Lines — direction segmented control + absolute qty, never a raw signed
+// number input (§7.4). signed_delta cannot be zero; qty > 0 makes that
+// impossible client-side. Unit cost is optional — 0 means "use current WAC".
+function _adjLineNetValue(line) {
+  const qty = parseFloat(line.quantity) || 0;
+  const cost = parseFloat(line.unit_cost) || 0;
+  if (qty <= 0 || cost <= 0) return null; // pending WAC at approve
+  const signedQty = line.direction === 'shortage' ? -qty : qty;
+  return signedQty * cost;
+}
+function _adjLineNetCellHtml(line) {
+  const netVal = _adjLineNetValue(line);
+  return netVal == null
+    ? '<span style="color:#999;font-style:italic;">pending WAC</span>'
+    : `<span style="color:${_invSignedColor(netVal)};">${_invSignedMoney(netVal)}</span>`;
+}
+function _adjLineRowHtml(line, idx) {
+  return `
+    <tr>
+      <td><input type="text" class="fin-li-input" list="adj-item-datalist" placeholder="Search item…" value="${_invEsc(line.item_label || '')}" oninput="_adjResolveLineItem(${idx}, this.value)"></td>
+      <td>
+        <div style="display:flex;border-radius:6px;overflow:hidden;border:1px solid var(--grey-200);width:130px;">
+          <button type="button" style="flex:1;border:none;padding:4px 0;font-size:11px;cursor:pointer;${line.direction !== 'shortage' ? 'background:var(--navy-700,#1B3057);color:#fff;' : 'background:var(--white);color:#444;'}" onclick="_adjSetLineDirection(${idx},'surplus')">Surplus +</button>
+          <button type="button" style="flex:1;border:none;padding:4px 0;font-size:11px;cursor:pointer;${line.direction === 'shortage' ? 'background:var(--coral-500);color:#fff;' : 'background:var(--white);color:#444;'}" onclick="_adjSetLineDirection(${idx},'shortage')">Shortage −</button>
+        </div>
+      </td>
+      <td><input type="number" class="fin-li-input" step="0.001" min="0.001" style="width:90px;" value="${line.quantity || ''}" oninput="_adjUpdateLine(${idx},'quantity',this.value)"></td>
+      <td><input type="number" class="fin-li-input" step="0.0001" min="0" style="width:100px;" value="${line.unit_cost || ''}" placeholder="0 = current WAC" oninput="_adjUpdateLine(${idx},'unit_cost',this.value)"></td>
+      <td id="adj-line-net-${idx}" style="text-align:right;font-size:12px;white-space:nowrap;">${_adjLineNetCellHtml(line)}</td>
+      <td><input type="text" class="fin-li-input" placeholder="Notes" value="${_invEsc(line.notes || '')}" oninput="_adjUpdateLine(${idx},'notes',this.value)"></td>
+      <td><button class="fin-btn-li-rm" ${_adjLines.length <= 1 ? 'disabled' : ''} onclick="_adjRemoveLine(${idx})">&times;</button></td>
+    </tr>`;
+}
+function _adjRenderLines() {
+  const el = document.getElementById('adj-lines-body');
+  if (el) el.innerHTML = _adjLines.map((l, i) => _adjLineRowHtml(l, i)).join('');
+  _adjRecalcNet();
+}
+function _adjAddLine() {
+  _adjLines.push({ item_id: null, item_label: '', direction: 'surplus', quantity: '', unit_cost: '', notes: '' });
+  _adjRenderLines();
+}
+function _adjRemoveLine(idx) {
+  if (_adjLines.length <= 1) return;
+  _adjLines.splice(idx, 1);
+  _adjRenderLines();
+}
+function _adjResolveLineItem(idx, val) {
+  const id = (window._adjItemMap || {})[val];
+  _adjLines[idx].item_id = id || null;
+  _adjLines[idx].item_label = val;
+}
+function _adjSetLineDirection(idx, dir) {
+  _adjLines[idx].direction = dir;
+  _adjRenderLines();
+}
+function _adjUpdateLine(idx, key, val) {
+  _adjLines[idx][key] = val;
+  const cell = document.getElementById(`adj-line-net-${idx}`);
+  if (cell) cell.innerHTML = _adjLineNetCellHtml(_adjLines[idx]);
+  _adjRecalcNet();
+}
+// Live preview only — the server is authoritative on approve (§7.5). Lines
+// with no known effective cost yet are excluded from the sum rather than
+// treated as zero, so the total never understates what's actually pending.
+function _adjRecalcNet() {
+  let total = 0, anyPending = false;
+  _adjLines.forEach(l => {
+    const v = _adjLineNetValue(l);
+    if (v == null) anyPending = true; else total += v;
+  });
+  const el = document.getElementById('adj-f-net');
+  if (el) el.innerHTML = `<span style="color:${_invSignedColor(total)};">${_invSignedMoney(total)}</span>${anyPending ? ' <span style="font-size:11px;opacity:.8;">(some lines pending WAC at approve)</span>' : ''}`;
+}
+
+// ── Shared header fields + lines table ──────────────────────────────────
+function _adjHeaderFieldsHtml(adj) {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  return `
+    <div class="fin-form-grid-2">
+      <div class="fin-form-group">
+        <label class="fin-form-label">Store <span class="fin-required">*</span></label>
+        <select id="adj-f-store" class="fin-form-select"><option value="">Please Select</option>${_invStoreOptionsHtml(adj?.store_id)}</select>
+        <span class="fin-field-error" id="adj-f-store-err"></span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Adjustment Date <span class="fin-required">*</span></label>
+        <input type="date" id="adj-f-date" class="fin-form-input" value="${adj?.adjustment_date || todayStr}">
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Type <span class="fin-required">*</span></label>
+        <select id="adj-f-type" class="fin-form-select">${INV_ADJUSTMENT_TYPES.map(t => `<option value="${t.value}" ${adj?.adjustment_type === t.value ? 'selected' : ''}>${t.label}</option>`).join('')}</select>
+        <span style="font-size:12px;color:var(--grey-600)">The type is for reporting only. Journal entries are posted by net direction (surplus DRs stock, shortage CRs stock).</span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Reason <span class="fin-required">*</span></label>
+        <input type="text" id="adj-f-reason" class="fin-form-input" maxlength="200" value="${_invEsc(adj?.reason || '')}">
+        <span class="fin-field-error" id="adj-f-reason-err"></span>
+      </div>
+      <div class="fin-form-group fin-span-2">
+        <label class="fin-form-label">Notes</label>
+        <textarea id="adj-f-notes" class="fin-form-textarea" rows="3">${_invEsc(adj?.notes || '')}</textarea>
+      </div>
+    </div>`;
+}
+function _adjLinesTableHtml() {
+  return `
+    <div class="fin-section-label">Lines</div>
+    <div class="fin-table-wrap">
+      <table class="fin-li-table">
+        <thead><tr><th>Item</th><th>Direction</th><th>Qty</th><th>Unit Cost</th><th>Line Value</th><th>Notes</th><th></th></tr></thead>
+        <tbody id="adj-lines-body"></tbody>
+      </table>
+    </div>
+    <datalist id="adj-item-datalist"></datalist>
+    <button type="button" class="fin-btn-outline" style="margin-top:8px;" onclick="_adjAddLine()">+ Add Line</button>
+    <div style="margin-top:16px;max-width:360px;margin-left:auto;padding:14px 16px;border-radius:8px;background:var(--navy-700,#1B3057);color:#fff;">
+      <div style="font-size:11px;opacity:.75;text-transform:uppercase;letter-spacing:.05em;">Net Value</div>
+      <div style="font-size:1.3rem;font-weight:700;margin-top:4px;" id="adj-f-net">${formatKES(0)}</div>
+    </div>`;
+}
+// signed_delta is built by prefixing the typed magnitude string with "-" for
+// shortages rather than round-tripping through parseFloat, so the payload
+// carries exactly what the operator typed (§9.3 — decimals as JSON strings).
+function _adjCollectLinesPayload() {
+  return _adjLines
+    .filter(l => l.item_id && parseFloat(l.quantity) > 0)
+    .map(l => {
+      const qtyStr = String(l.quantity).trim();
+      return {
+        item_id: l.item_id,
+        signed_delta: l.direction === 'shortage' ? `-${qtyStr}` : qtyStr,
+        unit_cost: (l.unit_cost !== '' && l.unit_cost != null) ? String(l.unit_cost).trim() : '0',
+        notes: (l.notes || '').trim() || null,
+      };
+    });
+}
+function _adjCollectHeaderPayload() {
+  return {
+    store_id: parseInt(document.getElementById('adj-f-store').value),
+    adjustment_date: document.getElementById('adj-f-date').value || null,
+    adjustment_type: document.getElementById('adj-f-type').value,
+    reason: (document.getElementById('adj-f-reason').value || '').trim(),
+    notes: (document.getElementById('adj-f-notes').value || '').trim() || null,
+  };
+}
+
+// ── Add (Save Draft only) ─────────────────────────────────────────────────
+function _adjRenderAddForm(el) {
+  _adjLines = [{ item_id: null, item_label: '', direction: 'surplus', quantity: '', unit_cost: '', notes: '' }];
+  el.innerHTML = `
+    <div class="fin-form-wrap" style="max-width:100%;">
+      <h3 class="fin-title" style="font-size:1rem;">New Stock Adjustment</h3>
+      ${_adjHeaderFieldsHtml(null)}
+      ${_adjLinesTableHtml()}
+      <div id="adj-f-msg" style="margin-top:12px;"></div>
+      <div class="fin-form-actions">
+        <button class="fin-btn-teal" onclick="_adjSubmitAdd()">Save Draft</button>
+        <button class="fin-btn-cancel" onclick="window._splitReload && window._splitReload()">Cancel</button>
+      </div>
+    </div>`;
+  _adjRenderLines();
+  _invPopulateItemDatalist('adj-item-datalist', '_adjItemMap');
+}
+function _adjValidateHeader() {
+  document.getElementById('adj-f-store-err').textContent = '';
+  document.getElementById('adj-f-reason-err').textContent = '';
+  const storeId = document.getElementById('adj-f-store').value;
+  const reason = (document.getElementById('adj-f-reason').value || '').trim();
+  let valid = true;
+  if (!storeId) { document.getElementById('adj-f-store-err').textContent = 'This field is required.'; valid = false; }
+  if (!reason) { document.getElementById('adj-f-reason-err').textContent = 'This field is required.'; valid = false; }
+  return valid;
+}
+async function _adjSubmitAdd() {
+  document.getElementById('adj-f-msg').innerHTML = '';
+  if (!_adjValidateHeader()) return;
+  const lines = _adjCollectLinesPayload();
+  if (lines.length === 0) {
+    document.getElementById('adj-f-msg').innerHTML = `<div class="fin-field-error">Add at least one line with an item and quantity.</div>`;
+    return;
+  }
+  const payload = { ..._adjCollectHeaderPayload(), lines };
+  const res = await apiFetch(`${_INV_API}/adjustments`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  if (res && res.ok) { showToast('Adjustment saved as draft.', 'success'); await window._splitReload?.(); return; }
+  if (!res) return;
+  const { fieldErrors, message } = await _invParseError(res);
+  if (fieldErrors.store_id) document.getElementById('adj-f-store-err').textContent = fieldErrors.store_id;
+  else if (fieldErrors.reason) document.getElementById('adj-f-reason-err').textContent = fieldErrors.reason;
+  else document.getElementById('adj-f-msg').innerHTML = `<div class="fin-field-error">${_invEsc(message)}</div>`;
+}
+
+// ── Edit — draft-only, and forbidden entirely when stock-take-sourced
+// (canEdit already hides the trigger; this is the 409 backstop) ─────────
+function _adjRenderEditForm(item, el) {
+  _adjLines = (item.lines || []).map(l => {
+    const delta = parseFloat(l.signed_delta) || 0;
+    return { item_id: l.item_id, item_label: _invItemLabel(l.item_id), direction: delta < 0 ? 'shortage' : 'surplus', quantity: String(Math.abs(delta)), unit_cost: l.unit_cost, notes: l.notes };
+  });
+  if (_adjLines.length === 0) _adjLines = [{ item_id: null, item_label: '', direction: 'surplus', quantity: '', unit_cost: '', notes: '' }];
+  el.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Edit Adjustment ${_invEsc(item.adjustment_number || '')}</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Inventory &rsaquo;
+          <a href="#" class="fin-bc-link" onclick="loadView('inventory-adjustments');return false;">Adjustments</a> &rsaquo; Edit
+        </div>
+      </div>
+      <div class="fin-form-wrap" style="max-width:100%;">
+        ${_adjHeaderFieldsHtml(item)}
+        ${_adjLinesTableHtml()}
+        <div id="adj-f-msg" style="margin-top:12px;"></div>
+        <div class="fin-form-actions">
+          <button class="fin-btn-teal" onclick="_adjSubmitEdit(${item.id})">Update</button>
+          <button class="fin-btn-cancel" onclick="window._splitRefreshSelected && window._splitRefreshSelected()">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+  _adjRenderLines();
+  _invPopulateItemDatalist('adj-item-datalist', '_adjItemMap');
+}
+async function _adjSubmitEdit(id) {
+  document.getElementById('adj-f-msg').innerHTML = '';
+  if (!_adjValidateHeader()) return;
+  const lines = _adjCollectLinesPayload();
+  if (lines.length === 0) {
+    document.getElementById('adj-f-msg').innerHTML = `<div class="fin-field-error">Add at least one line with an item and quantity.</div>`;
+    return;
+  }
+  const payload = { ..._adjCollectHeaderPayload(), lines };
+  const res = await apiFetch(`${_INV_API}/adjustments/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  if (res && res.ok) { showToast('Adjustment updated.', 'success'); await window._splitRefreshSelected?.(); return; }
+  if (!res) return;
+  if (res.status === 409) {
+    const { message } = await _invParseError(res);
+    document.getElementById('adj-f-msg').innerHTML = `<div class="fin-field-error">${_invEsc(message)}</div>`;
+    return;
+  }
+  const { fieldErrors, message } = await _invParseError(res);
+  if (fieldErrors.store_id) document.getElementById('adj-f-store-err').textContent = fieldErrors.store_id;
+  else if (fieldErrors.reason) document.getElementById('adj-f-reason-err').textContent = fieldErrors.reason;
+  else document.getElementById('adj-f-msg').innerHTML = `<div class="fin-field-error">${_invEsc(message)}</div>`;
+}
+
+// ── Detail actions — status + source_stocktake_id conditional (§7.6-7.7) ──
+function _adjDetailActionsHtml(item) {
+  window._adjCurrentItem = item;
+  const locked = isStocktakeSourcedAdjustment(item);
+  const lockedBanner = locked ? `
+    <div style="padding:10px 12px;border-radius:6px;background:var(--gold-100,#fdf3d6);color:#8a6d00;font-size:0.85rem;margin-bottom:14px;">
+      This adjustment was auto-created by stock-take <a href="#" onclick="_invOpenStocktake(${item.source_stocktake_id});return false;" style="color:#8a6d00;font-weight:600;">#${item.source_stocktake_id}</a>. To correct it, post a new adjustment; you cannot edit or cancel this one.
+    </div>` : '';
+  const isDraft = item.status === 'draft';
+  const lineRows = (item.lines || []).map(l => {
+    const delta = parseFloat(l.signed_delta) || 0;
+    const dirPill = delta < 0
+      ? `<span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:0.68rem;font-weight:600;color:#fff;background:var(--coral-500);">Shortage</span>`
+      : `<span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:0.68rem;font-weight:600;color:#fff;background:var(--navy-700,#1B3057);">Surplus</span>`;
+    const enteredCost = parseFloat(l.unit_cost) || 0;
+    const pending = isDraft && enteredCost <= 0;
+    const costCell = pending ? '<span style="color:#999;font-style:italic;">—</span>' : formatUnitCost(l.unit_cost);
+    const lineValue = isDraft ? (delta * enteredCost) : parseFloat(l.line_total || 0);
+    const totalCell = pending
+      ? '<span style="color:#999;font-style:italic;">pending WAC at approve</span>'
+      : `<span style="color:${_invSignedColor(lineValue)};">${_invSignedMoney(lineValue)}</span>`;
+    return `
+      <tr>
+        <td>${_invEsc(_invItemLabel(l.item_id))}</td>
+        <td>${dirPill}</td>
+        <td style="text-align:right;">${formatQty(Math.abs(delta))}</td>
+        <td style="text-align:right;">${costCell}</td>
+        <td style="text-align:right;">${totalCell}</td>
+        <td>${_invEsc(l.notes || '—')}</td>
+      </tr>`;
+  }).join('') || `<tr><td colspan="6" class="fin-empty">No lines.</td></tr>`;
+  const linesTable = `
+    <div class="fin-section-label">Lines</div>
+    <div class="fin-table-wrap"><table class="fin-li-table">
+      <thead><tr><th>Item</th><th>Direction</th><th>Qty</th><th>Unit Cost</th><th>Line Total</th><th>Notes</th></tr></thead>
+      <tbody>${lineRows}</tbody>
+    </table></div>`;
+
+  let actions = '';
+  if (item.status === 'draft') {
+    actions += `<button class="fin-btn-teal" onclick="_adjOpenApproveModal(${item.id})">Approve</button>`;
+    if (!locked) actions += `<button class="fin-btn-outline" style="color:#c0392b;border-color:#c0392b;" onclick="_adjOpenCancelModal(${item.id})">Cancel</button>`;
+  } else if (item.status === 'approved') {
+    actions += `<div style="color:#888;font-size:0.85rem;">Approved adjustments cannot be cancelled — post a counter-adjustment instead.</div>`;
+  }
+  return `
+    ${lockedBanner}
+    ${linesTable}
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:14px;align-items:center;">${actions}</div>
+    <div id="adj-action-msg-${item.id}" style="margin-top:8px;"></div>`;
+}
+
+// ── Approve — wording adapts to surplus/shortage/net-zero (§7.8) ─────────
+function _adjOpenApproveModal(id) {
+  const item = window._adjCurrentItem;
+  const net = parseFloat(item.net_delta_value) || 0;
+  let body;
+  if (net > 0) body = `Approve adjustment ${_invEsc(item.adjustment_number || '')}? Stock will be increased and a journal entry posted (DR Inventory / CR Expense) for ${formatKES(net)}.`;
+  else if (net < 0) body = `Approve adjustment ${_invEsc(item.adjustment_number || '')}? Stock will be decreased and a journal entry posted (DR Expense / CR Inventory) for ${formatKES(Math.abs(net))}.`;
+  else body = `Approve adjustment ${_invEsc(item.adjustment_number || '')}? Stock will move (surplus and shortage lines cancel out net-zero); no journal entry will be posted.`;
+  const wrap = document.createElement('div');
+  wrap.id = 'adj-approve-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:var(--white);border-radius:8px;padding:24px;width:480px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 12px;font-size:1.05rem;color:var(--navy-700,#2c3e50);">Approve Adjustment</h3>
+      <p style="font-size:0.88rem;color:#444;">${body}</p>
+      <div id="adj-approve-err" style="display:none;padding:10px 12px;border-radius:6px;background:var(--coral-100);color:var(--coral-600);font-size:0.82rem;margin-top:6px;"></div>
+      <div id="adj-approve-config-warning" style="display:none;padding:10px 12px;border-radius:6px;background:var(--gold-100,#fdf3d6);color:#8a6d00;font-size:0.82rem;margin-top:6px;"></div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="_coaCloseModal('adj-approve-modal-overlay')">Cancel</button>
+        <button class="fin-btn-teal" onclick="_adjSubmitApprove(${id})">Approve</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+async function _adjSubmitApprove(id) {
+  const errEl = document.getElementById('adj-approve-err');
+  const cfgEl = document.getElementById('adj-approve-config-warning');
+  errEl.style.display = 'none'; cfgEl.style.display = 'none';
+  const res = await apiFetch(`${_INV_API}/adjustments/${id}/approve`, { method: 'POST' });
+  if (res && res.ok) {
+    _coaCloseModal('adj-approve-modal-overlay');
+    showToast('Adjustment approved.', 'success');
+    await window._splitRefreshSelected?.();
+    return;
+  }
+  if (!res) return;
+  const { message } = await _invParseError(res);
+  if (/No consumption expense account configured/i.test(message)) {
+    cfgEl.textContent = message; cfgEl.style.display = 'block';
+  } else {
+    errEl.textContent = message; errEl.style.display = 'block';
+  }
+}
+
+// ── Cancel — draft-only, no cancel path once approved ────────────────────
+function _adjOpenCancelModal(id) {
+  const wrap = document.createElement('div');
+  wrap.id = 'adj-cancel-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:var(--white);border-radius:8px;padding:24px;width:420px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 12px;font-size:1.05rem;color:var(--navy-700,#2c3e50);">Cancel Adjustment</h3>
+      <p style="font-size:0.88rem;color:#444;">Cancel draft adjustment? No stock or GL impact.</p>
+      <div id="adj-cancel-err" style="display:none;padding:10px 12px;border-radius:6px;background:var(--coral-100);color:var(--coral-600);font-size:0.82rem;margin-top:6px;"></div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-outline" onclick="_coaCloseModal('adj-cancel-modal-overlay')">Keep Adjustment</button>
+        <button class="fin-btn-cancel" onclick="_adjSubmitCancel(${id})">Cancel Adjustment</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+async function _adjSubmitCancel(id) {
+  const errEl = document.getElementById('adj-cancel-err');
+  errEl.style.display = 'none';
+  const res = await apiFetch(`${_INV_API}/adjustments/${id}/cancel`, { method: 'POST' });
+  if (res && res.ok) {
+    _coaCloseModal('adj-cancel-modal-overlay');
+    showToast('Adjustment cancelled.', 'success');
+    await window._splitRefreshSelected?.();
+    return;
+  }
+  if (!res) return;
+  const { message } = await _invParseError(res);
+  errEl.textContent = message; errEl.style.display = 'block';
+}
