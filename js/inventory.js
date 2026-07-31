@@ -8,6 +8,25 @@ function _invEsc(v) {
   return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// Signed-value renderers — the sign itself is the informational value
+// (§4.3, §7.6), so these always show it explicitly rather than relying on
+// a bare negative number. Shared across the Stock Ledger, Transfers,
+// Adjustments and Stock-Takes.
+function _invSignedQty(v) {
+  const n = parseFloat(v) || 0;
+  const formatted = formatQty(Math.abs(n));
+  return n > 0 ? `+${formatted}` : (n < 0 ? `−${formatted}` : formatted);
+}
+function _invSignedMoney(v) {
+  const n = parseFloat(v) || 0;
+  const formatted = formatKES(Math.abs(n));
+  return n > 0 ? `+${formatted}` : (n < 0 ? `−${formatted}` : formatted);
+}
+function _invSignedColor(v) {
+  const n = parseFloat(v) || 0;
+  return n > 0 ? 'var(--navy-700,#1B3057)' : (n < 0 ? 'var(--coral-600,#B03030)' : '#666');
+}
+
 // Parses a FastAPI error body once, returning both a per-field map (for
 // inline errors) and a flattened verbatim string (for banners/toasts) —
 // unlike parseApiError(), this can drive field-level placement without a
@@ -876,4 +895,206 @@ async function _grnSubmitCancel(id) {
   // won't succeed until that invoice's status changes elsewhere, so disable
   // the confirm button rather than inviting an identical failed retry (§3.9).
   if (res.status === 409 && btn) btn.disabled = true;
+}
+
+// ==================== STOCK — BALANCES + LEDGER (§4) ====================
+// Two read-only report tabs, not a renderSplitView CRUD screen — built as a
+// bespoke view since there's nothing to add/edit here.
+
+const SRC_LABELS = {
+  goods_received_note: 'GRN',
+  stock_issue:          'Issue',
+  stock_transfer:       'Transfer',
+  stock_adjustment:     'Adjustment',
+};
+const _INV_MOVEMENT_STYLE = {
+  receipt:      'color:#1e7e34;background:#dcf3e2;',
+  issue:        'color:#c0392b;background:#fde0de;',
+  transfer_out: 'color:#8a6d00;background:var(--gold-100,#fdf3d6);',
+  transfer_in:  'color:#1B3057;background:var(--navy-100,#e4e9f3);',
+  adjustment:   'color:#6a1b9a;background:#efe0f7;',
+  // write_off / return are reserved for later phases (§4.3) — styled
+  // gracefully (grey, no icon) but no filter control offers them yet.
+  write_off:    'color:#666;background:#eee;',
+  return:       'color:#666;background:#eee;',
+};
+function _invMovementPill(type) {
+  const style = _INV_MOVEMENT_STYLE[type] || 'color:#666;background:#eee;';
+  return `<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.72rem;font-weight:600;${style}">${_invEsc((type || '').replace(/_/g, ' ') || '—')}</span>`;
+}
+// Dispatches to each source document type's own "open and preselect" global
+// (the same window._xOpenId + loadView() convention as _grnOpen) — routes
+// for stock_issue/stock_transfer/stock_adjustment resolve once §5-§7 land;
+// until then they fall through to loadView()'s own "Module not found".
+function _invOpenSourceDoc(type, id) {
+  const openers = {
+    goods_received_note: () => { window._grnOpenId = id; loadView('inventory-grn'); },
+    stock_issue:          () => { window._invIssueOpenId = id; loadView('inventory-issues'); },
+    stock_transfer:        () => { window._invTransferOpenId = id; loadView('inventory-transfers'); },
+    stock_adjustment:      () => { window._invAdjustmentOpenId = id; loadView('inventory-adjustments'); },
+  };
+  (openers[type] || (() => showToast('Unknown source document type.', 'error')))();
+}
+function _invSourceLink(type, id) {
+  if (!type || id == null) return '—';
+  const label = SRC_LABELS[type] || type;
+  return `<a href="#" onclick="_invOpenSourceDoc('${type}',${id});return false;">${_invEsc(label)} #${id}</a>`;
+}
+
+let _invStockTab = 'balances';
+let _invLedgerRows = [];
+let _invLedgerOffset = 0;
+const _INV_LEDGER_LIMIT = 200;
+let _invLedgerExhausted = false;
+
+async function loadInventoryStockView(container) {
+  await Promise.all([_invEnsureStoresCache(), _invEnsureItemsCache()]);
+  _invStockTab = 'balances';
+  container.innerHTML = `
+    ${renderBreadcrumb([{ label: 'Dashboard', view: null }, { label: 'Inventory', view: 'inventory-stock' }, { label: 'Stock Levels & Ledger' }])}
+    <div class="fin-page">
+      <div style="display:flex;gap:8px;margin-bottom:16px;">
+        <button id="inv-stock-tab-balances" class="fin-btn-teal" onclick="_invStockSwitchTab('balances')">Balances</button>
+        <button id="inv-stock-tab-ledger" class="fin-btn-outline" onclick="_invStockSwitchTab('ledger')">Ledger</button>
+      </div>
+      <div id="inv-stock-tab-body"></div>
+    </div>`;
+  _invStockRenderBalancesTab();
+}
+function _invStockSwitchTab(tab) {
+  _invStockTab = tab;
+  document.getElementById('inv-stock-tab-balances').className = tab === 'balances' ? 'fin-btn-teal' : 'fin-btn-outline';
+  document.getElementById('inv-stock-tab-ledger').className = tab === 'ledger' ? 'fin-btn-teal' : 'fin-btn-outline';
+  if (tab === 'balances') _invStockRenderBalancesTab();
+  else _invStockRenderLedgerTab();
+}
+
+// ── Balances tab ─────────────────────────────────────────────────────────
+function _invStockRenderBalancesTab() {
+  const body = document.getElementById('inv-stock-tab-body');
+  body.innerHTML = `
+    <div style="padding:0 0 12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <input type="text" id="inv-stock-bal-item" class="fin-form-input" list="inv-stock-bal-item-datalist" placeholder="Item…" style="flex:1;min-width:160px;">
+      <datalist id="inv-stock-bal-item-datalist"></datalist>
+      <select id="inv-stock-bal-store" class="fin-form-select" style="flex:1;min-width:130px;">
+        <option value="">All Stores</option>${_invStoreOptionsHtml(null)}
+      </select>
+      <input type="number" id="inv-stock-bal-lowthresh" class="fin-form-input" placeholder="Low stock ≤" step="0.001" style="width:120px;">
+      <label style="font-size:12px;display:flex;align-items:center;gap:4px;white-space:nowrap;">
+        <input type="checkbox" id="inv-stock-bal-includezero"> Include zero-qty rows
+      </label>
+      <button class="fin-btn-teal" onclick="_invStockLoadBalances()">Apply</button>
+    </div>
+    <div class="fin-table-wrap"><table class="fin-table" id="inv-stock-bal-table">
+      <thead><tr><th>Item</th><th>Store</th><th style="text-align:right;">Qty on Hand</th><th style="text-align:right;">Moving Avg Cost</th><th style="text-align:right;">Extended Value</th><th>Last Movement</th></tr></thead>
+      <tbody><tr><td colspan="6" class="fin-loading">Loading…</td></tr></tbody>
+    </table></div>`;
+  _invPopulateItemDatalist('inv-stock-bal-item-datalist', '_invStockBalItemMap');
+  _invStockLoadBalances();
+}
+async function _invStockLoadBalances() {
+  const tbody = document.querySelector('#inv-stock-bal-table tbody');
+  if (!tbody) return;
+  const itemVal = document.getElementById('inv-stock-bal-item')?.value || '';
+  const itemId = (window._invStockBalItemMap || {})[itemVal] || '';
+  const storeId = document.getElementById('inv-stock-bal-store')?.value || '';
+  const lowThresh = document.getElementById('inv-stock-bal-lowthresh')?.value || '';
+  const includeZero = document.getElementById('inv-stock-bal-includezero')?.checked || false;
+  const params = new URLSearchParams();
+  if (itemId) params.set('item_id', itemId);
+  if (storeId) params.set('store_id', storeId);
+  if (lowThresh) params.set('low_stock_threshold', lowThresh);
+  params.set('include_zero', includeZero ? 'true' : 'false');
+  const res = await apiFetch(`${_INV_API}/stock?${params.toString()}`);
+  const rows = (res && res.ok) ? _toArray(await res.json()) : [];
+  if (rows.length === 0) { tbody.innerHTML = `<tr><td colspan="6" class="fin-empty">No stock records found.</td></tr>`; return; }
+  const threshold = lowThresh !== '' ? parseFloat(lowThresh) : null;
+  tbody.innerHTML = rows.map(r => {
+    const qty = parseFloat(r.qty_on_hand) || 0;
+    const cost = parseFloat(r.moving_avg_cost) || 0;
+    const isLow = threshold != null && qty <= threshold;
+    return `
+      <tr${isLow ? ' style="border-left:3px solid var(--coral-500);"' : ''}>
+        <td>${_invEsc(_invItemLabel(r.item_id))}${isLow ? ' <span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:0.68rem;font-weight:600;color:var(--white);background:var(--coral-500);margin-left:4px;">Low</span>' : ''}</td>
+        <td>${_invEsc(_invStoreLabel(r.store_id))}</td>
+        <td style="text-align:right;">${formatQty(qty)}</td>
+        <td style="text-align:right;">${formatUnitCost(cost)}</td>
+        <td style="text-align:right;">${formatKES(qty * cost)}</td>
+        <td>${r.last_movement_at ? formatRelativeTime(r.last_movement_at) : '—'}</td>
+      </tr>`;
+  }).join('');
+}
+
+// ── Ledger tab (paginated — §4.3, §K.4) ─────────────────────────────────
+function _invStockRenderLedgerTab() {
+  const body = document.getElementById('inv-stock-tab-body');
+  body.innerHTML = `
+    <div style="padding:0 0 12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <input type="text" id="inv-stock-led-item" class="fin-form-input" list="inv-stock-led-item-datalist" placeholder="Item…" style="flex:1;min-width:160px;">
+      <datalist id="inv-stock-led-item-datalist"></datalist>
+      <select id="inv-stock-led-store" class="fin-form-select" style="flex:1;min-width:130px;">
+        <option value="">All Stores</option>${_invStoreOptionsHtml(null)}
+      </select>
+      <input type="date" id="inv-stock-led-start" class="fin-form-input" style="flex:1;min-width:110px;" title="Start date">
+      <input type="date" id="inv-stock-led-end" class="fin-form-input" style="flex:1;min-width:110px;" title="End date">
+      <button class="fin-btn-teal" onclick="_invStockLoadLedger(true)">Apply</button>
+    </div>
+    <div class="fin-table-wrap"><table class="fin-table" id="inv-stock-led-table">
+      <thead><tr><th>Timestamp</th><th>Item · Store</th><th>Type</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Unit Cost</th><th style="text-align:right;">Total Cost</th><th>Source</th><th>JE</th></tr></thead>
+      <tbody><tr><td colspan="8" class="fin-loading">Loading…</td></tr></tbody>
+    </table></div>
+    <div style="display:flex;justify-content:center;gap:10px;margin-top:12px;">
+      <button class="fin-btn-outline" id="inv-stock-led-more" onclick="_invStockLoadLedger(false)">Load older</button>
+    </div>`;
+  _invPopulateItemDatalist('inv-stock-led-item-datalist', '_invStockLedItemMap');
+  _invStockLoadLedger(true);
+}
+function _invLedgerFilterParams() {
+  const itemVal = document.getElementById('inv-stock-led-item')?.value || '';
+  const itemId = (window._invStockLedItemMap || {})[itemVal] || '';
+  const storeId = document.getElementById('inv-stock-led-store')?.value || '';
+  const start = document.getElementById('inv-stock-led-start')?.value || '';
+  const end = document.getElementById('inv-stock-led-end')?.value || '';
+  const params = new URLSearchParams();
+  if (itemId) params.set('item_id', itemId);
+  if (storeId) params.set('store_id', storeId);
+  if (start) params.set('start_date', start);
+  if (end) params.set('end_date', end);
+  return params;
+}
+async function _invStockLoadLedger(reset) {
+  const tbody = document.querySelector('#inv-stock-led-table tbody');
+  const moreBtn = document.getElementById('inv-stock-led-more');
+  if (!tbody) return;
+  if (reset) {
+    _invLedgerRows = []; _invLedgerOffset = 0; _invLedgerExhausted = false;
+    tbody.innerHTML = `<tr><td colspan="8" class="fin-loading">Loading…</td></tr>`;
+  }
+  const params = _invLedgerFilterParams();
+  params.set('limit', _INV_LEDGER_LIMIT);
+  params.set('offset', _invLedgerOffset);
+  const res = await apiFetch(`${_INV_API}/stock/ledger?${params.toString()}`);
+  const rows = (res && res.ok) ? _toArray(await res.json()) : [];
+  // No total-count is ever returned — exhausted is inferred from a
+  // short page, per §K.4 of the addendum.
+  _invLedgerExhausted = rows.length < _INV_LEDGER_LIMIT;
+  _invLedgerRows = _invLedgerRows.concat(rows);
+  _invLedgerOffset += rows.length;
+  tbody.innerHTML = _invLedgerRows.length === 0
+    ? `<tr><td colspan="8" class="fin-empty">No ledger entries found.</td></tr>`
+    : _invLedgerRows.map(_invLedgerRowHtml).join('');
+  if (moreBtn) { moreBtn.disabled = _invLedgerExhausted; moreBtn.textContent = _invLedgerExhausted ? 'No more records' : 'Load older'; }
+}
+function _invLedgerRowHtml(r) {
+  return `
+    <tr>
+      <td>${r.created_at ? new Date(r.created_at).toLocaleString() : '—'}</td>
+      <td>${_invEsc(_invItemLabel(r.item_id))} · ${_invEsc(_invStoreLabel(r.store_id))}</td>
+      <td>${_invMovementPill(r.movement_type)}</td>
+      <td style="text-align:right;color:${_invSignedColor(r.signed_delta)};font-weight:600;">${_invSignedQty(r.signed_delta)}</td>
+      <td style="text-align:right;">${formatUnitCost(r.unit_cost)}</td>
+      <td style="text-align:right;">${formatKES(r.total_cost)}</td>
+      <td>${_invSourceLink(r.source_document_type, r.source_document_id)}</td>
+      <td>${r.journal_entry_id ? `<a href="#" onclick="_jeViewDetail(${r.journal_entry_id});return false;">JE #${r.journal_entry_id}</a>` : '—'}</td>
+    </tr>`;
 }

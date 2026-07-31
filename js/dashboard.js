@@ -295,6 +295,7 @@ function showDashboard() {
             <ul id="inventory-management-dropdown" class="dropdown-menu">
               <li id="sidebar-inv-stores" onclick="loadView('inventory-stores')">Stores</li>
               <li id="sidebar-inv-grn" onclick="loadView('inventory-grn')">Goods Received Notes</li>
+              <li id="sidebar-inv-stock" onclick="loadView('inventory-stock')">Stock Levels & Ledger</li>
             </ul>
           </div>
 
@@ -1326,6 +1327,9 @@ async function loadView(view) {
     case 'inventory-grn':
       setActiveSidebarItem('sidebar-inv-grn');
       await loadInventoryGrnView(main); break;
+    case 'inventory-stock':
+      setActiveSidebarItem('sidebar-inv-stock');
+      await loadInventoryStockView(main); break;
     default: main.innerHTML = "<p>Module not found.</p>";
   }
   closeAllSidebarDropdowns();
