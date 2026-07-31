@@ -1098,3 +1098,380 @@ function _invLedgerRowHtml(r) {
       <td>${r.journal_entry_id ? `<a href="#" onclick="_jeViewDetail(${r.journal_entry_id});return false;">JE #${r.journal_entry_id}</a>` : '—'}</td>
     </tr>`;
 }
+
+// ==================== STOCK ISSUES (§5) ====================
+
+const _INV_ISSUE_STATUS_STYLE = {
+  draft:     'color:#666;background:#eee;',
+  approved:  'color:#1e7e34;background:#dcf3e2;',
+  cancelled: 'color:#888;background:#eee;text-decoration:line-through;',
+};
+function _issueStatusPill(status) {
+  const style = _INV_ISSUE_STATUS_STYLE[status] || 'color:#666;background:#eee;';
+  return `<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.75rem;font-weight:600;${style}">${_invEsc((status || '').replace(/_/g, ' ') || '—')}</span>`;
+}
+
+let _issueLines = [];
+
+// ── List (split-view) ────────────────────────────────────────────────────
+async function loadInventoryIssuesView(container) {
+  await Promise.all([_invEnsureStoresCache(), _invEnsureItemsCache(), _invEnsureTermsCache()]);
+  const preselectId = window._invIssueOpenId ?? null;
+  window._invIssueOpenId = null;
+  const cfg = {
+    container,
+    title: 'Issues',
+    moduleKey: 'inventory_management.issues',
+    breadcrumb: [
+      { label: 'Dashboard', view: null },
+      { label: 'Inventory', view: 'inventory-issues' },
+      { label: 'Issues' },
+    ],
+    apiUrl: `${_INV_API}/issues`,
+    searchFields: ['issue_number', 'reason'],
+    col1Label: 'Issue', col2Label: 'Status',
+    col1: g => `<strong>${_invEsc(g.issue_number || '—')}</strong><br><span style="font-weight:400;font-size:12px;color:#888;">${_invEsc(_invStoreLabel(g.store_id))} &middot; ${g.issue_date || ''}</span>`,
+    col2: g => `${_issueStatusPill(g.status)}<br><span style="font-size:12px;color:#555;">${formatKES(g.total_value)}</span>`,
+    rowLabel: g => g.issue_number || '—',
+    rowSub: g => `${_invStoreLabel(g.store_id)} · ${g.issue_date || ''}`,
+    idKey: 'id',
+    preselectId,
+    detailFields: [
+      { label: 'Store', key: 'store_id', fmt: v => _invStoreLabel(v) },
+      { label: 'Issue Date', key: 'issue_date', fmt: v => v || '—' },
+      { label: 'Reason', key: 'reason', fmt: v => v || '—' },
+      { label: 'Notes', key: 'notes', fmt: v => v || '—' },
+      { label: 'Total Value', key: 'total_value', fmt: v => formatKES(v) },
+      { label: 'Term', key: 'term_id', fmt: v => v ? _invTermLabel(v) : '—' },
+      { label: 'Journal Entry', key: 'journal_entry_id', fmt: v => v ? `<a href="#" onclick="_jeViewDetail(${v});return false;">JE #${v}</a>` : '—' },
+      { label: 'Status', key: 'status', fmt: v => _issueStatusPill(v) },
+      { label: 'Approved At', key: 'approved_at', fmt: v => v ? new Date(v).toLocaleString() : '—' },
+    ],
+    canEdit: item => item.status === 'draft',
+    renderAdd: el => _issueRenderAddForm(el),
+    renderEdit: (item, el) => _issueRenderEditForm(item, el),
+    detailActions: item => _issueDetailActionsHtml(item),
+  };
+  await renderSplitView(cfg);
+  _issueInjectFilters(cfg);
+}
+
+function _issueInjectFilters(cfg) {
+  const searchBox = document.querySelector('.split-left-search');
+  if (!searchBox) return;
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'padding:0 16px 10px;display:flex;gap:8px;flex-wrap:wrap;';
+  wrap.innerHTML = `
+    <select id="issue-filter-status" class="fin-form-select" style="flex:1;min-width:110px;font-size:12px;">
+      <option value="">All Statuses</option>
+      ${['draft', 'approved', 'cancelled'].map(s => `<option value="${s}">${s[0].toUpperCase() + s.slice(1)}</option>`).join('')}
+    </select>
+    <select id="issue-filter-store" class="fin-form-select" style="flex:1;min-width:130px;font-size:12px;">
+      <option value="">All Stores</option>${_invStoreOptionsHtml(null)}
+    </select>
+    <input type="date" id="issue-filter-start" class="fin-form-input" style="flex:1;min-width:110px;font-size:12px;" title="Start date">
+    <input type="date" id="issue-filter-end" class="fin-form-input" style="flex:1;min-width:110px;font-size:12px;" title="End date">`;
+  searchBox.insertAdjacentElement('afterend', wrap);
+  ['issue-filter-status', 'issue-filter-store', 'issue-filter-start', 'issue-filter-end'].forEach(id => {
+    document.getElementById(id).addEventListener('change', () => _issueReapplyFilters(cfg));
+  });
+}
+function _issueReapplyFilters(cfg) {
+  const status = document.getElementById('issue-filter-status')?.value || '';
+  const storeId = document.getElementById('issue-filter-store')?.value || '';
+  const start = document.getElementById('issue-filter-start')?.value || '';
+  const end = document.getElementById('issue-filter-end')?.value || '';
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (storeId) params.set('store_id', storeId);
+  if (start) params.set('start_date', start);
+  if (end) params.set('end_date', end);
+  const qs = params.toString();
+  cfg.apiUrl = `${_INV_API}/issues` + (qs ? `?${qs}` : '');
+  window._splitReload && window._splitReload();
+}
+
+// ── Lines — quantity-only on drafts; unit_cost/line_total are 0 until
+// approve populates them from the current WAC, so they're deliberately not
+// rendered on the Create/Edit form at all (§5.4). ──────────────────────────
+function _issueLineRowHtml(line, idx) {
+  return `
+    <tr>
+      <td><input type="text" class="fin-li-input" list="issue-item-datalist" placeholder="Search item…" value="${_invEsc(line.item_label || '')}" oninput="_issueResolveLineItem(${idx}, this.value)"></td>
+      <td><input type="number" class="fin-li-input" step="0.001" min="0.001" style="width:100px;" value="${line.quantity || ''}" oninput="_issueUpdateLine(${idx},'quantity',this.value)"></td>
+      <td><input type="text" class="fin-li-input" placeholder="Notes" value="${_invEsc(line.notes || '')}" oninput="_issueUpdateLine(${idx},'notes',this.value)"></td>
+      <td><button class="fin-btn-li-rm" ${_issueLines.length <= 1 ? 'disabled' : ''} onclick="_issueRemoveLine(${idx})">&times;</button></td>
+    </tr>`;
+}
+function _issueRenderLines() {
+  const el = document.getElementById('issue-lines-body');
+  if (el) el.innerHTML = _issueLines.map((l, i) => _issueLineRowHtml(l, i)).join('');
+}
+function _issueAddLine() {
+  _issueLines.push({ item_id: null, item_label: '', quantity: '', notes: '' });
+  _issueRenderLines();
+}
+function _issueRemoveLine(idx) {
+  if (_issueLines.length <= 1) return;
+  _issueLines.splice(idx, 1);
+  _issueRenderLines();
+}
+function _issueResolveLineItem(idx, val) {
+  const id = (window._issueItemMap || {})[val];
+  _issueLines[idx].item_id = id || null;
+  _issueLines[idx].item_label = val;
+}
+function _issueUpdateLine(idx, key, val) {
+  _issueLines[idx][key] = val;
+}
+
+// ── Shared header fields + lines table ──────────────────────────────────
+function _issueHeaderFieldsHtml(issue) {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  return `
+    <div class="fin-form-grid-2">
+      <div class="fin-form-group">
+        <label class="fin-form-label">Store <span class="fin-required">*</span></label>
+        <select id="issue-f-store" class="fin-form-select"><option value="">Please Select</option>${_invStoreOptionsHtml(issue?.store_id)}</select>
+        <span class="fin-field-error" id="issue-f-store-err"></span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Issue Date <span class="fin-required">*</span></label>
+        <input type="date" id="issue-f-date" class="fin-form-input" value="${issue?.issue_date || todayStr}">
+      </div>
+      <div class="fin-form-group fin-span-2">
+        <label class="fin-form-label">Reason <span class="fin-required">*</span></label>
+        <input type="text" id="issue-f-reason" class="fin-form-input" maxlength="200" value="${_invEsc(issue?.reason || '')}">
+        <span class="fin-field-error" id="issue-f-reason-err"></span>
+      </div>
+      <div class="fin-form-group fin-span-2">
+        <label class="fin-form-label">Notes</label>
+        <textarea id="issue-f-notes" class="fin-form-textarea" rows="3">${_invEsc(issue?.notes || '')}</textarea>
+      </div>
+    </div>`;
+}
+function _issueLinesTableHtml() {
+  return `
+    <div class="fin-section-label">Lines</div>
+    <div class="fin-table-wrap">
+      <table class="fin-li-table">
+        <thead><tr><th>Item</th><th>Qty</th><th>Notes</th><th></th></tr></thead>
+        <tbody id="issue-lines-body"></tbody>
+      </table>
+    </div>
+    <datalist id="issue-item-datalist"></datalist>
+    <button type="button" class="fin-btn-outline" style="margin-top:8px;" onclick="_issueAddLine()">+ Add Line</button>`;
+}
+function _issueCollectLinesPayload() {
+  return _issueLines
+    .filter(l => l.item_id && parseFloat(l.quantity) > 0)
+    .map(l => ({ item_id: l.item_id, quantity: String(l.quantity).trim(), notes: (l.notes || '').trim() || null }));
+}
+function _issueCollectHeaderPayload() {
+  return {
+    store_id: parseInt(document.getElementById('issue-f-store').value),
+    issue_date: document.getElementById('issue-f-date').value || null,
+    reason: (document.getElementById('issue-f-reason').value || '').trim(),
+    notes: (document.getElementById('issue-f-notes').value || '').trim() || null,
+  };
+}
+
+// ── Add (Save Draft only — no Approve from Add) ──────────────────────────
+function _issueRenderAddForm(el) {
+  _issueLines = [{ item_id: null, item_label: '', quantity: '', notes: '' }];
+  el.innerHTML = `
+    <div class="fin-form-wrap" style="max-width:100%;">
+      <h3 class="fin-title" style="font-size:1rem;">New Stock Issue</h3>
+      ${_issueHeaderFieldsHtml(null)}
+      ${_issueLinesTableHtml()}
+      <div id="issue-f-msg" style="margin-top:12px;"></div>
+      <div class="fin-form-actions">
+        <button class="fin-btn-teal" onclick="_issueSubmitAdd()">Save Draft</button>
+        <button class="fin-btn-cancel" onclick="window._splitReload && window._splitReload()">Cancel</button>
+      </div>
+    </div>`;
+  _issueRenderLines();
+  _invPopulateItemDatalist('issue-item-datalist', '_issueItemMap');
+}
+async function _issueSubmitAdd() {
+  document.getElementById('issue-f-store-err').textContent = '';
+  document.getElementById('issue-f-reason-err').textContent = '';
+  document.getElementById('issue-f-msg').innerHTML = '';
+  const storeId = document.getElementById('issue-f-store').value;
+  const reason = (document.getElementById('issue-f-reason').value || '').trim();
+  let valid = true;
+  if (!storeId) { document.getElementById('issue-f-store-err').textContent = 'This field is required.'; valid = false; }
+  if (!reason) { document.getElementById('issue-f-reason-err').textContent = 'This field is required.'; valid = false; }
+  if (!valid) return;
+  const lines = _issueCollectLinesPayload();
+  if (lines.length === 0) {
+    document.getElementById('issue-f-msg').innerHTML = `<div class="fin-field-error">Add at least one line with an item and quantity.</div>`;
+    return;
+  }
+  const payload = { ..._issueCollectHeaderPayload(), lines };
+  const res = await apiFetch(`${_INV_API}/issues`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  if (res && res.ok) { showToast('Issue saved as draft.', 'success'); await window._splitReload?.(); return; }
+  if (!res) return;
+  const { fieldErrors, message } = await _invParseError(res);
+  if (fieldErrors.store_id) document.getElementById('issue-f-store-err').textContent = fieldErrors.store_id;
+  else if (fieldErrors.reason) document.getElementById('issue-f-reason-err').textContent = fieldErrors.reason;
+  else document.getElementById('issue-f-msg').innerHTML = `<div class="fin-field-error">${_invEsc(message)}</div>`;
+}
+
+// ── Edit — draft-only, PATCH lines is a full replacement ────────────────
+function _issueRenderEditForm(item, el) {
+  _issueLines = (item.lines || []).map(l => ({ item_id: l.item_id, item_label: _invItemLabel(l.item_id), quantity: l.quantity, notes: l.notes }));
+  if (_issueLines.length === 0) _issueLines = [{ item_id: null, item_label: '', quantity: '', notes: '' }];
+  el.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Edit Issue ${_invEsc(item.issue_number || '')}</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Inventory &rsaquo;
+          <a href="#" class="fin-bc-link" onclick="loadView('inventory-issues');return false;">Issues</a> &rsaquo; Edit
+        </div>
+      </div>
+      <div class="fin-form-wrap" style="max-width:100%;">
+        ${_issueHeaderFieldsHtml(item)}
+        ${_issueLinesTableHtml()}
+        <div id="issue-f-msg" style="margin-top:12px;"></div>
+        <div class="fin-form-actions">
+          <button class="fin-btn-teal" onclick="_issueSubmitEdit(${item.id})">Update</button>
+          <button class="fin-btn-cancel" onclick="window._splitRefreshSelected && window._splitRefreshSelected()">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+  _issueRenderLines();
+  _invPopulateItemDatalist('issue-item-datalist', '_issueItemMap');
+}
+async function _issueSubmitEdit(id) {
+  document.getElementById('issue-f-store-err').textContent = '';
+  document.getElementById('issue-f-reason-err').textContent = '';
+  document.getElementById('issue-f-msg').innerHTML = '';
+  const storeId = document.getElementById('issue-f-store').value;
+  const reason = (document.getElementById('issue-f-reason').value || '').trim();
+  let valid = true;
+  if (!storeId) { document.getElementById('issue-f-store-err').textContent = 'This field is required.'; valid = false; }
+  if (!reason) { document.getElementById('issue-f-reason-err').textContent = 'This field is required.'; valid = false; }
+  if (!valid) return;
+  const lines = _issueCollectLinesPayload();
+  if (lines.length === 0) {
+    document.getElementById('issue-f-msg').innerHTML = `<div class="fin-field-error">Add at least one line with an item and quantity.</div>`;
+    return;
+  }
+  const payload = { ..._issueCollectHeaderPayload(), lines };
+  const res = await apiFetch(`${_INV_API}/issues/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  if (res && res.ok) { showToast('Issue updated.', 'success'); await window._splitRefreshSelected?.(); return; }
+  if (!res) return;
+  const { fieldErrors, message } = await _invParseError(res);
+  if (fieldErrors.store_id) document.getElementById('issue-f-store-err').textContent = fieldErrors.store_id;
+  else if (fieldErrors.reason) document.getElementById('issue-f-reason-err').textContent = fieldErrors.reason;
+  else document.getElementById('issue-f-msg').innerHTML = `<div class="fin-field-error">${_invEsc(message)}</div>`;
+}
+
+// ── Detail actions — status-conditional (§5.5); approved shows costs ──────
+function _issueDetailActionsHtml(item) {
+  window._issueCurrentItem = item;
+  const showCosts = item.status === 'approved';
+  const lineRows = (item.lines || []).map(l => showCosts ? `
+    <tr>
+      <td>${_invEsc(_invItemLabel(l.item_id))}</td>
+      <td style="text-align:right;">${formatQty(l.quantity)}</td>
+      <td style="text-align:right;">${formatUnitCost(l.unit_cost)}</td>
+      <td style="text-align:right;">${formatKES(l.line_total)}</td>
+      <td>${_invEsc(l.notes || '—')}</td>
+    </tr>` : `
+    <tr>
+      <td>${_invEsc(_invItemLabel(l.item_id))}</td>
+      <td style="text-align:right;">${formatQty(l.quantity)}</td>
+      <td>${_invEsc(l.notes || '—')}</td>
+    </tr>`).join('') || `<tr><td colspan="${showCosts ? 5 : 3}" class="fin-empty">No lines.</td></tr>`;
+  const linesTable = `
+    <div class="fin-section-label">Lines</div>
+    <div class="fin-table-wrap"><table class="fin-li-table">
+      <thead><tr><th>Item</th><th>Qty</th>${showCosts ? '<th>Unit Cost</th><th>Line Total</th>' : ''}<th>Notes</th></tr></thead>
+      <tbody>${lineRows}</tbody>
+    </table></div>`;
+
+  let actions = '';
+  if (item.status === 'draft') {
+    actions += `<button class="fin-btn-teal" onclick="_issueOpenApproveModal(${item.id})">Approve</button>`;
+    actions += `<button class="fin-btn-outline" style="color:#c0392b;border-color:#c0392b;" onclick="_issueOpenCancelModal(${item.id})">Cancel</button>`;
+  } else if (item.status === 'approved') {
+    actions += `<div style="color:#888;font-size:0.85rem;">Approved issues cannot be cancelled — post a compensating Adjustment instead.</div>`;
+  }
+  return `
+    ${linesTable}
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:14px;align-items:center;">${actions}</div>
+    <div id="issue-action-msg-${item.id}" style="margin-top:8px;"></div>`;
+}
+
+// ── Approve — insufficient-stock + missing-expense-account guards (§5.6) ──
+function _issueOpenApproveModal(id) {
+  const item = window._issueCurrentItem;
+  const wrap = document.createElement('div');
+  wrap.id = 'issue-approve-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:var(--white);border-radius:8px;padding:24px;width:460px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 12px;font-size:1.05rem;color:var(--navy-700,#2c3e50);">Approve Issue</h3>
+      <p style="font-size:0.88rem;color:#444;">Approve issue ${_invEsc(item.issue_number || '')}? This will consume stock from ${_invEsc(_invStoreLabel(item.store_id))} and post a journal entry (DR expense / CR Inventory).</p>
+      <div id="issue-approve-err" style="display:none;padding:10px 12px;border-radius:6px;background:var(--coral-100);color:var(--coral-600);font-size:0.82rem;margin-top:6px;"></div>
+      <div id="issue-approve-config-warning" style="display:none;padding:10px 12px;border-radius:6px;background:var(--gold-100,#fdf3d6);color:#8a6d00;font-size:0.82rem;margin-top:6px;"></div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="_coaCloseModal('issue-approve-modal-overlay')">Cancel</button>
+        <button class="fin-btn-teal" onclick="_issueSubmitApprove(${id})">Approve</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+async function _issueSubmitApprove(id) {
+  const errEl = document.getElementById('issue-approve-err');
+  const cfgEl = document.getElementById('issue-approve-config-warning');
+  errEl.style.display = 'none'; cfgEl.style.display = 'none';
+  const res = await apiFetch(`${_INV_API}/issues/${id}/approve`, { method: 'POST' });
+  if (res && res.ok) {
+    _coaCloseModal('issue-approve-modal-overlay');
+    showToast('Issue approved.', 'success');
+    await window._splitRefreshSelected?.();
+    return;
+  }
+  if (!res) return;
+  const { message } = await _invParseError(res);
+  if (/No consumption expense account configured/i.test(message)) {
+    cfgEl.textContent = message; cfgEl.style.display = 'block';
+  } else {
+    errEl.textContent = message; errEl.style.display = 'block';
+  }
+}
+
+// ── Cancel — draft-only, no cancel path once approved (§5.7) ────────────
+function _issueOpenCancelModal(id) {
+  const wrap = document.createElement('div');
+  wrap.id = 'issue-cancel-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:var(--white);border-radius:8px;padding:24px;width:420px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 12px;font-size:1.05rem;color:var(--navy-700,#2c3e50);">Cancel Issue</h3>
+      <p style="font-size:0.88rem;color:#444;">Cancel draft issue? No stock or GL impact.</p>
+      <div id="issue-cancel-err" style="display:none;padding:10px 12px;border-radius:6px;background:var(--coral-100);color:var(--coral-600);font-size:0.82rem;margin-top:6px;"></div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-outline" onclick="_coaCloseModal('issue-cancel-modal-overlay')">Keep Issue</button>
+        <button class="fin-btn-cancel" onclick="_issueSubmitCancel(${id})">Cancel Issue</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+async function _issueSubmitCancel(id) {
+  const errEl = document.getElementById('issue-cancel-err');
+  errEl.style.display = 'none';
+  const res = await apiFetch(`${_INV_API}/issues/${id}/cancel`, { method: 'POST' });
+  if (res && res.ok) {
+    _coaCloseModal('issue-cancel-modal-overlay');
+    showToast('Issue cancelled.', 'success');
+    await window._splitRefreshSelected?.();
+    return;
+  }
+  if (!res) return;
+  const { message } = await _invParseError(res);
+  errEl.textContent = message; errEl.style.display = 'block';
+}
