@@ -530,7 +530,7 @@ async function loadStudentFormView(container) {
   // every save (surfaced as a 400 "Referenced record does not exist" here, but would
   // silently wipe the assignment if the backend ever accepted it instead).
   if (data.uses_school_transport == null) data.uses_school_transport = !!data.transport_route_id;
-  // API returns medical_info; the Medical tab template reads d.medical.
+1  // API returns medical_info; the Medical tab template reads d.medical.
   // Without this alias, reopening a saved student's Edit form renders blank
   // medical inputs even though the record persisted — matches the identical
   // alias applied on the view path below.

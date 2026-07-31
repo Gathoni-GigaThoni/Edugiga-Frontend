@@ -647,7 +647,15 @@ async function renderSplitView(cfg) {
 
   try {
     const resp = await apiFetch(cfg.apiUrl);
-    if (!resp || !resp.ok) throw new Error('fetch failed');
+    if (!resp) throw new Error('fetch failed');
+    if (!resp.ok) {
+      // Surface the API's actual reason (e.g. "Insufficient permissions") instead
+      // of a generic message — a 403 on a role's permission gap looks identical
+      // to a dead network otherwise, which made the real cause invisible.
+      const msg = await parseApiError(resp);
+      container.innerHTML = `<p style="color:var(--color-danger);padding:20px">Failed to load data: ${_dashEsc(msg)}</p>`;
+      return;
+    }
     const data = await resp.json();
     allItems = _toArray(data);
     if (typeof cfg.onFetched === 'function') cfg.onFetched(data);
