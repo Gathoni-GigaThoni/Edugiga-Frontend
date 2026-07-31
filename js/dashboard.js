@@ -294,6 +294,7 @@ function showDashboard() {
           <div class="flyout-module-body" id="flyout-body-inventory-management" data-label="Inventory" hidden>
             <ul id="inventory-management-dropdown" class="dropdown-menu">
               <li id="sidebar-inv-stores" onclick="loadView('inventory-stores')">Stores</li>
+              <li id="sidebar-inv-grn" onclick="loadView('inventory-grn')">Goods Received Notes</li>
             </ul>
           </div>
 
@@ -840,7 +841,7 @@ const FORM_VIEWS = new Set([
   // Communication
   'communication-parent-documents',
   // Inventory
-  'inventory-stores',
+  'inventory-stores', 'inventory-grn',
   // Administration
   'user-management', 'admin-roles', 'admin-role-edit', 'admin-role-permissions',
   // Academic setup
@@ -1322,6 +1323,9 @@ async function loadView(view) {
     case 'inventory-stores':
       setActiveSidebarItem('sidebar-inv-stores');
       await loadInventoryStoresView(main); break;
+    case 'inventory-grn':
+      setActiveSidebarItem('sidebar-inv-grn');
+      await loadInventoryGrnView(main); break;
     default: main.innerHTML = "<p>Module not found.</p>";
   }
   closeAllSidebarDropdowns();

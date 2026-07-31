@@ -33,6 +33,86 @@ async function _invParseError(res) {
   return { fieldErrors: {}, message: JSON.stringify(detail) };
 }
 
+// ── Shared cross-module lookups (suppliers, stores, stockable items, terms) ─
+// Each new document type (GRN, Issues, Transfers, Adjustments, Stock-Takes)
+// reuses these instead of re-fetching — one prefetch per view load, never a
+// per-row lookup (§9.1 of the addendum).
+let _invSuppliersCache = null;
+let _invStoresCache = null;
+let _invItemsCache = null;
+let _invTermsCache = null;
+
+async function _invEnsureSuppliersCache() {
+  if (_invSuppliersCache) return;
+  const res = await apiFetch(`${API_BASE}/suppliers/`);
+  _invSuppliersCache = (res && res.ok) ? _toArray(await res.json()) : [];
+}
+function _invSupplierLabel(id) {
+  if (id == null) return '—';
+  const s = (_invSuppliersCache || []).find(x => String(x.id) === String(id));
+  return s ? (s.name || `#${id}`) : `#${id}`;
+}
+function _invSupplierOptionsHtml(selectedId) {
+  return (_invSuppliersCache || []).map(s =>
+    `<option value="${s.id}" ${String(s.id) === String(selectedId) ? 'selected' : ''}>${_invEsc(s.name || '')}</option>`).join('');
+}
+
+async function _invEnsureStoresCache() {
+  if (_invStoresCache) return;
+  const res = await apiFetch(`${_INV_API}/stores?is_active=true`);
+  _invStoresCache = (res && res.ok) ? _toArray(await res.json()) : [];
+}
+function _invStoreLabel(id) {
+  if (id == null) return '—';
+  const s = (_invStoresCache || []).find(x => String(x.id) === String(id));
+  return s ? (s.code || s.name || `#${id}`) : `#${id}`;
+}
+function _invStoreOptionsHtml(selectedId) {
+  return (_invStoresCache || []).map(s =>
+    `<option value="${s.id}" ${String(s.id) === String(selectedId) ? 'selected' : ''}>${_invEsc(s.code || s.name || ('#' + s.id))}</option>`).join('');
+}
+
+async function _invEnsureItemsCache() {
+  if (_invItemsCache) return;
+  const res = await apiFetch(`${API_BASE}/finance/general-items/?is_stockable=true`);
+  const rows = (res && res.ok) ? _toArray(await res.json()) : [];
+  // Belt-and-suspenders client-side filter in case the backend ignores the
+  // query param — never show a non-stockable or inactive item in a picker.
+  _invItemsCache = rows.filter(it => it.is_stockable !== false && it.is_active !== false);
+}
+function _invItemLabel(id) {
+  if (id == null) return '—';
+  const it = (_invItemsCache || []).find(x => String(x.id) === String(id));
+  if (!it) return `#${id}`;
+  return `${it.name || ''}${it.code ? ' (' + it.code + ')' : ''}`.trim() || `#${id}`;
+}
+
+async function _invEnsureTermsCache() {
+  if (_invTermsCache) return;
+  const res = await apiFetch(`${API_BASE}/terms/`);
+  _invTermsCache = (res && res.ok) ? _toArray(await res.json()) : [];
+}
+function _invTermLabel(id) {
+  if (id == null) return '—';
+  const t = (_invTermsCache || []).find(x => String(x.id) === String(id));
+  if (!t) return `#${id}`;
+  return t.title || t.name || `Term #${id}`;
+}
+
+// Populates a shared <datalist> with "name (code)" options and stashes a
+// label->id map on window under mapKey — same convention as the Student
+// datalist pickers (js/supplies.js _suppPopulateStudentDatalist).
+function _invPopulateItemDatalist(listId, mapKey) {
+  const dl = document.getElementById(listId);
+  if (!dl) return;
+  window[mapKey] = {};
+  dl.innerHTML = (_invItemsCache || []).map(it => {
+    const label = `${it.name || ''}${it.code ? ' (' + it.code + ')' : ''}`.trim();
+    window[mapKey][label] = it.id;
+    return `<option value="${_invEsc(label)}"></option>`;
+  }).join('');
+}
+
 // ==================== STORES (§2) ====================
 
 const INV_STORE_TYPES = [
@@ -376,4 +456,424 @@ async function _invToggleStoreActive(id, activate) {
   const res = await apiFetch(`${_INV_API}/stores/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ is_active: activate }) });
   if (res && res.ok) { showToast(`Store ${activate ? 'reactivated' : 'deactivated'}.`, 'success'); await window._splitRefreshSelected?.(); return; }
   if (res) { const { message } = await _invParseError(res); showToast('Error: ' + message, 'error'); }
+}
+
+// ==================== GOODS RECEIVED NOTES (§3) ====================
+
+const _INV_GRN_STATUS_STYLE = {
+  draft:     'color:#666;background:#eee;',
+  approved:  'color:#1e7e34;background:#dcf3e2;',
+  cancelled: 'color:#888;background:#eee;text-decoration:line-through;',
+};
+function _grnStatusPill(status) {
+  const style = _INV_GRN_STATUS_STYLE[status] || 'color:#666;background:#eee;';
+  return `<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.75rem;font-weight:600;${style}">${_invEsc((status || '').replace(/_/g, ' ') || '—')}</span>`;
+}
+
+let _grnLines = [];
+
+// ── List (split-view) ────────────────────────────────────────────────────
+async function loadInventoryGrnView(container) {
+  await Promise.all([_invEnsureSuppliersCache(), _invEnsureStoresCache(), _invEnsureItemsCache(), _invEnsureTermsCache()]);
+  const preselectId = window._grnOpenId ?? null;
+  window._grnOpenId = null;
+  const cfg = {
+    container,
+    title: 'Goods Received Notes',
+    moduleKey: 'inventory_management.grn',
+    breadcrumb: [
+      { label: 'Dashboard', view: null },
+      { label: 'Inventory', view: 'inventory-grn' },
+      { label: 'Goods Received Notes' },
+    ],
+    apiUrl: `${_INV_API}/grn`,
+    searchFields: ['grn_number'],
+    col1Label: 'GRN', col2Label: 'Status',
+    col1: g => `<strong>${_invEsc(g.grn_number || '—')}</strong><br><span style="font-weight:400;font-size:12px;color:#888;">${_invEsc(_invSupplierLabel(g.supplier_id))} &middot; ${g.received_date || ''}</span>`,
+    col2: g => `${_grnStatusPill(g.status)}<br><span style="font-size:12px;color:#555;">${formatKES(g.total_value)} &middot; ${(g.lines || []).length} line${(g.lines || []).length === 1 ? '' : 's'}</span>`,
+    rowLabel: g => g.grn_number || '—',
+    rowSub: g => `${_invSupplierLabel(g.supplier_id)} · ${g.received_date || ''}`,
+    idKey: 'id',
+    preselectId,
+    detailFields: [
+      { label: 'Supplier', key: 'supplier_id', fmt: v => _invSupplierLabel(v) },
+      { label: 'Received Date', key: 'received_date', fmt: v => v || '—' },
+      { label: 'Delivery Note Ref', key: 'delivery_note_ref', fmt: v => v || '—' },
+      { label: 'Notes', key: 'notes', fmt: v => v || '—' },
+      { label: 'Total Value', key: 'total_value', fmt: v => formatKES(v) },
+      { label: 'Term', key: 'term_id', fmt: v => v ? _invTermLabel(v) : '—' },
+      { label: 'Journal Entry', key: 'journal_entry_id', fmt: v => v ? `<a href="#" onclick="_jeViewDetail(${v});return false;">JE #${v}</a>` : '—' },
+      { label: 'Status', key: 'status', fmt: v => _grnStatusPill(v) },
+      { label: 'Approved At', key: 'approved_at', fmt: v => v ? new Date(v).toLocaleString() : '—' },
+    ],
+    canEdit: item => item.status === 'draft',
+    renderAdd: el => _grnRenderAddForm(el),
+    renderEdit: (item, el) => _grnRenderEditForm(item, el),
+    detailActions: item => _grnDetailActionsHtml(item),
+  };
+  await renderSplitView(cfg);
+  _grnInjectFilters(cfg);
+}
+
+function _grnInjectFilters(cfg) {
+  const searchBox = document.querySelector('.split-left-search');
+  if (!searchBox) return;
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'padding:0 16px 10px;display:flex;gap:8px;flex-wrap:wrap;';
+  wrap.innerHTML = `
+    <select id="grn-filter-status" class="fin-form-select" style="flex:1;min-width:110px;font-size:12px;">
+      <option value="">All Statuses</option>
+      ${['draft', 'approved', 'cancelled'].map(s => `<option value="${s}">${s[0].toUpperCase() + s.slice(1)}</option>`).join('')}
+    </select>
+    <select id="grn-filter-supplier" class="fin-form-select" style="flex:1;min-width:130px;font-size:12px;">
+      <option value="">All Suppliers</option>${_invSupplierOptionsHtml(null)}
+    </select>
+    <input type="date" id="grn-filter-start" class="fin-form-input" style="flex:1;min-width:110px;font-size:12px;" title="Start date">
+    <input type="date" id="grn-filter-end" class="fin-form-input" style="flex:1;min-width:110px;font-size:12px;" title="End date">`;
+  searchBox.insertAdjacentElement('afterend', wrap);
+  ['grn-filter-status', 'grn-filter-supplier', 'grn-filter-start', 'grn-filter-end'].forEach(id => {
+    document.getElementById(id).addEventListener('change', () => _grnReapplyFilters(cfg));
+  });
+}
+function _grnReapplyFilters(cfg) {
+  const status = document.getElementById('grn-filter-status')?.value || '';
+  const supplierId = document.getElementById('grn-filter-supplier')?.value || '';
+  const start = document.getElementById('grn-filter-start')?.value || '';
+  const end = document.getElementById('grn-filter-end')?.value || '';
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (supplierId) params.set('supplier_id', supplierId);
+  if (start) params.set('start_date', start);
+  if (end) params.set('end_date', end);
+  const qs = params.toString();
+  cfg.apiUrl = `${_INV_API}/grn` + (qs ? `?${qs}` : '');
+  window._splitReload && window._splitReload();
+}
+function _grnOpen(id) {
+  window._grnOpenId = id;
+  loadView('inventory-grn');
+}
+
+// ── Lines (mirrors js/procurement.js's requisition-line pattern) ───────────
+// Quantity/unit cost are kept as the raw input strings, never re-derived
+// through parseFloat, so the payload sends exactly what the operator typed —
+// Decimals go over the wire as JSON strings (§9.3 of the addendum).
+function _grnLineNet(line) {
+  const qty = parseFloat(line.quantity) || 0;
+  const cost = parseFloat(line.unit_cost) || 0;
+  return qty * cost;
+}
+function _grnLineRowHtml(line, idx) {
+  const net = _grnLineNet(line);
+  return `
+    <tr>
+      <td><input type="text" class="fin-li-input" list="grn-item-datalist" placeholder="Search item…" value="${_invEsc(line.item_label || '')}" oninput="_grnResolveLineItem(${idx}, this.value)"></td>
+      <td><select class="fin-li-input" onchange="_grnUpdateLine(${idx},'store_id',this.value)">
+        <option value="">Select store</option>
+        ${_invStoreOptionsHtml(line.store_id)}
+      </select></td>
+      <td><input type="number" class="fin-li-input" step="0.001" min="0.001" style="width:90px;" value="${line.quantity || ''}" oninput="_grnUpdateLine(${idx},'quantity',this.value)"></td>
+      <td><input type="number" class="fin-li-input" step="0.0001" min="0" style="width:100px;" value="${line.unit_cost || ''}" oninput="_grnUpdateLine(${idx},'unit_cost',this.value)"></td>
+      <td id="grn-line-total-${idx}" style="text-align:right;font-size:12px;white-space:nowrap;">${formatKES(net)}</td>
+      <td><input type="text" class="fin-li-input" placeholder="Notes" value="${_invEsc(line.notes || '')}" oninput="_grnUpdateLine(${idx},'notes',this.value)"></td>
+      <td><button class="fin-btn-li-rm" ${_grnLines.length <= 1 ? 'disabled' : ''} onclick="_grnRemoveLine(${idx})">&times;</button></td>
+    </tr>`;
+}
+function _grnRenderLines() {
+  const el = document.getElementById('grn-lines-body');
+  if (el) el.innerHTML = _grnLines.map((l, i) => _grnLineRowHtml(l, i)).join('');
+  _grnRecalcTotal();
+}
+function _grnAddLine() {
+  _grnLines.push({ item_id: null, item_label: '', store_id: '', quantity: '', unit_cost: '', notes: '' });
+  _grnRenderLines();
+}
+function _grnRemoveLine(idx) {
+  if (_grnLines.length <= 1) return;
+  _grnLines.splice(idx, 1);
+  _grnRenderLines();
+}
+function _grnResolveLineItem(idx, val) {
+  const id = (window._grnItemMap || {})[val];
+  _grnLines[idx].item_id = id || null;
+  _grnLines[idx].item_label = val;
+}
+function _grnUpdateLine(idx, key, val) {
+  _grnLines[idx][key] = val;
+  if (key === 'quantity' || key === 'unit_cost') {
+    const cell = document.getElementById(`grn-line-total-${idx}`);
+    if (cell) cell.textContent = formatKES(_grnLineNet(_grnLines[idx]));
+  }
+  _grnRecalcTotal();
+}
+function _grnRecalcTotal() {
+  // Round each line to 2 DP before summing to avoid drift with the server's
+  // per-line rounding (§3.5) — this is a live client preview only; the
+  // server total on approve is authoritative.
+  const total = _grnLines.reduce((s, l) => s + Math.round(_grnLineNet(l) * 100) / 100, 0);
+  const el = document.getElementById('grn-f-total');
+  if (el) el.textContent = formatKES(total);
+}
+
+// ── Shared header fields + lines table ──────────────────────────────────
+function _grnHeaderFieldsHtml(grn, isEdit) {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  return `
+    <div class="fin-form-grid-2">
+      <div class="fin-form-group">
+        <label class="fin-form-label">Supplier <span class="fin-required">*</span></label>
+        <select id="grn-f-supplier" class="fin-form-select"><option value="">Please Select</option>${_invSupplierOptionsHtml(grn?.supplier_id)}</select>
+        <span class="fin-field-error" id="grn-f-supplier-err"></span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Received Date <span class="fin-required">*</span></label>
+        <input type="date" id="grn-f-received-date" class="fin-form-input" value="${grn?.received_date || todayStr}"${isEdit ? ' oninput="_grnShowTermRederiveHint()"' : ''}>
+        ${isEdit
+          ? `<div id="grn-f-term-hint" style="display:none;padding:8px 10px;border-radius:6px;background:var(--gold-100,#fdf3d6);color:#8a6d00;font-size:0.8rem;margin-top:6px;">Changing the received date will re-derive the term.</div>`
+          : `<span style="font-size:12px;color:var(--grey-600)">Term is derived from this date.</span>`}
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Delivery Note Ref</label>
+        <input type="text" id="grn-f-delivery-ref" class="fin-form-input" maxlength="50" value="${_invEsc(grn?.delivery_note_ref || '')}">
+      </div>
+      <div class="fin-form-group fin-span-2">
+        <label class="fin-form-label">Notes</label>
+        <textarea id="grn-f-notes" class="fin-form-textarea" rows="3" maxlength="500">${_invEsc(grn?.notes || '')}</textarea>
+      </div>
+    </div>`;
+}
+function _grnShowTermRederiveHint() {
+  const el = document.getElementById('grn-f-term-hint');
+  if (el) el.style.display = 'block';
+}
+function _grnLinesTableHtml() {
+  return `
+    <div class="fin-section-label">Lines</div>
+    <div class="fin-table-wrap">
+      <table class="fin-li-table">
+        <thead><tr><th>Item</th><th>Store</th><th>Qty</th><th>Unit Cost</th><th>Line Total</th><th>Notes</th><th></th></tr></thead>
+        <tbody id="grn-lines-body"></tbody>
+      </table>
+    </div>
+    <datalist id="grn-item-datalist"></datalist>
+    <button type="button" class="fin-btn-outline" style="margin-top:8px;" onclick="_grnAddLine()">+ Add Line</button>
+    <div style="margin-top:16px;max-width:360px;margin-left:auto;padding:14px 16px;border-radius:8px;background:var(--navy-700,#1B3057);color:#fff;">
+      <div style="font-size:11px;opacity:.75;text-transform:uppercase;letter-spacing:.05em;">Total Value</div>
+      <div style="font-size:1.3rem;font-weight:700;margin-top:4px;" id="grn-f-total">${formatKES(0)}</div>
+    </div>`;
+}
+function _grnCollectLinesPayload() {
+  return _grnLines
+    .filter(l => l.item_id && l.store_id && parseFloat(l.quantity) > 0 && l.unit_cost !== '' && parseFloat(l.unit_cost) >= 0)
+    .map(l => ({
+      item_id: l.item_id,
+      store_id: parseInt(l.store_id),
+      quantity: String(l.quantity).trim(),
+      unit_cost: String(l.unit_cost).trim(),
+      notes: (l.notes || '').trim() || null,
+    }));
+}
+function _grnCollectHeaderPayload() {
+  return {
+    supplier_id: parseInt(document.getElementById('grn-f-supplier').value),
+    received_date: document.getElementById('grn-f-received-date').value || null,
+    delivery_note_ref: (document.getElementById('grn-f-delivery-ref').value || '').trim() || null,
+    notes: (document.getElementById('grn-f-notes').value || '').trim() || null,
+  };
+}
+
+// ── Add (Save Draft only — no Approve from Add, §3.5) ───────────────────
+function _grnRenderAddForm(el) {
+  _grnLines = [{ item_id: null, item_label: '', store_id: '', quantity: '', unit_cost: '', notes: '' }];
+  el.innerHTML = `
+    <div class="fin-form-wrap" style="max-width:100%;">
+      <h3 class="fin-title" style="font-size:1rem;">New Goods Received Note</h3>
+      ${_grnHeaderFieldsHtml(null, false)}
+      ${_grnLinesTableHtml()}
+      <div id="grn-f-msg" style="margin-top:12px;"></div>
+      <div class="fin-form-actions">
+        <button class="fin-btn-teal" onclick="_grnSubmitAdd()">Save Draft</button>
+        <button class="fin-btn-cancel" onclick="window._splitReload && window._splitReload()">Cancel</button>
+      </div>
+    </div>`;
+  _grnRenderLines();
+  _invPopulateItemDatalist('grn-item-datalist', '_grnItemMap');
+}
+async function _grnSubmitAdd() {
+  document.getElementById('grn-f-supplier-err').textContent = '';
+  document.getElementById('grn-f-msg').innerHTML = '';
+  const supplierId = document.getElementById('grn-f-supplier').value;
+  if (!supplierId) { document.getElementById('grn-f-supplier-err').textContent = 'This field is required.'; return; }
+  const lines = _grnCollectLinesPayload();
+  if (lines.length === 0) {
+    document.getElementById('grn-f-msg').innerHTML = `<div class="fin-field-error">Add at least one line with an item, store, quantity and unit cost.</div>`;
+    return;
+  }
+  const payload = { ..._grnCollectHeaderPayload(), lines };
+  const res = await apiFetch(`${_INV_API}/grn`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  if (res && res.ok) { showToast('GRN saved as draft.', 'success'); await window._splitReload?.(); return; }
+  if (!res) return;
+  const { fieldErrors, message } = await _invParseError(res);
+  if (fieldErrors.supplier_id) document.getElementById('grn-f-supplier-err').textContent = fieldErrors.supplier_id;
+  else document.getElementById('grn-f-msg').innerHTML = `<div class="fin-field-error">${_invEsc(message)}</div>`;
+}
+
+// ── Edit — draft-only, PATCH lines is a full replacement (§3.7, §9.6) ──────
+function _grnRenderEditForm(item, el) {
+  _grnLines = (item.lines || []).map(l => ({
+    item_id: l.item_id, item_label: _invItemLabel(l.item_id), store_id: l.store_id,
+    quantity: l.quantity, unit_cost: l.unit_cost, notes: l.notes,
+  }));
+  if (_grnLines.length === 0) _grnLines = [{ item_id: null, item_label: '', store_id: '', quantity: '', unit_cost: '', notes: '' }];
+  el.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Edit GRN ${_invEsc(item.grn_number || '')}</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Inventory &rsaquo;
+          <a href="#" class="fin-bc-link" onclick="loadView('inventory-grn');return false;">Goods Received Notes</a> &rsaquo; Edit
+        </div>
+      </div>
+      <div class="fin-form-wrap" style="max-width:100%;">
+        ${_grnHeaderFieldsHtml(item, true)}
+        ${_grnLinesTableHtml()}
+        <div id="grn-f-msg" style="margin-top:12px;"></div>
+        <div class="fin-form-actions">
+          <button class="fin-btn-teal" onclick="_grnSubmitEdit(${item.id})">Update</button>
+          <button class="fin-btn-cancel" onclick="window._splitRefreshSelected && window._splitRefreshSelected()">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+  _grnRenderLines();
+  _invPopulateItemDatalist('grn-item-datalist', '_grnItemMap');
+}
+async function _grnSubmitEdit(id) {
+  document.getElementById('grn-f-supplier-err').textContent = '';
+  document.getElementById('grn-f-msg').innerHTML = '';
+  const supplierId = document.getElementById('grn-f-supplier').value;
+  if (!supplierId) { document.getElementById('grn-f-supplier-err').textContent = 'This field is required.'; return; }
+  const lines = _grnCollectLinesPayload();
+  if (lines.length === 0) {
+    document.getElementById('grn-f-msg').innerHTML = `<div class="fin-field-error">Add at least one line with an item, store, quantity and unit cost.</div>`;
+    return;
+  }
+  const payload = { ..._grnCollectHeaderPayload(), lines };
+  const res = await apiFetch(`${_INV_API}/grn/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  if (res && res.ok) { showToast('GRN updated.', 'success'); await window._splitRefreshSelected?.(); return; }
+  if (!res) return;
+  const { fieldErrors, message } = await _invParseError(res);
+  if (fieldErrors.supplier_id) document.getElementById('grn-f-supplier-err').textContent = fieldErrors.supplier_id;
+  else document.getElementById('grn-f-msg').innerHTML = `<div class="fin-field-error">${_invEsc(message)}</div>`;
+}
+
+// ── Detail actions — status-conditional (§3.6) ──────────────────────────
+function _grnDetailActionsHtml(item) {
+  window._grnCurrentItem = item;
+  const lineRows = (item.lines || []).map(l => `
+    <tr>
+      <td>${_invEsc(_invItemLabel(l.item_id))}</td>
+      <td>${_invEsc(_invStoreLabel(l.store_id))}</td>
+      <td style="text-align:right;">${formatQty(l.quantity)}</td>
+      <td style="text-align:right;">${formatUnitCost(l.unit_cost)}</td>
+      <td style="text-align:right;">${formatKES(l.line_total)}</td>
+      <td>${_invEsc(l.notes || '—')}</td>
+    </tr>`).join('') || `<tr><td colspan="6" class="fin-empty">No lines.</td></tr>`;
+  const linesTable = `
+    <div class="fin-section-label">Lines</div>
+    <div class="fin-table-wrap"><table class="fin-li-table">
+      <thead><tr><th>Item</th><th>Store</th><th>Qty</th><th>Unit Cost</th><th>Line Total</th><th>Notes</th></tr></thead>
+      <tbody>${lineRows}</tbody>
+    </table></div>`;
+
+  let actions = '';
+  if (item.status === 'draft') {
+    actions += `<button class="fin-btn-teal" onclick="_grnOpenApproveModal(${item.id})">Approve</button>`;
+    actions += `<button class="fin-btn-outline" style="color:#c0392b;border-color:#c0392b;" onclick="_grnOpenCancelModal(${item.id})">Cancel</button>`;
+  } else if (item.status === 'approved') {
+    actions += `<button class="fin-btn-outline" style="color:#c0392b;border-color:#c0392b;" onclick="_grnOpenCancelModal(${item.id})">Cancel</button>`;
+  }
+  return `
+    ${linesTable}
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:14px;align-items:center;">${actions}</div>
+    <div id="grn-action-msg-${item.id}" style="margin-top:8px;"></div>`;
+}
+
+// ── Approve — DR store inventory control (aggregated) / CR GRIR (§3.8) ───
+function _grnOpenApproveModal(id) {
+  const item = window._grnCurrentItem;
+  const wrap = document.createElement('div');
+  wrap.id = 'grn-approve-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:var(--white);border-radius:8px;padding:24px;width:460px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 12px;font-size:1.05rem;color:var(--navy-700,#2c3e50);">Approve GRN</h3>
+      <p style="font-size:0.88rem;color:#444;">Approve GRN ${_invEsc(item.grn_number || '')}? This will post ${formatKES(item.total_value)} to stock and post a journal entry (DR Inventory / CR Goods-Received-Not-Invoiced).</p>
+      <div id="grn-approve-err" style="display:none;padding:10px 12px;border-radius:6px;background:var(--coral-100);color:var(--coral-600);font-size:0.82rem;margin-top:6px;"></div>
+      <div id="grn-approve-config-warning" style="display:none;padding:10px 12px;border-radius:6px;background:var(--gold-100,#fdf3d6);color:#8a6d00;font-size:0.82rem;margin-top:6px;"></div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="_coaCloseModal('grn-approve-modal-overlay')">Cancel</button>
+        <button class="fin-btn-teal" onclick="_grnSubmitApprove(${id})">Approve</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+async function _grnSubmitApprove(id) {
+  const errEl = document.getElementById('grn-approve-err');
+  const cfgEl = document.getElementById('grn-approve-config-warning');
+  errEl.style.display = 'none'; cfgEl.style.display = 'none';
+  const res = await apiFetch(`${_INV_API}/grn/${id}/approve`, { method: 'POST' });
+  if (res && res.ok) {
+    _coaCloseModal('grn-approve-modal-overlay');
+    showToast('GRN approved.', 'success');
+    await window._splitRefreshSelected?.();
+    return;
+  }
+  if (!res) return;
+  const { message } = await _invParseError(res);
+  if (/GRIR_ACCOUNT_ID is not configured/i.test(message)) {
+    cfgEl.textContent = message; cfgEl.style.display = 'block';
+  } else {
+    errEl.textContent = message; errEl.style.display = 'block';
+  }
+}
+
+// ── Cancel — draft is a plain flip, approved reverses the JE (§3.9) ────────
+function _grnOpenCancelModal(id) {
+  const item = window._grnCurrentItem;
+  const isApproved = item.status === 'approved';
+  const wrap = document.createElement('div');
+  wrap.id = 'grn-cancel-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  const body = isApproved
+    ? `Cancel approved GRN ${_invEsc(item.grn_number || '')}? A reversing journal entry will be posted and ${formatKES(item.total_value)} reversed out of stock. This cannot be undone.`
+    : `Cancel draft GRN? No stock or GL impact.`;
+  wrap.innerHTML = `
+    <div style="background:var(--white);border-radius:8px;padding:24px;width:460px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 12px;font-size:1.05rem;color:var(--navy-700,#2c3e50);">Cancel GRN</h3>
+      <p style="font-size:0.88rem;color:${isApproved ? 'var(--coral-600)' : '#444'};">${body}</p>
+      <div id="grn-cancel-err" style="display:none;padding:10px 12px;border-radius:6px;background:var(--coral-100);color:var(--coral-600);font-size:0.82rem;margin-top:6px;"></div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-outline" onclick="_coaCloseModal('grn-cancel-modal-overlay')">Keep GRN</button>
+        <button class="fin-btn-cancel" id="grn-cancel-confirm-btn" onclick="_grnSubmitCancel(${id})">Cancel GRN</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+async function _grnSubmitCancel(id) {
+  const errEl = document.getElementById('grn-cancel-err');
+  const btn = document.getElementById('grn-cancel-confirm-btn');
+  errEl.style.display = 'none';
+  const res = await apiFetch(`${_INV_API}/grn/${id}/cancel`, { method: 'POST' });
+  if (res && res.ok) {
+    _coaCloseModal('grn-cancel-modal-overlay');
+    showToast('GRN cancelled.', 'success');
+    await window._splitRefreshSelected?.();
+    return;
+  }
+  if (!res) return;
+  const { message } = await _invParseError(res);
+  errEl.textContent = message; errEl.style.display = 'block';
+  // Special refusal: linked SupplierInvoice not PENDING/VOIDED — retrying
+  // won't succeed until that invoice's status changes elsewhere, so disable
+  // the confirm button rather than inviting an identical failed retry (§3.9).
+  if (res.status === 409 && btn) btn.disabled = true;
 }
