@@ -90,6 +90,30 @@ function _invStoreOptionsHtml(selectedId) {
   return (_invStoresCache || []).map(s =>
     `<option value="${s.id}" ${String(s.id) === String(selectedId) ? 'selected' : ''}>${_invEsc(s.code || s.name || ('#' + s.id))}</option>`).join('');
 }
+function _invStoreAccountId(id) {
+  const s = (_invStoresCache || []).find(x => String(x.id) === String(id));
+  return s ? s.inventory_control_account_id : null;
+}
+
+// Shared draft/approved/cancelled pill — used by Transfers, Adjustments and
+// Stock-Takes (GRN and Issues shipped their own near-identical pill earlier
+// and are left as-is rather than refactored mid-rollout).
+const _INV_DOC_STATUS_STYLE = {
+  draft:     'color:#666;background:#eee;',
+  approved:  'color:#1e7e34;background:#dcf3e2;',
+  cancelled: 'color:#888;background:#eee;text-decoration:line-through;',
+};
+function _invStatusPill(status) {
+  const style = _INV_DOC_STATUS_STYLE[status] || 'color:#666;background:#eee;';
+  return `<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.75rem;font-weight:600;${style}">${_invEsc((status || '').replace(/_/g, ' ') || '—')}</span>`;
+}
+
+// journal_entry_id === null on an APPROVED doc is a valid state in three
+// cases (§9.4): same-account transfer, net-zero adjustment, zero-variance
+// stock-take. Never render that as "—" like a missing/broken value.
+function _invAuditOnlyBadge() {
+  return `<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.72rem;font-weight:600;color:#8a6d00;background:var(--gold-100,#fdf3d6);">Approved (audit-only, no GL impact)</span>`;
+}
 
 async function _invEnsureItemsCache() {
   if (_invItemsCache) return;
@@ -1468,6 +1492,391 @@ async function _issueSubmitCancel(id) {
   if (res && res.ok) {
     _coaCloseModal('issue-cancel-modal-overlay');
     showToast('Issue cancelled.', 'success');
+    await window._splitRefreshSelected?.();
+    return;
+  }
+  if (!res) return;
+  const { message } = await _invParseError(res);
+  errEl.textContent = message; errEl.style.display = 'block';
+}
+
+// ==================== STOCK TRANSFERS (§6) ====================
+
+let _transferLines = [];
+
+// ── List (split-view) ────────────────────────────────────────────────────
+async function loadInventoryTransfersView(container) {
+  await Promise.all([_invEnsureStoresCache(), _invEnsureItemsCache(), _invEnsureTermsCache()]);
+  const preselectId = window._invTransferOpenId ?? null;
+  window._invTransferOpenId = null;
+  const cfg = {
+    container,
+    title: 'Transfers',
+    moduleKey: 'inventory_management.transfers',
+    breadcrumb: [
+      { label: 'Dashboard', view: null },
+      { label: 'Inventory', view: 'inventory-transfers' },
+      { label: 'Transfers' },
+    ],
+    apiUrl: `${_INV_API}/transfers`,
+    searchFields: ['transfer_number', 'reason'],
+    col1Label: 'Transfer', col2Label: 'Status',
+    col1: t => `<strong>${_invEsc(t.transfer_number || '—')}</strong><br><span style="font-weight:400;font-size:12px;color:#888;">${_invEsc(_invStoreLabel(t.from_store_id))} <span style="color:var(--gold-500,#C9A227);">&rarr;</span> ${_invEsc(_invStoreLabel(t.to_store_id))}</span>`,
+    col2: t => `${_invStatusPill(t.status)}<br><span style="font-size:12px;color:#555;">${formatKES(t.total_value)}</span>`,
+    rowLabel: t => t.transfer_number || '—',
+    rowSub: t => `${_invEsc(_invStoreLabel(t.from_store_id))} <span style="color:var(--gold-500,#C9A227);">&rarr;</span> ${_invEsc(_invStoreLabel(t.to_store_id))} · ${t.transfer_date || ''}`,
+    idKey: 'id',
+    preselectId,
+    detailFields: [
+      { label: 'From Store', key: 'from_store_id', fmt: v => _invStoreLabel(v) },
+      { label: 'To Store', key: 'to_store_id', fmt: v => _invStoreLabel(v) },
+      { label: 'Transfer Date', key: 'transfer_date', fmt: v => v || '—' },
+      { label: 'Reason', key: 'reason', fmt: v => v || '—' },
+      { label: 'Notes', key: 'notes', fmt: v => v || '—' },
+      { label: 'Total Value', key: 'total_value', fmt: v => formatKES(v) },
+      { label: 'Term', key: 'term_id', fmt: v => v ? _invTermLabel(v) : '—' },
+      { label: 'Journal Entry', key: 'journal_entry_id', fmt: (v, item) => v ? `<a href="#" onclick="_jeViewDetail(${v});return false;">JE #${v}</a>` : (item.status === 'approved' ? _invAuditOnlyBadge() : '—') },
+      { label: 'Status', key: 'status', fmt: v => _invStatusPill(v) },
+      { label: 'Approved At', key: 'approved_at', fmt: v => v ? new Date(v).toLocaleString() : '—' },
+    ],
+    canEdit: item => item.status === 'draft',
+    renderAdd: el => _transferRenderAddForm(el),
+    renderEdit: (item, el) => _transferRenderEditForm(item, el),
+    detailActions: item => _transferDetailActionsHtml(item),
+  };
+  await renderSplitView(cfg);
+  _transferInjectFilters(cfg);
+}
+
+function _transferInjectFilters(cfg) {
+  const searchBox = document.querySelector('.split-left-search');
+  if (!searchBox) return;
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'padding:0 16px 10px;display:flex;gap:8px;flex-wrap:wrap;';
+  wrap.innerHTML = `
+    <select id="transfer-filter-status" class="fin-form-select" style="flex:1;min-width:110px;font-size:12px;">
+      <option value="">All Statuses</option>
+      ${['draft', 'approved', 'cancelled'].map(s => `<option value="${s}">${s[0].toUpperCase() + s.slice(1)}</option>`).join('')}
+    </select>
+    <select id="transfer-filter-store" class="fin-form-select" style="flex:1;min-width:130px;font-size:12px;">
+      <option value="">All Stores</option>${_invStoreOptionsHtml(null)}
+    </select>
+    <input type="date" id="transfer-filter-start" class="fin-form-input" style="flex:1;min-width:110px;font-size:12px;" title="Start date">
+    <input type="date" id="transfer-filter-end" class="fin-form-input" style="flex:1;min-width:110px;font-size:12px;" title="End date">`;
+  searchBox.insertAdjacentElement('afterend', wrap);
+  ['transfer-filter-status', 'transfer-filter-store', 'transfer-filter-start', 'transfer-filter-end'].forEach(id => {
+    document.getElementById(id).addEventListener('change', () => _transferReapplyFilters(cfg));
+  });
+}
+function _transferReapplyFilters(cfg) {
+  const status = document.getElementById('transfer-filter-status')?.value || '';
+  const storeId = document.getElementById('transfer-filter-store')?.value || '';
+  const start = document.getElementById('transfer-filter-start')?.value || '';
+  const end = document.getElementById('transfer-filter-end')?.value || '';
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (storeId) params.set('store_id', storeId);
+  if (start) params.set('start_date', start);
+  if (end) params.set('end_date', end);
+  const qs = params.toString();
+  cfg.apiUrl = `${_INV_API}/transfers` + (qs ? `?${qs}` : '');
+  window._splitReload && window._splitReload();
+}
+
+// ── Lines — quantity-only on drafts, same rule as Issues (§6.3) ──────────
+function _transferLineRowHtml(line, idx) {
+  return `
+    <tr>
+      <td><input type="text" class="fin-li-input" list="transfer-item-datalist" placeholder="Search item…" value="${_invEsc(line.item_label || '')}" oninput="_transferResolveLineItem(${idx}, this.value)"></td>
+      <td><input type="number" class="fin-li-input" step="0.001" min="0.001" style="width:100px;" value="${line.quantity || ''}" oninput="_transferUpdateLine(${idx},'quantity',this.value)"></td>
+      <td><input type="text" class="fin-li-input" placeholder="Notes" value="${_invEsc(line.notes || '')}" oninput="_transferUpdateLine(${idx},'notes',this.value)"></td>
+      <td><button class="fin-btn-li-rm" ${_transferLines.length <= 1 ? 'disabled' : ''} onclick="_transferRemoveLine(${idx})">&times;</button></td>
+    </tr>`;
+}
+function _transferRenderLines() {
+  const el = document.getElementById('transfer-lines-body');
+  if (el) el.innerHTML = _transferLines.map((l, i) => _transferLineRowHtml(l, i)).join('');
+}
+function _transferAddLine() {
+  _transferLines.push({ item_id: null, item_label: '', quantity: '', notes: '' });
+  _transferRenderLines();
+}
+function _transferRemoveLine(idx) {
+  if (_transferLines.length <= 1) return;
+  _transferLines.splice(idx, 1);
+  _transferRenderLines();
+}
+function _transferResolveLineItem(idx, val) {
+  const id = (window._transferItemMap || {})[val];
+  _transferLines[idx].item_id = id || null;
+  _transferLines[idx].item_label = val;
+}
+function _transferUpdateLine(idx, key, val) {
+  _transferLines[idx][key] = val;
+}
+
+// ── Shared header fields + lines table ──────────────────────────────────
+function _transferHeaderFieldsHtml(t) {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  return `
+    <div class="fin-form-grid-2">
+      <div class="fin-form-group">
+        <label class="fin-form-label">From Store <span class="fin-required">*</span></label>
+        <select id="transfer-f-from" class="fin-form-select" onchange="_transferCheckSameAccount()"><option value="">Please Select</option>${_invStoreOptionsHtml(t?.from_store_id)}</select>
+        <span class="fin-field-error" id="transfer-f-from-err"></span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">To Store <span class="fin-required">*</span></label>
+        <select id="transfer-f-to" class="fin-form-select" onchange="_transferCheckSameAccount()"><option value="">Please Select</option>${_invStoreOptionsHtml(t?.to_store_id)}</select>
+        <span class="fin-field-error" id="transfer-f-to-err"></span>
+      </div>
+      <div class="fin-form-group fin-span-2" id="transfer-f-same-account-hint" style="display:none;padding:8px 10px;border-radius:6px;background:var(--gold-100,#fdf3d6);color:#8a6d00;font-size:0.8rem;">
+        These stores share the same inventory control account — approving this transfer will move stock without a journal entry (the ledger will still record the movement).
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Transfer Date <span class="fin-required">*</span></label>
+        <input type="date" id="transfer-f-date" class="fin-form-input" value="${t?.transfer_date || todayStr}">
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Reason</label>
+        <input type="text" id="transfer-f-reason" class="fin-form-input" maxlength="200" value="${_invEsc(t?.reason || '')}">
+      </div>
+      <div class="fin-form-group fin-span-2">
+        <label class="fin-form-label">Notes</label>
+        <textarea id="transfer-f-notes" class="fin-form-textarea" rows="3">${_invEsc(t?.notes || '')}</textarea>
+      </div>
+    </div>`;
+}
+// Proactive heads-up, not a warning — approving a same-account transfer is
+// normal behaviour, just without a JE (§6.3).
+function _transferCheckSameAccount() {
+  const fromId = document.getElementById('transfer-f-from')?.value;
+  const toId = document.getElementById('transfer-f-to')?.value;
+  const hint = document.getElementById('transfer-f-same-account-hint');
+  if (!hint) return;
+  const fromAcct = fromId ? _invStoreAccountId(fromId) : null;
+  const toAcct = toId ? _invStoreAccountId(toId) : null;
+  hint.style.display = (fromAcct != null && toAcct != null && String(fromAcct) === String(toAcct)) ? 'block' : 'none';
+}
+function _transferLinesTableHtml() {
+  return `
+    <div class="fin-section-label">Lines</div>
+    <div class="fin-table-wrap">
+      <table class="fin-li-table">
+        <thead><tr><th>Item</th><th>Qty</th><th>Notes</th><th></th></tr></thead>
+        <tbody id="transfer-lines-body"></tbody>
+      </table>
+    </div>
+    <datalist id="transfer-item-datalist"></datalist>
+    <button type="button" class="fin-btn-outline" style="margin-top:8px;" onclick="_transferAddLine()">+ Add Line</button>`;
+}
+function _transferCollectLinesPayload() {
+  return _transferLines
+    .filter(l => l.item_id && parseFloat(l.quantity) > 0)
+    .map(l => ({ item_id: l.item_id, quantity: String(l.quantity).trim(), notes: (l.notes || '').trim() || null }));
+}
+function _transferCollectHeaderPayload() {
+  return {
+    from_store_id: parseInt(document.getElementById('transfer-f-from').value),
+    to_store_id: parseInt(document.getElementById('transfer-f-to').value),
+    transfer_date: document.getElementById('transfer-f-date').value || null,
+    reason: (document.getElementById('transfer-f-reason').value || '').trim() || null,
+    notes: (document.getElementById('transfer-f-notes').value || '').trim() || null,
+  };
+}
+
+// ── Add (Save Draft only) — from ≠ to enforced client-side (§6.3) ────────
+function _transferRenderAddForm(el) {
+  _transferLines = [{ item_id: null, item_label: '', quantity: '', notes: '' }];
+  el.innerHTML = `
+    <div class="fin-form-wrap" style="max-width:100%;">
+      <h3 class="fin-title" style="font-size:1rem;">New Stock Transfer</h3>
+      ${_transferHeaderFieldsHtml(null)}
+      ${_transferLinesTableHtml()}
+      <div id="transfer-f-msg" style="margin-top:12px;"></div>
+      <div class="fin-form-actions">
+        <button class="fin-btn-teal" onclick="_transferSubmitAdd()">Save Draft</button>
+        <button class="fin-btn-cancel" onclick="window._splitReload && window._splitReload()">Cancel</button>
+      </div>
+    </div>`;
+  _transferRenderLines();
+  _invPopulateItemDatalist('transfer-item-datalist', '_transferItemMap');
+}
+function _transferValidateHeader() {
+  document.getElementById('transfer-f-from-err').textContent = '';
+  document.getElementById('transfer-f-to-err').textContent = '';
+  const fromId = document.getElementById('transfer-f-from').value;
+  const toId = document.getElementById('transfer-f-to').value;
+  let valid = true;
+  if (!fromId) { document.getElementById('transfer-f-from-err').textContent = 'This field is required.'; valid = false; }
+  if (!toId) { document.getElementById('transfer-f-to-err').textContent = 'This field is required.'; valid = false; }
+  if (fromId && toId && fromId === toId) { document.getElementById('transfer-f-to-err').textContent = 'To Store must be different from From Store.'; valid = false; }
+  return valid;
+}
+async function _transferSubmitAdd() {
+  document.getElementById('transfer-f-msg').innerHTML = '';
+  if (!_transferValidateHeader()) return;
+  const lines = _transferCollectLinesPayload();
+  if (lines.length === 0) {
+    document.getElementById('transfer-f-msg').innerHTML = `<div class="fin-field-error">Add at least one line with an item and quantity.</div>`;
+    return;
+  }
+  const payload = { ..._transferCollectHeaderPayload(), lines };
+  const res = await apiFetch(`${_INV_API}/transfers`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  if (res && res.ok) { showToast('Transfer saved as draft.', 'success'); await window._splitReload?.(); return; }
+  if (!res) return;
+  const { fieldErrors, message } = await _invParseError(res);
+  if (fieldErrors.to_store_id) document.getElementById('transfer-f-to-err').textContent = fieldErrors.to_store_id;
+  else if (fieldErrors.from_store_id) document.getElementById('transfer-f-from-err').textContent = fieldErrors.from_store_id;
+  else document.getElementById('transfer-f-msg').innerHTML = `<div class="fin-field-error">${_invEsc(message)}</div>`;
+}
+
+// ── Edit — draft-only, PATCH lines is a full replacement ────────────────
+function _transferRenderEditForm(item, el) {
+  _transferLines = (item.lines || []).map(l => ({ item_id: l.item_id, item_label: _invItemLabel(l.item_id), quantity: l.quantity, notes: l.notes }));
+  if (_transferLines.length === 0) _transferLines = [{ item_id: null, item_label: '', quantity: '', notes: '' }];
+  el.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Edit Transfer ${_invEsc(item.transfer_number || '')}</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Inventory &rsaquo;
+          <a href="#" class="fin-bc-link" onclick="loadView('inventory-transfers');return false;">Transfers</a> &rsaquo; Edit
+        </div>
+      </div>
+      <div class="fin-form-wrap" style="max-width:100%;">
+        ${_transferHeaderFieldsHtml(item)}
+        ${_transferLinesTableHtml()}
+        <div id="transfer-f-msg" style="margin-top:12px;"></div>
+        <div class="fin-form-actions">
+          <button class="fin-btn-teal" onclick="_transferSubmitEdit(${item.id})">Update</button>
+          <button class="fin-btn-cancel" onclick="window._splitRefreshSelected && window._splitRefreshSelected()">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+  _transferRenderLines();
+  _invPopulateItemDatalist('transfer-item-datalist', '_transferItemMap');
+  _transferCheckSameAccount();
+}
+async function _transferSubmitEdit(id) {
+  document.getElementById('transfer-f-msg').innerHTML = '';
+  if (!_transferValidateHeader()) return;
+  const lines = _transferCollectLinesPayload();
+  if (lines.length === 0) {
+    document.getElementById('transfer-f-msg').innerHTML = `<div class="fin-field-error">Add at least one line with an item and quantity.</div>`;
+    return;
+  }
+  const payload = { ..._transferCollectHeaderPayload(), lines };
+  const res = await apiFetch(`${_INV_API}/transfers/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  if (res && res.ok) { showToast('Transfer updated.', 'success'); await window._splitRefreshSelected?.(); return; }
+  if (!res) return;
+  const { fieldErrors, message } = await _invParseError(res);
+  if (fieldErrors.to_store_id) document.getElementById('transfer-f-to-err').textContent = fieldErrors.to_store_id;
+  else if (fieldErrors.from_store_id) document.getElementById('transfer-f-from-err').textContent = fieldErrors.from_store_id;
+  else document.getElementById('transfer-f-msg').innerHTML = `<div class="fin-field-error">${_invEsc(message)}</div>`;
+}
+
+// ── Detail actions — status-conditional, mirrors Issues (§6.4-6.5) ───────
+function _transferDetailActionsHtml(item) {
+  window._transferCurrentItem = item;
+  const showCosts = item.status === 'approved';
+  const lineRows = (item.lines || []).map(l => showCosts ? `
+    <tr>
+      <td>${_invEsc(_invItemLabel(l.item_id))}</td>
+      <td style="text-align:right;">${formatQty(l.quantity)}</td>
+      <td style="text-align:right;">${formatUnitCost(l.unit_cost)}</td>
+      <td style="text-align:right;">${formatKES(l.line_total)}</td>
+      <td>${_invEsc(l.notes || '—')}</td>
+    </tr>` : `
+    <tr>
+      <td>${_invEsc(_invItemLabel(l.item_id))}</td>
+      <td style="text-align:right;">${formatQty(l.quantity)}</td>
+      <td>${_invEsc(l.notes || '—')}</td>
+    </tr>`).join('') || `<tr><td colspan="${showCosts ? 5 : 3}" class="fin-empty">No lines.</td></tr>`;
+  const linesTable = `
+    <div class="fin-section-label">Lines</div>
+    <div class="fin-table-wrap"><table class="fin-li-table">
+      <thead><tr><th>Item</th><th>Qty</th>${showCosts ? '<th>Unit Cost</th><th>Line Total</th>' : ''}<th>Notes</th></tr></thead>
+      <tbody>${lineRows}</tbody>
+    </table></div>`;
+
+  let actions = '';
+  if (item.status === 'draft') {
+    actions += `<button class="fin-btn-teal" onclick="_transferOpenApproveModal(${item.id})">Approve</button>`;
+    actions += `<button class="fin-btn-outline" style="color:#c0392b;border-color:#c0392b;" onclick="_transferOpenCancelModal(${item.id})">Cancel</button>`;
+  } else if (item.status === 'approved') {
+    actions += `<div style="color:#888;font-size:0.85rem;">Approved transfers cannot be cancelled — post a compensating Adjustment instead.</div>`;
+  }
+  return `
+    ${linesTable}
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:14px;align-items:center;">${actions}</div>
+    <div id="transfer-action-msg-${item.id}" style="margin-top:8px;"></div>`;
+}
+
+// ── Approve — insufficient-stock guard on source only; wording adapts to
+// whether a JE will post (§6.5) ───────────────────────────────────────────
+function _transferOpenApproveModal(id) {
+  const item = window._transferCurrentItem;
+  const fromAcct = _invStoreAccountId(item.from_store_id);
+  const toAcct = _invStoreAccountId(item.to_store_id);
+  const sameAccount = fromAcct != null && toAcct != null && String(fromAcct) === String(toAcct);
+  const n = (item.lines || []).length;
+  const jeWording = sameAccount
+    ? 'No journal entry will be posted (both stores share the same inventory control account).'
+    : `A journal entry will be posted (DR ${_invEsc(_invStoreLabel(item.to_store_id))} / CR ${_invEsc(_invStoreLabel(item.from_store_id))}).`;
+  const wrap = document.createElement('div');
+  wrap.id = 'transfer-approve-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:var(--white);border-radius:8px;padding:24px;width:480px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 12px;font-size:1.05rem;color:var(--navy-700,#2c3e50);">Approve Transfer</h3>
+      <p style="font-size:0.88rem;color:#444;">Approve transfer ${_invEsc(item.transfer_number || '')}? This will move ${n} item${n === 1 ? '' : 's'} from ${_invEsc(_invStoreLabel(item.from_store_id))} to ${_invEsc(_invStoreLabel(item.to_store_id))} at source-store cost. ${jeWording}</p>
+      <div id="transfer-approve-err" style="display:none;padding:10px 12px;border-radius:6px;background:var(--coral-100);color:var(--coral-600);font-size:0.82rem;margin-top:6px;"></div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="_coaCloseModal('transfer-approve-modal-overlay')">Cancel</button>
+        <button class="fin-btn-teal" onclick="_transferSubmitApprove(${id})">Approve</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+async function _transferSubmitApprove(id) {
+  const errEl = document.getElementById('transfer-approve-err');
+  errEl.style.display = 'none';
+  const res = await apiFetch(`${_INV_API}/transfers/${id}/approve`, { method: 'POST' });
+  if (res && res.ok) {
+    _coaCloseModal('transfer-approve-modal-overlay');
+    showToast('Transfer approved.', 'success');
+    await window._splitRefreshSelected?.();
+    return;
+  }
+  if (!res) return;
+  const { message } = await _invParseError(res);
+  errEl.textContent = message; errEl.style.display = 'block';
+}
+
+// ── Cancel — draft-only, no cancel path once approved ────────────────────
+function _transferOpenCancelModal(id) {
+  const wrap = document.createElement('div');
+  wrap.id = 'transfer-cancel-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:var(--white);border-radius:8px;padding:24px;width:420px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 12px;font-size:1.05rem;color:var(--navy-700,#2c3e50);">Cancel Transfer</h3>
+      <p style="font-size:0.88rem;color:#444;">Cancel draft transfer? No stock or GL impact.</p>
+      <div id="transfer-cancel-err" style="display:none;padding:10px 12px;border-radius:6px;background:var(--coral-100);color:var(--coral-600);font-size:0.82rem;margin-top:6px;"></div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-outline" onclick="_coaCloseModal('transfer-cancel-modal-overlay')">Keep Transfer</button>
+        <button class="fin-btn-cancel" onclick="_transferSubmitCancel(${id})">Cancel Transfer</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+async function _transferSubmitCancel(id) {
+  const errEl = document.getElementById('transfer-cancel-err');
+  errEl.style.display = 'none';
+  const res = await apiFetch(`${_INV_API}/transfers/${id}/cancel`, { method: 'POST' });
+  if (res && res.ok) {
+    _coaCloseModal('transfer-cancel-modal-overlay');
+    showToast('Transfer cancelled.', 'success');
     await window._splitRefreshSelected?.();
     return;
   }
