@@ -425,7 +425,6 @@ async function loadRequisitionsView(container) {
       {label:'Supplier',          key:'supplier_id', fmt:v=>_reqSupplierName(v)},
       {label:'KRA PIN',           key:'supplier_kra_pin_snapshot', fmt:v=>v||'(live PIN)'},
       {label:'Requisition Date', key:'requisition_date', fmt:v=>v||'—'},
-      {label:'Notes',            key:'notes', fmt:v=>v||'—'},
     ],
     canEdit: item => item.status === 'draft',
     renderAdd: el => _reqRenderAddForm(el),
@@ -560,8 +559,8 @@ function _reqHeaderFieldsHtml(req) {
         <span class="fin-field-hint fin-field-hint-info">If both are set, percentage wins.</span>
       </div>
       <div class="fin-form-group fin-span-2">
-        <label class="fin-form-label">Notes</label>
-        <textarea id="req-f-notes" class="fin-form-textarea" rows="3">${_reqEsc(req?.notes||'')}</textarea>
+        <label class="fin-form-label">Narration</label>
+        <textarea id="req-f-notes" class="fin-form-textarea" rows="3" placeholder="What is this requisition for? The approver reads this before deciding.">${_reqEsc(req?.notes||'')}</textarea>
       </div>
     </div>`;
 }
@@ -755,6 +754,16 @@ function _reqDetailActionsHtml(item) {
       ${item.status === 'rejected' ? `<span style="color:var(--coral-600,#B03030);">Rejection Reason: ${_reqEsc(item.rejection_reason||'')}</span>` : ''}
     </div>`;
 
+  // Narration — surfaced as its own callout, escaped and line-break-preserving
+  // (the generic detail-fields grid neither escapes nor preserves line breaks,
+  // which mangled anything longer than a short phrase), and positioned right
+  // before the Approve/Reject decision so the approver reads it last.
+  const narrationBlock = item.notes ? `
+    <div style="margin-top:14px;padding:12px 16px;background:var(--navy-50,#EEF3FA);border-left:3px solid var(--navy-400,#4A6FA5);border-radius:6px;">
+      <div style="font-size:11px;font-weight:600;color:var(--navy-700,#1B3057);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">Narration</div>
+      <div style="font-size:0.88rem;color:#333;white-space:pre-wrap;">${_reqEsc(item.notes)}</div>
+    </div>` : '';
+
   // Segregation of duties — client-side gate hides Approve/Reject when the
   // current user submitted this requisition; the server 403s as a backstop.
   const isSubmitter = currentUser && item.submitted_by != null && String(currentUser.id) === String(item.submitted_by);
@@ -776,6 +785,7 @@ function _reqDetailActionsHtml(item) {
     ${statCards}
     ${linesTable}
     ${auditStrip}
+    ${narrationBlock}
     <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:14px;align-items:center;">${actions}</div>
     <div id="req-action-msg-${item.id}" style="margin-top:8px;"></div>`;
 }
