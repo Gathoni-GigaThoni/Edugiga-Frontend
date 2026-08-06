@@ -1438,6 +1438,10 @@ function openFinReceivablesDropdown() {
   const dd = document.getElementById('fin-receivables-dropdown');
   if (dd) dd.style.display = 'block';
 }
+function openFinBankCashDropdown() {
+  const dd = document.getElementById('fin-bankcash-dropdown');
+  if (dd) dd.style.display = 'block';
+}
 function openFinPayablesDropdown() {
   const dd = document.getElementById('fin-payables-dropdown');
   if (dd) dd.style.display = 'block';
@@ -6225,5 +6229,842 @@ function _coopOpenRejectModal(unmatchedId) {
       showToast('Error: ' + await parseApiError(res), 'error');
     }
   };
+}
+
+// ==================== BANK RECONCILIATION WORKSPACE ====================
+// BE/FE Contract Addendum 2026-08-06 §4. Three routes: sessions list (this
+// section), statement imports (below), and the session workspace itself.
+// Field names below are verified against the live OpenAPI schema, not the
+// addendum's prose, which drifted from the shipped shapes in a few places
+// (period_start/period_end not period_from/period_to; opening/closing_
+// statement_balance not statement_opening/closing_balance; AdjustmentLine is
+// {account_id, line_type, amount} matching journal-entries.js's convention,
+// not separate dr/cr fields with a cost_center_id; mark-ignored's body key
+// is bank_line_ids not line_ids; workspace.suggestions not suggested_pairs,
+// keyed by journal_entry_line_id not book_line_id; complete's failure mode
+// is a plain error response, not a 200 with a completed:false/blockers[]
+// shape — CompleteResult has no such fields).
+const _RECON_API = `${API_BASE}/bank-cash/reconciliation`;
+const _RECON_SESSION_STATUS_COLORS = {
+  draft:     '#5F6B7C;background:#EEF1F5',
+  completed: '#1e7e34;background:#dcf3e2',
+  reopened:  '#8a6d00;background:#f5e6a8',
+};
+function _reconMoney(v) { return formatKES(v); }
+function _reconDate(v) {
+  if (!v) return '—';
+  const d = new Date(v);
+  return isNaN(d) ? v : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+function _reconSessionStatusBadge(status) {
+  const c = _RECON_SESSION_STATUS_COLORS[status] || '#888;background:#eee';
+  const [color, bg] = c.split(';background:');
+  const label = status ? status.charAt(0).toUpperCase() + status.slice(1) : '—';
+  return `<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:0.78rem;font-weight:600;color:${color};background:${bg};">${_finEsc(label)}</span>`;
+}
+function _reconBankAccountOptions(selectedId) {
+  return (_tpFlBankAccounts || []).filter(b => b.is_active !== false).map(b =>
+    `<option value="${b.id}" ${String(b.id) === String(selectedId) ? 'selected' : ''}>${_finEsc(b.bank_name)} — ${_finEsc(b.account_name)}</option>`
+  ).join('');
+}
+
+// ── Sessions list ────────────────────────────────────────────────────────────
+async function loadReconSessionsView(container) {
+  await _tpFlLoadBankAccounts();
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Reconciliation Sessions</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Bank &amp; Cash &rsaquo; Reconciliation Workspace</div>
+      </div>
+      <div class="fin-filter-section">
+        <div class="fin-filter-grid">
+          <div class="fin-filter-field">
+            <label class="fin-filter-label">Bank Account</label>
+            <select id="recon-filter-bank" class="fin-filter-select" onchange="_reconSessionsReload()">
+              <option value="">All</option>${_reconBankAccountOptions('')}
+            </select>
+          </div>
+          <div class="fin-filter-field">
+            <label class="fin-filter-label">Status</label>
+            <select id="recon-filter-status" class="fin-filter-select" onchange="_reconSessionsReload()">
+              <option value="">All</option>
+              <option value="draft">Draft</option>
+              <option value="completed">Completed</option>
+              <option value="reopened">Reopened</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div id="recon-sessions-split"></div>
+    </div>`;
+  await _reconSessionsReload();
+}
+
+async function _reconSessionsReload() {
+  const bankAccountId = document.getElementById('recon-filter-bank')?.value;
+  const status = document.getElementById('recon-filter-status')?.value;
+  const params = new URLSearchParams();
+  if (bankAccountId) params.set('bank_account_id', bankAccountId);
+  if (status) params.set('status', status);
+  await renderSplitView({
+    container: document.getElementById('recon-sessions-split'),
+    moduleKey: 'finance.bank_cash_reconciliation',
+    title: 'Reconciliation Sessions',
+    breadcrumb: [{label:'Dashboard',view:null},{label:'Finance',view:null},{label:'Reconciliation Workspace'}],
+    apiUrl: `${_RECON_API}/sessions${params.toString() ? '?' + params.toString() : ''}`,
+    searchFields: [],
+    col1Label: 'Bank Account', col2Label: 'Status',
+    col1: s => `<strong>${_finEsc(_tpFlBankAccountName(s.bank_account_id))}</strong><br><span style="font-weight:400;font-size:12px;color:#888;">${_reconDate(s.period_start)} &rarr; ${_reconDate(s.period_end)}</span>`,
+    col2: s => _reconSessionStatusBadge(s.status),
+    rowLabel: s => _tpFlBankAccountName(s.bank_account_id),
+    rowSub: s => `${_reconDate(s.period_start)} &rarr; ${_reconDate(s.period_end)}`,
+    idKey: 'id',
+    detailFields: [
+      {label:'Bank Account',              key:'bank_account_id',           fmt:v=>_tpFlBankAccountName(v)},
+      {label:'Period',                    key:'period_start',              fmt:(v,s)=>`${_reconDate(s.period_start)} &rarr; ${_reconDate(s.period_end)}`},
+      {label:'Status',                    key:'status',                    fmt:v=>_reconSessionStatusBadge(v)},
+      {label:'Opening Book Balance',      key:'opening_book_balance',      fmt:v=>_reconMoney(v)},
+      {label:'Closing Book Balance',      key:'closing_book_balance',      fmt:v=>_reconMoney(v)},
+      {label:'Opening Statement Balance', key:'opening_statement_balance', fmt:v=>v!=null?_reconMoney(v):'—'},
+      {label:'Closing Statement Balance', key:'closing_statement_balance', fmt:v=>v!=null?_reconMoney(v):'—'},
+      {label:'Reconciled At',             key:'reconciled_at',             fmt:v=>v?_reconDate(v):'—'},
+      {label:'Notes',                     key:'notes',                     fmt:v=>v||'—', hideWhen:item=>!item.notes},
+    ],
+    renderAdd: el => _reconRenderCreateSessionForm(el),
+    detailActions: s => `
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <button class="btn" onclick="_reconOpenWorkspace(${s.id})">Open Workspace</button>
+        ${s.status === 'completed' ? `<button class="fin-btn-outline" onclick="_reconReopenSession(${s.id})">Reopen</button>` : ''}
+      </div>`,
+  });
+}
+
+function _reconRenderCreateSessionForm(el) {
+  el.innerHTML = `
+    <div class="fin-form-wrap">
+      <h3 class="fin-title" style="font-size:1.1rem;">New Reconciliation Session</h3>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Bank Account <span class="fin-required">*</span></label>
+        <select id="recon-create-bank" class="fin-form-select"><option value="">Please Select</option>${_reconBankAccountOptions('')}</select>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Period Start <span class="fin-required">*</span></label>
+        <input type="date" id="recon-create-period-start" class="fin-form-input">
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Period End <span class="fin-required">*</span></label>
+        <input type="date" id="recon-create-period-end" class="fin-form-input">
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Statement Opening Balance</label>
+        <input type="number" id="recon-create-opening" class="fin-form-input" step="0.01">
+        <span style="font-size:0.78rem;color:#888;">Enter the bank's opening balance for this period, if you have the statement in hand. Leaves the book side as the source of truth if blank.</span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Statement Closing Balance</label>
+        <input type="number" id="recon-create-closing" class="fin-form-input" step="0.01">
+        <span style="font-size:0.78rem;color:#888;">Same as above — optional.</span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Notes</label>
+        <textarea id="recon-create-notes" class="fin-form-textarea" rows="3"></textarea>
+      </div>
+      <div class="fin-form-actions">
+        <button class="fin-btn-teal" onclick="_reconSubmitCreateSession()">Create Session</button>
+      </div>
+    </div>`;
+}
+
+async function _reconSubmitCreateSession() {
+  const bankAccountId = document.getElementById('recon-create-bank')?.value;
+  const periodStart = document.getElementById('recon-create-period-start')?.value;
+  const periodEnd = document.getElementById('recon-create-period-end')?.value;
+  if (!bankAccountId || !periodStart || !periodEnd) {
+    showToast('Bank Account, Period Start, and Period End are required.', 'error'); return;
+  }
+  const opening = document.getElementById('recon-create-opening')?.value;
+  const closing = document.getElementById('recon-create-closing')?.value;
+  const notes = document.getElementById('recon-create-notes')?.value.trim();
+  const payload = {
+    bank_account_id: parseInt(bankAccountId, 10),
+    period_start: periodStart,
+    period_end: periodEnd,
+    opening_statement_balance: opening ? opening : null,
+    closing_statement_balance: closing ? closing : null,
+    notes: notes || null,
+  };
+  const res = await apiFetch(`${_RECON_API}/sessions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  if (!res) return;
+  if (res.ok) {
+    const session = await res.json();
+    showToast('Session created.', 'success');
+    _reconOpenWorkspace(session.id);
+  } else {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
+}
+
+async function _reconReopenSession(sessionId) {
+  if (!confirm("Reopen this session? You'll be able to unmatch lines, add adjustments, and re-complete. History is preserved.")) return;
+  const res = await apiFetch(`${_RECON_API}/sessions/${sessionId}/reopen`, { method: 'POST' });
+  if (!res) return;
+  if (res.ok) {
+    showToast('Session reopened.', 'success');
+    await window._splitRefreshSelected?.();
+  } else {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
+}
+
+// ── Session Workspace — the working screen ──────────────────────────────────
+// §4.7: /workspace is the ONLY read the FE needs here. Every mutation
+// refetches it — no local patching, no chained per-line calls.
+let _reconWsSessionId = null;
+let _reconWsData = null;             // last-fetched WorkspaceRead
+let _reconWsBankFilter = 'unmatched';
+let _reconWsBookFilter = 'unmatched';
+let _reconWsBankChecked = {};        // bank_line_id -> true
+let _reconWsBookChecked = {};        // journal_entry_line_id -> true
+let _reconWsSuggChecked = {};        // "bankId:jelId" -> true
+
+function _reconOpenWorkspace(sessionId) {
+  _reconWsSessionId = sessionId;
+  _reconWsData = null;
+  _reconWsBankFilter = 'unmatched';
+  _reconWsBookFilter = 'unmatched';
+  _reconWsBankChecked = {};
+  _reconWsBookChecked = {};
+  _reconWsSuggChecked = {};
+  renderReconWorkspacePage(document.getElementById('main-content'));
+}
+
+async function renderReconWorkspacePage(container) {
+  container.innerHTML = `<div class="fin-page"><div id="recon-ws-mount"><p style="padding:20px;color:#888;">Loading&#8230;</p></div></div>`;
+  await _reconWsRefresh();
+}
+
+async function _reconWsRefresh() {
+  const res = await apiFetch(`${_RECON_API}/sessions/${_reconWsSessionId}/workspace`);
+  const mount = document.getElementById('recon-ws-mount');
+  if (!res || !res.ok) {
+    const msg = res ? await parseApiError(res) : 'Network error.';
+    if (mount) mount.innerHTML = `<p style="color:var(--coral-500,#D94040);padding:20px;">Failed to load workspace: ${_finEsc(msg)}</p>`;
+    return;
+  }
+  _reconWsData = await res.json();
+  _reconWsBankChecked = {};
+  _reconWsBookChecked = {};
+  _reconWsSuggChecked = {};
+  (_reconWsData.suggestions || []).forEach(sg => {
+    if (sg.confidence === 'high') _reconWsSuggChecked[`${sg.bank_line_id}:${sg.journal_entry_line_id}`] = true;
+  });
+  _reconWsRenderMount();
+}
+
+function _reconWsStatCard(label, value, warn) {
+  return `<div style="flex:1;min-width:170px;border-radius:8px;padding:14px 18px;background:${warn ? '#FBEAEA' : '#EEF1F5'};">
+    <div style="font-size:0.75rem;font-weight:600;color:${warn ? '#c0392b' : '#5F6B7C'};text-transform:uppercase;">${_finEsc(label)}</div>
+    <div style="font-size:1.25rem;font-weight:700;color:${warn ? '#c0392b' : 'var(--navy-700,#1B3057)'};margin-top:4px;">${value}</div>
+  </div>`;
+}
+
+function _reconWsRenderMount() {
+  const mount = document.getElementById('recon-ws-mount');
+  if (!mount || !_reconWsData) return;
+  const { session, summary } = _reconWsData;
+  const isOpen = session.status !== 'completed';
+  mount.innerHTML = `
+    <div class="fin-header-row">
+      <div>
+        <h2 class="fin-title">${_finEsc(_tpFlBankAccountName(session.bank_account_id))} ${_reconSessionStatusBadge(session.status)}</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Bank &amp; Cash &rsaquo; Reconciliation Workspace &rsaquo; ${_reconDate(session.period_start)} &rarr; ${_reconDate(session.period_end)}</div>
+      </div>
+      <div style="display:flex;gap:10px;">
+        ${isOpen ? `<button class="fin-btn-teal" onclick="_reconWsComplete()">Complete</button>` : ''}
+        ${session.status === 'completed' ? `<button class="fin-btn-outline" onclick="_reconWsReopen()">Reopen</button>` : ''}
+        <button class="fin-btn-cancel" onclick="loadView('bank-cash-reconciliation-workspace')">Back to Sessions</button>
+      </div>
+    </div>
+    <div id="recon-ws-blockers"></div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:20px;">
+      ${_reconWsStatCard('Unmatched Bank Lines', summary.unmatched_bank_count, summary.unmatched_bank_count > 0)}
+      ${_reconWsStatCard('Unmatched Book Lines', summary.unmatched_book_count, summary.unmatched_book_count > 0)}
+      ${_reconWsStatCard('Book Side Total', _reconMoney(summary.book_movement), false)}
+      ${_reconWsStatCard('Bank Side Total', _reconMoney(summary.statement_movement), false)}
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+      <div>
+        <h3 style="font-size:0.92rem;margin-bottom:8px;">Bank Lines</h3>
+        ${_reconWsFilterRow('bank')}
+        <div id="recon-ws-bank-list" style="max-height:420px;overflow-y:auto;border:1px solid var(--grey-100,#eee);border-radius:6px;"></div>
+      </div>
+      <div>
+        <h3 style="font-size:0.92rem;margin-bottom:8px;">Book Lines</h3>
+        ${_reconWsFilterRow('book')}
+        <div id="recon-ws-book-list" style="max-height:420px;overflow-y:auto;border:1px solid var(--grey-100,#eee);border-radius:6px;"></div>
+      </div>
+    </div>
+    ${isOpen ? `
+    <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap;">
+      <button class="btn" onclick="_reconWsManualMatch()">Match Selected</button>
+      <button class="fin-btn-outline" onclick="_reconWsOpenIgnoreModal()">Mark Ignored</button>
+      <button class="fin-btn-outline" onclick="_reconWsOpenAdjustModal()">Post Adjustment</button>
+    </div>` : ''}
+    <div id="recon-ws-suggestions" style="margin-top:22px;"></div>
+  `;
+  _reconWsRenderLists();
+  _reconWsRenderSuggestions();
+}
+
+function _reconWsFilterRow(side) {
+  const current = side === 'bank' ? _reconWsBankFilter : _reconWsBookFilter;
+  const tabs = side === 'bank'
+    ? [['unmatched','Unmatched'],['matched','Matched'],['ignored','Ignored'],['all','All']]
+    : [['unmatched','Unmatched'],['matched','Matched'],['all','All']];
+  return `<div style="display:flex;gap:6px;margin-bottom:8px;">
+    ${tabs.map(([val,label]) => `<button class="${current===val?'fin-btn-teal':'fin-btn-outline'}" style="padding:4px 10px;font-size:0.78rem;" onclick="_reconWsSetFilter('${side}','${val}')">${label}</button>`).join('')}
+  </div>`;
+}
+
+function _reconWsSetFilter(side, val) {
+  if (side === 'bank') _reconWsBankFilter = val; else _reconWsBookFilter = val;
+  _reconWsRenderMount();
+}
+
+const _RECON_SOURCE_ICON = { upload: '&#128196;', coop_ipn: '&#127974;' };
+
+function _reconWsRenderLists() {
+  const bankEl = document.getElementById('recon-ws-bank-list');
+  const bookEl = document.getElementById('recon-ws-book-list');
+  if (!bankEl || !bookEl || !_reconWsData) return;
+  const isOpen = _reconWsData.session.status !== 'completed';
+
+  const bankLines = (_reconWsData.bank_lines || []).filter(l =>
+    _reconWsBankFilter === 'all' || l.reconciliation_status === _reconWsBankFilter);
+  bankEl.innerHTML = bankLines.length ? bankLines.map(l => {
+    const checked = !!_reconWsBankChecked[l.id];
+    const canCheck = isOpen && l.reconciliation_status === 'unmatched';
+    return `<div style="display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border-bottom:1px solid var(--grey-100,#eee);${checked?'background:#EEF3FA;':''}">
+      ${canCheck ? `<input type="checkbox" ${checked?'checked':''} onchange="_reconWsToggleCheck('bank',${l.id})" style="margin-top:3px;">` : `<span style="width:13px;display:inline-block;"></span>`}
+      <div style="flex:1;">
+        <div style="font-size:0.85rem;">${_RECON_SOURCE_ICON[l.source]||''} ${_finEsc(l.description)}</div>
+        <div style="font-size:11.5px;color:#888;">${_reconDate(l.posting_date)} &middot; ${_reconMoney(l.amount)}${l.reference?` &middot; ${_finEsc(l.reference)}`:''}</div>
+        ${l.ignored_reason ? `<div style="font-size:11px;color:#8a6d00;font-style:italic;">Ignored: ${_finEsc(l.ignored_reason)}</div>` : ''}
+      </div>
+      <div>${_reconLineStatusPill(l.reconciliation_status)}</div>
+    </div>`;
+  }).join('') : `<p style="padding:20px;text-align:center;color:#aaa;font-size:0.85rem;">No lines.</p>`;
+
+  const bookLines = (_reconWsData.book_lines || []).filter(l =>
+    _reconWsBookFilter === 'all' || (_reconWsBookFilter === 'matched' ? l.match_id != null : l.match_id == null));
+  bookEl.innerHTML = bookLines.length ? bookLines.map(l => {
+    const checked = !!_reconWsBookChecked[l.journal_entry_line_id];
+    const canCheck = isOpen && l.match_id == null;
+    return `<div style="display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border-bottom:1px solid var(--grey-100,#eee);${checked?'background:#EEF3FA;':''}">
+      ${canCheck ? `<input type="checkbox" ${checked?'checked':''} onchange="_reconWsToggleCheck('book',${l.journal_entry_line_id})" style="margin-top:3px;">` : `<span style="width:13px;display:inline-block;"></span>`}
+      <div style="flex:1;">
+        <div style="font-size:0.85rem;">&#128203; ${_finEsc(l.jv_number)} &mdash; ${_finEsc(l.reference || l.notes || '')}</div>
+        <div style="font-size:11.5px;color:#888;">${_reconDate(l.entry_date)} &middot; ${_reconMoney(l.signed_amount)} &middot; ${_finEsc(l.line_type)}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        ${l.match_id != null ? _reconLineStatusPill('matched') : ''}
+        ${isOpen && l.match_id != null ? `<button class="fin-btn-outline" style="padding:2px 8px;font-size:0.72rem;" onclick="_reconWsUnmatch(${l.match_id})">Unmatch</button>` : ''}
+      </div>
+    </div>`;
+  }).join('') : `<p style="padding:20px;text-align:center;color:#aaa;font-size:0.85rem;">No lines.</p>`;
+}
+
+function _reconLineStatusPill(status) {
+  const map = { unmatched: '#5F6B7C;background:#EEF1F5', matched: '#1B3057;background:#dce8fb', ignored: '#c0392b;background:#fbdcdc' };
+  const c = map[status] || '#888;background:#eee';
+  const [color, bg] = c.split(';background:');
+  const label = { unmatched: 'Unmatched', matched: 'Matched', ignored: 'Ignored' }[status] || status || '—';
+  return `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.72rem;font-weight:600;color:${color};background:${bg};">${_finEsc(label)}</span>`;
+}
+
+function _reconWsToggleCheck(side, id) {
+  const store = side === 'bank' ? _reconWsBankChecked : _reconWsBookChecked;
+  if (store[id]) delete store[id]; else store[id] = true;
+  _reconWsRenderLists();
+}
+
+// ── Suggested matches ────────────────────────────────────────────────────────
+function _reconConfidencePill(conf) {
+  const map = { high: ['High', '#1e7e34', '#dcf3e2'], medium: ['Medium', '#8a6d00', '#f5e6a8'], low: ['Low', '#5F6B7C', '#EEF1F5'] };
+  const entry = map[conf] || [conf, '#888', '#eee'];
+  const [label, color, bg] = entry;
+  return `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.72rem;font-weight:600;color:${color};background:${bg};margin-left:6px;">${_finEsc(label)}</span>`;
+}
+
+function _reconWsRenderSuggestions() {
+  const el = document.getElementById('recon-ws-suggestions');
+  if (!el || !_reconWsData) return;
+  const isOpen = _reconWsData.session.status !== 'completed';
+  const suggestions = _reconWsData.suggestions || [];
+  if (!suggestions.length) { el.innerHTML = ''; return; }
+  const bankById = Object.fromEntries((_reconWsData.bank_lines || []).map(l => [l.id, l]));
+  const bookById = Object.fromEntries((_reconWsData.book_lines || []).map(l => [l.journal_entry_line_id, l]));
+  el.innerHTML = `
+    <div style="border:1px solid var(--grey-100,#eee);border-radius:8px;padding:14px 16px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <h3 style="font-size:0.92rem;margin:0;">Suggested Matches</h3>
+        ${isOpen ? `<button class="btn" onclick="_reconWsBulkMatchSuggestions()">Match Selected</button>` : ''}
+      </div>
+      ${suggestions.map(sg => {
+        const key = `${sg.bank_line_id}:${sg.journal_entry_line_id}`;
+        const bank = bankById[sg.bank_line_id], book = bookById[sg.journal_entry_line_id];
+        if (!bank || !book) return '';
+        const checked = !!_reconWsSuggChecked[key];
+        return `<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--grey-100,#eee);">
+          ${isOpen ? `<input type="checkbox" ${checked?'checked':''} onchange="_reconWsToggleSuggestion('${key}')">` : ''}
+          <div style="flex:1;font-size:0.82rem;">${_finEsc(bank.description)} <span style="color:#888;">(${_reconMoney(bank.amount)})</span> &harr; ${_finEsc(book.jv_number)} <span style="color:#888;">(${_reconMoney(book.signed_amount)})</span></div>
+          ${_reconConfidencePill(sg.confidence)}
+          ${sg.confidence === 'low' ? `<span style="font-size:0.7rem;color:#8a6d00;">Weak signal &mdash; confirm before matching</span>` : ''}
+        </div>`;
+      }).join('')}
+    </div>`;
+}
+
+function _reconWsToggleSuggestion(key) {
+  if (_reconWsSuggChecked[key]) delete _reconWsSuggChecked[key]; else _reconWsSuggChecked[key] = true;
+  _reconWsRenderSuggestions();
+}
+
+async function _reconWsBulkMatchSuggestions() {
+  const pairs = Object.keys(_reconWsSuggChecked).filter(k => _reconWsSuggChecked[k]).map(k => {
+    const [bankId, jelId] = k.split(':');
+    return { bank_line_id: parseInt(bankId, 10), journal_entry_line_id: parseInt(jelId, 10) };
+  });
+  if (!pairs.length) { showToast('Select at least one suggested match.', 'error'); return; }
+  await _reconWsSubmitMatch(pairs);
+}
+
+async function _reconWsManualMatch() {
+  const bankIds = Object.keys(_reconWsBankChecked).filter(k => _reconWsBankChecked[k]);
+  const bookIds = Object.keys(_reconWsBookChecked).filter(k => _reconWsBookChecked[k]);
+  if (bankIds.length !== 1 || bookIds.length !== 1) {
+    showToast('Select exactly one Bank Line and one Book Line to match manually.', 'error'); return;
+  }
+  await _reconWsSubmitMatch([{ bank_line_id: parseInt(bankIds[0], 10), journal_entry_line_id: parseInt(bookIds[0], 10) }]);
+}
+
+async function _reconWsSubmitMatch(pairs) {
+  const res = await apiFetch(`${_RECON_API}/sessions/${_reconWsSessionId}/match`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pairs })
+  });
+  if (!res) return;
+  if (res.ok) {
+    showToast(`Matched ${pairs.length} pair${pairs.length===1?'':'s'}.`, 'success');
+    await _reconWsRefresh();
+  } else {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
+}
+
+async function _reconWsUnmatch(matchId) {
+  if (!confirm('Break this match? Both sides move back to Unmatched.')) return;
+  const res = await apiFetch(`${_RECON_API}/sessions/${_reconWsSessionId}/matches/${matchId}`, { method: 'DELETE' });
+  if (!res) return;
+  if (res.ok || res.status === 204) {
+    showToast('Match broken.', 'success');
+    await _reconWsRefresh();
+  } else {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
+}
+
+// ── Mark Ignored ─────────────────────────────────────────────────────────────
+function _reconWsOpenIgnoreModal() {
+  const bankIds = Object.keys(_reconWsBankChecked).filter(k => _reconWsBankChecked[k]).map(Number);
+  if (!bankIds.length) { showToast('Select at least one Bank Line to ignore.', 'error'); return; }
+  const wrap = document.createElement('div');
+  wrap.id = 'recon-ignore-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:white;border-radius:8px;padding:24px;width:440px;max-width:92vw;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 10px;font-size:1.05rem;color:#2c3e50;">Mark Ignored</h3>
+      <p style="font-size:0.85rem;color:#555;margin:0 0 10px;">${bankIds.length} line${bankIds.length===1?'':'s'} selected.</p>
+      <label class="fin-form-label" style="display:block;margin-bottom:6px;">Reason <span class="fin-required">*</span></label>
+      <textarea id="recon-ignore-reason" class="fin-form-textarea" rows="3" maxlength="500" placeholder="e.g. 'Awaiting bank reversal', 'Duplicate statement line', 'Belongs to next period'."></textarea>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" style="background:var(--coral-500,#D94040);border-color:var(--coral-500,#D94040);color:#fff;" onclick="document.getElementById('recon-ignore-modal-overlay').remove()">Cancel</button>
+        <button class="fin-btn-teal" id="recon-ignore-confirm-btn">Mark Ignored</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  document.getElementById('recon-ignore-confirm-btn').onclick = async () => {
+    const reason = document.getElementById('recon-ignore-reason').value.trim();
+    if (!reason) { showToast('Reason is required.', 'error'); return; }
+    const res = await apiFetch(`${_RECON_API}/sessions/${_reconWsSessionId}/mark-ignored`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bank_line_ids: bankIds, reason })
+    });
+    if (!res) return;
+    if (res.ok) {
+      wrap.remove();
+      showToast('Lines marked ignored.', 'success');
+      await _reconWsRefresh();
+    } else {
+      showToast('Error: ' + await parseApiError(res), 'error');
+    }
+  };
+}
+
+// ── Post Adjustment — reuses journal-entries.js's debit/credit line pattern ─
+let _reconAdjDebitLines = [], _reconAdjCreditLines = [];
+
+async function _reconWsOpenAdjustModal() {
+  await _pvLoadLookups();
+  _reconAdjDebitLines = [{ account_id: '', amount: '' }];
+  _reconAdjCreditLines = [{ account_id: '', amount: '' }];
+  const today = new Date().toISOString().split('T')[0];
+  const wrap = document.createElement('div');
+  wrap.id = 'recon-adjust-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;overflow-y:auto;';
+  wrap.innerHTML = `
+    <div style="background:white;border-radius:8px;padding:24px;width:560px;max-width:92vw;max-height:90vh;overflow-y:auto;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 14px;font-size:1.05rem;color:#2c3e50;">Post Adjustment</h3>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Description <span class="fin-required">*</span></label>
+        <input type="text" id="recon-adj-desc" class="fin-form-input" maxlength="200" placeholder="e.g. Bank charges June 2026">
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Posting Date <span class="fin-required">*</span></label>
+        <input type="date" id="recon-adj-date" class="fin-form-input" value="${today}">
+      </div>
+      <div class="fin-section-label" style="margin-top:10px;">Debit</div>
+      <table class="fin-li-table">
+        <thead><tr><th>GL Account</th><th>Amount</th><th></th></tr></thead>
+        <tbody id="recon-adj-debit-lines"></tbody>
+      </table>
+      <a href="#" style="color:#2db3b3;font-weight:600;text-decoration:underline;font-size:0.85rem;" onclick="_reconAdjAddLine('debit');return false;">+ Add More</a>
+      <div class="fin-section-label" style="margin-top:14px;">Credit</div>
+      <table class="fin-li-table">
+        <thead><tr><th>GL Account</th><th>Amount</th><th></th></tr></thead>
+        <tbody id="recon-adj-credit-lines"></tbody>
+      </table>
+      <a href="#" style="color:#2db3b3;font-weight:600;text-decoration:underline;font-size:0.85rem;" onclick="_reconAdjAddLine('credit');return false;">+ Add More</a>
+      <div style="margin-top:12px;font-size:0.85rem;">Debit total: <span id="recon-adj-debit-total">KES 0.00</span> &middot; Credit total: <span id="recon-adj-credit-total">KES 0.00</span></div>
+      <span style="display:block;color:var(--coral-500,#D94040);font-size:0.82rem;margin-top:4px;" id="recon-adj-balance-err"></span>
+      <div style="display:flex;gap:10px;margin-top:18px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="document.getElementById('recon-adjust-modal-overlay').remove()">Cancel</button>
+        <button class="fin-btn-teal" id="recon-adj-post-btn" disabled onclick="_reconWsSubmitAdjustment()">Post Adjustment</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  _reconAdjRenderLines('debit'); _reconAdjRenderLines('credit');
+}
+
+function _reconAdjLineHtml(line, idx, type) {
+  const list = type === 'debit' ? _reconAdjDebitLines : _reconAdjCreditLines;
+  return `<tr>
+    <td><select class="fin-li-input" onchange="_reconAdjUpdateLine('${type}',${idx},'account_id',this.value)">
+      <option value="">Please Select</option>${_pvAccountOptions(line.account_id)}
+    </select></td>
+    <td><input type="number" class="fin-li-input" step="0.01" min="0.01" value="${line.amount||''}" oninput="_reconAdjUpdateLine('${type}',${idx},'amount',this.value)"></td>
+    <td><button class="fin-btn-li-rm" ${list.length<=1?'disabled':''} onclick="_reconAdjRemoveLine('${type}',${idx})">&times;</button></td>
+  </tr>`;
+}
+function _reconAdjRenderLines(type) {
+  const list = type === 'debit' ? _reconAdjDebitLines : _reconAdjCreditLines;
+  const el = document.getElementById(`recon-adj-${type}-lines`);
+  if (el) el.innerHTML = list.map((l, i) => _reconAdjLineHtml(l, i, type)).join('');
+  _reconAdjRecalc();
+}
+function _reconAdjAddLine(type) {
+  (type === 'debit' ? _reconAdjDebitLines : _reconAdjCreditLines).push({ account_id: '', amount: '' });
+  _reconAdjRenderLines(type);
+}
+function _reconAdjRemoveLine(type, idx) {
+  const list = type === 'debit' ? _reconAdjDebitLines : _reconAdjCreditLines;
+  if (list.length <= 1) return;
+  list.splice(idx, 1);
+  _reconAdjRenderLines(type);
+}
+function _reconAdjUpdateLine(type, idx, key, val) {
+  const list = type === 'debit' ? _reconAdjDebitLines : _reconAdjCreditLines;
+  list[idx][key] = key === 'account_id' ? parseInt(val, 10) : val;
+  _reconAdjRecalc();
+}
+function _reconAdjRecalc() {
+  const sum = list => list.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+  const debitTotal = sum(_reconAdjDebitLines), creditTotal = sum(_reconAdjCreditLines);
+  const debitEl = document.getElementById('recon-adj-debit-total');
+  const creditEl = document.getElementById('recon-adj-credit-total');
+  if (debitEl) debitEl.textContent = _reconMoney(debitTotal);
+  if (creditEl) creditEl.textContent = _reconMoney(creditTotal);
+  const diff = Math.abs(debitTotal - creditTotal);
+  const balanced = diff <= 0.005 && debitTotal > 0;
+  const errEl = document.getElementById('recon-adj-balance-err');
+  if (errEl) errEl.textContent = balanced ? '' : `Debit and credit totals must match. Difference: ${_reconMoney(diff)}`;
+  const btn = document.getElementById('recon-adj-post-btn');
+  if (btn) btn.disabled = !balanced;
+}
+
+async function _reconWsSubmitAdjustment() {
+  const description = document.getElementById('recon-adj-desc')?.value.trim();
+  const entryDate = document.getElementById('recon-adj-date')?.value;
+  if (!description || !entryDate) { showToast('Description and Posting Date are required.', 'error'); return; }
+  const lines = [
+    ..._reconAdjDebitLines.filter(l => l.account_id && l.amount).map(l => ({ account_id: l.account_id, line_type: 'debit', amount: l.amount })),
+    ..._reconAdjCreditLines.filter(l => l.account_id && l.amount).map(l => ({ account_id: l.account_id, line_type: 'credit', amount: l.amount })),
+  ];
+  if (lines.length < 2) { showToast('Add at least one debit and one credit line.', 'error'); return; }
+  const res = await apiFetch(`${_RECON_API}/sessions/${_reconWsSessionId}/adjust`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ entry_date: entryDate, description, lines })
+  });
+  if (!res) return;
+  if (res.ok) {
+    const data = await res.json();
+    document.getElementById('recon-adjust-modal-overlay')?.remove();
+    showToast(`Adjustment posted (${data.jv_number}).`, 'success');
+    await _reconWsRefresh();
+  } else {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
+}
+
+// ── Complete / Reopen ────────────────────────────────────────────────────────
+async function _reconWsComplete() {
+  const blockersEl = document.getElementById('recon-ws-blockers');
+  if (blockersEl) blockersEl.innerHTML = '';
+  const res = await apiFetch(`${_RECON_API}/sessions/${_reconWsSessionId}/complete`, { method: 'POST' });
+  if (!res) return;
+  if (res.ok) {
+    showToast('Session completed.', 'success');
+    await _reconWsRefresh();
+  } else {
+    // CompleteResult carries no blockers[] array — failure is a plain error
+    // response with a .detail string, possibly listing several reasons
+    // separated by "; " or newlines. Render each on its own line either way.
+    const msg = await parseApiError(res);
+    const reasons = msg.split(/;\s*|\n+/).map(s => s.trim()).filter(Boolean);
+    if (blockersEl) {
+      blockersEl.innerHTML = `<div style="background:#FBEAEA;border-left:3px solid var(--coral-500,#D94040);border-radius:6px;padding:12px 16px;margin-bottom:16px;font-size:0.85rem;color:#7a2020;">
+        <div style="font-weight:600;margin-bottom:4px;">Cannot complete:</div>
+        <ul style="margin:0;padding-left:18px;">${reasons.map(r => `<li>${_finEsc(r)}</li>`).join('')}</ul>
+      </div>`;
+    }
+  }
+}
+
+async function _reconWsReopen() {
+  if (!confirm("Reopen this session? You'll be able to unmatch lines, add adjustments, and re-complete. History is preserved.")) return;
+  const res = await apiFetch(`${_RECON_API}/sessions/${_reconWsSessionId}/reopen`, { method: 'POST' });
+  if (!res) return;
+  if (res.ok) {
+    showToast('Session reopened.', 'success');
+    await _reconWsRefresh();
+  } else {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
+}
+
+// ==================== STATEMENT IMPORTS — sibling utility (§4.6) ====================
+let _reconImpActiveTab = 'uploads';
+const _RECON_IMPORT_STATUS_COLORS = {
+  processing: '#8a6d00;background:#f5e6a8',
+  complete:   '#1e7e34;background:#dcf3e2',
+  failed:     '#c0392b;background:#fbdcdc',
+};
+function _reconImportStatusBadge(status) {
+  const c = _RECON_IMPORT_STATUS_COLORS[status] || '#888;background:#eee';
+  const [color, bg] = c.split(';background:');
+  const label = status ? status.charAt(0).toUpperCase() + status.slice(1) : '—';
+  return `<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:0.78rem;font-weight:600;color:${color};background:${bg};">${_finEsc(label)}</span>`;
+}
+
+async function loadReconImportsView(container) {
+  await _tpFlLoadBankAccounts();
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Statement Imports</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Bank &amp; Cash &rsaquo; Statement Imports</div>
+      </div>
+      <div id="recon-imp-tabs" style="display:flex;gap:8px;margin-bottom:16px;"></div>
+      <div id="recon-imp-tab-content"></div>
+    </div>`;
+  _reconImpRenderTabs();
+  await _reconImpRenderTab();
+}
+
+function _reconImpRenderTabs() {
+  const el = document.getElementById('recon-imp-tabs');
+  if (!el) return;
+  el.innerHTML = `
+    <button class="${_reconImpActiveTab==='uploads'?'fin-btn-teal':'fin-btn-outline'}" onclick="_reconImpSetTab('uploads')">Uploads</button>
+    <button class="${_reconImpActiveTab==='sync'?'fin-btn-teal':'fin-btn-outline'}" onclick="_reconImpSetTab('sync')">Co-op Sync</button>`;
+}
+
+async function _reconImpSetTab(tab) {
+  _reconImpActiveTab = tab;
+  _reconImpRenderTabs();
+  await _reconImpRenderTab();
+}
+
+async function _reconImpRenderTab() {
+  const el = document.getElementById('recon-imp-tab-content');
+  if (!el) return;
+  if (_reconImpActiveTab === 'sync') {
+    _reconImpRenderSyncTab(el);
+  } else {
+    _reconImpRenderUploadsTab(el);
+    await _reconImpReloadList();
+  }
+}
+
+// ── Uploads tab ──────────────────────────────────────────────────────────────
+function _reconImpRenderUploadsTab(el) {
+  el.innerHTML = `
+    <div class="fin-form-wrap" style="max-width:520px;">
+      <div class="fin-form-group">
+        <label class="fin-form-label">Bank Account <span class="fin-required">*</span></label>
+        <select id="recon-imp-upload-bank" class="fin-form-select"><option value="">Please Select</option>${_reconBankAccountOptions('')}</select>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Statement File <span class="fin-required">*</span></label>
+        <input type="file" id="recon-imp-upload-file" accept=".xlsx,.csv">
+      </div>
+      <div class="fin-form-actions">
+        <button class="fin-btn-teal" id="recon-imp-upload-btn" onclick="_reconImpSubmitUpload()">Upload</button>
+      </div>
+      <div id="recon-imp-upload-status"></div>
+    </div>
+    <h3 style="font-size:0.92rem;margin:22px 0 10px;">Imports</h3>
+    <div id="recon-imp-list"></div>`;
+}
+
+async function _reconImpSubmitUpload() {
+  const bankAccountId = document.getElementById('recon-imp-upload-bank')?.value;
+  const fileInput = document.getElementById('recon-imp-upload-file');
+  const file = fileInput && fileInput.files && fileInput.files[0];
+  if (!bankAccountId || !file) { showToast('Bank Account and a statement file are required.', 'error'); return; }
+  const statusEl = document.getElementById('recon-imp-upload-status');
+  const btn = document.getElementById('recon-imp-upload-btn');
+  btn.disabled = true;
+  if (statusEl) statusEl.innerHTML = `<p style="color:#888;font-size:0.85rem;margin-top:10px;">Uploading&#8230;</p>`;
+  const formData = new FormData();
+  formData.append('bank_account_id', bankAccountId);
+  formData.append('file', file);
+  const res = await apiFetch(`${_RECON_API}/imports/upload`, { method: 'POST', body: formData });
+  btn.disabled = false;
+  if (!res) return;
+  if (res.ok) {
+    const data = await res.json();
+    if (statusEl) statusEl.innerHTML = `<p style="color:#888;font-size:0.85rem;margin-top:10px;">Parsing&#8230;</p>`;
+    fileInput.value = '';
+    await _reconImpPollImport(data.import_id, data.row_count, data.warnings || []);
+    await _reconImpReloadList();
+  } else {
+    if (statusEl) statusEl.innerHTML = '';
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
+}
+
+async function _reconImpPollImport(importId, rowCountHint, warnings) {
+  const statusEl = document.getElementById('recon-imp-upload-status');
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const res = await apiFetch(`${_RECON_API}/imports/${importId}`);
+    if (!res || !res.ok) break;
+    const data = await res.json();
+    if (data.status === 'complete') {
+      showToast(`Parsed ${data.row_count} line${data.row_count === 1 ? '' : 's'}.`, 'success');
+      if (warnings.length && statusEl) {
+        statusEl.innerHTML = `<div style="background:#FBF3D9;border-left:3px solid var(--gold-500,#C9A227);border-radius:6px;padding:8px 12px;margin-top:10px;font-size:12.5px;color:#5c4a00;">${warnings.map(w=>_finEsc(w)).join('<br>')}</div>`;
+      } else if (statusEl) {
+        statusEl.innerHTML = '';
+      }
+      return;
+    }
+    if (data.status === 'failed') {
+      if (statusEl) statusEl.innerHTML = `<div style="background:#FBEAEA;border-left:3px solid var(--coral-500,#D94040);border-radius:6px;padding:8px 12px;margin-top:10px;font-size:12.5px;color:#7a2020;">${_finEsc(data.error_message || 'Parse failed.')}</div>`;
+      return;
+    }
+    await new Promise(r => setTimeout(r, 1500));
+  }
+  if (statusEl) statusEl.innerHTML = `<p style="color:#888;font-size:0.85rem;margin-top:10px;">Still processing &mdash; refresh the Imports list shortly.</p>`;
+}
+
+async function _reconImpReloadList() {
+  const el = document.getElementById('recon-imp-list');
+  if (!el) return;
+  const res = await apiFetch(`${_RECON_API}/imports`);
+  if (!res || !res.ok) { el.innerHTML = `<p style="color:#888;padding:14px;">Could not load imports.</p>`; return; }
+  const list = _toArray(await res.json());
+  if (!list.length) { el.innerHTML = `<p style="color:#aaa;padding:14px;font-size:0.85rem;">No imports yet.</p>`; return; }
+  el.innerHTML = `
+    <table class="fin-li-table">
+      <thead><tr><th>Filename</th><th>Bank Account</th><th>Uploaded</th><th>Status</th><th>Lines</th><th></th></tr></thead>
+      <tbody>
+        ${list.map(imp => `<tr>
+          <td>${_finEsc(imp.filename)}</td>
+          <td>${_finEsc(_tpFlBankAccountName(imp.bank_account_id))}</td>
+          <td>${_reconDate(imp.uploaded_at)}</td>
+          <td>${_reconImportStatusBadge(imp.status)}${imp.status==='failed' && imp.error_message ? `<div style="font-size:11px;color:#c0392b;margin-top:2px;">${_finEsc(imp.error_message)}</div>` : ''}</td>
+          <td>${imp.row_count ?? '—'}</td>
+          <td><button class="fin-btn-outline" style="padding:3px 10px;font-size:0.78rem;" onclick="_reconImpDiscard(${imp.id})">Discard</button></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
+async function _reconImpDiscard(importId) {
+  if (!confirm('Discard this import? This is only allowed if no line from it has been matched yet.')) return;
+  const res = await apiFetch(`${_RECON_API}/imports/${importId}/discard`, { method: 'POST' });
+  if (!res) return;
+  if (res.ok || res.status === 204) {
+    showToast('Import discarded.', 'success');
+    await _reconImpReloadList();
+  } else {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
+}
+
+// ── Co-op Sync tab ───────────────────────────────────────────────────────────
+// sync-coop takes bank_account_id as a required query param and no request
+// body — the live schema has no from_date/to_date params at all, unlike the
+// addendum's prose; it always pulls every unsynced Co-op IPN transaction for
+// the account.
+function _reconImpRenderSyncTab(el) {
+  const coopGuess = (_tpFlBankAccounts || []).find(b => /coop|co-op/i.test(b.bank_name || ''));
+  el.innerHTML = `
+    <div class="fin-form-wrap" style="max-width:480px;">
+      <div class="fin-form-group">
+        <label class="fin-form-label">Bank Account <span class="fin-required">*</span></label>
+        <select id="recon-sync-bank" class="fin-form-select"><option value="">Please Select</option>${_reconBankAccountOptions(coopGuess ? coopGuess.id : '')}</select>
+      </div>
+      <span style="font-size:0.78rem;color:#888;">Pulls every unsynced Co-op IPN transaction for this account. Safe to run repeatedly &mdash; duplicates are ignored.</span>
+      <div class="fin-form-actions">
+        <button class="fin-btn-teal" onclick="_reconImpSubmitSync()">Sync</button>
+      </div>
+      <div id="recon-sync-result"></div>
+    </div>`;
+}
+
+async function _reconImpSubmitSync() {
+  const bankAccountId = document.getElementById('recon-sync-bank')?.value;
+  if (!bankAccountId) { showToast('Bank Account is required.', 'error'); return; }
+  const res = await apiFetch(`${_RECON_API}/sync-coop?bank_account_id=${encodeURIComponent(bankAccountId)}`, { method: 'POST' });
+  if (!res) return;
+  const resultEl = document.getElementById('recon-sync-result');
+  if (res.ok) {
+    const data = await res.json();
+    const msg = `Synced. Inserted ${data.inserted}, skipped ${data.skipped_duplicates} duplicate${data.skipped_duplicates===1?'':'s'}.`;
+    showToast(msg, 'success');
+    if (resultEl) resultEl.innerHTML = `<p style="color:#1e7e34;font-size:0.85rem;margin-top:10px;">${_finEsc(msg)}</p>`;
+  } else {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
 }
 

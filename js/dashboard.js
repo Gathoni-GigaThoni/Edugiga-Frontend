@@ -183,7 +183,14 @@ function showDashboard() {
                   <li id="sidebar-fin-fee-setup"      class="sidebar-sub-sub" onclick="loadView('fin-fee-setup-per-class')">Class Fee Setup (Legacy)</li>
                 </ul>
               </li>
-              <li onclick="loadView('cash-bank-management')">Cash and Bank Management</li>
+              <li class="dropdown">
+                ${flyoutGroupHeader('Bank & Cash', 'fin-bankcash-dropdown')}
+                <ul id="fin-bankcash-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('fin-bankcash-dropdown')}">
+                  <li id="sidebar-fin-bc-mgmt"    class="sidebar-sub-sub" onclick="loadView('cash-bank-management')">Cash and Bank Management</li>
+                  <li id="sidebar-fin-bc-recon"   class="sidebar-sub-sub" onclick="loadView('bank-cash-reconciliation-workspace')">Reconciliation Workspace</li>
+                  <li id="sidebar-fin-bc-imports" class="sidebar-sub-sub" onclick="loadView('bank-cash-reconciliation-imports')">Statement Imports</li>
+                </ul>
+              </li>
               <li class="dropdown">
                 ${flyoutGroupHeader('Tendepay', 'fin-tendepay-dropdown')}
                 <ul id="fin-tendepay-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('fin-tendepay-dropdown')}">
@@ -1125,7 +1132,15 @@ async function loadView(view) {
     case 'fin-payment-modes':
       setActiveSidebarItem('sidebar-fin-pay-modes'); openFinUtilitiesDropdown();
       loadFinPlaceholderView(main, 'Payment Modes'); break;
-    case 'cash-bank-management': showPlaceholder(main, 'Cash and Bank Management'); break;
+    case 'cash-bank-management':
+      setActiveSidebarItem('sidebar-fin-bc-mgmt'); openFinBankCashDropdown();
+      showPlaceholder(main, 'Cash and Bank Management'); break;
+    case 'bank-cash-reconciliation-workspace':
+      setActiveSidebarItem('sidebar-fin-bc-recon'); openFinBankCashDropdown();
+      await loadReconSessionsView(main); break;
+    case 'bank-cash-reconciliation-imports':
+      setActiveSidebarItem('sidebar-fin-bc-imports'); openFinBankCashDropdown();
+      await loadReconImportsView(main); break;
     // Document Approvals
     case 'document-approvals-queue':
       setActiveSidebarItem('sidebar-da-queue'); await loadDaQueueView(main); break;
