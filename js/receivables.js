@@ -1248,7 +1248,7 @@ async function openRecordPaymentModal(invoiceId, balanceDue, incomeAccountId) {
           <option value="">Please Select</option>
           <option value="cash">Cash</option>
           <option value="bank_transfer">Bank Transfer</option>
-          <option value="mpesa">M-Pesa</option>
+          <option value="coop_paybill">Co-op Paybill</option>
           <option value="cheque">Cheque</option>
           <option value="card">Card</option>
         </select>

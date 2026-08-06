@@ -5986,8 +5986,244 @@ async function _rtReload() {
       {label:'Status',                             key:'status',               fmt:v=>_rtStatusBadge(v)},
       {label:'Initiated By',                       key:'initiated_by',         fmt:v=>v?_finEsc(String(v)):'Paybill (customer-initiated)'},
       {label:'Transaction Date',                   key:'transaction_date',     fmt:v=>_rtDate(v)},
-      {label:'Narration',                          key:'narration',            fmt:v=>v||'—'},
     ],
+    detailActions: t => _rtBankDetailsCard(t),
   });
+}
+
+// Co-op IPN bank-side fields (BE/FE Contract Addendum 2026-08-06 §2.4) — only
+// populated on transactions landed via Co-op Paybill; pre-IPN rows have all
+// seven null, so suppress the card entirely rather than show a wall of "—".
+function _rtBankDetailsCard(t) {
+  const fields = [
+    {label:'AcctNo',          value: t.acct_no},
+    {label:'Event Type',      value: t.event_type},
+    {label:'Narration',       value: t.narration},
+    {label:'Booked Balance',  value: t.booked_balance != null ? _rtMoney(t.booked_balance) : null},
+    {label:'Cleared Balance', value: t.cleared_balance != null ? _rtMoney(t.cleared_balance) : null},
+    {label:'Posting Date',    value: t.posting_date ? _rtDate(t.posting_date) : null},
+    {label:'Value Date',      value: t.value_date ? _rtDate(t.value_date) : null},
+  ];
+  if (!fields.some(f => f.value != null && f.value !== '')) return '';
+  return `
+    <div class="detail-info-card" style="margin-top:16px;">
+      <div style="font-size:0.78rem;font-weight:600;color:var(--navy-700,#1B3057);text-transform:uppercase;margin-bottom:10px;">Bank details</div>
+      <div class="detail-fields-grid">
+        ${fields.map(f => `
+          <div class="detail-field">
+            <span class="detail-field-label">${f.label}</span>
+            <span class="detail-field-value">${f.value != null && f.value !== '' ? f.value : '—'}</span>
+          </div>`).join('')}
+      </div>
+    </div>`;
+}
+
+// ── Unmatched Co-op Payments (BE/FE Contract Addendum 2026-08-06 §2.5) ─────
+// Co-op Paybill inflows the backend couldn't auto-attribute to a student.
+// Modeled on loadTendepaySuspenseView (unmatched -> resolve-via-modal), but
+// this queue additionally offers suggested_students embedded on the detail
+// response, a manual student search, and a required-reason reject path.
+const _COOP_API = `${API_BASE}/receivables/coop-unmatched`;
+const _COOP_STATUS_COLORS = {
+  pending_review: '#8a6d00;background:#f5e6a8',
+  resolved:       '#1e7e34;background:#dcf3e2',
+  rejected:       '#c0392b;background:#fbdcdc',
+};
+function _coopMoney(v) { return formatKES(v); }
+function _coopDate(v) {
+  if (!v) return '—';
+  const d = new Date(v);
+  return isNaN(d) ? v : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+function _coopStatusBadge(status) {
+  const c = _COOP_STATUS_COLORS[status] || '#888;background:#eee';
+  const [color, bg] = c.split(';background:');
+  const label = { pending_review: 'Pending Review', resolved: 'Resolved', rejected: 'Rejected' }[status] || status || '—';
+  return `<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:0.78rem;font-weight:600;color:${color};background:${bg};">${_finEsc(label)}</span>`;
+}
+
+let _coopStatusFilter = 'pending_review';
+
+async function loadCoopUnmatchedView(container) {
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Unmatched Co-op Payments</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Receivables &rsaquo; Unmatched Co-op Payments</div>
+      </div>
+      <div id="coop-status-tabs" style="display:flex;gap:8px;margin-bottom:16px;"></div>
+      <div id="coop-split"></div>
+    </div>`;
+  _coopRenderTabs();
+  await _coopReload();
+}
+
+function _coopRenderTabs() {
+  const el = document.getElementById('coop-status-tabs');
+  if (!el) return;
+  const tabs = [['', 'All'], ['pending_review', 'Pending Review'], ['resolved', 'Resolved'], ['rejected', 'Rejected']];
+  el.innerHTML = tabs.map(([val, label]) => {
+    const active = _coopStatusFilter === val;
+    return `<button class="${active ? 'fin-btn-teal' : 'fin-btn-outline'}" style="padding:6px 14px;font-size:0.85rem;" onclick="_coopSetTab('${val}')">${label}</button>`;
+  }).join('');
+}
+
+async function _coopSetTab(status) {
+  _coopStatusFilter = status;
+  _coopRenderTabs();
+  await _coopReload();
+}
+
+async function _coopReload() {
+  const params = _coopStatusFilter ? `?status=${encodeURIComponent(_coopStatusFilter)}` : '';
+  await renderSplitView({
+    container: document.getElementById('coop-split'),
+    moduleKey: 'finance.receivables',
+    title: 'Unmatched Co-op Payments',
+    breadcrumb: [{label:'Dashboard',view:null},{label:'Finance',view:null},{label:'Unmatched Co-op Payments'}],
+    apiUrl: `${_COOP_API}${params}`,
+    searchFields: ['narration', 'transaction_gateway_ref', 'transaction_payment_ref'],
+    col1Label: 'Amount', col2Label: 'Status',
+    col1: t => {
+      const sub = (t.narration || '').length > 60 ? _finEsc(t.narration.slice(0, 60)) + '&hellip;' : _finEsc(t.narration || '—');
+      return `<strong>${_coopMoney(t.amount)}</strong><br><span style="font-weight:400;font-size:12px;color:#888;" title="${_finEsc(t.narration || '')}">${_coopDate(t.transaction_date || t.created_at)} &middot; ${sub}</span>`;
+    },
+    col2: t => _coopStatusBadge(t.status),
+    rowLabel: t => _coopMoney(t.amount),
+    rowSub: t => _coopDate(t.transaction_date || t.created_at),
+    idKey: 'id',
+    detailFields: [
+      {label:'Amount',           key:'amount',                  fmt:v=>_coopMoney(v)},
+      {label:'Status',           key:'status',                  fmt:v=>_coopStatusBadge(v)},
+      {label:'Transaction Date', key:'transaction_date',        fmt:v=>_coopDate(v)},
+      {label:'Received At',      key:'created_at',              fmt:v=>_coopDate(v)},
+      {label:'Narration',        key:'narration',                fmt:v=>v||'—', fullWidth:true},
+      {label:'AcctNo',           key:'transaction_acct_no',      fmt:v=>v||'—'},
+      {label:'Gateway Ref',      key:'transaction_gateway_ref',  fmt:v=>v||'—'},
+      {label:'Payment Ref',      key:'transaction_payment_ref',  fmt:v=>v||'—'},
+      {label:'Notes',            key:'notes',                    fmt:v=>v||'—', hideWhen:item=>!item.notes},
+    ],
+    renderAdd: el => {
+      el.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--grey-600,#5F6B7C)">
+        <p style="font-weight:600;margin-bottom:8px;">Unmatched Co-op Payments</p>
+        <p style="font-size:13px;">Co-op Paybill inflows that could not be auto-matched to a student land here.
+        Click a row to see the details and any suggested matches.</p>
+      </div>`;
+    },
+    detailActions: item => _coopDetailActions(item),
+  });
+}
+
+function _coopDetailActions(item) {
+  if (item.status !== 'pending_review') {
+    return `<div style="color:var(--grey-600,#5F6B7C);font-size:0.9rem;">This payment has already been ${_finEsc((item.status||'').replace('_',' '))}.</div>`;
+  }
+  const suggestions = item.suggested_students || [];
+  const suggestionCards = suggestions.length ? suggestions.map((s, i) => `
+    <div style="border:1px solid var(--grey-100,#eee);border-radius:6px;padding:10px 14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">
+      <div>
+        <div style="font-weight:600;font-size:0.9rem;">${_finEsc(s.first_name)} ${_finEsc(s.last_name)}</div>
+        <div style="font-size:12px;color:#888;">${_finEsc(s.student_id)}${suggestions.length > 1 ? ` &middot; Match ${i + 1}` : ''}</div>
+      </div>
+      <button class="btn" onclick="_coopAssign(${item.id}, ${s.id})">Assign</button>
+    </div>`).join('')
+    : `<p style="font-size:13px;color:#888;">No suggested matches found.</p>`;
+
+  return `
+    <div style="width:100%;">
+      <div style="font-size:0.78rem;font-weight:600;color:var(--navy-700,#1B3057);text-transform:uppercase;margin-bottom:10px;">Suggested Students</div>
+      ${suggestionCards}
+      <div style="font-size:0.78rem;font-weight:600;color:var(--navy-700,#1B3057);text-transform:uppercase;margin:18px 0 10px;">Manual Search</div>
+      <div style="position:relative;">
+        <input type="text" id="coop-manual-search" class="fin-form-input" placeholder="Search by name or admission number…" oninput="_coopSearchStudent(${item.id}, this.value)" autocomplete="off">
+        <div id="coop-manual-search-dd" style="display:none;position:absolute;z-index:20;background:#fff;border:1px solid var(--grey-200,#D6DAE3);border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,0.12);max-height:220px;overflow-y:auto;width:100%;"></div>
+      </div>
+      <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--grey-100,#eee);">
+        <button class="fin-btn-cancel" onclick="_coopOpenRejectModal(${item.id})">Reject</button>
+      </div>
+    </div>`;
+}
+
+let _coopSearchDebounce = null;
+function _coopSearchStudent(unmatchedId, val) {
+  clearTimeout(_coopSearchDebounce);
+  const dd = document.getElementById('coop-manual-search-dd');
+  if (!val.trim()) { if (dd) dd.style.display = 'none'; return; }
+  _coopSearchDebounce = setTimeout(async () => {
+    const res = await apiFetch(`${API_BASE}/students/?search=${encodeURIComponent(val)}`);
+    const list = (res && res.ok) ? _toArray(await res.json().catch(() => [])) : [];
+    if (!dd) return;
+    if (!list.length) {
+      dd.innerHTML = `<div style="padding:10px 14px;color:#888;font-size:0.88rem;">No results found</div>`;
+    } else {
+      dd.innerHTML = list.slice(0, 10).map(s => {
+        const name = `${s.first_name || ''} ${s.last_name || ''}`.trim();
+        return `<a href="#" style="display:block;padding:9px 14px;text-decoration:none;color:var(--navy-900,#0D2137);border-bottom:1px solid var(--grey-100,#ECEEF2);"
+                   onclick="_coopAssign(${unmatchedId}, ${s.id});return false;">
+          ${_finEsc(s.student_id || '')} — ${_finEsc(name)}
+        </a>`;
+      }).join('');
+    }
+    dd.style.display = 'block';
+  }, 300);
+}
+document.addEventListener('click', (e) => {
+  const dd = document.getElementById('coop-manual-search-dd');
+  const input = document.getElementById('coop-manual-search');
+  if (dd && input && !dd.contains(e.target) && e.target !== input) dd.style.display = 'none';
+});
+
+async function _coopAssign(unmatchedId, studentId) {
+  const res = await apiFetch(`${_COOP_API}/${unmatchedId}/assign`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ student_id: studentId })
+  });
+  if (!res) return;
+  if (res.ok) {
+    const data = await res.json().catch(() => ({}));
+    showToast(`Assigned to ${data.resolved_student_id ? 'student #' + data.resolved_student_id : 'student'}. Fee balance updated.`, 'success');
+    await _coopReload();
+  } else {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
+}
+
+function _coopOpenRejectModal(unmatchedId) {
+  const wrap = document.createElement('div');
+  wrap.id = 'coop-reject-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:white;border-radius:8px;padding:24px;width:440px;max-width:92vw;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 14px;font-size:1.05rem;color:#2c3e50;">Reject Payment</h3>
+      <label class="fin-form-label" style="display:block;margin-bottom:6px;">Reason <span class="fin-required">*</span></label>
+      <textarea id="coop-reject-reason" class="fin-form-textarea" rows="4" maxlength="500" placeholder="Enter reason..." oninput="document.getElementById('coop-reject-count').textContent = this.value.length"></textarea>
+      <div style="text-align:right;font-size:11px;color:#999;"><span id="coop-reject-count">0</span>/500</div>
+      <div style="background:#FBEAEA;border-left:3px solid var(--coral-500,#D94040);border-radius:6px;padding:10px 14px;margin-top:10px;font-size:12.5px;color:#7a2020;line-height:1.5;">
+        Rejecting leaves the payment PENDING on the transactions table for off-book refund. It does not credit any student.
+      </div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="document.getElementById('coop-reject-modal-overlay').remove()">Cancel</button>
+        <button class="fin-btn-teal" id="coop-reject-confirm-btn" style="background:var(--coral-500,#D94040);border-color:var(--coral-500,#D94040);">Reject</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  document.getElementById('coop-reject-confirm-btn').onclick = async () => {
+    const reason = document.getElementById('coop-reject-reason').value.trim();
+    if (!reason) { showToast('Reason is required.', 'error'); return; }
+    const res = await apiFetch(`${_COOP_API}/${unmatchedId}/reject`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason })
+    });
+    if (!res) return;
+    if (res.ok) {
+      wrap.remove();
+      showToast('Payment rejected. Log the reason with the finance lead for the refund process.', 'success');
+      await _coopReload();
+    } else {
+      showToast('Error: ' + await parseApiError(res), 'error');
+    }
+  };
 }
 

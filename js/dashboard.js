@@ -218,6 +218,7 @@ function showDashboard() {
                   <li id="sidebar-fin-txns"       class="sidebar-sub-sub" onclick="loadView('fin-transactions')">Transactions</li>
                   <li id="sidebar-fin-deposit"    class="sidebar-sub-sub" onclick="loadView('fin-deposit-slip')">Deposit Slip</li>
                   <li id="sidebar-fin-credit"     class="sidebar-sub-sub" onclick="loadView('fin-credit-notes')">Credit Notes</li>
+                  <li id="sidebar-fin-coop"       class="sidebar-sub-sub" onclick="loadView('fin-coop-unmatched')">Unmatched Co-op Payments</li>
                 </ul>
               </li>
               <li onclick="loadView('cancellations')">Cancellations</li>
@@ -1096,6 +1097,9 @@ async function loadView(view) {
     case 'fin-credit-notes':
       setActiveSidebarItem('sidebar-fin-credit'); openFinReceivablesDropdown();
       loadFinPlaceholderView(main, 'Credit Notes'); break;
+    case 'fin-coop-unmatched':
+      setActiveSidebarItem('sidebar-fin-coop'); openFinReceivablesDropdown();
+      await loadCoopUnmatchedView(main); break;
     // Utilities sub-modules
     case 'fin-chart-of-accounts':
       setActiveSidebarItem('sidebar-fin-coa'); openFinUtilitiesDropdown();
