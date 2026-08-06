@@ -63,8 +63,6 @@ const REPORT_DEFS = {
   'reports-fee-reminder': { title: 'Fee Reminder', api: 'fee-reminder', dateMode: 'asof',
     extra: [{ key: 'days_overdue_threshold', label: 'Days Overdue Threshold', type: 'number', default: 30 }],
     columns: [['student_name','STUDENT NAME'],['student_id','STUDENT ID'],['invoice_ref','INVOICE REF'],['amount_due','AMOUNT DUE'],['days_overdue','DAYS OVERDUE']] },
-  'reports-aged-student-debtors': { title: 'Aged Student Debtors', api: 'aged-student-debtors', dateMode: 'asof',
-    columns: [['student_name','STUDENT NAME'],['student_id','STUDENT ID'],['current','CURRENT'],['30_days','30 DAYS'],['60_days','60 DAYS'],['90_days','90+ DAYS'],['total','TOTAL']] },
   'reports-students-arrears-analysis': { title: 'Students Arrears Analysis', api: 'aged-student-debtors', dateMode: 'asof',
     columns: [['student_name','STUDENT NAME'],['student_id','STUDENT ID'],['current','CURRENT'],['30_days','30 DAYS'],['60_days','60 DAYS'],['90_days','90+ DAYS'],['total','TOTAL']] },
   'reports-customer-aging-analysis': { title: 'Customer Aging Analysis', api: 'customer-aging-analysis', dateMode: 'asof',
@@ -73,9 +71,14 @@ const REPORT_DEFS = {
     columns: [['student_name','STUDENT NAME'],['student_id','STUDENT ID'],['credit_balance','CREDIT BALANCE']] },
   'reports-aged-payables': { title: 'Aged Payables', api: 'aged-payables', dateMode: 'asof',
     columns: [['supplier_name','SUPPLIER NAME'],['current','CURRENT'],['30_days','30 DAYS'],['60_days','60 DAYS'],['90_days','90+ DAYS'],['total','TOTAL']] },
-  // AP sub-ledger vs GL control account. Always 200s — configured/is_reconciled
-  // drive the render, not the HTTP status (§2 of the 2026-07-16 addendum).
-  'reports-ap-reconciliation': { title: 'AP Reconciliation', api: 'ap-reconciliation', dateMode: 'asof', layout: 'ap-reconciliation' },
+  // AP sub-ledger vs GL control account. The comment this replaced claimed
+  // "Always 200s — configured/is_reconciled drive the render, not the HTTP
+  // status" — that no longer matches the live schema: the endpoint's date
+  // param is named `as_of` (no `_date` suffix) and is required with no
+  // default, so the generic asof handler's hardcoded `as_of_date` was never
+  // recognized and every request 422'd. dateParam overrides the param name
+  // for this one route without touching the shared 'asof' handling.
+  'reports-ap-reconciliation': { title: 'AP Reconciliation', api: 'ap-reconciliation', dateMode: 'asof', dateParam: 'as_of', layout: 'ap-reconciliation' },
 
   'reports-daily-cash-return': { title: 'Daily Cash Return', api: 'daily-cash-return', dateMode: 'single', dateParam: 'report_date',
     columns: [['account','ACCOUNT'],['opening_balance','OPENING BALANCE'],['inflows','INFLOWS'],['outflows','OUTFLOWS'],['closing_balance','CLOSING BALANCE']] },
@@ -166,7 +169,7 @@ function _repBuildParams(def, extraFormat) {
     params.set('start_date', document.getElementById('rep-start-date').value);
     params.set('end_date', document.getElementById('rep-end-date').value);
   } else if (def.dateMode === 'asof') {
-    params.set('as_of_date', document.getElementById('rep-asof-date').value);
+    params.set(def.dateParam || 'as_of_date', document.getElementById('rep-asof-date').value);
     if (def.compareDate) {
       const cmp = document.getElementById('rep-compare-date').value;
       if (cmp) params.set('compare_to_date', cmp);

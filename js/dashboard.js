@@ -255,7 +255,6 @@ function showDashboard() {
                 ${flyoutGroupHeader('Reports', 'fin-reports-dropdown')}
                 <ul id="fin-reports-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('fin-reports-dropdown')}">
                   <li class="sidebar-sub-sub" onclick="loadView('reports-aged-payables')">Aged Payables</li>
-                  <li class="sidebar-sub-sub" onclick="loadView('reports-aged-student-debtors')">Aged Student Debtors</li>
                   <li class="sidebar-sub-sub" onclick="loadView('reports-ap-reconciliation')">AP Reconciliation</li>
                   <li class="sidebar-sub-sub" onclick="loadView('reports-balance-sheet')">Balance Sheet</li>
                   <li class="sidebar-sub-sub" onclick="loadView('reports-balances-report')">Balances Report</li>
@@ -1276,7 +1275,6 @@ async function loadView(view) {
     case 'reports-fees-invoiced-per-gl-account':
     case 'reports-fees-paid-per-gl-account':
     case 'reports-balances-report':
-    case 'reports-aged-student-debtors':
     case 'reports-students-arrears-analysis':
     case 'reports-student-prepayment-analysis':
     case 'reports-customer-aging-analysis':
