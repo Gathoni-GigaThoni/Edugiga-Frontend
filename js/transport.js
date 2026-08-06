@@ -1995,16 +1995,9 @@ async function _bsUpRenderStep1() {
 }
 
 async function _bsUpDownloadTemplate() {
-  const res = await apiFetch(`${_BS_API}/upload/template`);
-  if (res && res.ok) {
-    const blob = await res.blob();
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'bus_schedules_upload_template.xlsx';
-    document.body.appendChild(a); a.click(); a.remove();
-  } else if (res) {
-    showToast('Could not download template: ' + await parseApiError(res), 'error');
-  }
+  await authBlobDownload(`${_BS_API}/upload/template`, 'bus_schedules_upload_template.xlsx', {
+    errorPrefix: 'Could not download template: ',
+  });
 }
 
 async function _bsUpUploadFile(input) {

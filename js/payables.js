@@ -419,11 +419,10 @@ async function _pvPvQueueForTendepay(id, debitAccountId, tendepayWalletAccountId
   });
 }
 async function _pvPvPrint(id) {
-  const res = await apiFetch(`${_PV_PV_API}${id}/print`);
-  if (res && res.ok) {
-    const blob = await res.blob();
-    window.open(URL.createObjectURL(blob), '_blank');
-  } else if (res) showToast('Could not open print view: ' + await parseApiError(res), 'error');
+  await authBlobDownload(`${_PV_PV_API}${id}/print`, `payment-voucher-${id}.pdf`, {
+    openInline: true,
+    errorPrefix: 'Could not open print view: ',
+  });
 }
 
 // ── Add / Edit form ──────────────────────────────────────────────────────────
@@ -1546,14 +1545,9 @@ function _pvRenderWhtTable() {
     </table></div>`;
 }
 async function _pvWhtDownload(id) {
-  const res = await apiFetch(`${_PV_WHT_API}/${id}/download`);
-  if (res && res.ok) {
-    const blob = await res.blob();
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `wht-certificate-${id}.pdf`;
-    document.body.appendChild(a); a.click(); a.remove();
-  } else if (res) showToast('Could not download certificate: ' + await parseApiError(res), 'error');
+  await authBlobDownload(`${_PV_WHT_API}/${id}/download`, `wht-certificate-${id}.pdf`, {
+    errorPrefix: 'Could not download certificate: ',
+  });
 }
 async function _pvWhtRegenerate(id) {
   const res = await apiFetch(`${_PV_WHT_API}/${id}/regenerate-pdf`, { method: 'POST' });

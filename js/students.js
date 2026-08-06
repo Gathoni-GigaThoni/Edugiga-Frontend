@@ -2759,13 +2759,9 @@ async function _stuGenerateSoa(studentId) {
 
 async function _stuExportSoa(studentId, format) {
   const { url } = _stuSoaUrl(studentId, format);
-  const res = await apiFetch(url);
-  if (!res || !res.ok) { showToast('Export failed: ' + (res ? await parseApiError(res) : 'network error'), 'error'); return; }
-  const blob = await res.blob();
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `student-statement.${format === 'excel' ? 'xlsx' : 'csv'}`;
-  document.body.appendChild(a); a.click(); a.remove();
+  await authBlobDownload(url, `student-statement.${format === 'excel' ? 'xlsx' : 'csv'}`, {
+    errorPrefix: 'Export failed: ',
+  });
 }
 
 function _stuSoaLineTypePill(type) {

@@ -366,19 +366,9 @@ async function _daSyncOverdue() {
 }
 
 async function _daExportPv() {
-  const res = await apiFetch(`${_DA_API}export/payment-vouchers`);
-  if (!res || !res.ok) { showToast('Could not export.', 'error'); return; }
-  const blob = await res.blob();
-  const cd = res.headers.get('Content-Disposition') || '';
-  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
-  const filename = match ? decodeURIComponent(match[1]) : 'payment-vouchers-export.xlsx';
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  await authBlobDownload(`${_DA_API}export/payment-vouchers`, 'payment-vouchers-export.xlsx', {
+    onError: async () => showToast('Could not export.', 'error'),
+  });
 }
 
 // ==================== SURCHARGE POLICY ====================

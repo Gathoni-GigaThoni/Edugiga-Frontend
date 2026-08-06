@@ -376,14 +376,19 @@ async function loadHrWhtPaymentTypes(prefix, selectedValue) {
 
 // Authenticated blob download for any endpoint that streams a file behind
 // the Bearer token (a raw <a href> sends no Authorization header and 401s).
-// The five near-duplicates originally flagged (procurement.js
-// _reqDownloadPdf, payroll.js _prDownloadRunFile/_prDownloadPayslip,
-// finance.js's two template downloaders) are migrated onto this via
-// `options`. NOT yet migrated: finance-reports.js, document-approvals.js,
-// parent-portal.js, transport.js, payables.js (x2), students.js each have
-// their own copy of the same fetch-blob-CD-parse pattern, found during this
-// migration but out of the scope that was actually requested — a further
-// follow-up, not done here.
+// Every download call site in the admin app is migrated onto this: the
+// original five (procurement.js _reqDownloadPdf, payroll.js
+// _prDownloadRunFile/_prDownloadPayslip, finance.js's two template
+// downloaders) plus a later sweep (finance-reports.js _repExport,
+// document-approvals.js _daExportPv, transport.js _bsUpDownloadTemplate,
+// payables.js _pvPvPrint/_pvWhtDownload, students.js _stuExportSoa).
+// Deliberately NOT migrated: parent-portal.js's ppDownloadDocument — the
+// parent portal is a separate app/token context (ppToken, its own
+// sessionStorage key), not the admin session apiFetch()/authBlobDownload()
+// both assume; routing it through here would send the wrong bearer token
+// and trigger the admin app's logout() on a 401 instead of the parent
+// portal's own handling. It keeps its own fetch() with an explicit
+// Authorization header.
 //   - options.openInline: window.open() the blob instead of triggering a
 //     download (payslip preview never had a real filename/CD parse either).
 //   - options.errorPrefix: prefix for the default parseApiError() toast.

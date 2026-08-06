@@ -231,13 +231,9 @@ async function _repExport(routeKey, format) {
   const def = REPORT_DEFS[routeKey];
   const params = _repBuildParams(def, format);
   try {
-    const res = await apiFetch(_repUrl(def, params));
-    if (!res || !res.ok) { showToast('Export failed: ' + (res ? await parseApiError(res) : 'network error'), 'error'); return; }
-    const blob = await res.blob();
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `${def.api}.${format === 'excel' ? 'xlsx' : 'csv'}`;
-    document.body.appendChild(a); a.click(); a.remove();
+    await authBlobDownload(_repUrl(def, params), `${def.api}.${format === 'excel' ? 'xlsx' : 'csv'}`, {
+      errorPrefix: 'Export failed: ',
+    });
   } catch (e) { showToast('Network error during export.', 'error'); }
 }
 
