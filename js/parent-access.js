@@ -18,20 +18,15 @@ function _paEsc(str) {
 let _paInviteStudent = null; // { id, student_id, name }
 
 async function loadParentPortalAccessView(container) {
-  container.innerHTML = `
-    <div class="sa-page">
-      <div class="sa-header-row">
-        <h2 class="sa-title">Parent Portal Access</h2>
-        <div class="sa-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Parent Portal Access</div>
-      </div>
+  // Backend requires student_management.parent_portal (can_add) on all three
+  // POST actions here (invite/set-password/provision-from-profiles) — was
+  // implicitly super-admin-only before, now an explicit grantable permission.
+  // Hidden, not disabled, matching the _canAddHere convention in renderSplitView
+  // (js/dashboard.js:636) — there's no GET here to let a 403 reveal the gap
+  // naturally, so the client gate has to stand in for it.
+  const _paCanAdd = canAdd('student_management.parent_portal');
 
-      <div style="background:var(--navy-50,#EEF3FA);border-left:3px solid var(--navy-400,#4A6FA5);border-radius:6px;padding:14px 18px;margin-bottom:24px;font-size:13.5px;color:var(--navy-900,#0D2137);line-height:1.6;">
-        Parent portal accounts are created <strong>automatically</strong> when a student's profile is saved
-        with both a parent email and ID document number — the initial password is the ID document number,
-        and a welcome/invite email is sent automatically. The tools below are only for exceptions
-        (email typos, undelivered invites, or backfilling students saved before auto-provisioning existed).
-      </div>
-
+  const toolsGrid = _paCanAdd ? `
       <div class="pa-tools-grid">
         <div class="sa-form-wrap">
           <h3 class="pa-tool-title">Invite / Resend Invite</h3>
@@ -92,6 +87,28 @@ async function loadParentPortalAccessView(container) {
           <div id="pa-provision-result"></div>
         </div>
       </div>
+  ` : `
+      <div style="background:#FBF3D9;border-left:3px solid var(--gold-500,#C9A227);border-radius:6px;padding:14px 18px;font-size:13.5px;color:var(--navy-900,#0D2137);line-height:1.6;">
+        You don't have permission to manage Parent Portal Access. Ask an administrator to grant the
+        Parent Portal permission under Student Management.
+      </div>
+  `;
+
+  container.innerHTML = `
+    <div class="sa-page">
+      <div class="sa-header-row">
+        <h2 class="sa-title">Parent Portal Access</h2>
+        <div class="sa-breadcrumb">Dashboard &rsaquo; Student Management &rsaquo; Parent Portal Access</div>
+      </div>
+
+      <div style="background:var(--navy-50,#EEF3FA);border-left:3px solid var(--navy-400,#4A6FA5);border-radius:6px;padding:14px 18px;margin-bottom:24px;font-size:13.5px;color:var(--navy-900,#0D2137);line-height:1.6;">
+        Parent portal accounts are created <strong>automatically</strong> when a student's profile is saved
+        with both a parent email and ID document number — the initial password is the ID document number,
+        and a welcome/invite email is sent automatically. The tools below are only for exceptions
+        (email typos, undelivered invites, or backfilling students saved before auto-provisioning existed).
+      </div>
+
+      ${toolsGrid}
     </div>
   `;
 }
