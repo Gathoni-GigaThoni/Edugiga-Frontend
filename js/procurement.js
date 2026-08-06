@@ -844,7 +844,14 @@ async function _reqSubmitReject(id) {
 // ── PDF — authenticated blob download, not a raw <a href> (refactor #3) ─────
 async function _reqDownloadPdf(id) {
   const res = await apiFetch(`${API_BASE}/procurement/requisitions/${id}/pdf`);
-  if (!res || !res.ok) { showToast('Could not download the PDF.', 'error'); return; }
+  if (!res || !res.ok) {
+    // Surface the backend detail (e.g. WeasyPrint failure on Render) instead
+    // of a generic toast — matches the diagnostic pattern used for the
+    // requisition list load in dashboard.js.
+    const detail = res ? await parseApiError(res) : 'network error';
+    showToast('Could not download the PDF: ' + detail, 'error');
+    return;
+  }
   const blob = await res.blob();
   const cd = res.headers.get('Content-Disposition') || '';
   const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
