@@ -328,6 +328,7 @@ function showDashboard() {
             <ul id="payroll-dropdown" class="dropdown-menu">
               <li id="sidebar-payroll-esp" onclick="loadView('payroll-esp')">Employee Service Profile</li>
               <li id="sidebar-payroll-runs" onclick="loadView('payroll-runs')">Payroll Runs</li>
+              <li id="sidebar-payroll-contractor-runs" onclick="loadView('payroll-contractor-runs')">Contractor Runs</li>
               <li id="sidebar-payroll-payslips" onclick="loadView('payroll-payslips')">Payslips</li>
               <li class="dropdown">
                 ${flyoutGroupHeader('Utilities', 'payroll-utilities-dropdown')}
@@ -338,6 +339,7 @@ function showDashboard() {
                   <li id="sidebar-payroll-fi"                  class="sidebar-sub-sub" onclick="loadView('payroll-fi')">Financial Institutions</li>
                   <li id="sidebar-payroll-employee-events"     class="sidebar-sub-sub" onclick="loadView('payroll-employee-events')">Employee Events</li>
                   <li id="sidebar-payroll-employee-status"     class="sidebar-sub-sub" onclick="loadView('payroll-employee-status')">Employee Status</li>
+                  <li id="sidebar-payroll-statutory-rates"     class="sidebar-sub-sub" onclick="loadView('payroll-utilities-statutory-rates')">Statutory Rates</li>
                 </ul>
               </li>
             </ul>
@@ -1298,6 +1300,12 @@ async function loadView(view) {
     case 'payroll-runs':
       setActiveSidebarItem('sidebar-payroll-runs');
       await loadPayrollRunsView(main); break;
+    case 'payroll-contractor-runs':
+      setActiveSidebarItem('sidebar-payroll-contractor-runs');
+      await loadContractorRunsView(main); break;
+    case 'payroll-utilities-statutory-rates':
+      setActiveSidebarItem('sidebar-payroll-statutory-rates'); openPayrollDropdowns();
+      await loadStatutoryRatesView(main); break;
     case 'payroll-payslips':
       setActiveSidebarItem('sidebar-payroll-payslips');
       await loadPayrollPayslipsView(main); break;

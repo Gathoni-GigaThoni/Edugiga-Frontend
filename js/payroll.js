@@ -1100,6 +1100,624 @@ async function _prSubmitCreateVoucher(runId) {
   }
 }
 
+// ==================== CONTRACTOR RUNS ====================
+// BE/FE Contract Addendum 2026-08-06 §6. Separate pipeline from Payroll
+// Runs (WHT-only, no PAYE/SHIF/NSSF/AHL) — regular payroll_runs now filter
+// contractors out. No withdraw/delete endpoint exists on the live backend
+// (only list/create/detail/calculate/approve/fee-note), unlike the
+// addendum's action table which also mentions Delete/Withdraw — the FE
+// only wires what's actually there.
+let _crRuns = [];
+let _crSelectedRunId = null;
+let _crStatusFilter = '';
+let _crYearFilter = new Date().getFullYear();
+let _crMonthFilter = '';
+
+const _CR_STATUS_COLORS = {
+  draft: '#888;background:#eee',
+  calculated: '#1B3057;background:#dde3ec',
+  approved: '#8a6d00;background:#f5e6a8',
+  awaiting_payment: '#9a7d0a;background:#fdf3d0',
+  paid: '#1e7e34;background:#dcf3e2',
+  fee_notes_generated: '#0f766e;background:#d3f3ef',
+};
+function _crBadge(status) {
+  const c = _CR_STATUS_COLORS[status] || '#888;background:#eee';
+  const [color, bg] = c.split(';background:');
+  return `<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:0.78rem;font-weight:600;color:${color};background:${bg};">${_finEsc((status || '').replace(/_/g, ' '))}</span>`;
+}
+
+async function loadContractorRunsView(container) {
+  await _pvLoadLookups();
+  await _crLoadRuns();
+  _crRenderShell(container);
+}
+
+async function _crLoadRuns() {
+  const params = new URLSearchParams();
+  if (_crYearFilter) params.set('year', _crYearFilter);
+  if (_crMonthFilter) params.set('month', _crMonthFilter);
+  const res = await apiFetch(`${API_BASE}/payroll/contractor-runs/?${params.toString()}`);
+  _crRuns = res && res.ok ? _toArray(await res.json()) : [];
+}
+
+function _crFilteredRuns() {
+  return _crStatusFilter ? _crRuns.filter(r => r.status === _crStatusFilter) : _crRuns;
+}
+
+function _crRenderShell(container) {
+  container.innerHTML = `
+    ${renderBreadcrumb([{label:'Dashboard',view:null},{label:'Payroll',view:'payroll-contractor-runs'},{label:'Contractor Runs'}])}
+    <div style="background:#EEF3FA;border-left:3px solid var(--navy-400,#4A6FA5);border-radius:6px;padding:10px 16px;margin-bottom:14px;font-size:12.5px;color:var(--navy-900,#0D2137);">
+      Employees only appear on the regular <a href="#" onclick="loadView('payroll-runs');return false;">Payroll Runs</a>.
+      Contractors (tax_profile = contractor) are on their own runs here.
+    </div>
+    <div class="split-layout">
+      <div class="split-left">
+        <div class="split-left-header">
+          <span class="split-left-title">Contractor Runs</span>
+          <span class="split-left-count">${_crFilteredRuns().length}</span>
+        </div>
+        <div style="display:flex;gap:6px;padding:8px 12px;flex-wrap:wrap;">
+          <select id="cr-filter-year" class="fin-filter-select" style="max-width:100px;" onchange="_crApplyFilters()">
+            ${Array.from({length:6},(_,i)=>new Date().getFullYear()-2+i).map(y=>`<option value="${y}" ${y===_crYearFilter?'selected':''}>${y}</option>`).join('')}
+          </select>
+          <select id="cr-filter-month" class="fin-filter-select" style="max-width:120px;" onchange="_crApplyFilters()">
+            <option value="">All Months</option>
+            ${_PR_MONTHS.slice(1).map((m,i)=>`<option value="${i+1}" ${String(i+1)===String(_crMonthFilter)?'selected':''}>${m}</option>`).join('')}
+          </select>
+          <select id="cr-filter-status" class="fin-filter-select" style="max-width:140px;" onchange="_crApplyFilters()">
+            <option value="">All Statuses</option>
+            ${Object.keys(_CR_STATUS_COLORS).map(s=>`<option value="${s}" ${s===_crStatusFilter?'selected':''}>${s.replace(/_/g,' ')}</option>`).join('')}
+          </select>
+        </div>
+        <div class="split-left-col-headers"><span>Run</span><span>Status</span></div>
+        <div class="split-list" id="cr-list-items"></div>
+      </div>
+      <div class="split-right" id="cr-right-panel"></div>
+    </div>`;
+  _crRenderList();
+  if (_crSelectedRunId && _crRuns.some(r => String(r.id) === String(_crSelectedRunId))) _crSelectRun(_crSelectedRunId);
+  else _crRenderAddForm();
+}
+
+async function _crApplyFilters() {
+  _crYearFilter = parseInt(document.getElementById('cr-filter-year')?.value, 10) || '';
+  _crMonthFilter = document.getElementById('cr-filter-month')?.value || '';
+  _crStatusFilter = document.getElementById('cr-filter-status')?.value || '';
+  await _crLoadRuns();
+  _crRenderShell(document.getElementById('main-content'));
+}
+
+function _crRenderList() {
+  const el = document.getElementById('cr-list-items');
+  if (!el) return;
+  const runs = _crFilteredRuns();
+  el.innerHTML = runs.map(r => `
+    <div class="split-list-row${String(_crSelectedRunId) === String(r.id) ? ' active' : ''}" onclick="_crSelectRun(${r.id})">
+      <div class="split-col1">${_finEsc(r.run_number)}<br><span style="font-weight:400;font-size:11.5px;color:#888;">${_PR_MONTHS[r.period_month]||''} ${r.period_year}</span></div>
+      <div class="split-col2">${_crBadge(r.status)}</div>
+    </div>`).join('') || `<p style="padding:24px;text-align:center;color:var(--grey-400);font-style:italic;font-size:13px">No records found</p>`;
+}
+
+function _crRenderAddForm() {
+  _crSelectedRunId = null;
+  _crRenderList();
+  const right = document.getElementById('cr-right-panel');
+  if (!right) return;
+  right.className = 'split-right-add';
+  right.innerHTML = `
+    <div class="fin-form-wrap">
+      <h3 class="fin-title" style="font-size:1.1rem;">New Contractor Run</h3>
+      <div class="fin-form-grid-2">
+        <div class="fin-form-group">
+          <label class="fin-form-label">Period Month <span class="fin-required">*</span></label>
+          <select id="cr-add-month" class="fin-form-select">
+            <option value="">Please Select</option>
+            ${_PR_MONTHS.slice(1).map((m, i) => `<option value="${i + 1}">${m}</option>`).join('')}
+          </select>
+        </div>
+        <div class="fin-form-group">
+          <label class="fin-form-label">Period Year <span class="fin-required">*</span></label>
+          <input type="number" id="cr-add-year" class="fin-form-input" value="${new Date().getFullYear()}" min="2020" max="2100">
+        </div>
+      </div>
+      <div class="fin-form-actions">
+        <button class="fin-btn-teal" onclick="_crCreateRun()">Create Run</button>
+      </div>
+    </div>`;
+}
+
+async function _crCreateRun() {
+  const month = parseInt(document.getElementById('cr-add-month').value, 10);
+  const year = parseInt(document.getElementById('cr-add-year').value, 10);
+  if (!month || !year) { showToast('Period Month and Period Year are required.', 'error'); return; }
+  const res = await apiFetch(`${API_BASE}/payroll/contractor-runs/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ period_month: month, period_year: year }) });
+  if (res && res.ok) {
+    const run = await res.json();
+    showToast('Contractor run created.', 'success');
+    await _crLoadRuns();
+    await _crSelectRun(run.id);
+  } else if (res && res.status === 409) {
+    showToast('A contractor run already exists for that period.', 'error');
+  } else if (res) {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
+}
+
+async function _crSelectRun(runId) {
+  _crSelectedRunId = runId;
+  _crRenderList();
+  const right = document.getElementById('cr-right-panel');
+  right.className = 'split-right-detail';
+  right.innerHTML = '<p class="sa-loading">Loading&#8230;</p>';
+  const res = await apiFetch(`${API_BASE}/payroll/contractor-runs/${runId}`);
+  if (!res || !res.ok) { right.innerHTML = `<p class="fin-error-msg">Could not load contractor run.</p>`; return; }
+  const run = await res.json();
+  _crRenderDetail(right, run);
+}
+
+const _CR_EXEMPT_REASON_LABELS = {
+  resident_below_threshold: 'Resident, gross below the exempt threshold.',
+  unknown_payment_type: 'Payment type not found on the active WHT schedule.',
+};
+function _crExemptTooltip(reason) {
+  if (!reason) return '';
+  const [key, arg] = reason.split(':');
+  const base = _CR_EXEMPT_REASON_LABELS[key] || reason;
+  return key === 'resident_below_threshold' && arg ? `Resident, gross below KES ${Number(arg).toLocaleString()} threshold.` : base;
+}
+
+function _crRenderDetail(right, run) {
+  const isSubmitter = currentUser && run.created_by != null && String(currentUser.id) === String(run.created_by);
+  let actions = '';
+  if (run.status === 'draft' || run.status === 'calculated') {
+    actions += `<button class="btn" onclick="_crCalculate(${run.id})">${run.status === 'calculated' ? 'Recalculate' : 'Calculate'}</button>`;
+  }
+  if (run.status === 'calculated') {
+    if (isSubmitter) {
+      actions += `<div style="color:var(--coral-500,#D94040);font-size:0.85rem;">You created this run — segregation of duties means you cannot approve it yourself.</div>`;
+    } else {
+      actions += `<button class="fin-btn-teal" onclick="_crApprove(${run.id})">Approve</button>`;
+    }
+  }
+  right.innerHTML = `
+    <div class="detail-banner" style="background:var(--navy-700,#1B3057);color:#fff;padding:16px 20px;border-radius:8px 8px 0 0;">
+      <div style="font-size:1.15rem;font-weight:700;">${_finEsc(run.run_number)}</div>
+      <div style="opacity:0.85;font-size:0.85rem;">${_PR_MONTHS[run.period_month]||''} ${run.period_year} &middot; ${_crBadge(run.status)}</div>
+    </div>
+    <div style="display:flex;gap:24px;padding:14px 20px;background:#f8fafc;">
+      <div><div style="opacity:0.6;font-size:0.75rem;">GROSS</div><div style="font-weight:700;">${_pvMoney(run.total_gross)}</div></div>
+      <div><div style="opacity:0.6;font-size:0.75rem;">WHT</div><div style="font-weight:700;">${_pvMoney(run.total_wht)}</div></div>
+      <div><div style="opacity:0.6;font-size:0.75rem;">NET</div><div style="font-weight:700;">${_pvMoney(run.total_net)}</div></div>
+    </div>
+    <div style="padding:14px 20px;display:flex;gap:10px;flex-wrap:wrap;">${actions}</div>
+    <div id="cr-warnings" style="padding:0 20px;"></div>
+    <div style="padding:0 20px 20px;">
+      <table class="fin-li-table">
+        <thead><tr><th>Employee</th><th>Payment Type</th><th>Resident?</th><th>Gross</th><th>WHT %</th><th>WHT</th><th>Net</th><th>Payment</th><th></th></tr></thead>
+        <tbody>
+          ${(run.lines || []).map(l => {
+            const exempt = parseFloat(l.wht_rate_percent) === 0;
+            return `<tr${exempt ? ' style="color:var(--gold-600,#8a6d00);"' : ''} title="${exempt ? _finEsc(_crExemptTooltip(l.exempt_reason)) : ''}">
+              <td>${_finEsc(l.employee_code)}</td>
+              <td>${_finEsc(whtPaymentTypeLabel(l.payment_type))}</td>
+              <td>${l.is_non_resident ? 'No' : 'Yes'}</td>
+              <td>${_pvMoney(l.gross_amount)}</td>
+              <td>${parseFloat(l.wht_rate_percent).toFixed(2)}%</td>
+              <td>${_pvMoney(l.wht_amount)}</td>
+              <td>${_pvMoney(l.net_amount)}</td>
+              <td>${_finEsc((l.payment_status||'').replace(/_/g,' '))}</td>
+              <td>${l.payment_status === 'paid' ? `<button class="fin-btn-outline" style="padding:2px 8px;font-size:0.72rem;" onclick="_crDownloadFeeNote(${run.id},${l.id})">Fee Note</button>` : ''}</td>
+            </tr>`;
+          }).join('') || `<tr><td colspan="9" class="hr-empty">No lines yet &mdash; run Calculate.</td></tr>`}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+async function _crCalculate(runId) {
+  const res = await apiFetch(`${API_BASE}/payroll/contractor-runs/${runId}/calculate`, { method: 'POST' });
+  if (!res) return;
+  if (res.ok) {
+    const data = await res.json();
+    showToast('Contractor run calculated.', 'success');
+    await _crLoadRuns();
+    await _crSelectRun(runId);
+    if (data.warnings && data.warnings.length) _crRenderWarnings(data.warnings);
+  } else {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
+}
+
+function _crRenderWarnings(warnings) {
+  const el = document.getElementById('cr-warnings');
+  if (!el) return;
+  const reasonCopy = { no_contract_amount: 'Set the monthly consultancy fee on their service profile', missing_wht_payment_type: 'Set a WHT payment type on their statutory pipeline' };
+  el.innerHTML = `
+    <div style="background:#FBF3D9;border-left:3px solid var(--gold-500,#C9A227);border-radius:6px;padding:12px 16px;margin-bottom:14px;">
+      <div style="font-weight:600;font-size:0.85rem;color:#5c4a00;margin-bottom:8px;">${warnings.length} contractor${warnings.length===1?'':'s'} need onboarding before this run can be finalised.</div>
+      <table style="width:100%;font-size:0.8rem;">
+        ${warnings.map(w => `<tr>
+          <td style="padding:3px 0;"><a href="#" onclick="${w.reason==='no_contract_amount' ? `_prGoToServiceProfile('${_finEsc(w.employee_code)}')` : `hrEditEmployee('${_finEsc(w.employee_code)}')`};return false;">${_finEsc(w.employee_code)} &mdash; ${_finEsc(w.employee_name)}</a></td>
+          <td style="padding:3px 0;color:#5c4a00;">${_finEsc(reasonCopy[w.reason] || w.reason)}</td>
+        </tr>`).join('')}
+      </table>
+    </div>`;
+}
+
+async function _crApprove(runId) {
+  const res = await apiFetch(`${API_BASE}/payroll/contractor-runs/${runId}/approve`, { method: 'POST' });
+  if (!res) return;
+  if (res.ok) {
+    showToast('Contractor run approved.', 'success');
+    await _crLoadRuns();
+    await _crSelectRun(runId);
+  } else if (res.status === 403) {
+    showToast('You cannot approve a run you created (segregation of duties).', 'error');
+  } else {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
+}
+
+async function _crDownloadFeeNote(runId, lineId) {
+  const res = await apiFetch(`${API_BASE}/payroll/contractor-runs/${runId}/fee-note/${lineId}`);
+  if (!res) return;
+  if (!res.ok) { showToast('Error: ' + await parseApiError(res), 'error'); return; }
+  const blob = await res.blob();
+  const cd = res.headers.get('Content-Disposition') || '';
+  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
+  const filename = match ? decodeURIComponent(match[1]) : `FeeNote-${runId}-${lineId}.pdf`;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// ==================== STATUTORY RATES (Payroll > Utilities) ====================
+// BE/FE Contract Addendum 2026-08-06 §5. Five rate types, no PATCH/DELETE —
+// in-force schedules are immutable; a new schedule with a future
+// effective_from auto-closes the previous one. WHTScheduleRead (and its
+// siblings) already carry is_active directly, so "current" is a lookup, not
+// a client-side date-range computation.
+const _SR_API = `${API_BASE}/payroll/utilities/statutory-rates`;
+const _SR_TYPES = [['paye','PAYE'],['nssf','NSSF'],['shif','SHIF'],['ahl','AHL'],['wht','WHT']];
+const _SR_LABELS = Object.fromEntries(_SR_TYPES);
+let _srActiveTab = 'paye';
+let _srLists = {};
+let _srSelected = {};
+let _srBandsEditor = [];
+let _srRatesEditor = [];
+
+function _srMoney(v) { return formatKES(v); }
+function _srPercent(v) { return v == null || v === '' ? '—' : `${parseFloat(v).toFixed(2)}%`; }
+function _srDate(v) {
+  if (!v) return '—';
+  const d = new Date(v);
+  return isNaN(d) ? v : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+function _srStatusOf(s) {
+  if (s.is_active) return 'current';
+  return new Date(s.effective_from) > new Date() ? 'future' : 'historical';
+}
+function _srStatusPill(status) {
+  const map = { future: ['Future','#1B3057','#dce8fb'], current: ['Current','#8a6d00','#f5e6a8'], historical: ['Historical','#5F6B7C','#EEF1F5'] };
+  const [label, color, bg] = map[status] || [status, '#888', '#eee'];
+  return `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.72rem;font-weight:600;color:${color};background:${bg};">${label}</span>`;
+}
+function _srCurrentOf(type) { return (_srLists[type] || []).find(s => s.is_active) || null; }
+
+async function loadStatutoryRatesView(container) {
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Statutory Rates</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Payroll &rsaquo; Utilities &rsaquo; Statutory Rates</div>
+      </div>
+      <div id="sr-summary"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin:6px 0 12px;flex-wrap:wrap;gap:10px;">
+        <div id="sr-tabs" style="display:flex;gap:6px;"></div>
+        <button class="fin-btn-teal" onclick="_srOpenAddForm(_srActiveTab)">+ Add future schedule</button>
+      </div>
+      <div id="sr-tab-content"></div>
+    </div>`;
+  await _srLoadAll();
+  _srRenderSummary();
+  _srRenderTabs();
+  _srRenderTabContent();
+}
+
+async function _srLoadAll() {
+  const results = await Promise.all(_SR_TYPES.map(([type]) => apiFetch(`${_SR_API}/${type}`)));
+  for (let i = 0; i < _SR_TYPES.length; i++) {
+    const [type] = _SR_TYPES[i];
+    const res = results[i];
+    _srLists[type] = res && res.ok ? _toArray(await res.json()) : [];
+  }
+}
+
+function _srRenderSummary() {
+  const el = document.getElementById('sr-summary');
+  if (!el) return;
+  const paye = _srCurrentOf('paye'), nssf = _srCurrentOf('nssf'), shif = _srCurrentOf('shif'), ahl = _srCurrentOf('ahl'), wht = _srCurrentOf('wht');
+  el.innerHTML = `
+    <div style="border:1px solid var(--grey-100,#eee);border-radius:8px;padding:16px 20px;margin-bottom:20px;background:#fff;">
+      <div style="font-size:0.78rem;font-weight:600;color:var(--navy-700,#1B3057);text-transform:uppercase;margin-bottom:12px;">Current Rates</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:16px;font-size:0.82rem;">
+        <div><strong>PAYE</strong><br>${paye ? (paye.bands||[]).slice().sort((a,b)=>a.band_order-b.band_order).map(b=>`&le;${b.upper_bound?_srMoney(b.upper_bound):'&infin;'} @ ${_srPercent(b.rate_percent)}`).join('<br>') + `<br><span style="color:#888;">Relief ${_srMoney(paye.personal_relief)}</span>` : '<span style="color:#aaa;">Not configured</span>'}</div>
+        <div><strong>NSSF</strong><br>${nssf ? `Tier I &le; ${_srMoney(nssf.tier1_limit)} @ ${_srPercent(nssf.tier1_rate)}<br>Tier II &le; ${_srMoney(nssf.tier2_upper_limit)} @ ${_srPercent(nssf.tier2_rate)}` : '<span style="color:#aaa;">Not configured</span>'}</div>
+        <div><strong>SHIF</strong><br>${shif ? `${_srPercent(shif.rate)} &middot; min ${_srMoney(shif.minimum)}` : '<span style="color:#aaa;">Not configured</span>'}</div>
+        <div><strong>AHL</strong><br>${ahl ? `Employee ${_srPercent(ahl.employee_rate)}<br>Employer ${_srPercent(ahl.employer_rate)}` : '<span style="color:#aaa;">Not configured</span>'}</div>
+        <div><strong>WHT</strong><br>${wht ? (wht.rates||[]).slice(0,3).map(r=>`${_finEsc(whtPaymentTypeLabel(r.payment_type))} ${_srPercent(r.resident_rate)}/${_srPercent(r.nonresident_rate)}`).join('<br>') + ((wht.rates||[]).length>3?`<br><span style="color:#888;">+ ${wht.rates.length-3} more</span>`:'') : '<span style="color:#aaa;">Not configured</span>'}</div>
+      </div>
+    </div>`;
+}
+
+function _srRenderTabs() {
+  const el = document.getElementById('sr-tabs');
+  if (!el) return;
+  el.innerHTML = _SR_TYPES.map(([type,label]) => `<button class="${_srActiveTab===type?'fin-btn-teal':'fin-btn-outline'}" onclick="_srSetTab('${type}')">${label}</button>`).join('');
+}
+function _srSetTab(type) {
+  _srActiveTab = type;
+  _srRenderTabs();
+  _srRenderTabContent();
+}
+
+function _srRenderTabContent() {
+  const type = _srActiveTab;
+  const list = (_srLists[type] || []).slice().sort((a,b) => new Date(b.effective_from) - new Date(a.effective_from));
+  if (!_srSelected[type] && list.length) _srSelected[type] = list[0].id;
+  const el = document.getElementById('sr-tab-content');
+  if (!el) return;
+  el.innerHTML = `
+    <div class="split-layout">
+      <div class="split-left">
+        <div class="split-left-header">
+          <span class="split-left-title">${_SR_LABELS[type]} Schedules</span>
+          <span class="split-left-count">${list.length}</span>
+        </div>
+        <div class="split-list">
+          ${list.map(s => {
+            const status = _srStatusOf(s);
+            const active = String(_srSelected[type]) === String(s.id);
+            return `<div class="split-list-row${active?' active':''}" onclick="_srSelectSchedule('${type}',${s.id})">
+              <div class="split-col1">${_srDate(s.effective_from)} &rarr; ${s.effective_to?_srDate(s.effective_to):'open'}</div>
+              <div class="split-col2">${_srStatusPill(status)}</div>
+            </div>`;
+          }).join('') || `<p style="padding:24px;text-align:center;color:var(--grey-400);font-style:italic;font-size:13px">No schedules yet</p>`}
+        </div>
+      </div>
+      <div class="split-right" id="sr-detail-panel"></div>
+    </div>`;
+  _srRenderDetail(type);
+}
+
+function _srSelectSchedule(type, id) {
+  _srSelected[type] = id;
+  _srRenderTabContent();
+}
+
+function _srRenderDetail(type) {
+  const el = document.getElementById('sr-detail-panel');
+  if (!el) return;
+  const s = (_srLists[type] || []).find(x => String(x.id) === String(_srSelected[type]));
+  if (!s) { el.className = 'split-right-add'; el.innerHTML = `<p style="padding:40px;text-align:center;color:#aaa;">Select a schedule.</p>`; return; }
+  const status = _srStatusOf(s);
+  let body = '';
+  if (type === 'paye') {
+    body = `
+      <div class="detail-fields-grid">
+        <div class="detail-field"><span class="detail-field-label">Personal Relief</span><span class="detail-field-value">${_srMoney(s.personal_relief)}</span></div>
+        <div class="detail-field"><span class="detail-field-label">Insurance Relief Rate</span><span class="detail-field-value">${_srPercent(s.insurance_relief_rate)}</span></div>
+        <div class="detail-field"><span class="detail-field-label">Insurance Relief Cap</span><span class="detail-field-value">${_srMoney(s.insurance_relief_cap)}</span></div>
+        <div class="detail-field"><span class="detail-field-label">NCPWD Exemption</span><span class="detail-field-value">${_srMoney(s.ncpwd_exemption)}</span></div>
+      </div>
+      <table class="fin-li-table" style="margin-top:14px;">
+        <thead><tr><th>Band</th><th>Lower</th><th>Upper</th><th>Rate</th></tr></thead>
+        <tbody>${(s.bands||[]).slice().sort((a,b)=>a.band_order-b.band_order).map(b=>`<tr><td>${b.band_order}</td><td>${_srMoney(b.lower_bound)}</td><td>${b.upper_bound!=null?_srMoney(b.upper_bound):'Uncapped'}</td><td>${_srPercent(b.rate_percent)}</td></tr>`).join('')}</tbody>
+      </table>`;
+  } else if (type === 'nssf') {
+    body = `<div class="detail-fields-grid">
+      <div class="detail-field"><span class="detail-field-label">Tier I Limit</span><span class="detail-field-value">${_srMoney(s.tier1_limit)}</span></div>
+      <div class="detail-field"><span class="detail-field-label">Tier I Rate</span><span class="detail-field-value">${_srPercent(s.tier1_rate)}</span></div>
+      <div class="detail-field"><span class="detail-field-label">Tier II Upper Limit</span><span class="detail-field-value">${_srMoney(s.tier2_upper_limit)}</span></div>
+      <div class="detail-field"><span class="detail-field-label">Tier II Rate</span><span class="detail-field-value">${_srPercent(s.tier2_rate)}</span></div>
+    </div>`;
+  } else if (type === 'shif') {
+    body = `<div class="detail-fields-grid">
+      <div class="detail-field"><span class="detail-field-label">Rate</span><span class="detail-field-value">${_srPercent(s.rate)}</span></div>
+      <div class="detail-field"><span class="detail-field-label">Minimum</span><span class="detail-field-value">${_srMoney(s.minimum)}</span></div>
+    </div>`;
+  } else if (type === 'ahl') {
+    body = `<div class="detail-fields-grid">
+      <div class="detail-field"><span class="detail-field-label">Employee Rate</span><span class="detail-field-value">${_srPercent(s.employee_rate)}</span></div>
+      <div class="detail-field"><span class="detail-field-label">Employer Rate</span><span class="detail-field-value">${_srPercent(s.employer_rate)}</span></div>
+      <div class="detail-field"><span class="detail-field-label">Reduces PAYE Taxable</span><span class="detail-field-value">${s.reduces_paye_taxable?'Yes':'No'}</span></div>
+    </div>`;
+  } else if (type === 'wht') {
+    body = `<table class="fin-li-table">
+      <thead><tr><th>Payment Type</th><th>Resident</th><th>Non-Resident</th><th>Exempt Below</th><th>Notes</th></tr></thead>
+      <tbody>${(s.rates||[]).map(r=>`<tr><td>${_finEsc(whtPaymentTypeLabel(r.payment_type))}</td><td>${_srPercent(r.resident_rate)}</td><td>${_srPercent(r.nonresident_rate)}</td><td>${r.resident_exempt_below!=null?_srMoney(r.resident_exempt_below):'Always deduct'}</td><td>${_finEsc(r.notes||'—')}</td></tr>`).join('')}</tbody>
+    </table>`;
+  }
+  el.className = 'split-right-detail';
+  el.innerHTML = `
+    <div class="detail-banner">
+      <div class="detail-banner-initials">${_SR_LABELS[type].charAt(0)}</div>
+      <div>
+        <div class="detail-banner-name">${_SR_LABELS[type]} &mdash; ${_srDate(s.effective_from)} &rarr; ${s.effective_to?_srDate(s.effective_to):'open'}</div>
+        <div class="detail-banner-sub">${_srStatusPill(status)}</div>
+      </div>
+    </div>
+    <div class="detail-info-card">
+      ${body}
+      ${s.notes?`<p style="margin-top:12px;font-size:0.85rem;color:#555;"><strong>Notes:</strong> ${_finEsc(s.notes)}</p>`:''}
+      <p style="margin-top:10px;font-size:11.5px;color:#888;">Created ${_srDate(s.created_at)}${s.created_by?` by staff #${s.created_by}`:''}</p>
+    </div>`;
+}
+
+// ── Add future schedule — full-window form ──────────────────────────────────
+function _srOpenAddForm(type) {
+  const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+  if (type === 'paye') _srBandsEditor = [{ band_order: 1, lower_bound: '0', upper_bound: '', rate_percent: '' }];
+  if (type === 'wht') _srRatesEditor = [{ payment_type: '', resident_rate: '', nonresident_rate: '', resident_exempt_below: '', notes: '' }];
+  const container = document.getElementById('main-content');
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Add ${_SR_LABELS[type]} Schedule</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Payroll &rsaquo; Utilities &rsaquo; Statutory Rates &rsaquo; ${_SR_LABELS[type]} &rsaquo; Add</div>
+      </div>
+      <div style="background:#EEF3FA;border-left:3px solid var(--navy-400,#4A6FA5);border-radius:6px;padding:12px 16px;margin-bottom:16px;font-size:12.5px;color:var(--navy-900,#0D2137);">
+        New schedules take effect from a future date. The currently in-force schedule will be automatically closed on that date.
+      </div>
+      <div class="fin-form-wrap" id="sr-add-form-body"></div>
+      <div class="fin-form-actions">
+        <button class="fin-btn-teal" onclick="_srSubmitAdd('${type}')">Save</button>
+        <button class="fin-btn-cancel" onclick="loadView('payroll-utilities-statutory-rates')">Cancel</button>
+      </div>
+    </div>`;
+  document.getElementById('sr-add-form-body').innerHTML = _srAddFormFieldsHtml(type, tomorrow);
+  if (type === 'paye') _srRenderBandsEditor();
+  if (type === 'wht') _srRenderRatesEditor();
+}
+
+function _srAddFormFieldsHtml(type, tomorrow) {
+  const common = `
+    <div class="fin-form-group">
+      <label class="fin-form-label">Effective From <span class="fin-required">*</span></label>
+      <input type="date" id="sr-add-eff-from" class="fin-form-input" min="${tomorrow}">
+    </div>`;
+  const notes = `
+    <div class="fin-form-group">
+      <label class="fin-form-label">Notes</label>
+      <textarea id="sr-add-notes" class="fin-form-textarea" rows="2"></textarea>
+    </div>`;
+  if (type === 'paye') {
+    return `${common}
+      <div class="fin-form-grid-2">
+        <div class="fin-form-group"><label class="fin-form-label">Personal Relief</label><input type="number" id="sr-add-personal-relief" class="fin-form-input" step="0.01"></div>
+        <div class="fin-form-group"><label class="fin-form-label">Insurance Relief Rate (%)</label><input type="number" id="sr-add-ins-relief-rate" class="fin-form-input" step="0.01"></div>
+        <div class="fin-form-group"><label class="fin-form-label">Insurance Relief Cap</label><input type="number" id="sr-add-ins-relief-cap" class="fin-form-input" step="0.01"></div>
+        <div class="fin-form-group"><label class="fin-form-label">NCPWD Exemption</label><input type="number" id="sr-add-ncpwd" class="fin-form-input" step="0.01"></div>
+      </div>
+      <div class="fin-section-label" style="margin-top:14px;">Bands</div>
+      <table class="fin-li-table"><thead><tr><th>Order</th><th>Lower</th><th>Upper (blank = uncapped)</th><th>Rate %</th><th></th></tr></thead><tbody id="sr-bands-editor"></tbody></table>
+      <a href="#" style="color:#2db3b3;font-weight:600;text-decoration:underline;font-size:0.85rem;" onclick="_srAddBandRow();return false;">+ Add Band</a>
+      ${notes}`;
+  }
+  if (type === 'nssf') {
+    return `${common}
+      <div class="fin-form-grid-2">
+        <div class="fin-form-group"><label class="fin-form-label">Tier I Limit</label><input type="number" id="sr-add-tier1-limit" class="fin-form-input" step="0.01"></div>
+        <div class="fin-form-group"><label class="fin-form-label">Tier I Rate (%)</label><input type="number" id="sr-add-tier1-rate" class="fin-form-input" step="0.01"></div>
+        <div class="fin-form-group"><label class="fin-form-label">Tier II Upper Limit</label><input type="number" id="sr-add-tier2-limit" class="fin-form-input" step="0.01"></div>
+        <div class="fin-form-group"><label class="fin-form-label">Tier II Rate (%)</label><input type="number" id="sr-add-tier2-rate" class="fin-form-input" step="0.01"></div>
+      </div>${notes}`;
+  }
+  if (type === 'shif') {
+    return `${common}
+      <div class="fin-form-grid-2">
+        <div class="fin-form-group"><label class="fin-form-label">Rate (%)</label><input type="number" id="sr-add-rate" class="fin-form-input" step="0.01"></div>
+        <div class="fin-form-group"><label class="fin-form-label">Minimum</label><input type="number" id="sr-add-minimum" class="fin-form-input" step="0.01"></div>
+      </div>${notes}`;
+  }
+  if (type === 'ahl') {
+    return `${common}
+      <div class="fin-form-grid-2">
+        <div class="fin-form-group"><label class="fin-form-label">Employee Rate (%)</label><input type="number" id="sr-add-emp-rate" class="fin-form-input" step="0.01"></div>
+        <div class="fin-form-group"><label class="fin-form-label">Employer Rate (%)</label><input type="number" id="sr-add-empr-rate" class="fin-form-input" step="0.01"></div>
+      </div>
+      <label class="hr-form-checkbox-label" style="margin-top:8px;"><input type="checkbox" id="sr-add-reduces-paye" class="hr-form-cb"> Reduces PAYE Taxable</label>
+      ${notes}`;
+  }
+  if (type === 'wht') {
+    return `${common}
+      <div class="fin-section-label" style="margin-top:14px;">Rates</div>
+      <table class="fin-li-table"><thead><tr><th>Payment Type</th><th>Resident %</th><th>Non-Resident %</th><th>Exempt Below</th><th>Notes</th><th></th></tr></thead><tbody id="sr-rates-editor"></tbody></table>
+      <a href="#" style="color:#2db3b3;font-weight:600;text-decoration:underline;font-size:0.85rem;" onclick="_srAddRateRow();return false;">+ Add Rate</a>
+      ${notes}`;
+  }
+  return '';
+}
+
+function _srRenderBandsEditor() {
+  const el = document.getElementById('sr-bands-editor');
+  if (!el) return;
+  el.innerHTML = _srBandsEditor.map((b,i) => `<tr>
+    <td><input type="number" class="fin-li-input" value="${b.band_order}" min="1" max="20" style="width:60px;" oninput="_srUpdateBand(${i},'band_order',this.value)"></td>
+    <td><input type="number" class="fin-li-input" value="${b.lower_bound}" step="0.01" oninput="_srUpdateBand(${i},'lower_bound',this.value)"></td>
+    <td><input type="number" class="fin-li-input" value="${b.upper_bound}" step="0.01" placeholder="Uncapped" oninput="_srUpdateBand(${i},'upper_bound',this.value)"></td>
+    <td><input type="number" class="fin-li-input" value="${b.rate_percent}" step="0.01" oninput="_srUpdateBand(${i},'rate_percent',this.value)"></td>
+    <td><button class="fin-btn-li-rm" ${_srBandsEditor.length<=1?'disabled':''} onclick="_srRemoveBand(${i})">&times;</button></td>
+  </tr>`).join('');
+}
+function _srAddBandRow() { _srBandsEditor.push({ band_order: _srBandsEditor.length+1, lower_bound: '', upper_bound: '', rate_percent: '' }); _srRenderBandsEditor(); }
+function _srRemoveBand(i) { if (_srBandsEditor.length<=1) return; _srBandsEditor.splice(i,1); _srRenderBandsEditor(); }
+function _srUpdateBand(i,key,val) { _srBandsEditor[i][key] = val; }
+
+function _srRenderRatesEditor() {
+  const el = document.getElementById('sr-rates-editor');
+  if (!el) return;
+  el.innerHTML = _srRatesEditor.map((r,i) => `<tr>
+    <td><input type="text" class="fin-li-input" value="${_finEsc(r.payment_type)}" maxlength="60" oninput="_srUpdateRate(${i},'payment_type',this.value)"></td>
+    <td><input type="number" class="fin-li-input" value="${r.resident_rate}" step="0.01" oninput="_srUpdateRate(${i},'resident_rate',this.value)"></td>
+    <td><input type="number" class="fin-li-input" value="${r.nonresident_rate}" step="0.01" oninput="_srUpdateRate(${i},'nonresident_rate',this.value)"></td>
+    <td><input type="number" class="fin-li-input" value="${r.resident_exempt_below}" step="0.01" placeholder="Always deduct" oninput="_srUpdateRate(${i},'resident_exempt_below',this.value)"></td>
+    <td><input type="text" class="fin-li-input" value="${_finEsc(r.notes||'')}" oninput="_srUpdateRate(${i},'notes',this.value)"></td>
+    <td><button class="fin-btn-li-rm" ${_srRatesEditor.length<=1?'disabled':''} onclick="_srRemoveRate(${i})">&times;</button></td>
+  </tr>`).join('');
+}
+function _srAddRateRow() { _srRatesEditor.push({ payment_type:'', resident_rate:'', nonresident_rate:'', resident_exempt_below:'', notes:'' }); _srRenderRatesEditor(); }
+function _srRemoveRate(i) { if (_srRatesEditor.length<=1) return; _srRatesEditor.splice(i,1); _srRenderRatesEditor(); }
+function _srUpdateRate(i,key,val) { _srRatesEditor[i][key] = val; }
+
+async function _srSubmitAdd(type) {
+  const effFrom = document.getElementById('sr-add-eff-from')?.value;
+  const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+  if (!effFrom) { showToast('Effective From is required.', 'error'); return; }
+  if (effFrom < tomorrow) { showToast('Effective From must be strictly after today.', 'error'); return; }
+  const notes = document.getElementById('sr-add-notes')?.value.trim() || null;
+  const payload = { effective_from: effFrom, notes };
+  if (type === 'paye') {
+    const uncappedCount = _srBandsEditor.filter(b => !b.upper_bound).length;
+    if (uncappedCount !== 1) { showToast('Exactly one band must be uncapped (blank Upper Bound) — the top band.', 'error'); return; }
+    payload.personal_relief = document.getElementById('sr-add-personal-relief')?.value || '0';
+    payload.insurance_relief_rate = document.getElementById('sr-add-ins-relief-rate')?.value || '0';
+    payload.insurance_relief_cap = document.getElementById('sr-add-ins-relief-cap')?.value || '0';
+    payload.ncpwd_exemption = document.getElementById('sr-add-ncpwd')?.value || '0';
+    payload.bands = _srBandsEditor.map(b => ({ band_order: parseInt(b.band_order,10), lower_bound: b.lower_bound || '0', upper_bound: b.upper_bound || null, rate_percent: b.rate_percent || '0' }));
+  } else if (type === 'nssf') {
+    payload.tier1_limit = document.getElementById('sr-add-tier1-limit')?.value || '0';
+    payload.tier1_rate = document.getElementById('sr-add-tier1-rate')?.value || '0';
+    payload.tier2_upper_limit = document.getElementById('sr-add-tier2-limit')?.value || '0';
+    payload.tier2_rate = document.getElementById('sr-add-tier2-rate')?.value || '0';
+  } else if (type === 'shif') {
+    payload.rate = document.getElementById('sr-add-rate')?.value || '0';
+    payload.minimum = document.getElementById('sr-add-minimum')?.value || '0';
+  } else if (type === 'ahl') {
+    payload.employee_rate = document.getElementById('sr-add-emp-rate')?.value || '0';
+    payload.employer_rate = document.getElementById('sr-add-empr-rate')?.value || '0';
+    payload.reduces_paye_taxable = document.getElementById('sr-add-reduces-paye')?.checked || false;
+  } else if (type === 'wht') {
+    const types = _srRatesEditor.map(r => (r.payment_type||'').trim());
+    if (types.some(t => !t)) { showToast('Every rate row needs a Payment Type.', 'error'); return; }
+    if (new Set(types).size !== types.length) { showToast('Payment Type must be unique across rows.', 'error'); return; }
+    payload.rates = _srRatesEditor.map(r => ({ payment_type: r.payment_type.trim(), resident_rate: r.resident_rate || '0', nonresident_rate: r.nonresident_rate || '0', resident_exempt_below: r.resident_exempt_below || null, notes: r.notes || null }));
+  }
+  const res = await apiFetch(`${_SR_API}/${type}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  if (!res) return;
+  if (res.ok) {
+    showToast(`${_SR_LABELS[type]} schedule created.`, 'success');
+    if (type === 'wht') _whtActiveScheduleCache = undefined; // invalidate the Employee-form WHT picker cache
+    loadView('payroll-utilities-statutory-rates');
+  } else {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
+}
+
 // ── Payslips (run-based) ─────────────────────────────────────────────────────
 const _PR_PAYSLIP_COLORS = {
   pending_generation: '#9a7d0a;background:#fdf3d0',
