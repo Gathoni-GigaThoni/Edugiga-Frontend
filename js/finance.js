@@ -4479,14 +4479,9 @@ async function _tpLoadPayrollRunOptions() {
 }
 
 async function _tpDownloadTemplate() {
-  const res = await apiFetch(`${_TP_BASE}/import/template`);
-  if (res && res.ok) {
-    const blob = await res.blob();
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'tendepay-import-template.xlsx';
-    document.body.appendChild(a); a.click(); a.remove();
-  } else if (res) showToast('Could not download template: ' + await parseApiError(res), 'error');
+  await authBlobDownload(`${_TP_BASE}/import/template`, 'tendepay-import-template.xlsx', {
+    errorPrefix: 'Could not download template: ',
+  });
 }
 
 async function _tpUploadFile(input) {
@@ -5362,14 +5357,9 @@ async function _tpFlRenderStep1() {
 }
 
 async function _tpFlDownloadTemplate() {
-  const res = await apiFetch(`${_TP_BASE}/fund-loads/upload/template`);
-  if (res && res.ok) {
-    const blob = await res.blob();
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'fund_loads_upload_template.xlsx';
-    document.body.appendChild(a); a.click(); a.remove();
-  } else if (res) showToast('Could not download template: ' + await parseApiError(res), 'error');
+  await authBlobDownload(`${_TP_BASE}/fund-loads/upload/template`, 'fund_loads_upload_template.xlsx', {
+    errorPrefix: 'Could not download template: ',
+  });
 }
 
 async function _tpFlUploadFile(input) {

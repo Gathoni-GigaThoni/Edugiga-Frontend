@@ -94,8 +94,9 @@ function hrAddModalsHtml() {
           <div class="hr-modal-field">
             <label class="hr-form-label">Relationship <span class="hr-required">*</span></label>
             <select id="hr-dep-relationship" class="hr-modal-select">
-              <option value="">Please Select</option><option value="Spouse">Spouse</option>
-              <option value="Child">Child</option><option value="Parent">Parent</option><option value="Sibling">Sibling</option>
+              <option value="">Please Select</option><option value="spouse">Spouse</option>
+              <option value="child">Child</option><option value="parent">Parent</option><option value="sibling">Sibling</option>
+              <option value="other">Other</option>
             </select>
           </div>
           <div class="hr-modal-field">
@@ -203,10 +204,10 @@ function renderHrAddTabBasic() {
           <label class="hr-form-label">Employment Terms <span class="hr-required">*</span></label>
           <select id="hr-add-employment-terms" class="hr-form-select">
             <option value="">Please Select</option>
-            <option value="Permanent" ${sel(s.employment_terms,'Permanent')}>Permanent</option>
-            <option value="Contract" ${sel(s.employment_terms,'Contract')}>Contract</option>
-            <option value="Casual" ${sel(s.employment_terms,'Casual')}>Casual</option>
-            <option value="Intern" ${sel(s.employment_terms,'Intern')}>Intern</option>
+            <option value="permanent" ${sel(s.employment_terms,'permanent')}>Permanent</option>
+            <option value="contract" ${sel(s.employment_terms,'contract')}>Contract</option>
+            <option value="casual" ${sel(s.employment_terms,'casual')}>Casual</option>
+            <option value="intern" ${sel(s.employment_terms,'intern')}>Intern</option>
           </select>
         </div>
         <div class="hr-form-group">
@@ -433,31 +434,21 @@ function renderHrAddTabDependents() {
   `;
 }
 
+// Service profiles are created via a direct POST to
+// /payroll/employee-service-profiles/ keyed on employee_code — that only
+// works once the employee actually exists server-side. This tab used to
+// offer an "Add" button that opened the ESP form mid-wizard, which posted
+// against a client-only placeholder code and 404'd. Service profiles are
+// now added from Edit Employee (js/hr-edit.js), once the employee is real.
 function renderHrAddTabServiceProfile() {
   return `
     <div class="hr-tab-body">
-      <div class="hr-form-table-header">
-        <button class="hr-add-btn" onclick="hrAddServiceProfileRecord()">Add Employee Service Profile</button>
-      </div>
-      <div class="hr-table-wrap">
-        <table class="hr-table"><thead><tr>
-          <th>REASON/EVENT</th><th>PAY GRADE</th>
-          <th>BASIC SALARY</th><th>EFFECTIVE DATE</th><th>END DATE</th><th>ACTION</th>
-        </tr></thead><tbody>
-          <tr><td colspan="6" class="hr-empty">No records found</td></tr>
-        </tbody></table>
+      <div style="background:#EEF3FA;border-left:3px solid var(--navy-400,#4A6FA5);border-radius:6px;padding:14px 18px;font-size:13px;color:var(--navy-900,#0D2137);line-height:1.6;">
+        Service profiles can only be added once this employee has been saved. Submit this form first, then open
+        the new employee from the Employee Directory and add a Service Profile from there.
       </div>
     </div>
   `;
-}
-
-function hrAddServiceProfileRecord() {
-  hrEspFormState = {
-    context: 'add', sourceView: 'hr-add',
-    editSourceIdx: -1, lockedEmpCode: '', lockedEmpName: '',
-    bankAccounts: [], editingBankIdx: -1, existingRecord: null
-  };
-  renderHrEspFormPage(document.getElementById('main-content'));
 }
 
 // ---- Add Employee submission ----
@@ -477,69 +468,114 @@ async function submitHrAddEmployee() {
     showToast('Payment Type is required for contractor employees.', 'error'); return;
   }
 
-  // File inputs with actual uploads that must be sent via FormData:
-  //   hr-add-photo (employee photo), hr-edu-attachment (education docs), hr-idoc-file (identity docs)
-  const jsonPayload = {
-    employee_code:     s.employeeCode,
-    employment_terms:  s.employment_terms,
-    last_name:         s.surname,
-    first_name:        s.other_names,
-    department_id:     s.department_id ? parseInt(s.department_id, 10) : null,
-    email:             s.email,
-    phone_code:        s.phone_code,
-    phone:             s.phone,
-    birth_date:        s.birth_date,
-    gender:            s.gender,
-    joining_date:      s.joining_date,
-    probation_period:  s.probation_period,
-    confirmation_date: s.confirmation_date,
-    address:           s.address,
-    emergency_contact: s.emergency_contact,
-    nationality:       s.nationality,
-    national_id:       s.national_id,
-    is_director:       s.is_director,
-    is_active:         true,
-    disability_type:   s.disability_type,
-    medical_info:      s.medical_info,
-    education:         [...s.education],
-    kra_pin:           s.kra_pin,
-    nssf_number:       s.nssf_number,
-    shif_number:       s.shif_number,
-    tax_profile:                   s.tax_profile,
-    contractor_wht_payment_type:   s.tax_profile === 'contractor' ? s.contractor_wht_payment_type : null,
-    is_non_resident:               s.tax_profile === 'contractor' ? s.is_non_resident : false,
-    contractor_kra_pin:            s.tax_profile === 'contractor' ? (s.contractor_kra_pin || null) : null,
-    identity_docs:     [...s.identity_docs],
-    dependents:        [...s.dependents],
+  // POST /hr/employees/onboard (EmployeeOnboardRequest) is the atomic
+  // employee+identity+medical creation endpoint — replaces the old plain
+  // POST /hr/employees, whose payload used field names EmployeeCreate never
+  // recognized (phone_code vs phone_country_code, probation_period vs
+  // probation_days, nested emergency_contact vs flat fields) and stuffed in
+  // kra_pin/nssf_number/shif_number/education/identity_docs/dependents that
+  // EmployeeCreate doesn't accept at all — those were silently dropped by
+  // Pydantic on every Add Employee submit. Verified against the live schema.
+  const submitBtn = document.querySelector('.hr-btn-form-submit');
+  if (submitBtn) submitBtn.disabled = true;
+
+  let photoUrl = null;
+  if (s.photoFile) {
+    photoUrl = await uploadFile(s.photoFile); // toasts its own error on failure; non-fatal, submission continues
+  }
+
+  const employee = {
+    employment_terms: s.employment_terms,
+    last_name: s.surname,
+    first_name: s.other_names,
+    email: s.email || null,
+    phone_country_code: s.phone_code || null,
+    phone_number: s.phone || null,
+    birth_date: s.birth_date || null,
+    gender: s.gender || null,
+    joining_date: s.joining_date,
+    probation_days: s.probation_period ? parseInt(s.probation_period, 10) : 90,
+    address: s.address || null,
+    nationality: s.nationality || null,
+    national_id_no: s.national_id || null,
+    is_director: !!s.is_director,
+    photo_url: photoUrl,
+    emergency_contact_name: s.emergency_contact?.name || null,
+    emergency_contact_country_code: s.emergency_contact?.phone_code || null,
+    emergency_contact_number: s.emergency_contact?.phone || null,
+    emergency_contact_relationship: s.emergency_contact?.relationship || null,
+    department_id: s.department_id ? parseInt(s.department_id, 10) : null,
+    tax_profile: s.tax_profile || 'employee',
+    contractor_wht_payment_type: s.tax_profile === 'contractor' ? s.contractor_wht_payment_type : null,
+    is_non_resident: s.tax_profile === 'contractor' ? !!s.is_non_resident : false,
+    contractor_kra_pin: s.tax_profile === 'contractor' ? (s.contractor_kra_pin || null) : null,
+  };
+  const identity = {
+    kra_pin: s.kra_pin || null,
+    nssf_number: s.nssf_number || null,
+    shif_number: s.shif_number || null,
+  };
+  const medical = {
+    disability_type: s.disability_type || null,
+    medical_info: s.medical_info || null,
   };
 
-  const photoInput = document.getElementById('hr-add-photo');
-  const hasPhoto   = photoInput && photoInput.files && photoInput.files.length > 0;
-
-  let fetchBody, fetchHeaders;
-  if (hasPhoto) {
-    const formData = new FormData();
-    formData.append('data', JSON.stringify(jsonPayload));
-    formData.append('photo', photoInput.files[0]);
-    // Do NOT set Content-Type — browser sets multipart/form-data with boundary automatically
-    fetchBody    = formData;
-    fetchHeaders = {};
-  } else {
-    fetchBody    = JSON.stringify(jsonPayload);
-    fetchHeaders = { 'Content-Type': 'application/json' };
-  }
-
-  const res = await apiFetch(`${API_BASE}/hr/employees`, {
+  const res = await apiFetch(`${API_BASE}/hr/employees/onboard`, {
     method: 'POST',
-    headers: fetchHeaders,
-    body: fetchBody
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ employee, identity, medical }),
   });
-  if (res && res.ok) {
-    showToast('Employee added successfully!', 'success');
-    loadHrEmployeeDirectoryView(document.getElementById('main-content'));
-  } else if (res) {
-    showToast(await parseApiError(res), 'error');
+
+  if (submitBtn) submitBtn.disabled = false;
+
+  if (!res || !res.ok) {
+    if (res) showToast(await parseApiError(res), 'error');
+    return;
   }
+  const onboarded = await res.json();
+  const employeeId = onboarded.employee_id;
+
+  // Education, identity documents and dependents aren't part of
+  // EmployeeOnboardRequest — the core record above is already committed, so
+  // these are attached individually against the real employee_id. Best
+  // effort: a failure here doesn't roll back the employee, it's surfaced
+  // per-item so the operator can retry from Edit Employee.
+  for (const edu of s.education) {
+    const fd = new FormData();
+    if (edu.qualification) fd.append('qualification', edu.qualification);
+    if (edu.institution) fd.append('institution', edu.institution);
+    if (edu.academic_time) fd.append('academic_time', edu.academic_time);
+    if (edu.awards_grades) fd.append('awards_grades', edu.awards_grades);
+    if (edu.attachmentFile) fd.append('file', edu.attachmentFile);
+    const r = await apiFetch(`${API_BASE}/hr/employees/${employeeId}/education`, { method: 'POST', body: fd });
+    if (!(r && r.ok)) showToast(`Employee saved, but education record "${edu.qualification || ''}" failed: ` + (r ? await parseApiError(r) : 'network error'), 'error');
+  }
+  for (const doc of s.identity_docs) {
+    const fd = new FormData();
+    fd.append('document_title', doc.doc_title);
+    if (doc.date_attached) fd.append('date_attached', doc.date_attached);
+    if (doc.attachmentFile) fd.append('file', doc.attachmentFile);
+    const r = await apiFetch(`${API_BASE}/hr/employees/${employeeId}/identity/documents`, { method: 'POST', body: fd });
+    if (!(r && r.ok)) showToast(`Employee saved, but identity document "${doc.doc_title || ''}" failed: ` + (r ? await parseApiError(r) : 'network error'), 'error');
+  }
+  for (const dep of s.dependents) {
+    const payload = {
+      dependent_name: dep.name,
+      relationship: dep.relationship || null,
+      gender: dep.gender || null,
+      birth_date: dep.birth_date || null,
+      insurance_type: dep.insurance_type || null,
+      notes: dep.notes || null,
+      is_enrolled_in_school: !!dep.enrolled_in_school,
+      enrolled_student_name: dep.enrolled_in_school ? (dep.student_name || null) : null,
+      enrolled_student_id: dep.enrolled_in_school ? (dep.student_id || null) : null,
+    };
+    const r = await apiFetch(`${API_BASE}/hr/employees/${employeeId}/dependents`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!(r && r.ok)) showToast(`Employee saved, but dependent "${dep.name || ''}" failed: ` + (r ? await parseApiError(r) : 'network error'), 'error');
+  }
+
+  showToast('Employee added successfully!', 'success');
+  loadHrEmployeeDirectoryView(document.getElementById('main-content'));
 }
 
 function cancelHrAddEmployee() {
@@ -581,12 +617,14 @@ function closeHrAddEducationModal() {
   const ov = document.getElementById('hr-edu-overlay'); if (ov) ov.style.display = 'none';
 }
 function saveHrEducationRecord() {
+  const fileInput = document.getElementById('hr-edu-attachment');
   hrAddFormState.education.push({
     qualification: document.getElementById('hr-edu-qualification')?.value || '',
     institution:   document.getElementById('hr-edu-institution')?.value || '',
     academic_time: document.getElementById('hr-edu-time')?.value || '',
     awards_grades: document.getElementById('hr-edu-grades')?.value || '',
-    attachment:    document.getElementById('hr-edu-attachment')?.files?.[0]?.name || ''
+    attachment:    fileInput?.files?.[0]?.name || '',
+    attachmentFile: fileInput?.files?.[0] || null, // retained across tab switches for the multipart POST at submit
   });
   closeHrAddEducationModal();
   document.getElementById('hr-add-tab-content').innerHTML = renderHrAddTabEducation();
@@ -606,9 +644,11 @@ function closeHrAddIdentityModal() {
   const ov = document.getElementById('hr-idoc-overlay'); if (ov) ov.style.display = 'none';
 }
 function saveHrIdentityDoc() {
+  const fileInput = document.getElementById('hr-idoc-file');
   hrAddFormState.identity_docs.push({
     doc_title:     document.getElementById('hr-idoc-title')?.value || '',
-    attachment:    document.getElementById('hr-idoc-file')?.files?.[0]?.name || '',
+    attachment:    fileInput?.files?.[0]?.name || '',
+    attachmentFile: fileInput?.files?.[0] || null, // retained across tab switches for the multipart POST at submit
     date_attached: document.getElementById('hr-idoc-date')?.value || ''
   });
   closeHrAddIdentityModal();
@@ -664,6 +704,7 @@ function removeHrDependent(idx) {
 function handleHrPhotoPreview(input) {
   if (!input.files[0]) return;
   hrAddFormState.photo = input.files[0].name;
+  hrAddFormState.photoFile = input.files[0]; // retained across tab switches — the <input> is recreated on tab re-render
   const preview = document.getElementById('hr-photo-preview');
   if (preview) {
     const url = URL.createObjectURL(input.files[0]);

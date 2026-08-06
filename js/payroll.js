@@ -974,30 +974,22 @@ function _prActionsHtml(run) {
 // auth and stream a file, so a plain <a href> would send no Authorization
 // header and 401 (§11.5).
 async function _prDownloadRunFile(url, runId) {
-  const res = await apiFetch(url);
-  if (!res) return;
-  if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    if (body && body.detail && typeof body.detail === 'object' && Array.isArray(body.detail.affected)) {
-      _prShowExportFixList(body.detail);
-      return;
-    }
-    const detail = body && body.detail;
-    const msg = typeof detail === 'string' ? detail : (detail ? JSON.stringify(detail) : `HTTP ${res.status}`);
-    showToast('Export failed: ' + msg, 'error');
-    return;
+  const ok = await authBlobDownload(url, `payroll-run-${runId}-tendepay.xlsx`, {
+    onError: async (res) => {
+      const body = await res.json().catch(() => null);
+      if (body && body.detail && typeof body.detail === 'object' && Array.isArray(body.detail.affected)) {
+        _prShowExportFixList(body.detail);
+        return;
+      }
+      const detail = body && body.detail;
+      const msg = typeof detail === 'string' ? detail : (detail ? JSON.stringify(detail) : `HTTP ${res.status}`);
+      showToast('Export failed: ' + msg, 'error');
+    },
+  });
+  if (ok) {
+    const errEl = document.getElementById('pr-export-error');
+    if (errEl) errEl.innerHTML = '';
   }
-  const errEl = document.getElementById('pr-export-error');
-  if (errEl) errEl.innerHTML = '';
-  const blob = await res.blob();
-  const cd = res.headers.get('Content-Disposition') || '';
-  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
-  const filename = match ? decodeURIComponent(match[1]) : `payroll-run-${runId}-tendepay.xlsx`;
-  const objUrl = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = objUrl; a.download = filename;
-  document.body.appendChild(a); a.click(); a.remove();
-  URL.revokeObjectURL(objUrl);
 }
 
 async function _prExportTendepay(runId) {
@@ -1810,11 +1802,10 @@ function _prRenderPayslipsTable(rows, runId) {
 // Never link pdf_path directly (server filesystem path) — always fetch the
 // PDF through the authenticated /download endpoint and open it as a blob.
 async function _prDownloadPayslip(payslipId) {
-  const res = await apiFetch(`${API_BASE}/payroll/payslips/${payslipId}/download`);
-  if (res && res.ok) {
-    const blob = await res.blob();
-    window.open(URL.createObjectURL(blob), '_blank');
-  } else if (res) showToast('Could not download payslip: ' + await parseApiError(res), 'error');
+  await authBlobDownload(`${API_BASE}/payroll/payslips/${payslipId}/download`, `payslip-${payslipId}.pdf`, {
+    openInline: true,
+    errorPrefix: 'Could not download payslip: ',
+  });
 }
 
 async function _prResendPayslip(payslipId, runId) {

@@ -376,27 +376,43 @@ async function loadHrWhtPaymentTypes(prefix, selectedValue) {
 
 // Authenticated blob download for any endpoint that streams a file behind
 // the Bearer token (a raw <a href> sends no Authorization header and 401s).
-// §10.1 flags six pre-existing near-duplicate copies of this exact pattern
-// (procurement.js _reqDownloadPdf, payroll.js _prDownloadRunFile/
-// _prDownloadPayslip, finance.js's two template downloaders) that predate
-// this helper and aren't migrated here — each has a working, already-shipped
-// caller with its own quirks (JSON-error fix-lists, inline-view vs download,
-// no-revoke) not worth the regression risk of touching in the same pass that
-// introduces the helper. New download call sites (P9A, Contractor Runs fee
-// notes) use this directly instead of adding a seventh copy.
-async function authBlobDownload(url, fallbackFilename) {
+// The five near-duplicates originally flagged (procurement.js
+// _reqDownloadPdf, payroll.js _prDownloadRunFile/_prDownloadPayslip,
+// finance.js's two template downloaders) are migrated onto this via
+// `options`. NOT yet migrated: finance-reports.js, document-approvals.js,
+// parent-portal.js, transport.js, payables.js (x2), students.js each have
+// their own copy of the same fetch-blob-CD-parse pattern, found during this
+// migration but out of the scope that was actually requested — a further
+// follow-up, not done here.
+//   - options.openInline: window.open() the blob instead of triggering a
+//     download (payslip preview never had a real filename/CD parse either).
+//   - options.errorPrefix: prefix for the default parseApiError() toast.
+//   - options.onError(res): full override when a caller needs custom error
+//     handling (e.g. the Tendepay export's JSON affected-employees fix-list).
+// Returns true/false so callers can chain success-only follow-up (e.g.
+// clearing a previous error banner) without duplicating the ok-check.
+async function authBlobDownload(url, fallbackFilename, options = {}) {
   const res = await apiFetch(url);
-  if (!res) return;
-  if (!res.ok) { showToast('Error: ' + await parseApiError(res), 'error'); return; }
+  if (!res) return false;
+  if (!res.ok) {
+    if (typeof options.onError === 'function') await options.onError(res);
+    else showToast((options.errorPrefix || 'Error: ') + await parseApiError(res), 'error');
+    return false;
+  }
   const blob = await res.blob();
   const cd = res.headers.get('Content-Disposition') || '';
   const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
   const filename = match ? decodeURIComponent(match[1]) : fallbackFilename;
   const objUrl = URL.createObjectURL(blob);
+  if (options.openInline) {
+    window.open(objUrl, '_blank');
+    return true;
+  }
   const a = document.createElement('a');
   a.href = objUrl; a.download = filename;
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(objUrl);
+  return true;
 }
 
 async function downloadBulkTemplate(module) {

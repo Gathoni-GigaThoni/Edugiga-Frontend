@@ -143,7 +143,7 @@ function hrAddEmployee() {
     birth_date: '', gender: '', joining_date: '',
     probation_period: '', confirmation_date: '', address: '',
     emergency_contact: null, nationality: '', national_id: '',
-    is_director: false, photo: null,
+    is_director: false, photo: null, photoFile: null,
     disability_type: '', medical_info: '',
     education: [], kra_pin: '', nssf_number: '', shif_number: '',
     tax_profile: 'employee', contractor_wht_payment_type: '', is_non_resident: false, contractor_kra_pin: '',

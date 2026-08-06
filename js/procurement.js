@@ -841,26 +841,12 @@ async function _reqSubmitReject(id) {
   document.getElementById('req-reject-reason-err').textContent = await parseApiError(res);
 }
 
-// ── PDF — authenticated blob download, not a raw <a href> (refactor #3) ─────
+// ── PDF — authenticated blob download via the shared ui-helpers.js helper ───
 async function _reqDownloadPdf(id) {
-  const res = await apiFetch(`${API_BASE}/procurement/requisitions/${id}/pdf`);
-  if (!res || !res.ok) {
-    // Surface the backend detail (e.g. WeasyPrint failure on Render) instead
-    // of a generic toast — matches the diagnostic pattern used for the
-    // requisition list load in dashboard.js.
-    const detail = res ? await parseApiError(res) : 'network error';
-    showToast('Could not download the PDF: ' + detail, 'error');
-    return;
-  }
-  const blob = await res.blob();
-  const cd = res.headers.get('Content-Disposition') || '';
-  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
-  const filename = match ? decodeURIComponent(match[1]) : `requisition-${id}.pdf`;
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  // Surface the backend detail (e.g. WeasyPrint failure on Render) instead of
+  // a generic toast — matches the diagnostic pattern used for the
+  // requisition list load in dashboard.js.
+  await authBlobDownload(`${API_BASE}/procurement/requisitions/${id}/pdf`, `requisition-${id}.pdf`, {
+    errorPrefix: 'Could not download the PDF: ',
+  });
 }
