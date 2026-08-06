@@ -330,6 +330,7 @@ function showDashboard() {
               <li id="sidebar-payroll-runs" onclick="loadView('payroll-runs')">Payroll Runs</li>
               <li id="sidebar-payroll-contractor-runs" onclick="loadView('payroll-contractor-runs')">Contractor Runs</li>
               <li id="sidebar-payroll-payslips" onclick="loadView('payroll-payslips')">Payslips</li>
+              <li id="sidebar-payroll-p9a" onclick="loadView('payroll-p9a')">P9A Tax Deduction Card</li>
               <li class="dropdown">
                 ${flyoutGroupHeader('Utilities', 'payroll-utilities-dropdown')}
                 <ul id="payroll-utilities-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('payroll-utilities-dropdown')}">
@@ -1309,6 +1310,9 @@ async function loadView(view) {
     case 'payroll-payslips':
       setActiveSidebarItem('sidebar-payroll-payslips');
       await loadPayrollPayslipsView(main); break;
+    case 'payroll-p9a':
+      setActiveSidebarItem('sidebar-payroll-p9a');
+      await loadP9AView(main); break;
     case 'payroll-fi':  loadPayrollFiListingView(main); break;
     case 'payroll-pay-accounts':
       setActiveSidebarItem('sidebar-payroll-pay-accounts'); openPayrollDropdowns();

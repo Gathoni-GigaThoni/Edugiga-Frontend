@@ -736,6 +736,10 @@ async function _prLoadRuns() {
 function _prRenderShell(container) {
   container.innerHTML = `
     ${renderBreadcrumb([{label:'Dashboard',view:null},{label:'Payroll',view:'payroll-runs'},{label:'Payroll Runs'}])}
+    <div style="font-size:12px;color:#888;margin:-4px 0 10px;">
+      Employees only. Contractors are on their own runs &rarr;
+      <a href="#" onclick="loadView('payroll-contractor-runs');return false;">Contractor Runs</a>
+    </div>
     <div class="split-layout">
       <div class="split-left">
         <div class="split-left-header">
@@ -1361,18 +1365,7 @@ async function _crApprove(runId) {
 }
 
 async function _crDownloadFeeNote(runId, lineId) {
-  const res = await apiFetch(`${API_BASE}/payroll/contractor-runs/${runId}/fee-note/${lineId}`);
-  if (!res) return;
-  if (!res.ok) { showToast('Error: ' + await parseApiError(res), 'error'); return; }
-  const blob = await res.blob();
-  const cd = res.headers.get('Content-Disposition') || '';
-  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
-  const filename = match ? decodeURIComponent(match[1]) : `FeeNote-${runId}-${lineId}.pdf`;
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = filename;
-  document.body.appendChild(a); a.click(); a.remove();
-  URL.revokeObjectURL(url);
+  await authBlobDownload(`${API_BASE}/payroll/contractor-runs/${runId}/fee-note/${lineId}`, `FeeNote-${runId}-${lineId}.pdf`);
 }
 
 // ==================== STATUTORY RATES (Payroll > Utilities) ====================
@@ -1900,4 +1893,81 @@ async function _prpResendPayslip(payslipId) {
   const res = await apiFetch(`${API_BASE}/payroll/payslips/${payslipId}/send`, { method: 'POST' });
   if (res && res.ok) { showToast('Payslip resent.', 'success'); window._splitRefreshSelected && window._splitRefreshSelected(); }
   else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+}
+
+// ==================== P9A TAX DEDUCTION CARD ====================
+// BE/FE Contract Addendum 2026-08-06 §7. Not a split-view — a compact form
+// with three download actions. Params verified against the live schema:
+// employee_id (int), period_from/period_to ("YYYY-MM" strings), year (int).
+let _p9aSelectedEmp = null; // { id, employee_code, name }
+
+async function loadP9AView(container) {
+  const years = Array.from({length: 6}, (_, i) => new Date().getFullYear() - 4 + i);
+  const empOptions = (employeesData || []).map(e => {
+    const name = ((e.surname || e.first_name || '') + ' ' + (e.other_names || e.last_name || '')).trim();
+    return `<option value="${e.employee_code}">${_finEsc(name)} (${_finEsc(e.employee_code)})</option>`;
+  }).join('');
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">P9A Tax Deduction Card</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Payroll &rsaquo; P9A Tax Deduction Card</div>
+      </div>
+      <div class="fin-form-wrap" style="max-width:560px;">
+        <div class="fin-form-group">
+          <label class="fin-form-label">Employee</label>
+          <input type="text" id="p9a-emp-search" list="p9a-emp-list" class="fin-form-input" placeholder="Search employee&#8230;" oninput="_p9aPickEmployee(this.value)">
+          <datalist id="p9a-emp-list">${empOptions}</datalist>
+          <span style="font-size:0.78rem;color:#888;">Leave blank for the Bulk-year action.</span>
+        </div>
+        <div class="fin-form-group">
+          <label class="fin-form-label">Year</label>
+          <select id="p9a-year" class="fin-form-select">${years.map(y=>`<option value="${y}" ${y===new Date().getFullYear()?'selected':''}>${y}</option>`).join('')}</select>
+        </div>
+        <details style="margin:6px 0 14px;">
+          <summary style="cursor:pointer;font-size:0.85rem;color:var(--navy-700,#1B3057);font-weight:600;">Custom range</summary>
+          <div class="fin-form-grid-2" style="margin-top:10px;">
+            <div class="fin-form-group"><label class="fin-form-label">Period From</label><input type="month" id="p9a-period-from" class="fin-form-input"></div>
+            <div class="fin-form-group"><label class="fin-form-label">Period To</label><input type="month" id="p9a-period-to" class="fin-form-input"></div>
+          </div>
+        </details>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <button class="fin-btn-teal" onclick="_p9aDownloadSingle()">Single (custom range)</button>
+          <button class="fin-btn-outline" onclick="_p9aDownloadFullYear()">Single (full year)</button>
+          <button class="fin-btn-teal" style="background:var(--gold-500,#C9A227);border-color:var(--gold-500,#C9A227);" onclick="_p9aDownloadBulk()">Bulk (year)</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function _p9aPickEmployee(code) {
+  const emp = (employeesData || []).find(e => e.employee_code === code);
+  _p9aSelectedEmp = emp || null;
+}
+
+async function _p9aDownloadSingle() {
+  if (!_p9aSelectedEmp) { showToast('Select an employee first.', 'error'); return; }
+  const from = document.getElementById('p9a-period-from')?.value;
+  const to = document.getElementById('p9a-period-to')?.value;
+  if (!from || !to) { showToast('Period From and Period To are required for a custom range.', 'error'); return; }
+  if (from > to) { showToast('Period From must be on or before Period To.', 'error'); return; }
+  await authBlobDownload(
+    `${API_BASE}/payroll/p9?employee_id=${_p9aSelectedEmp.id}&period_from=${from}&period_to=${to}`,
+    `P9A_${_p9aSelectedEmp.employee_code}.pdf`
+  );
+}
+
+async function _p9aDownloadFullYear() {
+  if (!_p9aSelectedEmp) { showToast('Select an employee first.', 'error'); return; }
+  const year = document.getElementById('p9a-year')?.value;
+  await authBlobDownload(
+    `${API_BASE}/payroll/p9/full-year?employee_id=${_p9aSelectedEmp.id}&year=${year}`,
+    `P9A_${_p9aSelectedEmp.employee_code}_${year}.pdf`
+  );
+}
+
+async function _p9aDownloadBulk() {
+  const year = document.getElementById('p9a-year')?.value;
+  if (!confirm(`Generate P9A for every employee in ${year}? Contractors are excluded.`)) return;
+  await authBlobDownload(`${API_BASE}/payroll/p9/bulk?year=${year}`, `P9A_${year}.zip`);
 }

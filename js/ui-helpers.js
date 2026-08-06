@@ -374,6 +374,31 @@ async function loadHrWhtPaymentTypes(prefix, selectedValue) {
     active.rates.map(r => `<option value="${r.payment_type}" ${r.payment_type === selectedValue ? 'selected' : ''}>${whtPaymentTypeLabel(r.payment_type)}</option>`).join('');
 }
 
+// Authenticated blob download for any endpoint that streams a file behind
+// the Bearer token (a raw <a href> sends no Authorization header and 401s).
+// §10.1 flags six pre-existing near-duplicate copies of this exact pattern
+// (procurement.js _reqDownloadPdf, payroll.js _prDownloadRunFile/
+// _prDownloadPayslip, finance.js's two template downloaders) that predate
+// this helper and aren't migrated here — each has a working, already-shipped
+// caller with its own quirks (JSON-error fix-lists, inline-view vs download,
+// no-revoke) not worth the regression risk of touching in the same pass that
+// introduces the helper. New download call sites (P9A, Contractor Runs fee
+// notes) use this directly instead of adding a seventh copy.
+async function authBlobDownload(url, fallbackFilename) {
+  const res = await apiFetch(url);
+  if (!res) return;
+  if (!res.ok) { showToast('Error: ' + await parseApiError(res), 'error'); return; }
+  const blob = await res.blob();
+  const cd = res.headers.get('Content-Disposition') || '';
+  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
+  const filename = match ? decodeURIComponent(match[1]) : fallbackFilename;
+  const objUrl = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = objUrl; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(objUrl);
+}
+
 async function downloadBulkTemplate(module) {
   const res = await apiFetch(`${API_BASE}/bulk/${module}/template`);
   if (!res || !res.ok) { showToast('Could not download template.', 'error'); return; }
