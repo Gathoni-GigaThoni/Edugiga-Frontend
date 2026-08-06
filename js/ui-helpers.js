@@ -287,6 +287,93 @@ function _bulkUploadResultHTML(data) {
   return html;
 }
 
+// ── Active WHT schedule lookup (BE/FE Contract Addendum 2026-08-06 §3.3) ────
+// Employee create/edit forms need the in-force WHT schedule's payment types
+// to populate the contractor payment-type picker. WHTScheduleRead carries
+// is_active directly, so no client-side date-range math is needed. Cached
+// module-wide for the page session — the addendum only asks that it not be
+// re-queried per keystroke, and the active schedule can't change mid-session.
+let _whtActiveScheduleCache; // undefined = not fetched yet; null = fetched, none active
+async function fetchActiveWhtSchedule() {
+  if (_whtActiveScheduleCache !== undefined) return _whtActiveScheduleCache;
+  try {
+    const res = await apiFetch(`${API_BASE}/payroll/utilities/statutory-rates/wht`);
+    const list = (res && res.ok) ? _toArray(await res.json().catch(() => [])) : [];
+    const active = list.find(s => s.is_active);
+    _whtActiveScheduleCache = active ? { scheduleId: active.id, rates: active.rates || [] } : null;
+  } catch (_) {
+    _whtActiveScheduleCache = null;
+  }
+  return _whtActiveScheduleCache;
+}
+function whtPaymentTypeLabel(key) {
+  return String(key || '').split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+}
+
+// ── Statutory pipeline fieldset (BE/FE Contract Addendum 2026-08-06 §3.2) ───
+// Identical markup on both the Add and Edit Employee forms, so it's rendered
+// from one place with an id prefix ('add' | 'edit') rather than duplicated —
+// hr-add.js/hr-edit.js stay separate near-duplicate forms otherwise, but this
+// fieldset didn't previously exist on either, so there's no established
+// duplication to match.
+function renderHrTaxProfileFieldset(prefix, s) {
+  const isContractor = s.tax_profile === 'contractor';
+  return `
+    <div style="font-size:0.78rem;font-weight:600;color:var(--navy-700,#1B3057);text-transform:uppercase;margin:18px 0 10px;">Statutory pipeline</div>
+    <div class="hr-form-checkboxes" style="margin-bottom:14px;">
+      <label class="hr-form-checkbox-label">
+        <input type="radio" name="hr-${prefix}-tax-profile" value="employee" ${!isContractor ? 'checked' : ''} onchange="toggleHrTaxProfile('${prefix}')"> Employee (default)
+      </label>
+      <label class="hr-form-checkbox-label" style="margin-left:20px;">
+        <input type="radio" name="hr-${prefix}-tax-profile" value="contractor" ${isContractor ? 'checked' : ''} onchange="toggleHrTaxProfile('${prefix}')"> Contractor
+      </label>
+    </div>
+    <div id="hr-${prefix}-contractor-fields" class="hr-form-grid" style="display:${isContractor ? 'grid' : 'none'};">
+      <div class="hr-form-group">
+        <label class="hr-form-label">Payment Type <span class="hr-required">*</span></label>
+        <select id="hr-${prefix}-wht-type" class="hr-form-select"><option value="">Loading&#8230;</option></select>
+      </div>
+      <div class="hr-form-group">
+        <label class="hr-form-label">KRA PIN</label>
+        <input type="text" id="hr-${prefix}-contractor-kra-pin" class="hr-form-input" value="${s.contractor_kra_pin || ''}" placeholder="Optional">
+        <span style="font-size:0.78rem;color:#888;">Optional. Displayed on fee notes; falls back to "N/A" when blank.</span>
+      </div>
+      <div class="hr-form-group hr-form-span2">
+        <label class="hr-form-checkbox-label">
+          <input type="checkbox" id="hr-${prefix}-non-resident" class="hr-form-cb" ${s.is_non_resident ? 'checked' : ''}> Non-resident
+        </label>
+        <span style="font-size:0.78rem;color:#888;">Non-residents pay the higher WHT rate and are never exempt.</span>
+      </div>
+    </div>`;
+}
+
+function toggleHrTaxProfile(prefix) {
+  const checked = document.querySelector(`input[name="hr-${prefix}-tax-profile"]:checked`);
+  const sec = document.getElementById(`hr-${prefix}-contractor-fields`);
+  if (sec) sec.style.display = (checked && checked.value === 'contractor') ? 'grid' : 'none';
+}
+
+// Populates the #hr-{prefix}-wht-type <select> from the in-force WHT schedule.
+// No-ops quietly if the element isn't in the currently-rendered tab, matching
+// loadDepartmentOptions()'s convention.
+async function loadHrWhtPaymentTypes(prefix, selectedValue) {
+  const sel = document.getElementById(`hr-${prefix}-wht-type`);
+  if (!sel) return;
+  const active = await fetchActiveWhtSchedule();
+  if (!active || !active.rates.length) {
+    sel.innerHTML = '<option value="">No active WHT schedule configured</option>';
+    sel.disabled = true;
+    const hint = document.createElement('div');
+    hint.style = 'background:#FBF3D9;border-left:3px solid var(--gold-500,#C9A227);border-radius:6px;padding:8px 12px;margin-top:6px;font-size:12.5px;color:#5c4a00;';
+    hint.textContent = 'No active WHT schedule configured. Ask ops to set up statutory rates under Payroll → Utilities → Statutory Rates.';
+    sel.parentElement?.appendChild(hint);
+    return;
+  }
+  sel.disabled = false;
+  sel.innerHTML = '<option value="">Please Select</option>' +
+    active.rates.map(r => `<option value="${r.payment_type}" ${r.payment_type === selectedValue ? 'selected' : ''}>${whtPaymentTypeLabel(r.payment_type)}</option>`).join('');
+}
+
 async function downloadBulkTemplate(module) {
   const res = await apiFetch(`${API_BASE}/bulk/${module}/template`);
   if (!res || !res.ok) { showToast('Could not download template.', 'error'); return; }

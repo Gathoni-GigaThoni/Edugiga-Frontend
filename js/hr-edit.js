@@ -30,6 +30,7 @@ function renderHrEditPage(container, record) {
     ${hrEditModalsHtml()}
   `;
   loadDepartmentOptions('hr-edit-department', hrEditRecord.department_id);
+  loadHrWhtPaymentTypes('edit', hrEditRecord.contractor_wht_payment_type);
 }
 
 function hrEditTabPlaceholder() {
@@ -298,6 +299,7 @@ function renderHrEditTabBasic() {
           <input type="checkbox" id="hr-edit-director" class="hr-form-cb" ${r.is_director ? 'checked' : ''}> Director?
         </label>
       </div>
+      ${renderHrTaxProfileFieldset('edit', r)}
       <div class="hr-photo-section">
         <label class="hr-form-label">Photo</label>
         <div class="hr-photo-row">
@@ -343,6 +345,17 @@ async function updateHrEditBasic() {
   if (!probation_period) { showToast('Probation Period is required.', 'error'); return; }
   if (!nationality)      { showToast('Nationality is required.', 'error'); return; }
 
+  const taxProfileEl = document.querySelector('input[name="hr-edit-tax-profile"]:checked');
+  const tax_profile = taxProfileEl ? taxProfileEl.value : 'employee';
+  const contractor_wht_payment_type = gv('hr-edit-wht-type');
+  if (tax_profile === 'contractor' && !contractor_wht_payment_type) {
+    showToast('Payment Type is required for contractor employees.', 'error'); return;
+  }
+  hrEditRecord.tax_profile = tax_profile;
+  hrEditRecord.contractor_wht_payment_type = tax_profile === 'contractor' ? contractor_wht_payment_type : null;
+  hrEditRecord.is_non_resident = tax_profile === 'contractor' ? (document.getElementById('hr-edit-non-resident')?.checked || false) : false;
+  hrEditRecord.contractor_kra_pin = tax_profile === 'contractor' ? gvt('hr-edit-contractor-kra-pin') : null;
+
   hrEditRecord.employment_terms = employment_terms;
   hrEditRecord.last_name        = surname;
   hrEditRecord.first_name       = other_names;
@@ -384,6 +397,10 @@ async function updateHrEditBasic() {
     emergency_contact_country_code: ec?.phone_code || null,
     emergency_contact_number:       ec?.phone || null,
     emergency_contact_relationship: ec?.relationship || null,
+    tax_profile:                   hrEditRecord.tax_profile,
+    contractor_wht_payment_type:   hrEditRecord.contractor_wht_payment_type,
+    is_non_resident:               hrEditRecord.is_non_resident,
+    contractor_kra_pin:            hrEditRecord.contractor_kra_pin,
   };
 
   const res = await apiFetch(`${API_BASE}/hr/employees/${empId}`, {
@@ -608,10 +625,6 @@ function renderHrEditTabIdentity() {
           <input type="text" id="hr-edit-nssf" class="hr-form-input" value="${r.nssf_number || ''}">
         </div>
         <div class="hr-form-group">
-          <label class="hr-form-label">NHIF Number</label>
-          <input type="text" id="hr-edit-nhif" class="hr-form-input" value="${r.nhif_number || ''}">
-        </div>
-        <div class="hr-form-group">
           <label class="hr-form-label">SHIF Number</label>
           <input type="text" id="hr-edit-shif" class="hr-form-input" value="${r.shif_number || ''}">
         </div>
@@ -636,7 +649,6 @@ function renderHrEditTabIdentity() {
 async function updateHrEditIdentity() {
   hrEditRecord.kra_pin     = (document.getElementById('hr-edit-kra-pin')?.value || '').trim();
   hrEditRecord.nssf_number = (document.getElementById('hr-edit-nssf')?.value || '').trim();
-  hrEditRecord.nhif_number = (document.getElementById('hr-edit-nhif')?.value || '').trim();
   hrEditRecord.shif_number = (document.getElementById('hr-edit-shif')?.value || '').trim();
   hrEditRecord.identity_docs = hrEditRecord.identity_docs || [];
 
@@ -647,7 +659,6 @@ async function updateHrEditIdentity() {
     body: JSON.stringify({
       kra_pin:     hrEditRecord.kra_pin,
       nssf_number: hrEditRecord.nssf_number,
-      nhif_number: hrEditRecord.nhif_number,
       shif_number: hrEditRecord.shif_number,
     }),
   });
@@ -658,7 +669,6 @@ async function updateHrEditIdentity() {
     if (updated) {
       hrEditRecord.kra_pin     = updated.kra_pin;
       hrEditRecord.nssf_number = updated.nssf_number;
-      hrEditRecord.nhif_number = updated.nhif_number;
       hrEditRecord.shif_number = updated.shif_number;
     }
     showToast('Identity information updated successfully.', 'success');
@@ -907,6 +917,7 @@ function switchHrEditTab(tabId) {
   const content = document.getElementById('hr-edit-tab-content');
   if (content) content.innerHTML = renderHrEditTabContent(tabId);
   loadDepartmentOptions('hr-edit-department', hrEditRecord.department_id);
+  loadHrWhtPaymentTypes('edit', hrEditRecord.contractor_wht_payment_type);
   if (tabId === 'service-profile') {
     ensurePayGradeCache().then(() => {
       const c = document.getElementById('hr-edit-tab-content');

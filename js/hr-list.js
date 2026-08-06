@@ -145,7 +145,8 @@ function hrAddEmployee() {
     emergency_contact: null, nationality: '', national_id: '',
     is_director: false, photo: null,
     disability_type: '', medical_info: '',
-    education: [], kra_pin: '', nssf_number: '', nhif_number: '', shif_number: '',
+    education: [], kra_pin: '', nssf_number: '', shif_number: '',
+    tax_profile: 'employee', contractor_wht_payment_type: '', is_non_resident: false, contractor_kra_pin: '',
     identity_docs: [], dependents: [], service_profile: []
   };
   renderHrAddPage(document.getElementById('main-content'));
@@ -173,8 +174,11 @@ function _hrMapEditRecord(full, listRecord) {
   r.medical_info     = full.medical?.medical_info || '';
   r.kra_pin          = full.identity?.kra_pin || '';
   r.nssf_number      = full.identity?.nssf_number || '';
-  r.nhif_number      = full.identity?.nhif_number || '';
   r.shif_number      = full.identity?.shif_number || '';
+  r.tax_profile                  = full.tax_profile || 'employee';
+  r.contractor_wht_payment_type  = full.contractor_wht_payment_type || '';
+  r.is_non_resident              = !!full.is_non_resident;
+  r.contractor_kra_pin           = full.contractor_kra_pin || '';
   r.identity_docs    = full.identity?.documents || [];
   r.education        = full.education || [];
   r.dependents       = full.dependents || [];

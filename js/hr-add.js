@@ -19,6 +19,7 @@ function renderHrAddPage(container) {
 function _hrAddSetTabContent(tabId) {
   document.getElementById('hr-add-tab-content').innerHTML = renderHrAddTabContent(tabId);
   loadDepartmentOptions('hr-add-department', hrAddFormState.department_id);
+  loadHrWhtPaymentTypes('add', hrAddFormState.contractor_wht_payment_type);
 }
 
 function hrAddModalsHtml() {
@@ -161,8 +162,13 @@ function saveHrAddCurrentTabState() {
   set('medical_info',     'hr-add-medical-info');
   set('kra_pin',          'hr-add-kra-pin');
   set('nssf_number',      'hr-add-nssf');
-  set('nhif_number',      'hr-add-nhif');
   set('shif_number',      'hr-add-shif');
+  set('contractor_wht_payment_type', 'hr-add-wht-type');
+  set('contractor_kra_pin',          'hr-add-contractor-kra-pin');
+  const taxProfileEl = document.querySelector('input[name="hr-add-tax-profile"]:checked');
+  if (taxProfileEl) hrAddFormState.tax_profile = taxProfileEl.value;
+  const nonResCb = document.getElementById('hr-add-non-resident');
+  if (nonResCb) hrAddFormState.is_non_resident = nonResCb.checked;
   const dirCb = document.getElementById('hr-add-director');
   if (dirCb) hrAddFormState.is_director = dirCb.checked;
   const photoInput = document.getElementById('hr-add-photo');
@@ -382,14 +388,11 @@ function renderHrAddTabIdentity() {
           <input type="text" id="hr-add-nssf" class="hr-form-input" value="${s.nssf_number}" placeholder="NSSF Number">
         </div>
         <div class="hr-form-group">
-          <label class="hr-form-label">NHIF Number</label>
-          <input type="text" id="hr-add-nhif" class="hr-form-input" value="${s.nhif_number}" placeholder="NHIF Number">
-        </div>
-        <div class="hr-form-group">
           <label class="hr-form-label">SHIF Number</label>
           <input type="text" id="hr-add-shif" class="hr-form-input" value="${s.shif_number}" placeholder="SHIF Number">
         </div>
       </div>
+      ${renderHrTaxProfileFieldset('add', s)}
       <div class="hr-form-table-header">
         <button class="hr-add-btn" onclick="showHrAddIdentityModal()">Add Identity</button>
       </div>
@@ -470,6 +473,9 @@ async function submitHrAddEmployee() {
   if (!s.joining_date)        { showToast('Joining Date is required.', 'error'); return; }
   if (!s.probation_period)    { showToast('Probation Period is required.', 'error'); return; }
   if (!s.nationality)         { showToast('Nationality is required.', 'error'); return; }
+  if (s.tax_profile === 'contractor' && !s.contractor_wht_payment_type) {
+    showToast('Payment Type is required for contractor employees.', 'error'); return;
+  }
 
   // File inputs with actual uploads that must be sent via FormData:
   //   hr-add-photo (employee photo), hr-edu-attachment (education docs), hr-idoc-file (identity docs)
@@ -498,8 +504,11 @@ async function submitHrAddEmployee() {
     education:         [...s.education],
     kra_pin:           s.kra_pin,
     nssf_number:       s.nssf_number,
-    nhif_number:       s.nhif_number,
     shif_number:       s.shif_number,
+    tax_profile:                   s.tax_profile,
+    contractor_wht_payment_type:   s.tax_profile === 'contractor' ? s.contractor_wht_payment_type : null,
+    is_non_resident:               s.tax_profile === 'contractor' ? s.is_non_resident : false,
+    contractor_kra_pin:            s.tax_profile === 'contractor' ? (s.contractor_kra_pin || null) : null,
     identity_docs:     [...s.identity_docs],
     dependents:        [...s.dependents],
   };
