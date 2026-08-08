@@ -891,10 +891,20 @@ function cancelTrnBusForm() {
 }
 
 // ==================== BUS BOARDING REPORT ====================
+// GET /transport/boarding-records is server-side paged — _trnBoardingData
+// holds only the current page's rows, not the full result set. Pager count
+// and the "Total" label read from _trnBoardingTotal (server-reported).
 
-let _trnBoardingData = [], _trnBoardingPage = 1, _trnBoardingPerPage = 10;
+let _trnBoardingData = [], _trnBoardingPage = 1, _trnBoardingPerPage = 10, _trnBoardingTotal = 0;
+let _trnBoardingFilters = { date: '', route_id: '', trip_leg: '' };
+
+const _TRN_TRIP_LEG_LABELS = { am: 'Morning', pm: 'Evening' };
+function tripLegLabel(v) { return _TRN_TRIP_LEG_LABELS[v] || v; }
 
 async function loadTrnBusBoardingReportView(container) {
+  const today = new Date().toISOString().slice(0, 10);
+  _trnBoardingFilters = { date: today, route_id: '', trip_leg: '' };
+
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -908,31 +918,100 @@ async function loadTrnBusBoardingReportView(container) {
           </select> entries &nbsp;|&nbsp; Total <span id="trn-brd-total">0</span> entries
         </div>
         <div class="fin-controls-right">
+          <label style="font-size:0.88rem;color:#555;margin-right:6px;">Date:</label>
+          <input type="date" id="trn-brd-date" class="fin-search-input" style="min-width:150px;margin-right:10px;"
+                 value="${today}" onchange="onTrnBrdDateChange(this.value)">
+          <label style="font-size:0.88rem;color:#555;margin-right:6px;">Route:</label>
+          <select id="trn-brd-route-sel" class="fin-search-input" onchange="onTrnBrdRouteChange(this.value)"
+                  style="min-width:180px;margin-right:10px;">
+            <option value="">All routes</option>
+          </select>
+          <div class="fin-segmented" id="trn-brd-leg-group" style="margin-right:10px;">
+            <button type="button" data-value="" class="active" onclick="onTrnBrdLegChange('')">All</button>
+            <button type="button" data-value="am" onclick="onTrnBrdLegChange('am')">Morning</button>
+            <button type="button" data-value="pm" onclick="onTrnBrdLegChange('pm')">Evening</button>
+          </div>
           <button class="fin-export-btn" title="Export PDF">&#128438;</button>
           <button class="fin-export-btn" title="Export CSV" onclick="exportTrnBoardingCSV()">&#128202;</button>
         </div>
       </div>
       <div id="trn-brd-table"></div>
       <div id="trn-brd-pagination"></div>
+      <div style="font-size:11px;color:var(--grey-400,#888);margin-top:6px;">Exports the current page. Change page size to include more rows.</div>
     </div>
   `;
   renderSkeletonRows('trn-brd-table', 5);
 
-  // TODO: backend needs a bus boarding/check-in endpoint (e.g. GET /transport/boarding-records)
-  // No boarding data endpoint confirmed yet — showing empty state with a note.
-  console.warn('[EduGiga] Bus Boarding Report: requires a boarding-records API endpoint (not yet confirmed).');
-  _trnBoardingData = [];
+  const routesRes = await apiFetch(`${API_BASE}/routes/`);
+  const routes = (routesRes && routesRes.ok)
+    ? (await routesRes.json().then(r => Array.isArray(r) ? r : (r.data || r.results || [])))
+    : [];
+  const routeSel = document.getElementById('trn-brd-route-sel');
+  if (routeSel) {
+    routes.forEach(r => {
+      const opt = document.createElement('option');
+      opt.value = r.id;
+      opt.textContent = r.name || `Route #${r.id}`;
+      routeSel.appendChild(opt);
+    });
+  }
+
   _trnBoardingPage = 1;
+  await _trnBoardingFetch();
+}
+
+async function _trnBoardingFetch() {
+  const qs = new URLSearchParams({
+    page: String(_trnBoardingPage),
+    per_page: String(_trnBoardingPerPage),
+  });
+  if (_trnBoardingFilters.date)     qs.set('date', _trnBoardingFilters.date);
+  if (_trnBoardingFilters.route_id) qs.set('route_id', _trnBoardingFilters.route_id);
+  if (_trnBoardingFilters.trip_leg) qs.set('trip_leg', _trnBoardingFilters.trip_leg);
+
+  try {
+    const res  = await apiFetch(`${API_BASE}/transport/boarding-records?${qs.toString()}`);
+    const data = await res.json();
+    _trnBoardingData  = data.items || [];
+    _trnBoardingTotal = data.total || 0;
+  } catch (err) {
+    console.error('[EduGiga] Bus Boarding Report fetch failed:', err);
+    _trnBoardingData  = [];
+    _trnBoardingTotal = 0;
+    // apiFetch already surfaces network/auth errors globally — no second toast.
+  }
   _renderTrnBoardingTable();
+}
+
+function onTrnBrdDateChange(v) {
+  _trnBoardingFilters.date = v || '';
+  _trnBoardingPage = 1;
+  _trnBoardingFetch();
+}
+
+function onTrnBrdRouteChange(v) {
+  _trnBoardingFilters.route_id = v || '';
+  _trnBoardingPage = 1;
+  _trnBoardingFetch();
+}
+
+function onTrnBrdLegChange(v) {
+  _trnBoardingFilters.trip_leg = v || '';
+  document.querySelectorAll('#trn-brd-leg-group button').forEach(b => {
+    b.classList.toggle('active', b.dataset.value === v);
+  });
+  _trnBoardingPage = 1;
+  _trnBoardingFetch();
 }
 
 function _renderTrnBoardingTable() {
   const totalEl = document.getElementById('trn-brd-total');
-  if (totalEl) totalEl.textContent = _trnBoardingData.length;
+  if (totalEl) totalEl.textContent = _trnBoardingTotal;
 
-  const start = (_trnBoardingPage - 1) * _trnBoardingPerPage;
-  const paged = _trnBoardingData.slice(start, start + _trnBoardingPerPage);
-  const pages = Math.max(1, Math.ceil(_trnBoardingData.length / _trnBoardingPerPage));
+  // _trnBoardingData is already the current page's rows (server-side paged) —
+  // do not re-slice it here.
+  const paged = _trnBoardingData;
+  const pages = Math.max(1, Math.ceil(_trnBoardingTotal / _trnBoardingPerPage));
 
   const rows = paged.length
     ? paged.map(r => {
@@ -942,13 +1021,10 @@ function _renderTrnBoardingTable() {
           <td>${_e(r.student_name || '')}</td>
           <td>${_e(r.route_name || '')}</td>
           <td>${_e(r.boarding_date || '')}</td>
-          <td>${_e(r.time_of_day || '')}</td>
+          <td>${_e(tripLegLabel(r.time_of_day))}</td>
         </tr>`;
       }).join('')
-    : `<tr><td colspan="5" class="fin-empty">No boarding records found.
-         <span style="color:#888;font-size:0.82rem;display:block;margin-top:4px;">
-           This report requires a boarding-records endpoint on the backend.
-         </span></td></tr>`;
+    : `<tr><td colspan="5" class="fin-empty">No boarding records for the selected date.</td></tr>`;
 
   const tbl = document.getElementById('trn-brd-table');
   if (tbl) tbl.innerHTML = `
@@ -964,12 +1040,24 @@ function _renderTrnBoardingTable() {
   _mkTrnPagination('trn-brd-pagination', _trnBoardingPage, pages, 'trnBrdGoPage');
 }
 
-function changeTrnBrdPerPage(v) { _trnBoardingPerPage = parseInt(v); _trnBoardingPage = 1; _renderTrnBoardingTable(); }
-function trnBrdGoPage(p) { _trnBoardingPage = p; _renderTrnBoardingTable(); }
+function changeTrnBrdPerPage(v) {
+  _trnBoardingPerPage = parseInt(v, 10) || 25;
+  _trnBoardingPage = 1;
+  _trnBoardingFetch();
+}
+
+// _mkTrnPagination calls goFn(i) with the absolute target page (see line 131),
+// not a delta — mirrors every other Transport report's pager convention.
+function trnBrdGoPage(p) {
+  const pages = Math.max(1, Math.ceil(_trnBoardingTotal / _trnBoardingPerPage));
+  _trnBoardingPage = Math.min(pages, Math.max(1, p));
+  _trnBoardingFetch();
+}
+
 function exportTrnBoardingCSV() {
   exportTableCSV(
     ['Student ID', 'Student Name', 'Route', 'Date', 'Time of Day'],
-    _trnBoardingData.map(r => [r.student_id||'', r.student_name||'', r.route_name||'', r.boarding_date||'', r.time_of_day||'']),
+    _trnBoardingData.map(r => [r.student_id||'', r.student_name||'', r.route_name||'', r.boarding_date||'', tripLegLabel(r.time_of_day)]),
     'bus-boarding-report.csv'
   );
 }
