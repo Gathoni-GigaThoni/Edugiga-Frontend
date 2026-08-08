@@ -7,7 +7,7 @@
 // staff (JWT sub claim "parent:{id}" vs staff tokens) and should never share
 // sessionStorage keys with a staff session in the same browser profile.
 
-const PP_API_BASE = "https://edugiga-sois-api.onrender.com/api";
+const PP_API_BASE = "https://api.sevenoaks.ac/api";
 const PP_TOKEN_KEY = 'edugiga_parent_token';
 
 let ppToken = sessionStorage.getItem(PP_TOKEN_KEY) || '';

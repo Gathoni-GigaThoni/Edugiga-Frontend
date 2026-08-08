@@ -1,6 +1,6 @@
 // app.js
 
-const API_BASE = "https://edugiga-sois-api.onrender.com/api";
+const API_BASE = "https://api.sevenoaks.ac/api";
 
 // ── Sibling Groups: browser-local "known groups" index ───────────────────────
 // The backend has no GET-list endpoint for sibling groups (only POST create
