@@ -17,8 +17,9 @@ let _rcvRoutesCache    = null;
 let _rcvAccountsCache  = null;
 let _rcvLedgersCache   = null;
 let _rcvStudentsCache  = null;
+let _rcvSchedulesCache = null;
 
-async function _rcvLoadLookups({ items=false, terms=false, levels=false, classes=false, routes=false, accounts=false, ledgers=false, students=false } = {}) {
+async function _rcvLoadLookups({ items=false, terms=false, levels=false, classes=false, routes=false, accounts=false, ledgers=false, students=false, schedules=false } = {}) {
   const reqs = [];
   if (items    && !_rcvFeeItemsCache)  reqs.push(apiFetch(`${API_BASE}/receivables/setup/fee-items`).then(r => r&&r.ok ? r.json() : []).then(d => { _rcvFeeItemsCache  = _toArray(d); }));
   if (terms    && !_rcvTermsCache)     reqs.push(apiFetch(`${API_BASE}/terms`).then(r => r&&r.ok ? r.json() : []).then(d => { _rcvTermsCache     = _toArray(d); }));
@@ -28,7 +29,17 @@ async function _rcvLoadLookups({ items=false, terms=false, levels=false, classes
   if (accounts && !_rcvAccountsCache)  reqs.push(apiFetch(`${API_BASE}/accounts/`).then(r => r&&r.ok ? r.json() : []).then(d => { _rcvAccountsCache  = _toArray(d); }));
   if (ledgers  && !_rcvLedgersCache)   reqs.push(apiFetch(`${API_BASE}/lookups/ledgers`).then(r => r&&r.ok ? r.json() : []).then(d => { _rcvLedgersCache   = _toArray(d); }));
   if (students && !_rcvStudentsCache)  reqs.push(apiFetch(`${API_BASE}/students/`).then(r => r&&r.ok ? r.json() : []).then(d => { _rcvStudentsCache  = _toArray(d); }));
+  if (schedules&& !_rcvSchedulesCache) reqs.push(apiFetch(`${API_BASE}/receivables/setup/fee-schedules`).then(r => r&&r.ok ? r.json() : []).then(d => { _rcvSchedulesCache = _toArray(d); }));
   await Promise.all(reqs);
+}
+
+// StudentFeeAssignmentRead only carries a flat fee_schedule_id (no nested
+// fee_schedule object, no flat amount) — confirmed against the live
+// OpenAPI schema. Callers that need the schedule's amount/fee_item_id/
+// scope_type must resolve it through this cache instead of reading
+// a.fee_schedule.*, which is always undefined and silently reads as 0.
+function _rcvScheduleById(id) {
+  return (_rcvSchedulesCache||[]).find(x => String(x.id) === String(id)) || null;
 }
 
 function _rcvFeeItemName(id) {
@@ -624,7 +635,7 @@ let _rcvAsnTerm  = '', _rcvAsnStudent = '';
 
 async function loadFeeAssignmentsView(container) {
   _rcvAsnTerm=''; _rcvAsnStudent=''; _rcvAsnData=[];
-  await _rcvLoadLookups({ terms:true, items:true, students:true });
+  await _rcvLoadLookups({ terms:true, items:true, students:true, schedules:true });
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -671,6 +682,7 @@ async function rcvAsnLoad() {
   if (!termId) return;
   _rcvAsnTerm    = termId;
   _rcvAsnStudent = studentId;
+  await _rcvLoadLookups({ schedules:true });
   const url = `${API_BASE}/receivables/student-fee-assignments/?term_id=${termId}${studentId?`&student_id=${studentId}`:''}`;
   const res = await apiFetch(url);
   _rcvAsnData = (res && res.ok) ? _toArray(await res.json()) : [];
@@ -704,12 +716,13 @@ function _rcvRenderAsnTable() {
   if (!wrap) return;
   if (!_rcvAsnData.length) { wrap.innerHTML='<p style="color:#888;padding:20px 0;">No assignments found for this selection.</p>'; return; }
   const rows = _rcvAsnData.map(a => {
-    const effAmt = a.override_amount != null ? a.override_amount : (a.fee_schedule?.amount ?? a.amount ?? 0);
+    const sched  = _rcvScheduleById(a.fee_schedule_id);
+    const effAmt = a.override_amount != null ? a.override_amount : (sched?.amount ?? 0);
     const amtDisplay = a.override_amount != null
       ? `<span style="color:#d97706;font-weight:600;" title="Override amount">KES ${_finFmt(a.override_amount)} ✎</span>`
       : `KES ${_finFmt(effAmt)}`;
-    const schedDesc = a.fee_schedule
-      ? `${_rcvFeeItemName(a.fee_schedule.fee_item_id)} — ${_rcvScopeBadge(a.fee_schedule.scope_type)}`
+    const schedDesc = sched
+      ? `${_rcvFeeItemName(sched.fee_item_id)} — ${_rcvScopeBadge(sched.scope_type)}`
       : (a.fee_schedule_id ? `Schedule #${a.fee_schedule_id}` : '—');
     return `<tr id="rcv-asn-row-${a.id}">
       <td>${_finEsc(_rcvStudentName(a.student_id))}</td>
@@ -778,11 +791,11 @@ function _rcvRenderAsnPreview(studentId, termId) {
   if (!panel) return;
   panel.style.display = '';
   const stuAssignments = _rcvAsnData.filter(a=>String(a.student_id)===String(studentId));
-  const total = stuAssignments.reduce((s,a) => s + parseFloat(a.override_amount??a.fee_schedule?.amount??a.amount??0), 0);
+  const total = stuAssignments.reduce((s,a) => s + parseFloat(a.override_amount ?? _rcvScheduleById(a.fee_schedule_id)?.amount ?? 0), 0);
   const rows = stuAssignments.map(a => {
-    const amt = parseFloat(a.override_amount??a.fee_schedule?.amount??a.amount??0);
+    const amt = parseFloat(a.override_amount ?? _rcvScheduleById(a.fee_schedule_id)?.amount ?? 0);
     return `<li style="display:flex;justify-content:space-between;padding:4px 0;font-size:0.85rem;">
-      <span>${_finEsc(_rcvFeeItemName(a.fee_schedule?.fee_item_id||a.fee_item_id))}</span>
+      <span>${_finEsc(_rcvFeeItemName(_rcvScheduleById(a.fee_schedule_id)?.fee_item_id))}</span>
       <span>KES ${_finFmt(amt)}</span>
     </li>`;
   }).join('');
@@ -1055,7 +1068,7 @@ async function rcvGenReviewAssignments() {
     if(btn) btn.disabled=true; return;
   }
   preview.innerHTML='<p style="color:#888;">Loading&#8230;</p>';
-  await _rcvLoadLookups({ items:true });
+  await _rcvLoadLookups({ items:true, schedules:true });
   const res = await apiFetch(`${API_BASE}/receivables/student-fee-assignments/?student_id=${studentId}&term_id=${termId}`);
   const assignments = (res&&res.ok) ? _toArray(await res.json()) : [];
   if (!assignments.length) {
@@ -1064,12 +1077,13 @@ async function rcvGenReviewAssignments() {
   }
   let total=0;
   const rows=assignments.map(a=>{
-    const base=parseFloat(a.fee_schedule?.amount??a.amount??0);
+    const sched=_rcvScheduleById(a.fee_schedule_id);
+    const base=parseFloat(sched?.amount??0);
     const override=a.override_amount!=null?parseFloat(a.override_amount):null;
     const net=override??base;
     total+=net;
     return `<tr>
-      <td>${_finEsc(_rcvFeeItemName(a.fee_schedule?.fee_item_id||a.fee_item_id))}</td>
+      <td>${_finEsc(_rcvFeeItemName(sched?.fee_item_id))}</td>
       <td>KES ${_finFmt(base)}</td>
       <td>×1.0 (100%)</td>
       <td>KES ${_finFmt(net)}</td>
