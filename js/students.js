@@ -866,6 +866,10 @@ function _wireStuPersonalTab() {
   const joiningDate = document.getElementById('se-joining-date');
   if (joiningDate) {
     joiningDate.addEventListener('change', async () => {
+      // A genuine edit to the joining date — from here on, re-derive for real
+      // instead of trusting the backend's original term/class (see the guard
+      // at the top of _deriveStuTermAndClass).
+      (window._stuFormData || (window._stuFormData = {}))._termDerivationArmed = true;
       if (joiningDate.value) {
         await _deriveStuTermAndClass();
         if (dob?.value) _suggestLevelFromAge(dob.value);
@@ -944,6 +948,24 @@ async function _deriveStuTermAndClass() {
   const confirmEl   = document.getElementById('se-class-term-confirm');
   const joiningErrEl = document.getElementById('err-se-joining-date');
   const levelErrEl  = document.getElementById('err-se-level');
+
+  // In Edit mode, trust the enrollment term/class the backend already returned
+  // instead of re-deriving from the joining date, until the operator actually
+  // touches the joining date or level themselves (_termDerivationArmed). A
+  // term's configured date range can drift after enrollment — dates edited,
+  // an old term archived, a promotion that didn't update joining_date — and
+  // re-deriving on every render would otherwise silently null out a valid
+  // existing assignment and block every save with a false "no term" error.
+  if (_currentEditStudentId && !d._termDerivationArmed && d.term_id && d.class_id) {
+    d._derivation_error   = null;
+    d._derived_term_name  = _stuTermName(d.term_id);
+    d._derived_class_name = d.class_name || d.school_class_name || '';
+    if (joiningErrEl) joiningErrEl.textContent = '';
+    if (confirmEl) confirmEl.innerHTML = d._derived_class_name
+      ? `<span style="color:#27ae60;font-size:0.85rem;">&#10003; Currently enrolled in: <strong>${_esc(d._derived_class_name)}</strong> for <strong>${_esc(d._derived_term_name)}</strong></span>`
+      : `<span style="color:#27ae60;font-size:0.85rem;">&#10003; Currently enrolled for: <strong>${_esc(d._derived_term_name)}</strong></span>`;
+    return;
+  }
 
   const priorClassId = d.class_id;
   d.term_id = null; d.class_id = null; d.academic_year_id = null;
@@ -1067,6 +1089,12 @@ async function onStuLevelChange(levelId, clearHouse = true) {
       houseSelect.innerHTML = '<option value="">No houses found</option>';
     }
   } catch (_) { houseSelect.innerHTML = '<option value="">Error loading</option>'; }
+
+  // clearHouse defaults true only for the real onchange="" handler on the select
+  // itself — the two initial-render call sites pass false. Use it as the signal
+  // that the operator genuinely changed the level, vs. just wiring up the form
+  // on open, so a fresh Edit-mode load doesn't re-arm term/class derivation.
+  if (clearHouse) (window._stuFormData || (window._stuFormData = {}))._termDerivationArmed = true;
 
   // Re-derive class whenever the level changes (non-blocking)
   _deriveStuTermAndClass();
