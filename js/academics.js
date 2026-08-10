@@ -340,6 +340,17 @@ function _renderAyEditPage(container, year) {
           </div>
         </div>
 
+        ${canAdd('student_academics.academic_year_setup') ? `
+        <!-- Year-End Promotion -->
+        <div class="sa-terms-section" style="margin-top:24px;">
+          <div class="sa-terms-title">Year-End Promotion</div>
+          <p style="font-size:0.85rem;color:#666;margin:4px 0 12px;">
+            Promote active enrollments from a prior academic year into
+            ${_ayEsc(year.title)} and auto-assign Term&nbsp;1 fees.
+          </p>
+          <button class="sa-btn-submit" onclick="_ayOpenPromoteModal(${year.id})">Promote from prior AY &rarr;</button>
+        </div>` : ''}
+
         <div class="sa-form-actions" style="margin-top:24px;">
           <button class="sa-btn-submit" onclick="_saveAyLocalEdits(${year.id})">Update</button>
           <button class="sa-btn-cancel" onclick="loadView('sa-academic-years')">Cancel</button>
@@ -432,6 +443,136 @@ async function _loadAyClasses(yearId) {
   } catch (_) {
     container.innerHTML = '<p style="color:#c0392b;font-size:0.88rem;">Failed to load classes.</p>';
   }
+}
+
+// ==================== YEAR-END PROMOTION ====================
+// POST /academic-years/{to_year_id}/promote?from_year_id=&dry_run=
+// Idempotent on the backend; dry_run=true simulates inside a savepoint so
+// we always preview before the real, persisting call.
+
+async function _ayOpenPromoteModal(toYearId) {
+  const wrap = document.createElement('div');
+  wrap.id = 'ay-promote-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:var(--white);border-radius:8px;padding:24px;width:480px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 12px;font-size:1.05rem;color:var(--navy-700,#2c3e50);">Promote from Prior Academic Year</h3>
+      <p style="font-size:0.85rem;color:#666;margin:0 0 12px;">Runs a dry run first so you can review the impact before anything is saved.</p>
+      <div class="sa-form-group">
+        <label class="sa-form-label">Promote From <span class="sa-required">*</span></label>
+        <select id="ay-promote-from-select" class="sa-form-input">
+          <option value="">Loading academic years&#8230;</option>
+        </select>
+      </div>
+      <div id="ay-promote-summary" style="display:none;margin-top:12px;padding:12px;border-radius:6px;background:var(--grey-100,#f5f6f8);font-size:0.85rem;"></div>
+      <div id="ay-promote-err" style="display:none;padding:10px 12px;border-radius:6px;background:var(--coral-100);color:var(--coral-600);font-size:0.82rem;margin-top:10px;"></div>
+      <div id="ay-promote-actions" style="display:flex;gap:10px;margin-top:18px;justify-content:flex-end;">
+        <button class="sa-btn-cancel" onclick="_coaCloseModal('ay-promote-modal-overlay')">Cancel</button>
+        <button class="sa-btn-submit" id="ay-promote-dryrun-btn" onclick="_ayRunPromoteDryRun(${toYearId})">Preview (Dry Run)</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+
+  const sel = document.getElementById('ay-promote-from-select');
+  try {
+    const res = await fetch(`${API_BASE}/academic-years/`, { headers: { Authorization: `Bearer ${token}` } });
+    const years = res.ok ? await res.json() : [];
+    const others = years.filter(y => y.id !== toYearId);
+    sel.innerHTML = others.length
+      ? others.map(y => `<option value="${y.id}">${_ayEsc(y.title)} (${_fmtDDMmmYYYY(y.start_date)} – ${_fmtDDMmmYYYY(y.end_date)})</option>`).join('')
+      : '<option value="">No other academic years found</option>';
+  } catch (_) {
+    sel.innerHTML = '<option value="">Failed to load academic years</option>';
+  }
+}
+
+async function _ayRunPromoteDryRun(toYearId) {
+  const sel     = document.getElementById('ay-promote-from-select');
+  const fromId  = sel?.value;
+  const errEl   = document.getElementById('ay-promote-err');
+  const sumEl   = document.getElementById('ay-promote-summary');
+  errEl.style.display = 'none';
+  if (!fromId) {
+    errEl.textContent = 'Select an academic year to promote from.';
+    errEl.style.display = 'block';
+    return;
+  }
+  const btn = document.getElementById('ay-promote-dryrun-btn');
+  btn.disabled = true; btn.textContent = 'Running preview…';
+
+  const res = await apiFetch(`${API_BASE}/academic-years/${toYearId}/promote?from_year_id=${fromId}&dry_run=true`, { method: 'POST' });
+  if (!res) { btn.disabled = false; btn.textContent = 'Preview (Dry Run)'; return; }
+
+  if (res.ok) {
+    const data = await res.json();
+    sumEl.innerHTML = _ayRenderPromoteSummary(data, true);
+    sumEl.style.display = 'block';
+    sel.disabled = true;
+    document.getElementById('ay-promote-actions').innerHTML = `
+      <button class="sa-btn-cancel" onclick="_coaCloseModal('ay-promote-modal-overlay')">Cancel</button>
+      <button class="sa-btn-submit" onclick="_ayRunPromoteConfirm(${toYearId}, ${fromId})">Confirm &amp; Promote</button>`;
+  } else {
+    const msg = await parseApiError(res);
+    errEl.textContent = msg; errEl.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Preview (Dry Run)';
+  }
+}
+
+async function _ayRunPromoteConfirm(toYearId, fromId) {
+  const errEl     = document.getElementById('ay-promote-err');
+  const actionsEl = document.getElementById('ay-promote-actions');
+  errEl.style.display = 'none';
+  actionsEl.innerHTML = '<button class="sa-btn-submit" disabled>Promoting…</button>';
+
+  const res = await apiFetch(`${API_BASE}/academic-years/${toYearId}/promote?from_year_id=${fromId}&dry_run=false`, { method: 'POST' });
+  if (!res) {
+    actionsEl.innerHTML = `
+      <button class="sa-btn-cancel" onclick="_coaCloseModal('ay-promote-modal-overlay')">Cancel</button>
+      <button class="sa-btn-submit" onclick="_ayRunPromoteConfirm(${toYearId}, ${fromId})">Confirm &amp; Promote</button>`;
+    return;
+  }
+
+  if (res.ok) {
+    const data = await res.json();
+    document.getElementById('ay-promote-summary').innerHTML = _ayRenderPromoteSummary(data, false);
+    _coaCloseModal('ay-promote-modal-overlay');
+    showToast('Academic year promotion complete.', 'success');
+    _loadAySessions(toYearId);
+    _loadAyClasses(toYearId);
+  } else {
+    const msg = await parseApiError(res);
+    errEl.textContent = msg; errEl.style.display = 'block';
+    actionsEl.innerHTML = `
+      <button class="sa-btn-cancel" onclick="_coaCloseModal('ay-promote-modal-overlay')">Cancel</button>
+      <button class="sa-btn-submit" onclick="_ayRunPromoteConfirm(${toYearId}, ${fromId})">Retry Promote</button>`;
+  }
+}
+
+function _ayRenderPromoteSummary(data, isDryRun) {
+  const heading = isDryRun
+    ? 'Dry-run result &mdash; nothing has been saved yet:'
+    : 'Promotion result:';
+  if (data === null || typeof data !== 'object') {
+    return `<div style="font-weight:600;margin-bottom:6px;">${heading}</div><div>${_ayEsc(String(data))}</div>`;
+  }
+  const rows = Object.entries(data).map(([k, v]) => {
+    const label = _ayEsc(k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()));
+    let val;
+    if (Array.isArray(v)) {
+      val = `${v.length} item${v.length === 1 ? '' : 's'}`;
+      if (v.length && v.length <= 8 && v.every(x => typeof x !== 'object')) {
+        val += `: ${v.map(x => _ayEsc(String(x))).join(', ')}`;
+      }
+    } else if (v && typeof v === 'object') {
+      val = _ayEsc(JSON.stringify(v));
+    } else {
+      val = _ayEsc(String(v));
+    }
+    return `<div style="display:flex;justify-content:space-between;gap:12px;padding:4px 0;border-bottom:1px solid var(--grey-200,#e8e8e8);">
+      <span style="color:#666;">${label}</span><span style="font-weight:600;text-align:right;">${val}</span>
+    </div>`;
+  }).join('');
+  return `<div style="font-weight:600;margin-bottom:6px;">${heading}</div>${rows}`;
 }
 
 async function _saveAyLocalEdits(id) {
