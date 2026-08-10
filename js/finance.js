@@ -1,4 +1,3 @@
-<3>WSL (660215 - Relay) ERROR: CreateProcessCommon:792: chdir(-24.04/home/kaaray_legacy/school-management-system) failed 2
 // ==================== FINANCE MODULE ====================
 
 let _invPerPage = 10;
