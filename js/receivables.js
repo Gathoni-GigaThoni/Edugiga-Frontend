@@ -1,4 +1,3 @@
-<3>WSL (660206 - Relay) ERROR: CreateProcessCommon:792: chdir(-24.04/home/kaaray_legacy/school-management-system) failed 2
 // ==================== RECEIVABLES MODULE ====================
 // Modules: Fee Schedules (1), Fee Setup by Class (2),
 //          Student Fee Assignments (3), Fee Invoices (4), Bulk Invoice Generate (5)
@@ -71,10 +70,9 @@ function _rcvAccountName(id) {
   const a = (_rcvAccountsCache||[]).find(x => String(x.id) === String(id));
   return a ? `${a.number||''} — ${a.account_name||''}`.replace(/^ — /,'') : (id ? `Account #${id}` : '—');
 }
-// Fee Invoices no longer take an operator-picked income_account_id (removed
-// pending the BE change to post one credit line per fee item's own account
-// — see finance-module memory). Until FeeInvoiceLineItemRead grows its own
-// account_id, resolve a line's account through its Fee Item's account_id.
+// Fee Invoices resolve their income account per line at generation and
+// snapshot it onto FeeInvoiceLineItem.account_id (Layer-2 immutable
+// record). Fall back to the fee_item lookup for pre-refactor lines.
 function _rcvLineItemAccountName(li) {
   if (li.account_id != null) return _rcvAccountName(li.account_id);
   const item = (_rcvFeeItemsCache||[]).find(x => String(x.id) === String(li.fee_item_id));
@@ -1154,7 +1152,7 @@ async function rcvGenReviewAssignments() {
     <tbody>${rows}
     <tr style="font-weight:600;border-top:2px solid #e5e7eb;"><td colspan="6">Total</td><td>KES ${_finFmt(total)}</td></tr>
     </tbody></table></div>
-    <p style="font-size:0.8rem;color:#888;margin-top:6px;"><em>Preview amounts use proration_factor=1.0. Actual proration is computed server-side on generate. Each line posts to its Fee Item's configured income account (Finance &rsaquo; Fee Items) — a Fee Item shown with no account here will block invoice generation once the backend enforces this.</em></p>`;
+    <p style="font-size:0.8rem;color:#888;margin-top:6px;"><em>Preview amounts use proration_factor=1.0. Actual proration is computed server-side on generate. Each line posts to its Fee Item's configured income account (Finance &rsaquo; Fee Items). Generation is blocked if any Fee Item lacks an income account — the server responds 422 with the offending items named.</em></p>`;
   if(btn) btn.disabled=false;
 }
 
@@ -1171,6 +1169,11 @@ async function submitGenerateSingleInvoice() {
   });
   if (res && res.status===409) {
     showToast('An open invoice already exists for this student in this term. Cancel it before regenerating.','error'); return;
+  }
+  if (res && res.status===422) {
+    const msg = await parseApiError(res);
+    showToast('Cannot generate: ' + msg, 'error');
+    return;
   }
   if (res && res.ok) {
     const inv = await res.json();
@@ -1238,7 +1241,7 @@ async function loadInvoiceDetailView(container, invoiceId) {
     actions=`<button class="fin-btn-teal" onclick="rcvInvoiceIssue(${inv.id})">Issue Invoice</button>
              <button class="fin-btn-cancel" onclick="rcvInvoiceCancel(${inv.id})">Cancel Invoice</button>`;
   } else if (status==='issued'||status==='partially_paid'||status==='overdue') {
-    actions=`${canAdd('finance.receivables') ? `<button class="fin-btn-teal" onclick="openRecordPaymentModal(${inv.id},${bal},${inv.income_account_id||'null'})">Record Payment</button>` : ''}
+    actions=`${canAdd('finance.receivables') ? `<button class="fin-btn-teal" onclick="openRecordPaymentModal(${inv.id},${bal})">Record Payment</button>` : ''}
              <button class="fin-btn-cancel" onclick="rcvInvoiceCancel(${inv.id})">Cancel Invoice</button>`;
   }
   container.innerHTML = `
@@ -1304,12 +1307,16 @@ async function rcvInvoiceCancel(id) {
 }
 
 // 4.3 — Record Payment Modal
-async function openRecordPaymentModal(invoiceId, balanceDue, incomeAccountId) {
+// The receipt JE is DR Cash / CR AR Control (via backend AR_CONTROL_ACCOUNT_ID).
+// Income was already recognised at invoice issue by post_accrual_je; crediting
+// income here would double-count revenue. Layer-3 payment allocation then
+// distributes the payment across invoice lines per school policy — that logic
+// runs server-side on receipt creation.
+async function openRecordPaymentModal(invoiceId, balanceDue) {
   _rcvCloseModal();
   await _rcvLoadLookups({ accounts:true });
   const lastDebit = localStorage.getItem('rcv_last_debit_account_id') || '';
   const today = new Date().toISOString().split('T')[0];
-  const creditAcct = (_rcvAccountsCache||[]).find(a=>String(a.id)===String(incomeAccountId));
   const overlay = document.createElement('div');
   overlay.id = 'fin-gen-modal-overlay';
   overlay.style = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:1000;overflow-y:auto;';
@@ -1344,26 +1351,21 @@ async function openRecordPaymentModal(invoiceId, balanceDue, incomeAccountId) {
         <select id="rcv-pay-debit" class="fin-form-select">
           <option value="">Please Select</option>${_rcvAccountOptions('asset', lastDebit)}
         </select>
-      </div>
-      <div class="fin-form-group">
-        <label class="fin-form-label">Credit Account (Income)</label>
-        <p style="margin:4px 0;font-size:0.9rem;color:#374151;padding:8px;background:#f9fafb;border-radius:4px;">
-          ${creditAcct ? `${_finEsc(creditAcct.number||'')} — ${_finEsc(creditAcct.account_name||'')}` : (incomeAccountId ? `Account #${incomeAccountId}` : '— not set —')}
-        </p>
+        <span class="fin-field-hint fin-field-hint-info">Server credits AR Control automatically; the invoice's individual income accounts were already booked at issue.</span>
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Notes</label>
         <textarea id="rcv-pay-notes" class="fin-form-input" rows="2" style="resize:vertical;"></textarea>
       </div>
       <div class="fin-form-actions">
-        <button class="fin-btn-teal" onclick="submitRecordPayment(${invoiceId},${incomeAccountId||'null'})">Submit Payment</button>
+        <button class="fin-btn-teal" onclick="submitRecordPayment(${invoiceId})">Submit Payment</button>
         <button class="fin-btn-cancel" onclick="_rcvCloseModal()">Cancel</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
 }
 
-async function submitRecordPayment(invoiceId, incomeAccountId) {
+async function submitRecordPayment(invoiceId) {
   const amount  = parseFloat(document.getElementById('rcv-pay-amount')?.value);
   const method  = document.getElementById('rcv-pay-method')?.value;
   const date    = document.getElementById('rcv-pay-date')?.value;
@@ -1378,7 +1380,6 @@ async function submitRecordPayment(invoiceId, incomeAccountId) {
     payment_date: date + 'T00:00:00',
     reference: ref || null,
     debit_cash_account_id: debitId,
-    credit_income_account_id: incomeAccountId || null,
     notes: notes || null,
   };
   const res = await apiFetch(`${API_BASE}/receivables/receipts`, {
@@ -1468,12 +1469,16 @@ async function rcvBulkPreFlight() {
   }
   _rcvBulkStudentIds = studentIds;
 
-  const [existingRes, assignRes] = await Promise.all([
+  const [existingRes, assignRes, unconfRes] = await Promise.all([
     apiFetch(`${API_BASE}/receivables/fee-invoices?term_id=${termId}&status=issued`),
     apiFetch(`${API_BASE}/receivables/student-fee-assignments/?term_id=${termId}`),
+    // Layer-2 preflight: fee items with no configured income account.
+    // Backend blocks generation for any assignment touching such an item.
+    apiFetch(`${API_BASE}/receivables/setup/fee-items?missing_account=true`),
   ]);
   const existing   = (existingRes&&existingRes.ok)  ? _toArray(await existingRes.json()) : [];
   const allAssigns = (assignRes&&assignRes.ok)       ? _toArray(await assignRes.json())  : [];
+  const unconfigured = (unconfRes&&unconfRes.ok)     ? _toArray(await unconfRes.json())  : [];
 
   const inScope = studentIds ? studentIds.length : '?';
   const alreadyOpen = existing.filter(inv=>!studentIds||studentIds.includes(inv.student_id)).length;
@@ -1485,6 +1490,14 @@ async function rcvBulkPreFlight() {
   container.innerHTML += ``;
   const wrap = document.querySelector('.fin-form-wrap');
   if (!wrap) return;
+  const unconfBlock = unconfigured.length ? `
+      <div style="padding:12px 16px;background:#fef3c7;border-top:1px solid #f59e0b;">
+        <strong style="color:#92400e;">&#9888; ${unconfigured.length} Fee Item(s) have no income account configured.</strong>
+        Generation will fail for any assignment touching these items. Fix them first in Finance &rsaquo; Fee Items:
+        <ul style="margin:6px 0 0 20px;color:#78350f;">
+          ${unconfigured.map(fi=>`<li>#${fi.id} — ${_finEsc(fi.name||'')}</li>`).join('')}
+        </ul>
+      </div>` : '';
   wrap.insertAdjacentHTML('beforeend', `
     <div id="rcv-bulk-preflight" style="margin-top:20px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
       <h3 style="padding:12px 16px;margin:0;font-size:0.95rem;background:#f3f4f6;">Step 2 — Pre-flight Check</h3>
@@ -1495,9 +1508,9 @@ async function rcvBulkPreFlight() {
           <tr><td>Have no fee assignments <small style="color:#e67e22;">⚠ (may error)</small></td><td><strong>${noAssign}</strong></td></tr>
           <tr style="font-weight:700;"><td>Will generate</td><td>${willGen}</td></tr>
         </tbody>
-      </table>
+      </table>${unconfBlock}
       <div style="padding:14px 16px;">
-        <button class="fin-btn-teal" onclick="rcvBulkGenerate()">Proceed with Generation (${willGen})</button>
+        <button class="fin-btn-teal" onclick="rcvBulkGenerate()" ${unconfigured.length?'disabled title="Fix the unconfigured fee items above first"':''}>Proceed with Generation (${willGen})</button>
       </div>
     </div>`);
 }
