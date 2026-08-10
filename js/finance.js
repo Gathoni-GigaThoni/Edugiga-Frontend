@@ -1,3 +1,4 @@
+<3>WSL (660215 - Relay) ERROR: CreateProcessCommon:792: chdir(-24.04/home/kaaray_legacy/school-management-system) failed 2
 // ==================== FINANCE MODULE ====================
 
 let _invPerPage = 10;
@@ -4012,11 +4013,17 @@ function _fiValidate() {
   document.getElementById('fi-f-amount-err').textContent   = (amtStr!=='' && !isNaN(amount)) ? '' : 'This field is required.'; if(amtStr==='' || isNaN(amount)) valid=false;
   return valid;
 }
+// Map the FE `category` label onto the backend-enforced `billing_cadence`.
+// One axis, two field names — cadence is the field the backend acts on.
+const _FI_CATEGORY_TO_CADENCE = { TERMLY: 'PER_TERM', YEARLY: 'PER_YEAR', ONE_OFF: 'ONCE' };
+
 function _fiPayload() {
+  const category = document.getElementById('fi-f-category').value;
   return {
     code: document.getElementById('fi-f-code').value,
     name: (document.getElementById('fi-f-name').value||'').trim(),
-    category: document.getElementById('fi-f-category').value,
+    category,
+    billing_cadence: _FI_CATEGORY_TO_CADENCE[category] || 'PER_TERM',
     default_amount: parseFloat(document.getElementById('fi-f-amount').value),
     is_active: document.getElementById('fi-f-active').checked,
     is_extra_curricular: document.getElementById('fi-f-eca').checked,

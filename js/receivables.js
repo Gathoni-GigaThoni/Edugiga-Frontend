@@ -1,3 +1,4 @@
+<3>WSL (660206 - Relay) ERROR: CreateProcessCommon:792: chdir(-24.04/home/kaaray_legacy/school-management-system) failed 2
 // ==================== RECEIVABLES MODULE ====================
 // Modules: Fee Schedules (1), Fee Setup by Class (2),
 //          Student Fee Assignments (3), Fee Invoices (4), Bulk Invoice Generate (5)
@@ -65,6 +66,19 @@ function _rcvStudentName(id) {
 function _rcvRouteName(id) {
   const r = (_rcvRoutesCache||[]).find(x => String(x.id) === String(id));
   return r ? (r.name || r.route_name || '-') : (id ? `Route #${id}` : '—');
+}
+function _rcvAccountName(id) {
+  const a = (_rcvAccountsCache||[]).find(x => String(x.id) === String(id));
+  return a ? `${a.number||''} — ${a.account_name||''}`.replace(/^ — /,'') : (id ? `Account #${id}` : '—');
+}
+// Fee Invoices no longer take an operator-picked income_account_id (removed
+// pending the BE change to post one credit line per fee item's own account
+// — see finance-module memory). Until FeeInvoiceLineItemRead grows its own
+// account_id, resolve a line's account through its Fee Item's account_id.
+function _rcvLineItemAccountName(li) {
+  if (li.account_id != null) return _rcvAccountName(li.account_id);
+  const item = (_rcvFeeItemsCache||[]).find(x => String(x.id) === String(li.fee_item_id));
+  return item?.account_id != null ? _rcvAccountName(item.account_id) : '—';
 }
 
 const _RCV_SCOPE_BADGE_STYLES = {
@@ -310,23 +324,25 @@ async function openFeeScheduleModal(editId) {
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Fee Item <span class="fin-required">*</span></label>
-        <select id="rcv-fs-fee-item" class="fin-form-select">
+        <select id="rcv-fs-fee-item" class="fin-form-select" onchange="_rcvFeeItemChanged()">
           <option value="">Please Select</option>
           ${_rcvFeeItemOptions(s?.fee_item_id)}
         </select>
         <span class="fin-field-error" id="rcv-fs-item-err"></span>
+        <span class="fin-field-hint fin-field-hint-info" id="rcv-fs-cadence-hint" style="display:none;"></span>
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Amount (KES) <span class="fin-required">*</span></label>
         <input type="number" id="rcv-fs-amount" class="fin-form-input" step="0.01" min="0" value="${s?.amount??''}">
         <span class="fin-field-error" id="rcv-fs-amount-err"></span>
       </div>
-      <div class="fin-form-group">
-        <label class="fin-form-label">Term <small style="color:#888;">(leave blank to apply every term)</small></label>
+      <div class="fin-form-group" id="rcv-fs-term-wrap">
+        <label class="fin-form-label" id="rcv-fs-term-label">Term <small style="color:#888;" id="rcv-fs-term-help">(leave blank to apply every term)</small></label>
         <select id="rcv-fs-term" class="fin-form-select">
           <option value="">— Every Term —</option>
           ${_rcvTermOptions(s?.term_id)}
         </select>
+        <span class="fin-field-error" id="rcv-fs-term-err"></span>
       </div>
       <!-- Conditional scope fields -->
       <div id="rcv-fs-scope-academic-level" class="fin-form-group" style="display:none;">
@@ -377,6 +393,45 @@ async function openFeeScheduleModal(editId) {
     </div>`;
   document.body.appendChild(overlay);
   if (s?.scope_type) _rcvScopeTypeChange(s.scope_type);
+  _rcvFeeItemChanged();
+}
+
+// Read the selected FeeItem's billing_cadence (looked up in cache) and
+// adapt the Term field: PER_TERM hides it, PER_YEAR/ONCE renames it
+// "Anchor Term" and requires a value. Runs on modal-open and on
+// fee-item change. Backend rejects violations with a 422 anyway — this
+// is a usability layer to explain WHY without a round-trip.
+function _rcvFeeItemChanged() {
+  const feeItemId = document.getElementById('rcv-fs-fee-item')?.value;
+  const item = (_rcvFeeItemsCache||[]).find(f => String(f.id) === String(feeItemId));
+  const cadence = item?.billing_cadence || 'PER_TERM';
+  const termWrap = document.getElementById('rcv-fs-term-wrap');
+  const termSel  = document.getElementById('rcv-fs-term');
+  const termLbl  = document.getElementById('rcv-fs-term-label');
+  const termHelp = document.getElementById('rcv-fs-term-help');
+  const hint     = document.getElementById('rcv-fs-cadence-hint');
+  if (!termWrap || !termSel || !termLbl) return;
+  const blank = termSel.querySelector('option[value=""]');
+
+  if (cadence === 'PER_TERM') {
+    termWrap.style.display = '';
+    termLbl.innerHTML = 'Term <small style="color:#888;" id="rcv-fs-term-help">(leave blank to apply every term)</small>';
+    if (blank) blank.textContent = '— Every Term —';
+    if (hint && item) { hint.textContent = 'Charged every term.'; hint.style.display = ''; }
+  } else if (cadence === 'PER_YEAR') {
+    termWrap.style.display = '';
+    termLbl.innerHTML = 'Anchor Term <span class="fin-required">*</span> <small style="color:#888;">(billed once per academic year)</small>';
+    if (blank) blank.textContent = '— Select anchor term —';
+    if (termSel.value === '') termSel.value = '';
+    if (hint && item) { hint.textContent = 'Yearly fee — pick the term it lands in; the resolver ensures it fires once per academic year.'; hint.style.display = ''; }
+  } else if (cadence === 'ONCE') {
+    termWrap.style.display = '';
+    termLbl.innerHTML = 'Anchor Term <span class="fin-required">*</span> <small style="color:#888;">(billed once per student, ever)</small>';
+    if (blank) blank.textContent = '— Select anchor term —';
+    if (hint && item) { hint.textContent = 'One-off fee — pick the term it lands in; the ledger prevents the student from ever being charged twice.'; hint.style.display = ''; }
+  } else if (hint) {
+    hint.style.display = 'none';
+  }
 }
 
 function _rcvScopeTypeChange(val) {
@@ -410,6 +465,15 @@ async function submitFeeScheduleForm(editId) {
   setErr('rcv-fs-scope-err',  !scopeType ? 'Scope type is required.' : '');
   setErr('rcv-fs-item-err',   !feeItemId ? 'Fee item is required.'   : '');
   setErr('rcv-fs-amount-err', (!amount||isNaN(parseFloat(amount))) ? 'Amount is required.' : '');
+  // Cadence-aware term requirement — mirrors the backend validator so
+  // the user sees the error inline rather than as a 422 toast.
+  const itemForCadence = (_rcvFeeItemsCache||[]).find(f => String(f.id) === String(feeItemId));
+  const cadence = itemForCadence?.billing_cadence || 'PER_TERM';
+  if (cadence === 'PER_YEAR' || cadence === 'ONCE') {
+    setErr('rcv-fs-term-err', !termId ? 'Anchor term is required for this fee item.' : '');
+  } else {
+    setErr('rcv-fs-term-err', '');
+  }
   if (!valid) return;
 
   const payload = {
@@ -995,9 +1059,8 @@ function _rcvRenderInvTable() {
 
 // 4.1 — Generate Single Invoice
 async function loadInvoiceGenerateView(container, presetStudentId, presetTermId) {
-  await _rcvLoadLookups({ terms:true, students:true, accounts:true, ledgers:true });
+  await _rcvLoadLookups({ terms:true, students:true, ledgers:true });
   const lastLedger  = localStorage.getItem('rcv_last_ledger_id')  || '';
-  const lastAccount = localStorage.getItem('rcv_last_income_account_id') || '';
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -1034,12 +1097,6 @@ async function loadInvoiceGenerateView(container, presetStudentId, presetTermId)
             <option value="">Please Select</option>${_rcvLedgerOptions(lastLedger)}
           </select>
         </div>
-        <div class="fin-form-group">
-          <label class="fin-form-label">Income Account <span class="fin-required">*</span></label>
-          <select id="rcv-gen-income-account" class="fin-form-select">
-            <option value="">Please Select</option>${_rcvAccountOptions('income', lastAccount)}
-          </select>
-        </div>
         <h3 style="font-size:1rem;border-bottom:1px solid #e5e7eb;padding-bottom:8px;margin-top:24px;">Step 2 — Review Assignments</h3>
         <div id="rcv-gen-preview">
           <p style="color:#888;font-size:0.9rem;">Select a student and term to preview assignments.</p>
@@ -1068,7 +1125,7 @@ async function rcvGenReviewAssignments() {
     if(btn) btn.disabled=true; return;
   }
   preview.innerHTML='<p style="color:#888;">Loading&#8230;</p>';
-  await _rcvLoadLookups({ items:true, schedules:true });
+  await _rcvLoadLookups({ items:true, schedules:true, accounts:true });
   const res = await apiFetch(`${API_BASE}/receivables/student-fee-assignments/?student_id=${studentId}&term_id=${termId}`);
   const assignments = (res&&res.ok) ? _toArray(await res.json()) : [];
   if (!assignments.length) {
@@ -1084,6 +1141,7 @@ async function rcvGenReviewAssignments() {
     total+=net;
     return `<tr>
       <td>${_finEsc(_rcvFeeItemName(sched?.fee_item_id))}</td>
+      <td>${_finEsc(_rcvLineItemAccountName({ fee_item_id: sched?.fee_item_id }))}</td>
       <td>KES ${_finFmt(base)}</td>
       <td>×1.0 (100%)</td>
       <td>KES ${_finFmt(net)}</td>
@@ -1092,11 +1150,11 @@ async function rcvGenReviewAssignments() {
     </tr>`;
   }).join('');
   preview.innerHTML=`<div class="fin-table-wrap"><table class="fin-table">
-    <thead><tr><th>LINE</th><th>BASE AMOUNT</th><th>PRORATION</th><th>PRORATED</th><th>DISCOUNT</th><th>NET</th></tr></thead>
+    <thead><tr><th>LINE</th><th>ACCOUNT</th><th>BASE AMOUNT</th><th>PRORATION</th><th>PRORATED</th><th>DISCOUNT</th><th>NET</th></tr></thead>
     <tbody>${rows}
-    <tr style="font-weight:600;border-top:2px solid #e5e7eb;"><td colspan="5">Total</td><td>KES ${_finFmt(total)}</td></tr>
+    <tr style="font-weight:600;border-top:2px solid #e5e7eb;"><td colspan="6">Total</td><td>KES ${_finFmt(total)}</td></tr>
     </tbody></table></div>
-    <p style="font-size:0.8rem;color:#888;margin-top:6px;"><em>Preview amounts use proration_factor=1.0. Actual proration is computed server-side on generate.</em></p>`;
+    <p style="font-size:0.8rem;color:#888;margin-top:6px;"><em>Preview amounts use proration_factor=1.0. Actual proration is computed server-side on generate. Each line posts to its Fee Item's configured income account (Finance &rsaquo; Fee Items) — a Fee Item shown with no account here will block invoice generation once the backend enforces this.</em></p>`;
   if(btn) btn.disabled=false;
 }
 
@@ -1105,13 +1163,11 @@ async function submitGenerateSingleInvoice() {
   const termId          = parseInt(document.getElementById('rcv-gen-term')?.value, 10);
   const dueDate         = document.getElementById('rcv-gen-due-date')?.value;
   const ledgerId        = parseInt(document.getElementById('rcv-gen-ledger')?.value, 10);
-  const incomeAccountId = parseInt(document.getElementById('rcv-gen-income-account')?.value, 10);
-  if (!studentId||!termId||!dueDate||!ledgerId||!incomeAccountId) { showToast('All fields are required.','error'); return; }
-  localStorage.setItem('rcv_last_ledger_id',        String(ledgerId));
-  localStorage.setItem('rcv_last_income_account_id', String(incomeAccountId));
+  if (!studentId||!termId||!dueDate||!ledgerId) { showToast('All fields are required.','error'); return; }
+  localStorage.setItem('rcv_last_ledger_id', String(ledgerId));
   const res = await apiFetch(`${API_BASE}/receivables/fee-invoices/generate`, {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ student_id:studentId, term_id:termId, due_date:dueDate, ledger_id:ledgerId, income_account_id:incomeAccountId }),
+    body: JSON.stringify({ student_id:studentId, term_id:termId, due_date:dueDate, ledger_id:ledgerId }),
   });
   if (res && res.status===409) {
     showToast('An open invoice already exists for this student in this term. Cancel it before regenerating.','error'); return;
@@ -1131,13 +1187,14 @@ async function loadInvoiceDetailView(container, invoiceId) {
   const res = await apiFetch(`${API_BASE}/receivables/fee-invoices/${invoiceId}`);
   if (!res || !res.ok) { container.innerHTML=`<div class="fin-page"><p style="color:#c0392b;">Failed to load invoice.</p></div>`; return; }
   const inv = await res.json();
-  await _rcvLoadLookups({ terms:true, students:true, accounts:true });
+  await _rcvLoadLookups({ terms:true, students:true, accounts:true, items:true });
   const lineItems = _toArray(inv.line_items||inv.lineItems||[]);
   const due  = parseFloat(inv.amount_due||0);
   const paid = parseFloat(inv.amount_paid||0);
   const bal  = due - paid;
   const hasFull = lineItems.some(li => li.base_unit_price!=null);
   const lineRows = lineItems.length ? lineItems.map(li => {
+    const acctName = _rcvLineItemAccountName(li);
     if (hasFull && li.base_unit_price!=null) {
       const base   = parseFloat(li.base_unit_price||0);
       const factor = parseFloat(li.proration_factor||1);
@@ -1147,14 +1204,20 @@ async function loadInvoiceDetailView(container, invoiceId) {
       const pct    = (factor*100).toFixed(1);
       return `<tr>
         <td>${_finEsc(li.description||'')}</td>
+        <td>${_finEsc(acctName)}</td>
         <td>KES ${_finFmt(base)}</td>
         <td>×${factor.toFixed(4)} → KES ${_finFmt(prorated)} <small style="color:#888;">(${pct}%)</small></td>
         <td>${disc>0?`−KES ${_finFmt(disc)}`:'—'}</td>
         <td>KES ${_finFmt(net)}</td>
       </tr>`;
     }
-    return `<tr><td colspan="${hasFull?4:1}">${_finEsc(li.description||'')}</td><td>KES ${_finFmt(parseFloat(li.amount||0))}</td></tr>`;
-  }).join('') : '<tr><td colspan="5" class="fin-empty">No line items.</td></tr>';
+    return `<tr>
+        <td>${_finEsc(li.description||'')}</td>
+        <td>${_finEsc(acctName)}</td>
+        ${hasFull?'<td colspan="3" style="color:#888;">—</td>':''}
+        <td>KES ${_finFmt(parseFloat(li.amount||0))}</td>
+      </tr>`;
+  }).join('') : '<tr><td colspan="6" class="fin-empty">No line items.</td></tr>';
   // Accrual JE posted server-side on issue (reversed on cancel) — nullable,
   // populated only going forward, so historical pre-fix rows render '—'.
   // Mirrors the accrual_journal_entry_id link already shown on supplier
@@ -1201,6 +1264,7 @@ async function loadInvoiceDetailView(container, invoiceId) {
         <table class="fin-table">
           <thead><tr>
             <th>DESCRIPTION</th>
+            <th>ACCOUNT</th>
             ${hasFull?'<th>BASE</th><th>PRORATION</th><th>DISCOUNT</th>':''}
             <th>NET</th>
           </tr></thead>
@@ -1333,13 +1397,12 @@ let _rcvBulkStudentIds = null;
 
 async function loadBulkInvoiceView(container) {
   _rcvBulkStep=1; _rcvBulkStudentIds=null;
-  await _rcvLoadLookups({ terms:true, classes:true, accounts:true, ledgers:true });
+  await _rcvLoadLookups({ terms:true, classes:true, ledgers:true });
   _rcvRenderBulkStep1(container);
 }
 
 function _rcvRenderBulkStep1(container) {
   const lastLedger  = localStorage.getItem('rcv_last_ledger_id')  || '';
-  const lastAccount = localStorage.getItem('rcv_last_income_account_id') || '';
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -1359,10 +1422,6 @@ function _rcvRenderBulkStep1(container) {
         <div class="fin-form-group">
           <label class="fin-form-label">Ledger <span class="fin-required">*</span></label>
           <select id="rcv-bulk-ledger" class="fin-form-select"><option value="">Please Select</option>${_rcvLedgerOptions(lastLedger)}</select>
-        </div>
-        <div class="fin-form-group">
-          <label class="fin-form-label">Income Account <span class="fin-required">*</span></label>
-          <select id="rcv-bulk-income-account" class="fin-form-select"><option value="">Please Select</option>${_rcvAccountOptions('income', lastAccount)}</select>
         </div>
         <div class="fin-form-group">
           <label class="fin-form-label">Target Students <span class="fin-required">*</span></label>
@@ -1396,10 +1455,9 @@ async function rcvBulkPreFlight() {
   const termId      = document.getElementById('rcv-bulk-term')?.value;
   const dueDate     = document.getElementById('rcv-bulk-due-date')?.value;
   const ledgerId    = document.getElementById('rcv-bulk-ledger')?.value;
-  const incAcct     = document.getElementById('rcv-bulk-income-account')?.value;
   const target      = document.querySelector('input[name="rcv-bulk-target"]:checked')?.value;
   const classId     = document.getElementById('rcv-bulk-class')?.value;
-  if (!termId||!dueDate||!ledgerId||!incAcct) { showToast('All fields are required.','error'); return; }
+  if (!termId||!dueDate||!ledgerId) { showToast('All fields are required.','error'); return; }
   if (target==='class'&&!classId) { showToast('Please select a class.','error'); return; }
 
   let studentIds = null;
@@ -1448,11 +1506,9 @@ async function rcvBulkGenerate() {
   const termId   = parseInt(document.getElementById('rcv-bulk-term')?.value, 10);
   const dueDate  = document.getElementById('rcv-bulk-due-date')?.value;
   const ledgerId = parseInt(document.getElementById('rcv-bulk-ledger')?.value, 10);
-  const incAcct  = parseInt(document.getElementById('rcv-bulk-income-account')?.value, 10);
-  if (!termId||!dueDate||!ledgerId||!incAcct) { showToast('Configuration incomplete.','error'); return; }
+  if (!termId||!dueDate||!ledgerId) { showToast('Configuration incomplete.','error'); return; }
   localStorage.setItem('rcv_last_ledger_id', String(ledgerId));
-  localStorage.setItem('rcv_last_income_account_id', String(incAcct));
-  const payload = { term_id:termId, due_date:dueDate, ledger_id:ledgerId, income_account_id:incAcct };
+  const payload = { term_id:termId, due_date:dueDate, ledger_id:ledgerId };
   if (_rcvBulkStudentIds) payload.student_ids = _rcvBulkStudentIds;
   const res = await apiFetch(`${API_BASE}/receivables/fee-invoices/generate-bulk`, {
     method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload),
