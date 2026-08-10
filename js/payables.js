@@ -1833,14 +1833,14 @@ async function loadPayablesPettyCashApplicationsView(container) {
       {label:'Amount',    key:'requested_amount', fmt:v=>_pvMoney(v)},
       {label:'Status',    key:'status', fmt:v=>v||'—'},
     ],
+    detailActions: item => item.status === 'pending' ? `
+      <div style="background:var(--navy-50,#EEF3FA);border:1px solid var(--navy-100,#DCE6F5);border-radius:8px;padding:12px 16px;font-size:0.86rem;color:var(--navy-700,#1B3057);width:100%;">
+        This application is awaiting approval in the Document Approval System.
+        <br><a href="#" onclick="openDasQueueForType('petty_cash');return false;" style="color:var(--navy-700,#1B3057);font-weight:600;text-decoration:underline;">&rarr; Open the DAS queue</a>
+      </div>` : '',
     renderAdd: _pvAddPlaceholder('Petty Cash Application', 'payables-petty-cash-applications-add', 'Apply for a petty cash float.'),
     onAdd: () => loadView('payables-petty-cash-applications-add'),
   });
-}
-async function _pvPcaApprove(id) {
-  const res = await apiFetch(`${_PV_PCA_API}/${id}/approve`, { method: 'POST' });
-  if (res && res.ok) { showToast('Petty cash application approved.', 'success'); loadPayablesPettyCashApplicationsView(document.getElementById('main-content')); }
-  else if (res) showToast('Error: ' + await parseApiError(res), 'error');
 }
 async function loadPayablesPettyCashApplicationsAddView(container) {
   await _pvLoadLookups();

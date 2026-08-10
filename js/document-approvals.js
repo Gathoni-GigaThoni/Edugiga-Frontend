@@ -1,11 +1,14 @@
 // ==================== DOCUMENT APPROVAL SYSTEM ====================
-// Approval workflow for two polymorphic document types: Payment Vouchers
+// Approval workflow for four polymorphic document types: Payment Vouchers
 // (payables.js already has its own direct submit/approve/reject actions on
 // /payables/payment-vouchers/{id}/... — this module is the cross-cutting
 // queue that additionally covers overdue Fee Invoices, which have no other
-// approval path) and overdue Fee Invoices. DocumentApproval only stores a
-// document_type + document_id (no FK) so the referenced document's details
-// (payee/student, amount, description) must be resolved separately per type.
+// approval path), overdue Fee Invoices, Requisitions and Petty Cash
+// Applications. As of 2026-08-10 the in-module approve/reject endpoints for
+// the latter two were removed server-side (404) — this is now their only
+// approval path. DocumentApproval only stores a document_type + document_id
+// (no FK) so the referenced document's details (payee/student, amount,
+// description) must be resolved separately per type.
 
 const _DA_API = `${API_BASE}/document-approvals/`;
 
@@ -27,19 +30,51 @@ function _daBadge(status) {
   return `<span class="${cls}" style="padding:3px 10px;border-radius:12px;font-size:0.78rem;font-weight:600;">${_daEsc((status || '—').replace(/_/g, ' '))}</span>`;
 }
 
-// ── Resolve the referenced document (payment_voucher | fee_invoice) ────────
+const _DA_TYPE_LABEL = {
+  payment_voucher: 'Payment Voucher',
+  fee_invoice:      'Fee Invoice',
+  requisition:      'Requisition',
+  petty_cash:       'Petty Cash',
+};
+const _DA_TYPE_PILL_STYLE = {
+  payment_voucher: 'background:var(--navy-700,#1B3057);color:#fff;',
+  fee_invoice:      'background:var(--gold-500,#C9A227);color:var(--navy-900,#0D2137);',
+  requisition:      'background:transparent;border:1px solid var(--navy-700,#1B3057);color:var(--navy-700,#1B3057);',
+  petty_cash:       'background:transparent;border:1px solid var(--coral-500,#D94040);color:var(--coral-500,#D94040);',
+};
+function _daTypeLabel(type) { return _DA_TYPE_LABEL[type] || (type || '—'); }
+function _daTypeBadge(type) {
+  const style = _DA_TYPE_PILL_STYLE[type] || 'background:var(--grey-100,#eee);color:#666;';
+  return `<span style="display:inline-block;padding:2px 9px;border-radius:10px;font-size:0.7rem;font-weight:600;white-space:nowrap;${style}">${_daEsc(_daTypeLabel(type))}</span>`;
+}
+
+// ── Resolve the referenced document (payment_voucher | fee_invoice |
+// requisition | petty_cash) ─────────────────────────────────────────────
 // Payment Vouchers have no confirmed single-item GET, so the full collection
-// is fetched once and cached; Fee Invoices are fetched one-by-one via the
-// confirmed GET /receivables/fee-invoices/{id} (see receivables.js).
+// is fetched once and cached; the other three are fetched one-by-one via
+// their confirmed single-item GET endpoints.
 let _daPvListCache = null;
 let _daFeeInvoiceCache = {};
+let _daRequisitionCache = {};
+let _daPettyCashCache = {};
+// Tracks "<type>:<id>" keys whose single-item GET came back non-OK (e.g. the
+// source document was deleted after the DA row was created) so the detail
+// panel can render a coral banner and disable Approve/Reject instead of
+// silently falling back to a bare "#id" title.
+let _daHydrationFailed = {};
 
 async function _daPrefetchDocuments(items) {
   const pvNeeded = items.some(i => i.document_type === 'payment_voucher');
   const feeIds = [...new Set(items.filter(i => i.document_type === 'fee_invoice').map(i => i.document_id))]
     .filter(id => !_daFeeInvoiceCache[id]);
+  const reqIds = [...new Set(items.filter(i => i.document_type === 'requisition').map(i => i.document_id))]
+    .filter(id => !_daRequisitionCache[id]);
+  const pcaIds = [...new Set(items.filter(i => i.document_type === 'petty_cash').map(i => i.document_id))]
+    .filter(id => !_daPettyCashCache[id]);
 
   const jobs = [];
+  if (reqIds.length && typeof _reqEnsureSuppliersCache === 'function') jobs.push(_reqEnsureSuppliersCache());
+  if ((reqIds.length || pcaIds.length) && typeof _reqEnsureStaffCache === 'function') jobs.push(_reqEnsureStaffCache());
   if (pvNeeded && !_daPvListCache) {
     jobs.push(
       apiFetch(`${API_BASE}/payables/payment-vouchers/`)
@@ -51,9 +86,25 @@ async function _daPrefetchDocuments(items) {
   feeIds.forEach(id => {
     jobs.push(
       apiFetch(`${API_BASE}/receivables/fee-invoices/${id}`)
-        .then(res => res && res.ok ? res.json() : null)
+        .then(res => { if (res && !res.ok) _daHydrationFailed[`fee_invoice:${id}`] = true; return res && res.ok ? res.json() : null; })
         .then(data => { if (data) _daFeeInvoiceCache[id] = data; })
-        .catch(() => {})
+        .catch(() => { _daHydrationFailed[`fee_invoice:${id}`] = true; })
+    );
+  });
+  reqIds.forEach(id => {
+    jobs.push(
+      apiFetch(`${API_BASE}/procurement/requisitions/${id}`)
+        .then(res => { if (res && !res.ok) _daHydrationFailed[`requisition:${id}`] = true; return res && res.ok ? res.json() : null; })
+        .then(data => { if (data) _daRequisitionCache[id] = data; })
+        .catch(() => { _daHydrationFailed[`requisition:${id}`] = true; })
+    );
+  });
+  pcaIds.forEach(id => {
+    jobs.push(
+      apiFetch(`${API_BASE}/payables/petty-cash-applications/${id}`)
+        .then(res => { if (res && !res.ok) _daHydrationFailed[`petty_cash:${id}`] = true; return res && res.ok ? res.json() : null; })
+        .then(data => { if (data) _daPettyCashCache[id] = data; })
+        .catch(() => { _daHydrationFailed[`petty_cash:${id}`] = true; })
     );
   });
   await Promise.all(jobs);
@@ -70,6 +121,17 @@ function _daResolveDoc(item) {
     const inv = _daFeeInvoiceCache[item.document_id];
     if (!inv) return { title: `Fee Invoice #${item.document_id}`, sub: '', amount: null };
     return { title: inv.invoice_number || `Fee Invoice #${item.document_id}`, sub: `Balance: ${_daMoney(inv.balance)}`, amount: inv.amount_due };
+  }
+  if (item.document_type === 'requisition') {
+    const r = _daRequisitionCache[item.document_id];
+    if (!r) return { title: `Requisition #${item.document_id}`, sub: '', amount: null };
+    const supplierName = (typeof _reqSupplierName === 'function') ? _reqSupplierName(r.supplier_id) : `Supplier #${r.supplier_id}`;
+    return { title: r.requisition_no || `Requisition #${item.document_id}`, sub: supplierName, amount: r.total };
+  }
+  if (item.document_type === 'petty_cash') {
+    const p = _daPettyCashCache[item.document_id];
+    if (!p) return { title: `Petty Cash #${item.document_id}`, sub: '', amount: null };
+    return { title: p.purpose || `Petty Cash #${item.document_id}`, sub: `Employee #${p.applicant_id}`, amount: p.requested_amount };
   }
   return { title: `#${item.document_id}`, sub: '', amount: null };
 }
@@ -109,10 +171,10 @@ async function _daRenderQueueSplit(mountEl) {
     apiUrl: `${_DA_API}queue`,
     searchFields: [],
     col1Label: 'Document', col2Label: 'Status',
-    col1: item => `${_daEsc(_daResolveDoc(item).title)}`,
+    col1: item => `${_daTypeBadge(item.document_type)} ${_daEsc(_daResolveDoc(item).title)}`,
     col2: () => _daBadge('pending'),
     rowLabel: item => _daResolveDoc(item).title,
-    rowSub: item => `${item.document_type === 'payment_voucher' ? 'Payment Voucher' : 'Fee Invoice'} — ${_daResolveDoc(item).sub}`,
+    rowSub: item => `${_daTypeLabel(item.document_type)} — ${_daResolveDoc(item).sub}`,
     idKey: 'id',
     detailFields: _daDetailFields,
     renderAdd: el => {
@@ -150,6 +212,8 @@ function _daRenderAllFilterBar() {
           <option value="">All</option>
           <option value="payment_voucher" ${_daAllFilters.document_type === 'payment_voucher' ? 'selected' : ''}>Payment Voucher</option>
           <option value="fee_invoice" ${_daAllFilters.document_type === 'fee_invoice' ? 'selected' : ''}>Fee Invoice</option>
+          <option value="requisition" ${_daAllFilters.document_type === 'requisition' ? 'selected' : ''}>Requisition</option>
+          <option value="petty_cash" ${_daAllFilters.document_type === 'petty_cash' ? 'selected' : ''}>Petty Cash</option>
         </select>
       </div>
       <div class="fin-form-group" style="margin:0;">
@@ -201,10 +265,10 @@ async function _daRenderAllSplit() {
     apiUrl,
     searchFields: [],
     col1Label: 'Document', col2Label: 'Status',
-    col1: item => _daEsc(_daResolveDoc(item).title),
+    col1: item => `${_daTypeBadge(item.document_type)} ${_daEsc(_daResolveDoc(item).title)}`,
     col2: item => _daBadge(item.status),
     rowLabel: item => _daResolveDoc(item).title,
-    rowSub: item => `${item.document_type === 'payment_voucher' ? 'Payment Voucher' : 'Fee Invoice'} — ${_daResolveDoc(item).sub}`,
+    rowSub: item => `${_daTypeLabel(item.document_type)} — ${_daResolveDoc(item).sub}`,
     idKey: 'id',
     detailFields: _daDetailFields,
     renderAdd: el => {
@@ -220,10 +284,38 @@ async function _daRenderAllSplit() {
 
 // ==================== SHARED: detail fields + actions ====================
 
+function _daRequisitionLinesHtml(documentId) {
+  const r = _daRequisitionCache[documentId];
+  if (!r) return '—';
+  const lines = r.lines || [];
+  if (!lines.length) return '<span style="color:var(--grey-600,#5F6B7C);">No lines.</span>';
+  const rows = lines.map(l => `
+    <tr>
+      <td>${_daEsc(l.item_description || '')}</td>
+      <td>${parseFloat(l.quantity || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+      <td>${_daMoney(l.unit_price)}</td>
+      <td>${_daMoney(l.line_net)}</td>
+    </tr>`).join('');
+  return `<div class="fin-table-wrap"><table class="fin-li-table">
+    <thead><tr><th>Description</th><th>Qty</th><th>Unit Price</th><th>Line Net</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>`;
+}
+
 const _daDetailFields = [
-  { label: 'Document Type', key: 'document_type', fmt: v => v === 'payment_voucher' ? 'Payment Voucher' : v === 'fee_invoice' ? 'Fee Invoice' : (v || '—') },
+  { label: 'Document Type', key: 'document_type', fmt: v => _daTypeLabel(v) },
   { label: 'Reference',     key: 'document_id',  fmt: (v, item) => _daResolveDoc(item).title },
   { label: 'Amount',        key: 'document_id',  fmt: (v, item) => { const a = _daResolveDoc(item).amount; return a != null ? _daMoney(a) : '—'; } },
+  { label: 'Supplier',   key: 'document_id', hideWhen: item => item.document_type !== 'requisition',
+    fmt: (v, item) => { const r = _daRequisitionCache[item.document_id]; return r ? ((typeof _reqSupplierName === 'function') ? _reqSupplierName(r.supplier_id) : `Supplier #${r.supplier_id}`) : '—'; } },
+  { label: 'Applicant',  key: 'document_id', hideWhen: item => item.document_type !== 'petty_cash',
+    fmt: (v, item) => { const p = _daPettyCashCache[item.document_id]; return p ? ((typeof _reqStaffLabel === 'function') ? _reqStaffLabel(p.applicant_id) : `Employee #${p.applicant_id}`) : '—'; } },
+  { label: 'Purpose',    key: 'document_id', hideWhen: item => item.document_type !== 'petty_cash',
+    fmt: (v, item) => { const p = _daPettyCashCache[item.document_id]; return p ? (p.purpose || '—') : '—'; } },
+  { label: 'Payee',      key: 'document_id', hideWhen: item => item.document_type !== 'petty_cash',
+    fmt: (v, item) => { const p = _daPettyCashCache[item.document_id]; return p && p.payee ? p.payee : '—'; } },
+  { label: 'Category',   key: 'document_id', hideWhen: item => item.document_type !== 'petty_cash',
+    fmt: (v, item) => { const p = _daPettyCashCache[item.document_id]; return p && p.category ? p.category : '—'; } },
   { label: 'Status',        key: 'status',        fmt: v => _daBadge(v) },
   { label: 'Submitted By',  key: 'submitted_by',  fmt: v => v != null ? `Staff #${v}` : '—' },
   { label: 'Submitted At',  key: 'submitted_at',  fmt: v => _daDate(v) },
@@ -231,20 +323,37 @@ const _daDetailFields = [
   { label: 'Approved At',   key: 'approved_at',   fmt: v => _daDate(v) },
   { label: 'Rejection Reason', key: 'rejection_reason', fmt: v => v || '—' },
   { label: 'Notes',         key: 'notes',         fmt: v => v || '—' },
+  { label: 'Requisition Lines', key: 'document_id', fullWidth: true, hideWhen: item => item.document_type !== 'requisition',
+    fmt: (v, item) => _daRequisitionLinesHtml(item.document_id) },
+  { label: 'Document Notes', key: 'document_id', fullWidth: true, hideWhen: item => !['requisition', 'petty_cash'].includes(item.document_type),
+    fmt: (v, item) => {
+      const c = item.document_type === 'requisition' ? _daRequisitionCache[item.document_id] : _daPettyCashCache[item.document_id];
+      return (c && c.notes) ? _daEsc(c.notes) : '—';
+    } },
 ];
 
 function _daDetailActions(item) {
+  window._daCurrentItem = item;
+  const hydrationFailed = ['requisition', 'petty_cash'].includes(item.document_type) && _daHydrationFailed[`${item.document_type}:${item.document_id}`];
+  const failBanner = hydrationFailed ? `
+    <div style="width:100%;background:var(--coral-100,#FDEAEA);border:1px solid var(--coral-500,#D94040);color:var(--coral-600,#B03030);border-radius:6px;padding:10px 14px;font-size:0.85rem;margin-bottom:10px;">
+      Could not load the source document. It may have been deleted.
+    </div>` : '';
+
   if (item.status !== 'pending') {
     return `<div style="color:var(--grey-600);font-size:0.9rem;">This item has already been ${_daEsc(item.status)}.</div>`;
   }
   const isSubmitter = currentUser && item.submitted_by != null && String(currentUser.id) === String(item.submitted_by);
-  let html = '';
-  if (isSubmitter) {
+  let html = failBanner;
+  if (hydrationFailed) {
+    // approving/rejecting a document that failed to hydrate would just 404
+    // server-side, so the buttons stay off rather than let the operator hit that.
+  } else if (isSubmitter) {
     html += `<div style="width:100%;color:var(--color-danger);font-size:0.85rem;margin-bottom:8px;">You submitted this document — segregation of duties means you cannot approve or reject it yourself.</div>`;
   } else {
-    html += `<button class="btn" onclick="_daApprove(${item.id})">Approve</button>`;
+    html += `<button class="btn" onclick="_daApprove()">Approve</button>`;
   }
-  html += `<button class="fin-btn-cancel" onclick="_daReject(${item.id})">Reject</button>`;
+  if (!hydrationFailed) html += `<button class="fin-btn-cancel" onclick="_daReject()">Reject</button>`;
   return `<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">${html}</div>`;
 }
 
@@ -296,38 +405,64 @@ function _daShowReasonModal(title, onConfirm) {
 }
 
 async function _daHandleActionError(res) {
-  if (res.status === 403) { showToast('You cannot act on a document you submitted yourself.', 'error'); return; }
-  if (res.status === 409) { showToast('This item has already been processed.', 'error'); await _daRefreshCurrent(); return; }
-  showToast(await parseApiError(res), 'error');
+  // Surface the backend's own detail verbatim (403 SoD, 409 wrong-lifecycle-
+  // state, etc.) rather than a hardcoded generic message — the operator needs
+  // to know exactly what happened, not a paraphrase of it.
+  const detail = await parseApiError(res);
+  showToast(detail, 'error');
+  if (res.status === 409) await _daRefreshCurrent();
 }
 
 async function _daRefreshCurrent() {
   if (typeof window._splitRefreshSelected === 'function') await window._splitRefreshSelected();
 }
 
-async function _daApprove(id) {
-  // Look up the item to know whether to surface the surcharge policy first —
-  // renderSplitView doesn't expose selectedItem, so read it back off the DOM's
-  // detail fields is unreliable; simplest is to just always show the generic
-  // confirm and mention the surcharge policy note when relevant is handled
-  // server-side (surcharge auto-applies on approval per spec) — we still warn
-  // the user up front by fetching the active policy.
-  let policyNote = '';
-  try {
-    const res = await apiFetch(`${_DA_API}surcharge-policy`);
-    if (res && res.ok) {
-      const policy = await res.json().catch(() => null);
-      if (policy && policy.is_active) {
-        policyNote = `<p style="font-size:13px;color:var(--grey-600,#5F6B7C);margin:0 0 14px;">
-          If this is an overdue Fee Invoice, approving it will automatically add a
-          <strong>${policy.surcharge_percent}%</strong> late-payment surcharge line item
-          (grace period: ${policy.grace_period_days} day${policy.grace_period_days === 1 ? '' : 's'}).
-        </p>`;
-      }
-    }
-  } catch (_) {}
+// Shared link-out from Requisitions/Petty Cash status hints (and anywhere
+// else) into the DAS "All Approvals" view, pre-filtered to pending items of
+// one document type — keeps the target in one place if the DAS route moves.
+function openDasQueueForType(documentType) {
+  _daAllFilters = { document_type: documentType, status: 'pending' };
+  loadView('document-approvals-all');
+}
 
-  _daShowNotesModal('Approve Document', policyNote, async (notes) => {
+async function _daApprove() {
+  const item = window._daCurrentItem;
+  if (!item) return;
+  const id = item.id;
+  const type = item.document_type;
+
+  let title = 'Approve Document';
+  let bodyHtml = '';
+
+  if (type === 'requisition') {
+    const r = _daRequisitionCache[item.document_id];
+    const supplierName = (r && typeof _reqSupplierName === 'function') ? _reqSupplierName(r.supplier_id) : '—';
+    title = 'Approve Requisition';
+    bodyHtml = `<p style="font-size:13px;color:var(--grey-600,#5F6B7C);margin:0 0 14px;">Approve requisition <strong>${_daEsc(r?.requisition_no || `#${item.document_id}`)}</strong> from ${_daEsc(supplierName)}? Total ${_daMoney(r?.total)}.</p>`;
+  } else if (type === 'petty_cash') {
+    const p = _daPettyCashCache[item.document_id];
+    const applicantName = (p && typeof _reqStaffLabel === 'function') ? _reqStaffLabel(p.applicant_id) : (p ? `Employee #${p.applicant_id}` : '—');
+    title = 'Approve Petty Cash Application';
+    bodyHtml = `<p style="font-size:13px;color:var(--grey-600,#5F6B7C);margin:0 0 14px;">Approve petty cash application from ${_daEsc(applicantName)} for ${_daMoney(p?.requested_amount)}?</p>`;
+  } else {
+    // payment_voucher / fee_invoice — unchanged surcharge-policy note. Look up
+    // the active policy up front since the surcharge auto-applies server-side.
+    try {
+      const res = await apiFetch(`${_DA_API}surcharge-policy`);
+      if (res && res.ok) {
+        const policy = await res.json().catch(() => null);
+        if (policy && policy.is_active) {
+          bodyHtml = `<p style="font-size:13px;color:var(--grey-600,#5F6B7C);margin:0 0 14px;">
+            If this is an overdue Fee Invoice, approving it will automatically add a
+            <strong>${policy.surcharge_percent}%</strong> late-payment surcharge line item
+            (grace period: ${policy.grace_period_days} day${policy.grace_period_days === 1 ? '' : 's'}).
+          </p>`;
+        }
+      }
+    } catch (_) {}
+  }
+
+  _daShowNotesModal(title, bodyHtml, async (notes) => {
     const res = await apiFetch(`${_DA_API}${id}/approve`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -339,7 +474,10 @@ async function _daApprove(id) {
   });
 }
 
-async function _daReject(id) {
+async function _daReject() {
+  const item = window._daCurrentItem;
+  if (!item) return;
+  const id = item.id;
   _daShowReasonModal('Reject Document', async (reason) => {
     const res = await apiFetch(`${_DA_API}${id}/reject`, {
       method: 'POST',

@@ -353,7 +353,9 @@ async function _supSubmit() {
 
 // ==================== PROCUREMENT — REQUISITIONS ====================
 // Confirmed live against openapi.json 2026-07-27: POST/GET /api/procurement/requisitions/,
-// GET/PUT /api/procurement/requisitions/{id}, {id}/submit|approve|reject|cancel|pdf.
+// GET/PUT /api/procurement/requisitions/{id}, {id}/submit|cancel|pdf.
+// {id}/approve and {id}/reject are gone as of 2026-08-10 — approval now
+// routes exclusively through the Document Approval System (js/document-approvals.js).
 // No JE at any stage — books move only when a downstream PV/Supplier Invoice is raised.
 
 function _reqEsc(v) {
@@ -764,20 +766,16 @@ function _reqDetailActionsHtml(item) {
       <div style="font-size:0.88rem;color:#333;white-space:pre-wrap;">${_reqEsc(item.notes)}</div>
     </div>` : '';
 
-  // Segregation of duties — client-side gate hides Approve/Reject when the
-  // current user submitted this requisition; the server 403s as a backstop.
-  const isSubmitter = currentUser && item.submitted_by != null && String(currentUser.id) === String(item.submitted_by);
+  const dasBanner = item.status === 'submitted' ? `
+    <div style="background:var(--navy-50,#EEF3FA);border:1px solid var(--navy-100,#DCE6F5);border-radius:8px;padding:12px 16px;margin-bottom:14px;font-size:0.86rem;color:var(--navy-700,#1B3057);">
+      This requisition is awaiting approval in the Document Approval System.
+      <br><a href="#" onclick="openDasQueueForType('requisition');return false;" style="color:var(--navy-700,#1B3057);font-weight:600;text-decoration:underline;">&rarr; Open the DAS queue</a>
+    </div>` : '';
+
   let actions = '';
   if (item.status === 'draft') {
-    actions += `<button class="fin-btn-teal" onclick="_reqSubmitForApproval(${item.id})">Submit</button>`;
+    actions += `<button class="fin-btn-teal" onclick="_reqSubmitForApproval(${item.id})">Submit to DAS</button>`;
     actions += `<button class="fin-btn-outline" style="color:#c0392b;border-color:#c0392b;" onclick="_reqCancel(${item.id})">Cancel Requisition</button>`;
-  } else if (item.status === 'submitted') {
-    if (!isSubmitter) {
-      actions += `<button class="fin-btn-teal" onclick="_reqApprove(${item.id})">Approve</button>`;
-      actions += `<button class="fin-btn-outline" style="color:#c0392b;border-color:#c0392b;" onclick="_reqOpenRejectModal(${item.id})">Reject</button>`;
-    } else {
-      actions += `<div style="color:#888;font-size:0.85rem;">Awaiting approval from someone other than the submitter (segregation of duties).</div>`;
-    }
   }
   actions += `<button class="fin-btn-outline" onclick="_reqDownloadPdf(${item.id})">Download PDF</button>`;
 
@@ -786,6 +784,7 @@ function _reqDetailActionsHtml(item) {
     ${linesTable}
     ${auditStrip}
     ${narrationBlock}
+    ${dasBanner}
     <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:14px;align-items:center;">${actions}</div>
     <div id="req-action-msg-${item.id}" style="margin-top:8px;"></div>`;
 }
@@ -806,49 +805,10 @@ async function _reqSubmitForApproval(id) {
   const res = await apiFetch(`${API_BASE}/procurement/requisitions/${id}/submit`, { method: 'POST' });
   await _reqHandleLifecycleResult(res, id, 'Requisition submitted for approval.');
 }
-async function _reqApprove(id) {
-  const res = await apiFetch(`${API_BASE}/procurement/requisitions/${id}/approve`, { method: 'POST' });
-  await _reqHandleLifecycleResult(res, id, 'Requisition approved.');
-}
 async function _reqCancel(id) {
   if (!confirm('Cancel this requisition? This cannot be undone.')) return;
   const res = await apiFetch(`${API_BASE}/procurement/requisitions/${id}/cancel`, { method: 'POST' });
   await _reqHandleLifecycleResult(res, id, 'Requisition cancelled.');
-}
-function _reqOpenRejectModal(id) {
-  const wrap = document.createElement('div');
-  wrap.id = 'req-reject-modal-overlay';
-  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
-  wrap.innerHTML = `
-    <div style="background:var(--white);border-radius:8px;padding:24px;width:460px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
-      <h3 style="margin:0 0 12px;font-size:1.05rem;color:var(--navy-700,#2c3e50);">Reject Requisition</h3>
-      <div class="fin-form-group">
-        <label class="fin-form-label">Rejection Reason <span class="fin-required">*</span></label>
-        <textarea id="req-reject-reason" class="fin-form-textarea" rows="3" maxlength="500"></textarea>
-        <span class="fin-field-error" id="req-reject-reason-err"></span>
-      </div>
-      <div style="display:flex;gap:10px;margin-top:12px;justify-content:flex-end;">
-        <button class="fin-btn-cancel" onclick="_reqCloseModal('req-reject-modal-overlay')">Cancel</button>
-        <button class="fin-btn-teal" onclick="_reqSubmitReject(${id})">Confirm Reject</button>
-      </div>
-    </div>`;
-  document.body.appendChild(wrap);
-}
-function _reqCloseModal(id) { document.getElementById(id)?.remove(); }
-async function _reqSubmitReject(id) {
-  const reason = (document.getElementById('req-reject-reason').value || '').trim();
-  if (!reason) { document.getElementById('req-reject-reason-err').textContent = 'A rejection reason is required.'; return; }
-  const res = await apiFetch(`${API_BASE}/procurement/requisitions/${id}/reject`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rejection_reason: reason })
-  });
-  if (res && res.ok) {
-    showToast('Requisition rejected.', 'success');
-    _reqCloseModal('req-reject-modal-overlay');
-    window._splitRefreshSelected && await window._splitRefreshSelected();
-    return;
-  }
-  if (!res) return;
-  document.getElementById('req-reject-reason-err').textContent = await parseApiError(res);
 }
 
 // ── PDF — authenticated blob download via the shared ui-helpers.js helper ───
