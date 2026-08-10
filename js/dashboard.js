@@ -837,7 +837,6 @@ const FORM_VIEWS = new Set([
   'cohort-term-planner-add', 'cohort-term-planner-edit',
   'close-records-per-class',
   'student-supplies', 'student-supplies-my-class',
-  'student-reporting-add', 'student-reporting-bulk',
   'admissions-applicants',
   // Finance
   'fin-student-invoices', 'fin-student-invoices-add', 'fin-student-bulk-invoicing',
@@ -907,15 +906,6 @@ async function loadView(view) {
     case 'student-search':
       setActiveSidebarItem('sidebar-stu-search'); openStuMgmtDropdowns();
       await loadStudentSearchView(main); break;
-    case 'student-reporting':
-      setActiveSidebarItem('sidebar-stu-reporting'); openStuMgmtDropdowns();
-      await loadStudentReportingView(main); break;
-    case 'student-reporting-add':
-      openStuMgmtDropdowns();
-      await loadSingleReportingView(main); break;
-    case 'student-reporting-bulk':
-      openStuMgmtDropdowns();
-      await loadBulkReportingView(main); break;
     // Placeholder sidebar items (not yet implemented)
     case 'student-id-cards':
       setActiveSidebarItem('sidebar-stu-id-cards'); openStuMgmtDropdowns();

@@ -258,10 +258,10 @@ async function loadSupplierFormView(container, editId) {
             </div>
             <div class="fin-form-group">
               <label class="fin-form-label">Status</label>
-              <select id="sup-f-active" class="fin-form-select">
-                <option value="true"  ${supplier?.is_active !== false ? 'selected' : ''}>Active</option>
-                <option value="false" ${supplier?.is_active === false  ? 'selected' : ''}>Inactive</option>
-              </select>
+              <label style="display:flex;align-items:center;gap:8px;padding:8px 0;">
+                <input type="checkbox" id="sup-f-active" ${supplier?.is_active !== false ? 'checked' : ''}>
+                <span>Active</span>
+              </label>
             </div>
           </div>
         </div>
@@ -319,7 +319,7 @@ async function _supSubmit() {
     bank_branch:    document.getElementById('sup-f-bank-branch').value.trim() || null,
     account_name:   document.getElementById('sup-f-acct-name').value.trim()   || null,
     account_number: document.getElementById('sup-f-acct-no').value.trim()     || null,
-    is_active:      document.getElementById('sup-f-active').value === 'true',
+    is_active:      document.getElementById('sup-f-active').checked,
   };
 
   const isEdit = !!_supEditId;
