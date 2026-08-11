@@ -1,14 +1,16 @@
 // ==================== DOCUMENT APPROVAL SYSTEM ====================
-// Approval workflow for four polymorphic document types: Payment Vouchers
+// Approval workflow for six polymorphic document types: Payment Vouchers
 // (payables.js already has its own direct submit/approve/reject actions on
 // /payables/payment-vouchers/{id}/... — this module is the cross-cutting
 // queue that additionally covers overdue Fee Invoices, which have no other
-// approval path), overdue Fee Invoices, Requisitions and Petty Cash
-// Applications. As of 2026-08-10 the in-module approve/reject endpoints for
-// the latter two were removed server-side (404) — this is now their only
-// approval path. DocumentApproval only stores a document_type + document_id
-// (no FK) so the referenced document's details (payee/student, amount,
-// description) must be resolved separately per type.
+// approval path), overdue Fee Invoices, Requisitions, Petty Cash
+// Applications, Internal (inventory) Requisitions and Employee Salary
+// Advances. As of 2026-08-10 the in-module approve/reject endpoints for
+// Requisitions/Petty Cash were removed server-side (404) — this is now
+// their only approval path; Internal Requisitions and Employee Advances
+// (added 2026-08-11) never had one. DocumentApproval only stores a
+// document_type + document_id (no FK) so the referenced document's details
+// (payee/student, amount, description) must be resolved separately per type.
 
 const _DA_API = `${API_BASE}/document-approvals/`;
 
@@ -31,16 +33,22 @@ function _daBadge(status) {
 }
 
 const _DA_TYPE_LABEL = {
-  payment_voucher: 'Payment Voucher',
-  fee_invoice:      'Fee Invoice',
-  requisition:      'Requisition',
-  petty_cash:       'Petty Cash',
+  payment_voucher:      'Payment Voucher',
+  fee_invoice:           'Fee Invoice',
+  requisition:           'Requisition',
+  petty_cash:            'Petty Cash',
+  internal_requisition: 'Internal Requisition',
+  employee_advance:      'Employee Advance',
 };
 const _DA_TYPE_PILL_STYLE = {
-  payment_voucher: 'background:var(--navy-700,#1B3057);color:#fff;',
-  fee_invoice:      'background:var(--gold-500,#C9A227);color:var(--navy-900,#0D2137);',
-  requisition:      'background:transparent;border:1px solid var(--navy-700,#1B3057);color:var(--navy-700,#1B3057);',
-  petty_cash:       'background:transparent;border:1px solid var(--coral-500,#D94040);color:var(--coral-500,#D94040);',
+  payment_voucher:      'background:var(--navy-700,#1B3057);color:#fff;',
+  fee_invoice:           'background:var(--gold-500,#C9A227);color:var(--navy-900,#0D2137);',
+  requisition:           'background:transparent;border:1px solid var(--navy-700,#1B3057);color:var(--navy-700,#1B3057);',
+  petty_cash:            'background:transparent;border:1px solid var(--coral-500,#D94040);color:var(--coral-500,#D94040);',
+  // Distinct from the navy-ghost Requisition pill and the coral-ghost Petty
+  // Cash pill while staying inside the existing navy/gold/coral token set.
+  internal_requisition: 'background:var(--coral-500,#D94040);color:#fff;',
+  employee_advance:      'background:transparent;border:1px solid var(--gold-500,#C9A227);color:var(--gold-500,#C9A227);',
 };
 function _daTypeLabel(type) { return _DA_TYPE_LABEL[type] || (type || '—'); }
 function _daTypeBadge(type) {
@@ -57,6 +65,8 @@ let _daPvListCache = null;
 let _daFeeInvoiceCache = {};
 let _daRequisitionCache = {};
 let _daPettyCashCache = {};
+let _daInternalRequisitionCache = {};
+let _daAdvanceCache = {};
 // Tracks "<type>:<id>" keys whose single-item GET came back non-OK (e.g. the
 // source document was deleted after the DA row was created) so the detail
 // panel can render a coral banner and disable Approve/Reject instead of
@@ -71,10 +81,15 @@ async function _daPrefetchDocuments(items) {
     .filter(id => !_daRequisitionCache[id]);
   const pcaIds = [...new Set(items.filter(i => i.document_type === 'petty_cash').map(i => i.document_id))]
     .filter(id => !_daPettyCashCache[id]);
+  const intReqIds = [...new Set(items.filter(i => i.document_type === 'internal_requisition').map(i => i.document_id))]
+    .filter(id => !_daInternalRequisitionCache[id]);
+  const advIds = [...new Set(items.filter(i => i.document_type === 'employee_advance').map(i => i.document_id))]
+    .filter(id => !_daAdvanceCache[id]);
 
   const jobs = [];
   if (reqIds.length && typeof _reqEnsureSuppliersCache === 'function') jobs.push(_reqEnsureSuppliersCache());
-  if ((reqIds.length || pcaIds.length) && typeof _reqEnsureStaffCache === 'function') jobs.push(_reqEnsureStaffCache());
+  if ((reqIds.length || pcaIds.length || advIds.length) && typeof _reqEnsureStaffCache === 'function') jobs.push(_reqEnsureStaffCache());
+  if (intReqIds.length && typeof _invEnsureStoresCache === 'function') jobs.push(_invEnsureStoresCache());
   if (pvNeeded && !_daPvListCache) {
     jobs.push(
       apiFetch(`${API_BASE}/payables/payment-vouchers/`)
@@ -107,6 +122,22 @@ async function _daPrefetchDocuments(items) {
         .catch(() => { _daHydrationFailed[`petty_cash:${id}`] = true; })
     );
   });
+  intReqIds.forEach(id => {
+    jobs.push(
+      apiFetch(`${API_BASE}/inventory/internal-requisitions/${id}`)
+        .then(res => { if (res && !res.ok) _daHydrationFailed[`internal_requisition:${id}`] = true; return res && res.ok ? res.json() : null; })
+        .then(data => { if (data) _daInternalRequisitionCache[id] = data; })
+        .catch(() => { _daHydrationFailed[`internal_requisition:${id}`] = true; })
+    );
+  });
+  advIds.forEach(id => {
+    jobs.push(
+      apiFetch(`${API_BASE}/payroll/advances/${id}`)
+        .then(res => { if (res && !res.ok) _daHydrationFailed[`employee_advance:${id}`] = true; return res && res.ok ? res.json() : null; })
+        .then(data => { if (data) _daAdvanceCache[id] = data; })
+        .catch(() => { _daHydrationFailed[`employee_advance:${id}`] = true; })
+    );
+  });
   await Promise.all(jobs);
 }
 
@@ -132,6 +163,19 @@ function _daResolveDoc(item) {
     const p = _daPettyCashCache[item.document_id];
     if (!p) return { title: `Petty Cash #${item.document_id}`, sub: '', amount: null };
     return { title: p.purpose || `Petty Cash #${item.document_id}`, sub: `Employee #${p.applicant_id}`, amount: p.requested_amount };
+  }
+  if (item.document_type === 'internal_requisition') {
+    const r = _daInternalRequisitionCache[item.document_id];
+    if (!r) return { title: `Internal Requisition #${item.document_id}`, sub: '', amount: null };
+    const fromLabel = (typeof _invStoreLabel === 'function') ? _invStoreLabel(r.from_store_id) : `Store #${r.from_store_id}`;
+    const toLabel = (typeof _invStoreLabel === 'function') ? _invStoreLabel(r.to_store_id) : `Store #${r.to_store_id}`;
+    return { title: r.requisition_number || `Internal Requisition #${item.document_id}`, sub: `${fromLabel} → ${toLabel}`, amount: null };
+  }
+  if (item.document_type === 'employee_advance') {
+    const a = _daAdvanceCache[item.document_id];
+    if (!a) return { title: `Employee Advance #${item.document_id}`, sub: '', amount: null };
+    const employeeName = (typeof _reqStaffLabel === 'function') ? _reqStaffLabel(a.employee_id) : `Employee #${a.employee_id}`;
+    return { title: a.advance_number || `Employee Advance #${item.document_id}`, sub: employeeName, amount: a.approved_amount ?? a.principal };
   }
   return { title: `#${item.document_id}`, sub: '', amount: null };
 }
@@ -214,6 +258,8 @@ function _daRenderAllFilterBar() {
           <option value="fee_invoice" ${_daAllFilters.document_type === 'fee_invoice' ? 'selected' : ''}>Fee Invoice</option>
           <option value="requisition" ${_daAllFilters.document_type === 'requisition' ? 'selected' : ''}>Requisition</option>
           <option value="petty_cash" ${_daAllFilters.document_type === 'petty_cash' ? 'selected' : ''}>Petty Cash</option>
+          <option value="internal_requisition" ${_daAllFilters.document_type === 'internal_requisition' ? 'selected' : ''}>Internal Requisition</option>
+          <option value="employee_advance" ${_daAllFilters.document_type === 'employee_advance' ? 'selected' : ''}>Employee Advance</option>
         </select>
       </div>
       <div class="fin-form-group" style="margin:0;">
@@ -302,6 +348,26 @@ function _daRequisitionLinesHtml(documentId) {
   </table></div>`;
 }
 
+// Read-only lines table for the detail tab — the editable copy used at
+// approve time lives in the approve modal (§2.5 of the addendum), not here.
+function _daInternalRequisitionLinesHtml(documentId) {
+  const r = _daInternalRequisitionCache[documentId];
+  if (!r) return '—';
+  const lines = r.lines || [];
+  if (!lines.length) return '<span style="color:var(--grey-600,#5F6B7C);">No lines.</span>';
+  const rows = lines.map(l => `
+    <tr>
+      <td>${_daEsc((typeof _invItemLabel === 'function') ? _invItemLabel(l.item_id) : `#${l.item_id}`)}</td>
+      <td>${parseFloat(l.requested_quantity || 0).toLocaleString(undefined, { maximumFractionDigits: 3 })}</td>
+      <td>${l.approved_quantity != null ? parseFloat(l.approved_quantity).toLocaleString(undefined, { maximumFractionDigits: 3 }) : '—'}</td>
+      <td>${l.estimated_unit_cost != null ? _daMoney(l.estimated_unit_cost) : '—'}</td>
+    </tr>`).join('');
+  return `<div class="fin-table-wrap"><table class="fin-li-table">
+    <thead><tr><th>Item</th><th>Requested Qty</th><th>Approved Qty</th><th>Est. Unit Cost</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>`;
+}
+
 const _daDetailFields = [
   { label: 'Document Type', key: 'document_type', fmt: v => _daTypeLabel(v) },
   { label: 'Reference',     key: 'document_id',  fmt: (v, item) => _daResolveDoc(item).title },
@@ -316,6 +382,32 @@ const _daDetailFields = [
     fmt: (v, item) => { const p = _daPettyCashCache[item.document_id]; return p && p.payee ? p.payee : '—'; } },
   { label: 'Category',   key: 'document_id', hideWhen: item => item.document_type !== 'petty_cash',
     fmt: (v, item) => { const p = _daPettyCashCache[item.document_id]; return p && p.category ? p.category : '—'; } },
+  { label: 'From Store', key: 'document_id', hideWhen: item => item.document_type !== 'internal_requisition',
+    fmt: (v, item) => { const r = _daInternalRequisitionCache[item.document_id]; return r && typeof _invStoreLabel === 'function' ? _invStoreLabel(r.from_store_id) : '—'; } },
+  { label: 'To Store',   key: 'document_id', hideWhen: item => item.document_type !== 'internal_requisition',
+    fmt: (v, item) => { const r = _daInternalRequisitionCache[item.document_id]; return r && typeof _invStoreLabel === 'function' ? _invStoreLabel(r.to_store_id) : '—'; } },
+  { label: 'Request Date', key: 'document_id', hideWhen: item => item.document_type !== 'internal_requisition',
+    fmt: (v, item) => { const r = _daInternalRequisitionCache[item.document_id]; return r ? (r.request_date || '—') : '—'; } },
+  { label: 'Requisition Reason', key: 'document_id', hideWhen: item => item.document_type !== 'internal_requisition',
+    fmt: (v, item) => { const r = _daInternalRequisitionCache[item.document_id]; return r ? (r.reason || '—') : '—'; } },
+  { label: 'Notes', key: 'document_id', hideWhen: item => item.document_type !== 'internal_requisition',
+    fmt: (v, item) => { const r = _daInternalRequisitionCache[item.document_id]; return (r && r.notes) ? _daEsc(r.notes) : '—'; } },
+  { label: 'Full Record', key: 'document_id', hideWhen: item => item.document_type !== 'internal_requisition',
+    fmt: (v, item) => `<a href="#" onclick="window._irqOpenId=${item.document_id};loadView('inventory-internal-requisitions');return false;">&rarr; Open Internal Requisition</a>` },
+  { label: 'Employee', key: 'document_id', hideWhen: item => item.document_type !== 'employee_advance',
+    fmt: (v, item) => { const a = _daAdvanceCache[item.document_id]; return a ? ((typeof _reqStaffLabel === 'function') ? _reqStaffLabel(a.employee_id) : `Employee #${a.employee_id}`) : '—'; } },
+  { label: 'Principal', key: 'document_id', hideWhen: item => item.document_type !== 'employee_advance',
+    fmt: (v, item) => { const a = _daAdvanceCache[item.document_id]; return a ? _daMoney(a.principal) : '—'; } },
+  { label: 'Reason Category', key: 'document_id', hideWhen: item => item.document_type !== 'employee_advance',
+    fmt: (v, item) => { const a = _daAdvanceCache[item.document_id]; return a ? (a.reason_category || '—') : '—'; } },
+  { label: 'Advance Reason', key: 'document_id', hideWhen: item => item.document_type !== 'employee_advance',
+    fmt: (v, item) => { const a = _daAdvanceCache[item.document_id]; return a ? (a.reason || '—') : '—'; } },
+  { label: 'Repayment Type', key: 'document_id', hideWhen: item => item.document_type !== 'employee_advance',
+    fmt: (v, item) => { const a = _daAdvanceCache[item.document_id]; if (!a) return '—'; return a.repayment_type === 'installments' ? `Installments (${a.installment_count || '—'})` : 'Lump-sum'; } },
+  { label: 'Notes', key: 'document_id', hideWhen: item => item.document_type !== 'employee_advance',
+    fmt: (v, item) => { const a = _daAdvanceCache[item.document_id]; return (a && a.notes) ? _daEsc(a.notes) : '—'; } },
+  { label: 'Full Record', key: 'document_id', hideWhen: item => item.document_type !== 'employee_advance',
+    fmt: (v, item) => `<a href="#" onclick="window._advOpenId=${item.document_id};loadView('payroll-salary-advances');return false;">&rarr; Open Advance</a>` },
   { label: 'Status',        key: 'status',        fmt: v => _daBadge(v) },
   { label: 'Submitted By',  key: 'submitted_by',  fmt: v => v != null ? `Staff #${v}` : '—' },
   { label: 'Submitted At',  key: 'submitted_at',  fmt: v => _daDate(v) },
@@ -325,6 +417,8 @@ const _daDetailFields = [
   { label: 'Notes',         key: 'notes',         fmt: v => v || '—' },
   { label: 'Requisition Lines', key: 'document_id', fullWidth: true, hideWhen: item => item.document_type !== 'requisition',
     fmt: (v, item) => _daRequisitionLinesHtml(item.document_id) },
+  { label: 'Internal Requisition Lines', key: 'document_id', fullWidth: true, hideWhen: item => item.document_type !== 'internal_requisition',
+    fmt: (v, item) => _daInternalRequisitionLinesHtml(item.document_id) },
   { label: 'Document Notes', key: 'document_id', fullWidth: true, hideWhen: item => !['requisition', 'petty_cash'].includes(item.document_type),
     fmt: (v, item) => {
       const c = item.document_type === 'requisition' ? _daRequisitionCache[item.document_id] : _daPettyCashCache[item.document_id];
@@ -334,7 +428,7 @@ const _daDetailFields = [
 
 function _daDetailActions(item) {
   window._daCurrentItem = item;
-  const hydrationFailed = ['requisition', 'petty_cash'].includes(item.document_type) && _daHydrationFailed[`${item.document_type}:${item.document_id}`];
+  const hydrationFailed = ['requisition', 'petty_cash', 'internal_requisition', 'employee_advance'].includes(item.document_type) && _daHydrationFailed[`${item.document_type}:${item.document_id}`];
   const failBanner = hydrationFailed ? `
     <div style="width:100%;background:var(--coral-100,#FDEAEA);border:1px solid var(--coral-500,#D94040);color:var(--coral-600,#B03030);border-radius:6px;padding:10px 14px;font-size:0.85rem;margin-bottom:10px;">
       Could not load the source document. It may have been deleted.
@@ -404,6 +498,126 @@ function _daShowReasonModal(title, onConfirm) {
   };
 }
 
+// ── Approve modal variant with an extra validated widget (editable qty
+// table / approved-amount input) — no other modal in the codebase combines
+// an editable input with pre-confirm validation, so this is new rather than
+// an extension of _daShowNotesModal (which stays untouched for the four
+// original document types, per the addendum's defensive-callout list). ──
+function _daShowApproveModal(title, bodyHtml, extraHtml, opts) {
+  const wrap = document.createElement('div');
+  wrap.id = 'da-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:white;border-radius:8px;padding:24px;width:${opts.width || 480}px;max-width:92vw;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 14px;font-size:1.05rem;color:#2c3e50;">${_daEsc(title)}</h3>
+      ${bodyHtml || ''}
+      ${extraHtml || ''}
+      <div id="da-approve-extra-err" style="display:none;padding:8px 10px;border-radius:6px;background:var(--coral-100,#FDEAEA);color:var(--coral-600,#B03030);font-size:0.82rem;margin-top:8px;"></div>
+      <label class="fin-form-label" style="display:block;margin-top:10px;">Notes (optional)</label>
+      <textarea id="da-modal-notes" class="fin-form-textarea" rows="3" placeholder="Add a note..."></textarea>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="document.getElementById('da-modal-overlay').remove()">Cancel</button>
+        <button class="fin-btn-teal" id="da-modal-confirm-btn">Confirm</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+
+  const confirmBtn = document.getElementById('da-modal-confirm-btn');
+  function revalidate() {
+    const { valid, reason } = opts.validate ? opts.validate() : { valid: true };
+    confirmBtn.disabled = !valid;
+    confirmBtn.style.opacity = valid ? '1' : '0.5';
+    const errEl = document.getElementById('da-approve-extra-err');
+    if (!valid && reason) { errEl.textContent = reason; errEl.style.display = 'block'; }
+    else { errEl.style.display = 'none'; }
+  }
+  if (typeof opts.wireEvents === 'function') opts.wireEvents(revalidate);
+  revalidate();
+
+  confirmBtn.onclick = () => {
+    if (confirmBtn.disabled) return;
+    const notes = document.getElementById('da-modal-notes').value.trim();
+    const extra = opts.buildExtra ? opts.buildExtra() : null;
+    wrap.remove();
+    opts.onConfirm(notes, extra);
+  };
+}
+
+// Approve body composer (§6.2 of the addendum) — the single place that
+// decides which optional field the approve POST carries. Never sets both
+// line_adjustments and approved_amount, and never touches the payload for
+// the four original document types (which only ever send {notes}).
+function _daBuildApproveBody(documentType, notes, extra) {
+  const body = { notes: notes || null };
+  if (documentType === 'internal_requisition' && Array.isArray(extra) && extra.length) {
+    body.line_adjustments = extra;
+  } else if (documentType === 'employee_advance' && extra != null) {
+    body.approved_amount = extra;
+  }
+  return body;
+}
+
+// ── Internal Requisition — editable Approved Qty per line (§2.5) ─────────
+function _daBuildIrqApproveExtraHtml(r) {
+  const lines = r.lines || [];
+  const rows = lines.map(l => `
+    <tr>
+      <td>${_daEsc((typeof _invItemLabel === 'function') ? _invItemLabel(l.item_id) : `#${l.item_id}`)}</td>
+      <td style="text-align:right;">${parseFloat(l.requested_quantity || 0).toLocaleString(undefined, { maximumFractionDigits: 3 })}</td>
+      <td><input type="number" class="fin-li-input" data-irq-line-id="${l.id}" data-requested="${l.requested_quantity}" step="0.001" min="0" max="${l.requested_quantity}" value="${l.requested_quantity}" style="width:100px;"></td>
+    </tr>`).join('');
+  return `
+    <div class="fin-section-label" style="margin-top:6px;">Approve Quantities</div>
+    <div class="fin-table-wrap"><table class="fin-li-table">
+      <thead><tr><th>Item</th><th>Requested</th><th>Approved Qty</th></tr></thead>
+      <tbody id="da-irq-approve-lines">${rows}</tbody>
+    </table></div>
+    <div style="font-size:12px;color:#888;margin-top:6px;">Setting a line to 0 rejects that line. The header will still approve; the rejected line will be dropped from the resulting Stock Transfer.</div>`;
+}
+function _daIrqValidate() {
+  const inputs = Array.from(document.querySelectorAll('#da-irq-approve-lines input[data-irq-line-id]'));
+  if (!inputs.length) return { valid: true };
+  let allZero = true;
+  for (const inp of inputs) {
+    const v = parseFloat(inp.value);
+    const max = parseFloat(inp.dataset.requested);
+    if (isNaN(v) || v < 0 || v > max) return { valid: false, reason: 'Approved quantity must be between 0 and the requested quantity for every line.' };
+    if (v > 0) allZero = false;
+  }
+  if (allZero) return { valid: false, reason: 'Cannot approve with zero quantities across all lines. Reject the requisition instead.' };
+  return { valid: true };
+}
+function _daIrqBuildExtra() {
+  const inputs = Array.from(document.querySelectorAll('#da-irq-approve-lines input[data-irq-line-id]'));
+  const adjustments = [];
+  inputs.forEach(inp => {
+    const requested = String(inp.dataset.requested).trim();
+    const val = String(inp.value).trim();
+    if (val !== requested) {
+      adjustments.push({ line_id: parseInt(inp.dataset.irqLineId), approved_quantity: val });
+    }
+  });
+  return adjustments.length ? adjustments : null;
+}
+
+// ── Employee Advance — Approved Amount trim input (§2.6) ─────────────────
+function _daBuildAdvanceApproveExtraHtml(a) {
+  return `
+    <div class="fin-form-group" style="margin-top:10px;">
+      <label class="fin-form-label">Approved Amount (KES)</label>
+      <input type="number" id="da-adv-approved-amount" class="fin-form-input" step="0.01" min="0.01" max="${a.principal}" value="${a.principal}">
+      <div style="font-size:12px;color:#888;margin-top:4px;">You can approve the full requested principal, or trim it. The installment amount (if applicable) will be recomputed to approved_amount &divide; installment_count.</div>
+    </div>`;
+}
+function _daAdvanceValidate(principal) {
+  const el = document.getElementById('da-adv-approved-amount');
+  if (!el) return { valid: true };
+  const v = parseFloat(el.value);
+  if (isNaN(v) || v <= 0) return { valid: false, reason: 'Approved amount must be > 0.' };
+  if (v > parseFloat(principal)) return { valid: false, reason: 'Approved amount cannot exceed the requested principal.' };
+  return { valid: true };
+}
+
 async function _daHandleActionError(res) {
   // Surface the backend's own detail verbatim (403 SoD, 409 wrong-lifecycle-
   // state, etc.) rather than a hardcoded generic message — the operator needs
@@ -430,6 +644,64 @@ async function _daApprove() {
   if (!item) return;
   const id = item.id;
   const type = item.document_type;
+
+  if (type === 'internal_requisition') {
+    const r = _daInternalRequisitionCache[item.document_id];
+    if (!r) { showToast('Could not load the requisition — try again.', 'error'); return; }
+    const fromLabel = (typeof _invStoreLabel === 'function') ? _invStoreLabel(r.from_store_id) : `Store #${r.from_store_id}`;
+    const toLabel = (typeof _invStoreLabel === 'function') ? _invStoreLabel(r.to_store_id) : `Store #${r.to_store_id}`;
+    const n = (r.lines || []).length;
+    const bodyHtml = `<p style="font-size:13px;color:var(--grey-600,#5F6B7C);margin:0 0 6px;">Approve requisition <strong>${_daEsc(r.requisition_number || `#${item.document_id}`)}</strong> from ${_daEsc(toLabel)} for ${n} line${n === 1 ? '' : 's'}? A draft Stock Transfer will be created for ${_daEsc(fromLabel)} to post.</p>`;
+    _daShowApproveModal('Approve Internal Requisition', bodyHtml, _daBuildIrqApproveExtraHtml(r), {
+      validate: () => _daIrqValidate(),
+      wireEvents: (revalidate) => {
+        document.querySelectorAll('#da-irq-approve-lines input[data-irq-line-id]').forEach(inp => inp.addEventListener('input', revalidate));
+      },
+      buildExtra: () => _daIrqBuildExtra(),
+      onConfirm: async (notes, extra) => {
+        const res = await apiFetch(`${_DA_API}${id}/approve`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(_daBuildApproveBody(type, notes, extra)),
+        });
+        if (!res) return;
+        if (res.ok) { showToast('Approved.', 'success'); await _daRefreshCurrent(); }
+        else await _daHandleActionError(res);
+      },
+    });
+    return;
+  }
+
+  if (type === 'employee_advance') {
+    const a = _daAdvanceCache[item.document_id];
+    if (!a) { showToast('Could not load the advance — try again.', 'error'); return; }
+    const employeeName = (typeof _reqStaffLabel === 'function') ? _reqStaffLabel(a.employee_id) : `Employee #${a.employee_id}`;
+    const installmentNote = (a.repayment_type === 'installments' && a.installment_count)
+      ? `, ${a.installment_count} installments of ${_daMoney(Number(a.principal) / a.installment_count)}` : '';
+    const bodyHtml = `<p style="font-size:13px;color:var(--grey-600,#5F6B7C);margin:0 0 6px;">Approve advance <strong>${_daEsc(a.advance_number || `#${item.document_id}`)}</strong> for ${_daEsc(employeeName)}, ${_daMoney(a.principal)} (${_daEsc(a.repayment_type)}${installmentNote})? The employee will need a disbursement PV before funds move.</p>`;
+    _daShowApproveModal('Approve Employee Advance', bodyHtml, _daBuildAdvanceApproveExtraHtml(a), {
+      validate: () => _daAdvanceValidate(a.principal),
+      wireEvents: (revalidate) => {
+        document.getElementById('da-adv-approved-amount')?.addEventListener('input', revalidate);
+      },
+      buildExtra: () => {
+        const el = document.getElementById('da-adv-approved-amount');
+        const val = (el?.value || '').trim();
+        return (val && val !== String(a.principal).trim()) ? val : null;
+      },
+      onConfirm: async (notes, extra) => {
+        const res = await apiFetch(`${_DA_API}${id}/approve`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(_daBuildApproveBody(type, notes, extra)),
+        });
+        if (!res) return;
+        if (res.ok) { showToast('Approved.', 'success'); await _daRefreshCurrent(); }
+        else await _daHandleActionError(res);
+      },
+    });
+    return;
+  }
 
   let title = 'Approve Document';
   let bodyHtml = '';
