@@ -2799,3 +2799,407 @@ async function _stkSubmitCancel(id) {
   const { message } = await _invParseError(res);
   errEl.textContent = message; errEl.style.display = 'block';
 }
+
+// ==================== INTERNAL REQUISITIONS (BE/FE Contract Addendum 2026-08-11 §1) ====
+// Destination-store custodians request stock from a source store; submitting
+// routes through DAS (js/document-approvals.js), whose approval auto-creates
+// a draft Stock Transfer for the source store to post — which then flips
+// this record to FULFILLED server-side (§1.9 of the addendum). No FE
+// polling needed for that transition.
+
+// Extend the shared draft/approved/cancelled pill (line ~101) with the three
+// extra states this lifecycle needs — additive; Transfers/Adjustments/
+// Stock-Takes never hit these keys so their rendering is unaffected.
+Object.assign(_INV_DOC_STATUS_STYLE, {
+  submitted: 'color:#8a6d00;background:var(--gold-100,#fdf3d6);',
+  rejected:  'color:var(--coral-600,#B03030);background:var(--coral-100,#fbe3e3);',
+  fulfilled: 'color:#1e7e34;background:#dcf3e2;',
+});
+
+let _irqLines = [];
+
+// Onboarding copy for a new governance loop — shown a few times then
+// dismissible for good, persisted via localStorage (§1.2).
+function _irqGovernanceBanner() {
+  const seen = parseInt(localStorage.getItem('irq-banner-seen') || '0', 10);
+  if (seen >= 3) return '';
+  localStorage.setItem('irq-banner-seen', String(seen + 1));
+  return `
+    <div id="irq-gov-banner" style="background:var(--navy-700,#1B3057);color:#fff;border-radius:8px;padding:14px 40px 14px 18px;margin-bottom:14px;font-size:0.85rem;line-height:1.5;position:relative;">
+      <button onclick="document.getElementById('irq-gov-banner').remove();localStorage.setItem('irq-banner-seen','99');" style="position:absolute;top:8px;right:10px;background:none;border:none;color:#fff;opacity:.7;cursor:pointer;font-size:1rem;line-height:1;">&times;</button>
+      Destination-store custodians request stock from a source store here. Submitting routes the requisition through the Document Approval System. On DAS approval, a draft Stock Transfer is auto-created — the source store's custodian then posts it via the normal Transfer approve flow, which fulfils this requisition.
+    </div>`;
+}
+
+// ── List (split-view) ────────────────────────────────────────────────────
+async function loadInventoryInternalRequisitionsView(container) {
+  await Promise.all([_invEnsureStoresCache(), _invEnsureItemsCache()]);
+  const preselectId = window._irqOpenId ?? null;
+  window._irqOpenId = null;
+  container.innerHTML = `<div id="irq-banner-slot">${_irqGovernanceBanner()}</div><div id="irq-split-slot"></div>`;
+  const cfg = {
+    container: document.getElementById('irq-split-slot'),
+    title: 'Internal Requisitions',
+    moduleKey: 'inventory_management.internal_requisitions',
+    breadcrumb: [
+      { label: 'Dashboard', view: null },
+      { label: 'Inventory', view: 'inventory-internal-requisitions' },
+      { label: 'Internal Requisitions' },
+    ],
+    apiUrl: `${_INV_API}/internal-requisitions`,
+    searchFields: ['requisition_number', 'reason'],
+    col1Label: 'Requisition', col2Label: 'Status',
+    col1: r => `<strong>${_invEsc(r.requisition_number || '—')}</strong><br><span style="font-weight:400;font-size:12px;color:#888;">${_invEsc(_invStoreLabel(r.from_store_id))} <span style="color:var(--gold-500,#C9A227);">&rarr;</span> ${_invEsc(_invStoreLabel(r.to_store_id))}</span>`,
+    col2: r => _invStatusPill(r.status),
+    rowLabel: r => r.requisition_number || '—',
+    rowSub: r => `${_invEsc(_invStoreLabel(r.from_store_id))} <span style="color:var(--gold-500,#C9A227);">&rarr;</span> ${_invEsc(_invStoreLabel(r.to_store_id))} · ${r.request_date || ''}`,
+    idKey: 'id',
+    preselectId,
+    detailFields: [
+      { label: 'From Store', key: 'from_store_id', fmt: v => _invStoreLabel(v) },
+      { label: 'To Store', key: 'to_store_id', fmt: v => _invStoreLabel(v) },
+      { label: 'Request Date', key: 'request_date', fmt: v => v || '—' },
+      { label: 'Reason', key: 'reason', fmt: v => v || '—' },
+      { label: 'Notes', key: 'notes', fmt: v => v || '—' },
+      { label: 'Status', key: 'status', fmt: v => _invStatusPill(v) },
+    ],
+    canEdit: item => item.status === 'draft',
+    renderAdd: el => _irqRenderAddForm(el),
+    renderEdit: (item, el) => _irqRenderEditForm(item, el),
+    detailActions: item => _irqDetailActionsHtml(item),
+  };
+  await renderSplitView(cfg);
+  _irqInjectFilters(cfg);
+}
+
+function _irqInjectFilters(cfg) {
+  const searchBox = document.querySelector('.split-left-search');
+  if (!searchBox) return;
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'padding:0 16px 10px;display:flex;gap:8px;flex-wrap:wrap;';
+  wrap.innerHTML = `
+    <select id="irq-filter-status" class="fin-form-select" style="flex:1;min-width:110px;font-size:12px;">
+      <option value="">All Statuses</option>
+      ${['draft', 'submitted', 'approved', 'rejected', 'cancelled', 'fulfilled'].map(s => `<option value="${s}">${s[0].toUpperCase() + s.slice(1)}</option>`).join('')}
+    </select>
+    <select id="irq-filter-from" class="fin-form-select" style="flex:1;min-width:120px;font-size:12px;">
+      <option value="">Any From Store</option>${_invStoreOptionsHtml(null)}
+    </select>
+    <select id="irq-filter-to" class="fin-form-select" style="flex:1;min-width:120px;font-size:12px;">
+      <option value="">Any To Store</option>${_invStoreOptionsHtml(null)}
+    </select>
+    <input type="date" id="irq-filter-start" class="fin-form-input" style="flex:1;min-width:110px;font-size:12px;" title="Start date">
+    <input type="date" id="irq-filter-end" class="fin-form-input" style="flex:1;min-width:110px;font-size:12px;" title="End date">`;
+  searchBox.insertAdjacentElement('afterend', wrap);
+  ['irq-filter-status', 'irq-filter-from', 'irq-filter-to', 'irq-filter-start', 'irq-filter-end'].forEach(id => {
+    document.getElementById(id).addEventListener('change', () => _irqReapplyFilters(cfg));
+  });
+}
+function _irqReapplyFilters(cfg) {
+  const status = document.getElementById('irq-filter-status')?.value || '';
+  const fromId = document.getElementById('irq-filter-from')?.value || '';
+  const toId = document.getElementById('irq-filter-to')?.value || '';
+  const start = document.getElementById('irq-filter-start')?.value || '';
+  const end = document.getElementById('irq-filter-end')?.value || '';
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (fromId) params.set('from_store_id', fromId);
+  if (toId) params.set('to_store_id', toId);
+  if (start) params.set('start_date', start);
+  if (end) params.set('end_date', end);
+  const qs = params.toString();
+  cfg.apiUrl = `${_INV_API}/internal-requisitions` + (qs ? `?${qs}` : '');
+  window._splitReload && window._splitReload();
+}
+
+// ── Lines ─────────────────────────────────────────────────────────────────
+function _irqLineRowHtml(line, idx) {
+  return `
+    <tr>
+      <td><input type="text" class="fin-li-input" list="irq-item-datalist" placeholder="Search item…" value="${_invEsc(line.item_label || '')}" oninput="_irqResolveLineItem(${idx}, this.value)"></td>
+      <td><input type="number" class="fin-li-input" step="0.001" min="0.001" style="width:100px;" value="${line.requested_quantity || ''}" oninput="_irqUpdateLine(${idx},'requested_quantity',this.value)"></td>
+      <td><input type="number" class="fin-li-input" step="0.0001" min="0" style="width:110px;" value="${line.estimated_unit_cost || ''}" oninput="_irqUpdateLine(${idx},'estimated_unit_cost',this.value)"></td>
+      <td><input type="text" class="fin-li-input" placeholder="Notes" value="${_invEsc(line.notes || '')}" oninput="_irqUpdateLine(${idx},'notes',this.value)"></td>
+      <td><button class="fin-btn-li-rm" ${_irqLines.length <= 1 ? 'disabled' : ''} onclick="_irqRemoveLine(${idx})">&times;</button></td>
+    </tr>`;
+}
+function _irqRenderLines() {
+  const el = document.getElementById('irq-lines-body');
+  if (el) el.innerHTML = _irqLines.map((l, i) => _irqLineRowHtml(l, i)).join('');
+}
+function _irqAddLine() {
+  _irqLines.push({ item_id: null, item_label: '', requested_quantity: '', estimated_unit_cost: '', notes: '' });
+  _irqRenderLines();
+}
+function _irqRemoveLine(idx) {
+  if (_irqLines.length <= 1) return;
+  _irqLines.splice(idx, 1);
+  _irqRenderLines();
+}
+function _irqResolveLineItem(idx, val) {
+  const id = (window._irqItemMap || {})[val];
+  _irqLines[idx].item_id = id || null;
+  _irqLines[idx].item_label = val;
+}
+function _irqUpdateLine(idx, key, val) {
+  _irqLines[idx][key] = val;
+}
+
+// ── Shared header fields + lines table ──────────────────────────────────
+function _irqHeaderFieldsHtml(r) {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  return `
+    <div class="fin-form-grid-2">
+      <div class="fin-form-group">
+        <label class="fin-form-label">From Store <span class="fin-required">*</span></label>
+        <select id="irq-f-from" class="fin-form-select"><option value="">Please Select</option>${_invStoreOptionsHtml(r?.from_store_id)}</select>
+        <span class="fin-field-error" id="irq-f-from-err"></span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">To Store <span class="fin-required">*</span></label>
+        <select id="irq-f-to" class="fin-form-select"><option value="">Please Select</option>${_invStoreOptionsHtml(r?.to_store_id)}</select>
+        <span class="fin-field-error" id="irq-f-to-err"></span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Request Date <span class="fin-required">*</span></label>
+        <input type="date" id="irq-f-date" class="fin-form-input" value="${r?.request_date || todayStr}">
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Reason</label>
+        <input type="text" id="irq-f-reason" class="fin-form-input" maxlength="200" value="${_invEsc(r?.reason || '')}">
+      </div>
+      <div class="fin-form-group fin-span-2">
+        <label class="fin-form-label">Notes</label>
+        <textarea id="irq-f-notes" class="fin-form-textarea" rows="3" maxlength="500">${_invEsc(r?.notes || '')}</textarea>
+      </div>
+    </div>`;
+}
+function _irqLinesTableHtml() {
+  return `
+    <div class="fin-section-label">Lines</div>
+    <div class="fin-table-wrap">
+      <table class="fin-li-table">
+        <thead><tr><th>Item</th><th>Requested Qty</th><th>Est. Unit Cost</th><th>Notes</th><th></th></tr></thead>
+        <tbody id="irq-lines-body"></tbody>
+      </table>
+    </div>
+    <datalist id="irq-item-datalist"></datalist>
+    <div style="font-size:12px;color:#888;margin-top:4px;">Estimated unit cost is optional — actual cost is snapshotted from the source store's moving average at post time.</div>
+    <button type="button" class="fin-btn-outline" style="margin-top:8px;" onclick="_irqAddLine()">+ Add Line</button>`;
+}
+function _irqCollectLinesPayload() {
+  return _irqLines
+    .filter(l => l.item_id && parseFloat(l.requested_quantity) > 0)
+    .map(l => ({
+      item_id: l.item_id,
+      requested_quantity: String(l.requested_quantity).trim(),
+      estimated_unit_cost: (l.estimated_unit_cost !== '' && l.estimated_unit_cost != null) ? String(l.estimated_unit_cost).trim() : null,
+      notes: (l.notes || '').trim() || null,
+    }));
+}
+function _irqCollectHeaderPayload() {
+  return {
+    from_store_id: parseInt(document.getElementById('irq-f-from').value),
+    to_store_id: parseInt(document.getElementById('irq-f-to').value),
+    request_date: document.getElementById('irq-f-date').value || null,
+    reason: (document.getElementById('irq-f-reason').value || '').trim() || null,
+    notes: (document.getElementById('irq-f-notes').value || '').trim() || null,
+  };
+}
+function _irqValidateHeader() {
+  document.getElementById('irq-f-from-err').textContent = '';
+  document.getElementById('irq-f-to-err').textContent = '';
+  const fromId = document.getElementById('irq-f-from').value;
+  const toId = document.getElementById('irq-f-to').value;
+  let valid = true;
+  if (!fromId) { document.getElementById('irq-f-from-err').textContent = 'This field is required.'; valid = false; }
+  if (!toId) { document.getElementById('irq-f-to-err').textContent = 'This field is required.'; valid = false; }
+  if (fromId && toId && fromId === toId) { document.getElementById('irq-f-to-err').textContent = 'To Store must be different from From Store.'; valid = false; }
+  return valid;
+}
+
+// ── Add (Save Draft only) — from ≠ to enforced client-side (§1.6) ────────
+function _irqRenderAddForm(el) {
+  _irqLines = [{ item_id: null, item_label: '', requested_quantity: '', estimated_unit_cost: '', notes: '' }];
+  el.innerHTML = `
+    <div class="fin-form-wrap" style="max-width:100%;">
+      <h3 class="fin-title" style="font-size:1rem;">New Internal Requisition</h3>
+      ${_irqHeaderFieldsHtml(null)}
+      ${_irqLinesTableHtml()}
+      <div id="irq-f-msg" style="margin-top:12px;"></div>
+      <div class="fin-form-actions">
+        <button class="fin-btn-teal" onclick="_irqSubmitAdd()">Save Draft</button>
+        <button class="fin-btn-cancel" onclick="window._splitReload && window._splitReload()">Cancel</button>
+      </div>
+    </div>`;
+  _irqRenderLines();
+  _invPopulateItemDatalist('irq-item-datalist', '_irqItemMap');
+}
+async function _irqSubmitAdd() {
+  document.getElementById('irq-f-msg').innerHTML = '';
+  if (!_irqValidateHeader()) return;
+  const lines = _irqCollectLinesPayload();
+  if (lines.length === 0) {
+    document.getElementById('irq-f-msg').innerHTML = `<div class="fin-field-error">Add at least one line with an item and requested quantity.</div>`;
+    return;
+  }
+  const payload = { ..._irqCollectHeaderPayload(), lines };
+  const res = await apiFetch(`${_INV_API}/internal-requisitions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  if (res && res.ok) { showToast('Internal requisition saved as draft.', 'success'); await window._splitReload?.(); return; }
+  if (!res) return;
+  const { fieldErrors, message } = await _invParseError(res);
+  if (fieldErrors.to_store_id) document.getElementById('irq-f-to-err').textContent = fieldErrors.to_store_id;
+  else if (fieldErrors.from_store_id) document.getElementById('irq-f-from-err').textContent = fieldErrors.from_store_id;
+  else document.getElementById('irq-f-msg').innerHTML = `<div class="fin-field-error">${_invEsc(message)}</div>`;
+}
+
+// ── Edit — draft-only, PATCH lines is a full replacement (§1.4) ──────────
+function _irqRenderEditForm(item, el) {
+  _irqLines = (item.lines || []).map(l => ({
+    item_id: l.item_id, item_label: _invItemLabel(l.item_id),
+    requested_quantity: l.requested_quantity, estimated_unit_cost: l.estimated_unit_cost, notes: l.notes,
+  }));
+  if (_irqLines.length === 0) _irqLines = [{ item_id: null, item_label: '', requested_quantity: '', estimated_unit_cost: '', notes: '' }];
+  el.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Edit Requisition ${_invEsc(item.requisition_number || '')}</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Inventory &rsaquo;
+          <a href="#" class="fin-bc-link" onclick="loadView('inventory-internal-requisitions');return false;">Internal Requisitions</a> &rsaquo; Edit
+        </div>
+      </div>
+      <div class="fin-form-wrap" style="max-width:100%;">
+        ${_irqHeaderFieldsHtml(item)}
+        ${_irqLinesTableHtml()}
+        <div id="irq-f-msg" style="margin-top:12px;"></div>
+        <div class="fin-form-actions">
+          <button class="fin-btn-teal" onclick="_irqSubmitEdit(${item.id})">Update</button>
+          <button class="fin-btn-cancel" onclick="window._splitRefreshSelected && window._splitRefreshSelected()">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+  _irqRenderLines();
+  _invPopulateItemDatalist('irq-item-datalist', '_irqItemMap');
+}
+async function _irqSubmitEdit(id) {
+  document.getElementById('irq-f-msg').innerHTML = '';
+  if (!_irqValidateHeader()) return;
+  const lines = _irqCollectLinesPayload();
+  if (lines.length === 0) {
+    document.getElementById('irq-f-msg').innerHTML = `<div class="fin-field-error">Add at least one line with an item and requested quantity.</div>`;
+    return;
+  }
+  const payload = { ..._irqCollectHeaderPayload(), lines };
+  const res = await apiFetch(`${_INV_API}/internal-requisitions/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  if (res && res.ok) { showToast('Requisition updated.', 'success'); await window._splitRefreshSelected?.(); return; }
+  if (!res) return;
+  const { fieldErrors, message } = await _invParseError(res);
+  if (fieldErrors.to_store_id) document.getElementById('irq-f-to-err').textContent = fieldErrors.to_store_id;
+  else if (fieldErrors.from_store_id) document.getElementById('irq-f-from-err').textContent = fieldErrors.from_store_id;
+  else document.getElementById('irq-f-msg').innerHTML = `<div class="fin-field-error">${_invEsc(message)}</div>`;
+}
+
+// ── Detail actions — status-conditional lifecycle + cross-links (§1.7-1.9) ──
+function _irqDetailActionsHtml(item) {
+  window._irqCurrentItem = item;
+
+  const lineRows = (item.lines || []).map(l => {
+    const rejected = l.approved_quantity != null && parseFloat(l.approved_quantity) === 0;
+    return `
+    <tr style="${rejected ? 'opacity:0.6;' : ''}">
+      <td>${_invEsc(_invItemLabel(l.item_id))}</td>
+      <td style="text-align:right;">${formatQty(l.requested_quantity)}</td>
+      <td style="text-align:right;">${l.approved_quantity != null ? formatQty(l.approved_quantity) : '—'}${rejected ? ' <span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:0.68rem;font-weight:600;color:var(--coral-600,#B03030);background:var(--coral-100,#fbe3e3);margin-left:6px;">Rejected line</span>' : ''}</td>
+      <td style="text-align:right;">${l.estimated_unit_cost != null ? formatUnitCost(l.estimated_unit_cost) : '—'}</td>
+      <td>${_invEsc(l.notes || '—')}</td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="5" class="fin-empty">No lines.</td></tr>`;
+  const linesTable = `
+    <div class="fin-section-label">Lines</div>
+    <div class="fin-table-wrap"><table class="fin-li-table">
+      <thead><tr><th>Item</th><th>Requested Qty</th><th>Approved Qty</th><th>Est. Unit Cost</th><th>Notes</th></tr></thead>
+      <tbody>${lineRows}</tbody>
+    </table></div>`;
+
+  const auditStrip = `
+    <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--grey-100);font-size:0.82rem;color:#666;display:flex;gap:24px;flex-wrap:wrap;">
+      <span>Submitted By: ${item.submitted_by ? '#' + item.submitted_by : '—'}</span>
+      <span>Submitted At: ${item.submitted_at ? new Date(item.submitted_at).toLocaleString() : '—'}</span>
+      <span>Approved By: ${item.approved_by ? '#' + item.approved_by : '—'}</span>
+      <span>Approved At: ${item.approved_at ? new Date(item.approved_at).toLocaleString() : '—'}</span>
+      ${item.status === 'rejected' ? `<span style="color:var(--coral-600,#B03030);">Rejection Reason: ${_invEsc(item.rejection_reason || '')}</span>` : ''}
+    </div>`;
+
+  let crossLinks = '';
+  if ((item.status === 'approved' || item.status === 'fulfilled') && item.stock_transfer_id) {
+    crossLinks += `<div style="margin-top:12px;"><button class="fin-btn-outline" onclick="_invOpenSourceDoc('stock_transfer', ${item.stock_transfer_id})">&rarr; View Stock Transfer</button>${item.status === 'approved' ? ` <button class="fin-btn-outline" style="margin-left:8px;" onclick="window._splitRefreshSelected && window._splitRefreshSelected()">Refresh</button>` : ''}</div>`;
+  } else if (item.status === 'submitted') {
+    crossLinks += `
+      <div style="background:var(--navy-50,#EEF3FA);border:1px solid var(--navy-100,#DCE6F5);border-radius:8px;padding:12px 16px;margin-top:12px;font-size:0.86rem;color:var(--navy-700,#1B3057);">
+        Awaiting DAS approval.
+        <br><a href="#" onclick="openDasQueueForType('internal_requisition');return false;" style="color:var(--navy-700,#1B3057);font-weight:600;text-decoration:underline;">&rarr; Open the DAS queue</a>
+      </div>`;
+  }
+  if (item.status === 'fulfilled' && item.fulfilled_at) {
+    crossLinks += `
+      <div style="margin-top:12px;display:inline-block;background:var(--navy-700,#1B3057);color:#fff;border-radius:8px;padding:10px 16px;">
+        <div style="font-size:11px;opacity:.75;text-transform:uppercase;letter-spacing:.05em;">Fulfilled At</div>
+        <div style="font-size:0.95rem;font-weight:600;margin-top:2px;">${new Date(item.fulfilled_at).toLocaleString()}</div>
+      </div>`;
+  }
+
+  let actions = '';
+  if (item.status === 'draft') {
+    actions += `<button class="fin-btn-teal" onclick="_irqSubmitForApproval(${item.id})">Submit</button>`;
+    actions += `<button class="fin-btn-outline" style="color:#c0392b;border-color:#c0392b;" onclick="_irqOpenCancelModal(${item.id})">Cancel</button>`;
+  }
+  return `
+    ${linesTable}
+    ${auditStrip}
+    ${crossLinks}
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:14px;align-items:center;">${actions}</div>
+    <div id="irq-action-msg-${item.id}" style="margin-top:8px;"></div>`;
+}
+
+// ── Submit to DAS — idempotently creates a PENDING DA row server-side ────
+async function _irqSubmitForApproval(id) {
+  const res = await apiFetch(`${_INV_API}/internal-requisitions/${id}/submit`, { method: 'POST' });
+  if (res && res.ok) { showToast('Requisition submitted for approval.', 'success'); await window._splitRefreshSelected?.(); return; }
+  if (!res) return;
+  const { message } = await _invParseError(res);
+  const el = document.getElementById(`irq-action-msg-${id}`);
+  if (el) el.innerHTML = `<div class="fin-field-error">${_invEsc(message)}</div>`; else showToast(message, 'error');
+}
+
+// ── Cancel — draft-only ───────────────────────────────────────────────────
+function _irqOpenCancelModal(id) {
+  const item = window._irqCurrentItem;
+  const wrap = document.createElement('div');
+  wrap.id = 'irq-cancel-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:var(--white);border-radius:8px;padding:24px;width:440px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 12px;font-size:1.05rem;color:var(--navy-700,#2c3e50);">Cancel Requisition</h3>
+      <p style="font-size:0.88rem;color:#444;">Cancel draft requisition ${_invEsc(item?.requisition_number || '')}? This can only be undone by creating a new record.</p>
+      <div id="irq-cancel-err" style="display:none;padding:10px 12px;border-radius:6px;background:var(--coral-100);color:var(--coral-600);font-size:0.82rem;margin-top:6px;"></div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-outline" onclick="_coaCloseModal('irq-cancel-modal-overlay')">Keep Requisition</button>
+        <button class="fin-btn-cancel" onclick="_irqSubmitCancel(${id})">Cancel Requisition</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+async function _irqSubmitCancel(id) {
+  const errEl = document.getElementById('irq-cancel-err');
+  errEl.style.display = 'none';
+  const res = await apiFetch(`${_INV_API}/internal-requisitions/${id}/cancel`, { method: 'POST' });
+  if (res && res.ok) {
+    _coaCloseModal('irq-cancel-modal-overlay');
+    showToast('Requisition cancelled.', 'success');
+    await window._splitRefreshSelected?.();
+    return;
+  }
+  if (!res) return;
+  const { message } = await _invParseError(res);
+  errEl.textContent = message; errEl.style.display = 'block';
+}

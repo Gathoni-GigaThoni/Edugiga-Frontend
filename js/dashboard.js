@@ -305,6 +305,7 @@ function showDashboard() {
               <li id="sidebar-inv-transfers" onclick="loadView('inventory-transfers')">Transfers</li>
               <li id="sidebar-inv-adjustments" onclick="loadView('inventory-adjustments')">Adjustments</li>
               <li id="sidebar-inv-stocktakes" onclick="loadView('inventory-stocktakes')">Stock-Takes</li>
+              <li id="sidebar-inv-internal-requisitions" onclick="loadView('inventory-internal-requisitions')">Internal Requisitions</li>
             </ul>
           </div>
 
@@ -860,7 +861,7 @@ const FORM_VIEWS = new Set([
   // Communication
   'communication-parent-documents',
   // Inventory
-  'inventory-stores', 'inventory-grn', 'inventory-issues', 'inventory-transfers', 'inventory-adjustments', 'inventory-stocktakes',
+  'inventory-stores', 'inventory-grn', 'inventory-issues', 'inventory-transfers', 'inventory-adjustments', 'inventory-stocktakes', 'inventory-internal-requisitions',
   // Administration
   'user-management', 'admin-roles', 'admin-role-edit', 'admin-role-permissions',
   // Academic setup
@@ -1355,6 +1356,9 @@ async function loadView(view) {
     case 'inventory-stocktakes':
       setActiveSidebarItem('sidebar-inv-stocktakes');
       await loadInventoryStocktakesView(main); break;
+    case 'inventory-internal-requisitions':
+      setActiveSidebarItem('sidebar-inv-internal-requisitions');
+      await loadInventoryInternalRequisitionsView(main); break;
     default: main.innerHTML = "<p>Module not found.</p>";
   }
   closeAllSidebarDropdowns();
