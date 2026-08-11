@@ -18,8 +18,9 @@ let _rcvAccountsCache  = null;
 let _rcvLedgersCache   = null;
 let _rcvStudentsCache  = null;
 let _rcvSchedulesCache = null;
+let _rcvAcademicYearsCache = null;
 
-async function _rcvLoadLookups({ items=false, terms=false, levels=false, classes=false, routes=false, accounts=false, ledgers=false, students=false, schedules=false } = {}) {
+async function _rcvLoadLookups({ items=false, terms=false, levels=false, classes=false, routes=false, accounts=false, ledgers=false, students=false, schedules=false, academicYears=false } = {}) {
   const reqs = [];
   if (items    && !_rcvFeeItemsCache)  reqs.push(apiFetch(`${API_BASE}/receivables/setup/fee-items`).then(r => r&&r.ok ? r.json() : []).then(d => { _rcvFeeItemsCache  = _toArray(d); }));
   if (terms    && !_rcvTermsCache)     reqs.push(apiFetch(`${API_BASE}/terms`).then(r => r&&r.ok ? r.json() : []).then(d => { _rcvTermsCache     = _toArray(d); }));
@@ -30,6 +31,7 @@ async function _rcvLoadLookups({ items=false, terms=false, levels=false, classes
   if (ledgers  && !_rcvLedgersCache)   reqs.push(apiFetch(`${API_BASE}/lookups/ledgers`).then(r => r&&r.ok ? r.json() : []).then(d => { _rcvLedgersCache   = _toArray(d); }));
   if (students && !_rcvStudentsCache)  reqs.push(apiFetch(`${API_BASE}/students/`).then(r => r&&r.ok ? r.json() : []).then(d => { _rcvStudentsCache  = _toArray(d); }));
   if (schedules&& !_rcvSchedulesCache) reqs.push(apiFetch(`${API_BASE}/receivables/setup/fee-schedules`).then(r => r&&r.ok ? r.json() : []).then(d => { _rcvSchedulesCache = _toArray(d); }));
+  if (academicYears && !_rcvAcademicYearsCache) reqs.push(apiFetch(`${API_BASE}/academic-years/`).then(r => r&&r.ok ? r.json() : []).then(d => { _rcvAcademicYearsCache = _toArray(d); }));
   await Promise.all(reqs);
 }
 
@@ -57,6 +59,14 @@ function _rcvLevelName(id) {
 function _rcvClassName(id) {
   const c = (_rcvClassesCache||[]).find(x => String(x.id) === String(id));
   return c ? (c.name || c.class_name || '-') : (id ? `#${id}` : '—');
+}
+// Classes don't carry a flat academic-year name — only academic_year_id — so
+// resolving a year name from a class_id is a two-hop lookup through both caches.
+function _rcvAcademicYearName(classId) {
+  const c = (_rcvClassesCache||[]).find(x => String(x.id) === String(classId));
+  if (!c) return '—';
+  const ay = (_rcvAcademicYearsCache||[]).find(y => String(y.id) === String(c.academic_year_id));
+  return ay ? (ay.title || ay.name || '-') : '—';
 }
 function _rcvStudentName(id) {
   const s = (_rcvStudentsCache||[]).find(x => String(x.id) === String(id));

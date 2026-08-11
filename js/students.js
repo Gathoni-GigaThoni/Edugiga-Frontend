@@ -2444,10 +2444,9 @@ async function loadStudentViewPage(container) {
   _renderStudentViewBody(d, 'Personal Data');
 }
 
-// Fee statement pulls the student's charges (created via the Class Fee Setup ->
-// "Generate Fees for Term" trigger) from GET /finance/student-fees/{id} and
-// renders them in the school's official statement layout (sample PDF on file).
-// _fs* lookups/helpers are defined in finance.js but loaded globally on this page.
+// Fee statement renders the school's official statement layout (sample PDF on
+// file) from the student's Fee Invoices. Name-resolution helpers (_rcv*) are
+// defined in receivables.js but loaded globally on this page.
 async function openStudentFeeStatement(studentId) {
   if (!studentId) { showToast('No student selected.', 'error'); return; }
   // Open the tab synchronously, before any await — browsers only treat
@@ -2468,7 +2467,7 @@ async function openStudentFeeStatement(studentId) {
     return;
   }
   const d = await studentRes.json();
-  if (typeof _fsLoadLookups === 'function') await _fsLoadLookups();
+  await _rcvLoadLookups({ terms: true, classes: true, items: true, academicYears: true });
 
   const termId  = d.term_id || null;
   const classId = d.class_id || d.school_class_id || null;
@@ -2488,10 +2487,10 @@ async function openStudentFeeStatement(studentId) {
     if (res && res.ok) invoices = _toArray(await res.json()).filter(inv => inv.status !== 'cancelled');
   } catch (_) {}
 
-  const feeItemName = id => (typeof _fsFeeItemName === 'function') ? _fsFeeItemName(id) : `#${id}`;
-  const termName     = id => (typeof _fsTermName === 'function') ? _fsTermName(id) : (id ? `Term #${id}` : '-');
-  const yearName      = cid => (typeof _fsAcademicYearName === 'function') ? _fsAcademicYearName(cid) : '-';
-  const className       = cid => (typeof _fsClassName === 'function') ? _fsClassName(cid) : '-';
+  const feeItemName = id => _rcvFeeItemName(id);
+  const termName     = id => _rcvTermName(id);
+  const yearName      = cid => _rcvAcademicYearName(cid);
+  const className       = cid => _rcvClassName(cid);
 
   const lineItems = invoices.flatMap(inv => _toArray(inv.line_items).map(li => ({
     description: li.description || feeItemName(li.fee_item_id),

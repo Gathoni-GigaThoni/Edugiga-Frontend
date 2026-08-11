@@ -45,12 +45,10 @@ const employeeServiceProfilesData = [];
 const financialInstitutionsData = [];
 
 // Finance
-let studentInvoicesData            = [];
 let sessionData                    = [];
 let studentClassesData             = [];
 let studentInvoiceAdjustmentsData  = [];
 let sponsorshipAllocationsData     = [];
-let feeSetupPerClassData           = [];
 let receivePaymentsData            = [];
 let chartOfAccountsData            = [];
 let feeItemsData                   = [];

@@ -176,11 +176,9 @@ function showDashboard() {
                   <li id="sidebar-fin-fee-assign"     class="sidebar-sub-sub" onclick="loadView('fin-fee-assignments')">Fee Assignments</li>
                   <li id="sidebar-fin-fee-invoices"   class="sidebar-sub-sub" onclick="loadView('fin-fee-invoices')">Fee Invoices</li>
                   <li id="sidebar-fin-bulk"           class="sidebar-sub-sub" onclick="loadView('fin-invoices-bulk')">Bulk Invoice Generate</li>
-                  <li id="sidebar-fin-invoices"       class="sidebar-sub-sub" onclick="loadView('fin-student-invoices')">Student Invoices (Legacy)</li>
                   <li id="sidebar-fin-inv-adj"        class="sidebar-sub-sub" onclick="loadView('fin-invoice-adjustments')">Student Invoice Adjustments</li>
                   <li id="sidebar-fin-spon-alloc"     class="sidebar-sub-sub" onclick="loadView('fin-sponsorship-allocations')">Sponsorship Allocations</li>
                   <li id="sidebar-fin-spon-mgmt"      class="sidebar-sub-sub" onclick="loadView('fin-sponsorship-managements')">Sponsorship Managements</li>
-                  <li id="sidebar-fin-fee-setup"      class="sidebar-sub-sub" onclick="loadView('fin-fee-setup-per-class')">Class Fee Setup (Legacy)</li>
                 </ul>
               </li>
               <li class="dropdown">
@@ -839,9 +837,8 @@ const FORM_VIEWS = new Set([
   'student-supplies', 'student-supplies-my-class',
   'admissions-applicants',
   // Finance
-  'fin-student-invoices', 'fin-student-invoices-add', 'fin-student-bulk-invoicing',
-  'fin-invoice-adjustments', 'fin-sponsorship-allocations', 'fin-student-fee-assignments',
-  'fin-fee-setup-per-class', 'fin-receive-payments',
+  'fin-invoice-adjustments', 'fin-sponsorship-allocations',
+  'fin-receive-payments',
   'fin-fee-schedules', 'fin-fee-setup-class', 'fin-fee-assignments',
   'fin-fee-invoices', 'fin-invoice-detail', 'fin-invoice-generate', 'fin-invoices-bulk',
   'fin-chart-of-accounts', 'fin-fee-accounts', 'fin-fee-items', 'fin-general-items', 'finance-discount-setup',
@@ -1037,18 +1034,6 @@ async function loadView(view) {
     case 'student-fees-status': await loadStudentFeesStatusView(main); break;
     case 'summarized-fee-statement': await loadSummarizedFeeStatementView(main); break;
     case 'student-finance': showPlaceholder(main, 'Student Finance'); break;
-    // Student Finance sub-modules
-    case 'fin-student-invoices':
-      setActiveSidebarItem('sidebar-fin-invoices'); openFinStudentFinanceDropdown();
-      loadStudentInvoicesView(main); break;
-    case 'fin-student-invoices-add':
-      openFinStudentFinanceDropdown(); loadStudentInvoicesAddView(main); break;
-    case 'fin-student-fee-assignments':
-      setActiveSidebarItem('sidebar-fin-fee-assign'); openFinStudentFinanceDropdown();
-      loadStudentFeeAssignmentsView(main); break;
-    case 'fin-student-bulk-invoicing':
-      setActiveSidebarItem('sidebar-fin-bulk'); openFinStudentFinanceDropdown();
-      loadStudentBulkInvoicingView(main); break;
     // Receivables (new modules)
     case 'fin-fee-schedules':
       setActiveSidebarItem('sidebar-fin-fee-schedules'); openFinStudentFinanceDropdown();
@@ -1080,9 +1065,6 @@ async function loadView(view) {
     case 'fin-sponsorship-managements':
       setActiveSidebarItem('sidebar-fin-spon-mgmt'); openFinStudentFinanceDropdown();
       loadFinPlaceholderView(main, 'Sponsorship Managements'); break;
-    case 'fin-fee-setup-per-class':
-      setActiveSidebarItem('sidebar-fin-fee-setup'); openFinStudentFinanceDropdown();
-      loadFeeSetupPerClassView(main); break;
     // Receivables sub-modules
     case 'fin-receive-payments':
       setActiveSidebarItem('sidebar-fin-rcv-pay'); openFinReceivablesDropdown();
