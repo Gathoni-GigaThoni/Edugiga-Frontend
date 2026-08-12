@@ -1962,3 +1962,417 @@ async function _p9aDownloadBulk() {
   if (!confirm(`Generate P9A for every employee in ${year}? Contractors are excluded.`)) return;
   await authBlobDownload(`${API_BASE}/payroll/p9/bulk?year=${year}`, `P9A_${year}.zip`);
 }
+
+// ==================== SALARY DEDUCTIONS (BE/FE Contract Addendum 2026-08-11 §3) ====
+// Pause/resume/end lifecycle (not immutable, unlike Statutory Rates), so a
+// standard renderSplitView CRUD module rather than the tabbed schedule view.
+const _SD_API = `${API_BASE}/payroll/deductions`;
+const _SD_TYPES = [
+  ['sacco', 'SACCO'], ['welfare', 'Welfare'], ['insurance', 'Insurance'], ['union_dues', 'Union Dues'],
+  ['court_order', 'Court Order'], ['helb', 'HELB'], ['overpayment_recovery', 'Overpayment Recovery'],
+  ['damage_recovery', 'Damage Recovery'], ['other', 'Other'],
+];
+const _SD_TYPE_LABEL = Object.fromEntries(_SD_TYPES);
+const _SD_TIER_LABEL = { legal: 'Legal', company: 'Company', voluntary: 'Voluntary' };
+// Priority tier governs how the two-thirds cap treats the deduction (§5.4),
+// so the colour is the key visual cue — reused by the Payroll Run
+// deductions breakdown table, not just this module.
+const _SD_TIER_STYLE = {
+  legal:     'color:var(--coral-600,#B03030);background:var(--coral-100,#fbe3e3);',
+  company:   'color:#fff;background:var(--navy-700,#1B3057);',
+  voluntary: 'color:#8a6d00;background:var(--gold-100,#fdf3d6);',
+};
+function _sdPriorityPill(tier) {
+  const style = _SD_TIER_STYLE[tier] || 'color:#666;background:#eee;';
+  return `<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.72rem;font-weight:600;${style}">${_finEsc(_SD_TIER_LABEL[tier] || tier || '—')}</span>`;
+}
+const _SD_STATUS_STYLE = {
+  active: 'color:#fff;background:var(--navy-700,#1B3057);',
+  paused: 'color:#8a6d00;background:var(--gold-100,#fdf3d6);',
+  ended:  'color:#666;background:#eee;',
+};
+function _sdStatusPill(status) {
+  const style = _SD_STATUS_STYLE[status] || 'color:#666;background:#eee;';
+  return `<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.75rem;font-weight:600;${style}">${_finEsc((status || '').replace(/_/g, ' ') || '—')}</span>`;
+}
+function _sdAmountSummary(d) {
+  if (d.amount_type === 'fixed') return formatKES(d.amount);
+  if (d.amount_type === 'percent_of_basic') return `${d.percent_rate}% of basic`;
+  if (d.amount_type === 'percent_of_gross') return `${d.percent_rate}% of gross`;
+  return '—';
+}
+
+// Employee label/picker — reuses the global employeesData cache, same
+// convention as _p9aPickEmployee (§P9A tax deduction card).
+function _sdComputeEmpLabel(e) {
+  const name = ((e.surname || e.first_name || '') + ' ' + (e.other_names || e.last_name || '')).trim();
+  return `${name} (${e.employee_code || e.id})`;
+}
+function _sdEmployeeLabel(id) {
+  const e = (employeesData || []).find(x => String(x.id) === String(id));
+  return e ? _sdComputeEmpLabel(e) : `Employee #${id}`;
+}
+function _sdEmployeeDatalistHtml(listId) {
+  return `<datalist id="${listId}">${(employeesData || []).map(e => `<option value="${_finEsc(_sdComputeEmpLabel(e))}"></option>`).join('')}</datalist>`;
+}
+
+let _sdActiveSuppliers = null;
+async function _sdEnsureActiveSuppliers() {
+  if (_sdActiveSuppliers) return;
+  const res = await apiFetch(`${API_BASE}/suppliers/?is_active=true`);
+  _sdActiveSuppliers = (res && res.ok) ? _toArray(await res.json()) : [];
+}
+function _sdSupplierLabel(id) {
+  if (id == null) return '—';
+  const s = (_sdActiveSuppliers || []).find(x => String(x.id) === String(id));
+  return s ? s.name : `#${id}`;
+}
+
+// ── List (split-view) ────────────────────────────────────────────────────
+async function loadPayrollSalaryDeductionsView(container) {
+  await Promise.all([_pvLoadLookups(), _sdEnsureActiveSuppliers()]);
+  const cfg = {
+    container,
+    title: 'Salary Deductions',
+    moduleKey: 'payroll.salary_deductions',
+    breadcrumb: [
+      { label: 'Dashboard', view: null },
+      { label: 'Human Resource', view: null },
+      { label: 'Payroll', view: null },
+      { label: 'Deductions' },
+    ],
+    apiUrl: `${_SD_API}/`,
+    searchFields: ['ref_number'],
+    col1Label: 'Employee', col2Label: 'Amount',
+    col1: d => `<strong>${_finEsc(_sdEmployeeLabel(d.employee_id))}</strong><br><span style="font-weight:400;font-size:12px;color:#888;">${_finEsc(_SD_TYPE_LABEL[d.deduction_type] || d.deduction_type)} ${_sdPriorityPill(d.priority_tier)}</span>`,
+    col2: d => `${_sdAmountSummary(d)}<br>${_sdStatusPill(d.status)}`,
+    rowLabel: d => _sdEmployeeLabel(d.employee_id),
+    rowSub: d => `${_SD_TYPE_LABEL[d.deduction_type] || d.deduction_type} &middot; ${_sdAmountSummary(d)}`,
+    idKey: 'id',
+    detailFields: [
+      { label: 'Employee',           key: 'employee_id',            fmt: v => _sdEmployeeLabel(v) },
+      { label: 'Deduction Type',     key: 'deduction_type',         fmt: v => _SD_TYPE_LABEL[v] || v },
+      { label: 'Priority Tier',      key: 'priority_tier',          fmt: v => _sdPriorityPill(v) },
+      { label: 'Recipient Supplier', key: 'recipient_supplier_id',  fmt: v => v ? _sdSupplierLabel(v) : '—' },
+      { label: 'Reference Number',   key: 'ref_number',             fmt: v => v || '—' },
+      { label: 'Amount',             key: 'id',                     fmt: (_, d) => _sdAmountSummary(d) },
+      { label: 'Liability Account',  key: 'liability_account_id',   fmt: v => _pvAccountName(v) },
+      { label: 'Expense Account',    key: 'expense_account_id',     fmt: v => v ? _pvAccountName(v) : '—' },
+      { label: 'Effective From',     key: 'id',                     fmt: (_, d) => `${_PR_MONTHS[d.effective_from_month] || ''} ${d.effective_from_year || ''}`.trim() || '—' },
+      { label: 'Effective To',       key: 'id',                     fmt: (_, d) => d.effective_to_month ? `${_PR_MONTHS[d.effective_to_month]} ${d.effective_to_year}` : '—' },
+      { label: 'Recurring',          key: 'is_recurring',           fmt: v => v ? 'Yes' : 'No' },
+      { label: 'Notes',              key: 'notes',                  fmt: v => v || '—' },
+      { label: 'Status',             key: 'status',                 fmt: v => _sdStatusPill(v) },
+      { label: 'Created By',         key: 'created_by',             fmt: v => v != null ? `Staff #${v}` : '—' },
+      { label: 'Created At',         key: 'created_at',             fmt: v => v ? new Date(v).toLocaleString() : '—' },
+      { label: 'Updated At',         key: 'updated_at',             fmt: v => v ? new Date(v).toLocaleString() : '—' },
+    ],
+    canEdit: item => item.status !== 'ended',
+    renderAdd: el => _sdRenderForm(null, el),
+    renderEdit: (item, el) => _sdRenderForm(item, el),
+    detailActions: item => _sdDetailActionsHtml(item),
+  };
+  await renderSplitView(cfg);
+  _sdInjectFilters(cfg);
+}
+
+function _sdInjectFilters(cfg) {
+  const searchBox = document.querySelector('.split-left-search');
+  if (!searchBox) return;
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'padding:0 16px 10px;display:flex;gap:8px;flex-wrap:wrap;';
+  wrap.innerHTML = `
+    <select id="sd-filter-status" class="fin-form-select" style="flex:1;min-width:100px;font-size:12px;">
+      <option value="">All Statuses</option>
+      <option value="active">Active</option><option value="paused">Paused</option><option value="ended">Ended</option>
+    </select>
+    <select id="sd-filter-type" class="fin-form-select" style="flex:1;min-width:130px;font-size:12px;">
+      <option value="">All Types</option>${_SD_TYPES.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}
+    </select>
+    <input type="text" id="sd-filter-employee" list="sd-filter-employee-datalist" class="fin-form-input" style="flex:1;min-width:150px;font-size:12px;" placeholder="Employee…">
+    ${_sdEmployeeDatalistHtml('sd-filter-employee-datalist')}`;
+  searchBox.insertAdjacentElement('afterend', wrap);
+  ['sd-filter-status', 'sd-filter-type'].forEach(id => document.getElementById(id).addEventListener('change', () => _sdReapplyFilters(cfg)));
+  document.getElementById('sd-filter-employee').addEventListener('change', () => _sdReapplyFilters(cfg));
+}
+function _sdReapplyFilters(cfg) {
+  const status = document.getElementById('sd-filter-status')?.value || '';
+  const type = document.getElementById('sd-filter-type')?.value || '';
+  const empLabel = document.getElementById('sd-filter-employee')?.value || '';
+  const emp = (employeesData || []).find(e => _sdComputeEmpLabel(e) === empLabel);
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (type) params.set('deduction_type', type);
+  if (emp) params.set('employee_id', emp.id);
+  const qs = params.toString();
+  cfg.apiUrl = `${_SD_API}/` + (qs ? `?${qs}` : '');
+  window._splitReload && window._splitReload();
+}
+
+// ── Add/Edit form — segmented Priority Tier + Amount Type controls ────────
+let _sdFormState = { priority: 'voluntary', amountType: 'fixed' };
+let _sdSelectedEmployeeId = null;
+
+function _sdSegButton(value, label, groupField, activeValue) {
+  return `<button type="button" class="${activeValue === value ? 'fin-btn-teal' : 'fin-btn-outline'}" onclick="_sdSetSeg('${groupField}','${value}')">${label}</button>`;
+}
+function _sdSetSeg(field, value) {
+  _sdFormState[field] = value;
+  _sdRenderSegButtons();
+  if (field === 'amountType') _sdToggleAmountFields();
+}
+function _sdRenderSegButtons() {
+  const priEl = document.getElementById('sd-f-priority-seg');
+  if (priEl) priEl.innerHTML = ['legal', 'company', 'voluntary'].map(t => _sdSegButton(t, _SD_TIER_LABEL[t], 'priority', _sdFormState.priority)).join('');
+  const amtEl = document.getElementById('sd-f-amounttype-seg');
+  if (amtEl) amtEl.innerHTML = [['fixed', 'Fixed'], ['percent_of_basic', '% of Basic'], ['percent_of_gross', '% of Gross']].map(([v, l]) => _sdSegButton(v, l, 'amountType', _sdFormState.amountType)).join('');
+}
+function _sdToggleAmountFields() {
+  const amtGroup = document.getElementById('sd-f-amount-group');
+  const pctGroup = document.getElementById('sd-f-percent-group');
+  if (amtGroup) amtGroup.style.display = _sdFormState.amountType === 'fixed' ? '' : 'none';
+  if (pctGroup) pctGroup.style.display = _sdFormState.amountType === 'fixed' ? 'none' : '';
+}
+function _sdPickEmployee(label) {
+  const emp = (employeesData || []).find(e => _sdComputeEmpLabel(e) === label);
+  _sdSelectedEmployeeId = emp ? emp.id : null;
+}
+function _sdMonthYearSelectHtml(idPrefix, month, year, includeEmpty) {
+  const years = Array.from({ length: 8 }, (_, i) => new Date().getFullYear() - 2 + i);
+  return `
+    <select id="${idPrefix}-month" class="fin-form-select" style="width:auto;display:inline-block;">
+      ${includeEmpty ? '<option value="">Month</option>' : ''}
+      ${_PR_MONTHS.slice(1).map((m, i) => `<option value="${i + 1}" ${Number(month) === i + 1 ? 'selected' : ''}>${m}</option>`).join('')}
+    </select>
+    <select id="${idPrefix}-year" class="fin-form-select" style="width:auto;display:inline-block;">
+      ${includeEmpty ? '<option value="">Year</option>' : ''}
+      ${years.map(y => `<option value="${y}" ${Number(year) === y ? 'selected' : ''}>${y}</option>`).join('')}
+    </select>`;
+}
+
+function _sdRenderForm(d, el) {
+  _sdFormState = { priority: d?.priority_tier || 'voluntary', amountType: d?.amount_type || 'fixed' };
+  _sdSelectedEmployeeId = d ? d.employee_id : null;
+  const isEdit = !!d;
+  el.innerHTML = `
+    <div class="fin-form-wrap" style="max-width:100%;">
+      <h3 class="fin-title" style="font-size:1rem;">${isEdit ? 'Edit' : 'New'} Salary Deduction</h3>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Employee <span class="fin-required">*</span></label>
+        <input type="text" id="sd-f-employee" list="sd-employee-datalist" class="fin-form-input" placeholder="Search employee…" value="${d ? _finEsc(_sdEmployeeLabel(d.employee_id)) : ''}" oninput="_sdPickEmployee(this.value)">
+        ${_sdEmployeeDatalistHtml('sd-employee-datalist')}
+        <span class="fin-field-error" id="sd-f-employee-err"></span>
+      </div>
+      <div class="fin-form-grid-2">
+        <div class="fin-form-group">
+          <label class="fin-form-label">Deduction Type <span class="fin-required">*</span></label>
+          <select id="sd-f-type" class="fin-form-select">${_SD_TYPES.map(([v, l]) => `<option value="${v}" ${d?.deduction_type === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        </div>
+        <div class="fin-form-group">
+          <label class="fin-form-label">Priority Tier <span class="fin-required">*</span></label>
+          <div id="sd-f-priority-seg" style="display:flex;gap:6px;"></div>
+        </div>
+      </div>
+      <div class="fin-form-grid-2">
+        <div class="fin-form-group">
+          <label class="fin-form-label">Recipient Supplier</label>
+          <select id="sd-f-supplier" class="fin-form-select"><option value="">None</option>${(_sdActiveSuppliers || []).map(s => `<option value="${s.id}" ${String(d?.recipient_supplier_id) === String(s.id) ? 'selected' : ''}>${_finEsc(s.name)}</option>`).join('')}</select>
+        </div>
+        <div class="fin-form-group">
+          <label class="fin-form-label">Reference Number</label>
+          <input type="text" id="sd-f-ref" class="fin-form-input" maxlength="100" value="${_finEsc(d?.ref_number || '')}">
+        </div>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Amount Type <span class="fin-required">*</span></label>
+        <div id="sd-f-amounttype-seg" style="display:flex;gap:6px;"></div>
+      </div>
+      <div class="fin-form-grid-2">
+        <div class="fin-form-group" id="sd-f-amount-group">
+          <label class="fin-form-label">Amount (KES)</label>
+          <input type="number" id="sd-f-amount" class="fin-form-input" step="0.01" min="0.01" value="${d?.amount ?? ''}">
+        </div>
+        <div class="fin-form-group" id="sd-f-percent-group" style="display:none;">
+          <label class="fin-form-label">Percent Rate (%)</label>
+          <input type="number" id="sd-f-percent" class="fin-form-input" step="0.01" min="0.01" max="100" value="${d?.percent_rate ?? ''}">
+        </div>
+      </div>
+      <div class="fin-form-grid-2">
+        <div class="fin-form-group">
+          <label class="fin-form-label">Liability Account <span class="fin-required">*</span></label>
+          <select id="sd-f-liab-acct" class="fin-form-select"><option value="">Please Select</option>${_pvAccountOptions(d?.liability_account_id)}</select>
+          <span style="font-size:11px;color:#888;">CR account for the deduction — where the withheld amount is parked pending remittance.</span>
+        </div>
+        <div class="fin-form-group">
+          <label class="fin-form-label">Expense Account</label>
+          <select id="sd-f-exp-acct" class="fin-form-select"><option value="">None</option>${_pvAccountOptions(d?.expense_account_id)}</select>
+          <span style="font-size:11px;color:#888;">DR account for recovery-style deductions (damage / overpayment). Blank for ordinary payables.</span>
+        </div>
+      </div>
+      <div class="fin-form-grid-2">
+        <div class="fin-form-group">
+          <label class="fin-form-label">Effective From <span class="fin-required">*</span></label>
+          ${_sdMonthYearSelectHtml('sd-f-eff-from', d?.effective_from_month, d?.effective_from_year, false)}
+        </div>
+        <div class="fin-form-group">
+          <label class="fin-form-label">Effective To</label>
+          ${_sdMonthYearSelectHtml('sd-f-eff-to', d?.effective_to_month, d?.effective_to_year, true)}
+        </div>
+      </div>
+      <div class="fin-form-group">
+        <label><input type="checkbox" id="sd-f-recurring" style="width:auto;margin-right:6px;" ${(d ? d.is_recurring : true) ? 'checked' : ''}> Recurring</label>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Notes</label>
+        <textarea id="sd-f-notes" class="fin-form-textarea" rows="3">${_finEsc(d?.notes || '')}</textarea>
+      </div>
+      <div id="sd-f-msg" style="margin-top:12px;"></div>
+      <div class="fin-form-actions">
+        <button class="fin-btn-teal" onclick="_sdSubmit(${d?.id ?? 'null'})">${isEdit ? 'Update' : 'Save'}</button>
+        <button class="fin-btn-cancel" onclick="${isEdit ? 'window._splitRefreshSelected && window._splitRefreshSelected()' : 'window._splitReload && window._splitReload()'}">Cancel</button>
+      </div>
+    </div>`;
+  _sdRenderSegButtons();
+  _sdToggleAmountFields();
+}
+
+function _sdValidate() {
+  document.getElementById('sd-f-employee-err').textContent = '';
+  document.getElementById('sd-f-msg').innerHTML = '';
+  let valid = true;
+  if (!_sdSelectedEmployeeId) { document.getElementById('sd-f-employee-err').textContent = 'Select a valid employee.'; valid = false; }
+  if (_sdFormState.amountType === 'fixed') {
+    const v = parseFloat(document.getElementById('sd-f-amount').value);
+    if (!(v > 0)) { document.getElementById('sd-f-msg').innerHTML = `<div class="fin-field-error">amount must be &gt; 0 when amount_type = 'fixed'</div>`; valid = false; }
+  } else {
+    const v = parseFloat(document.getElementById('sd-f-percent').value);
+    if (!(v > 0) || v > 100) { document.getElementById('sd-f-msg').innerHTML = `<div class="fin-field-error">percent_rate must be in (0, 100] when amount_type is a percentage</div>`; valid = false; }
+  }
+  if (!document.getElementById('sd-f-liab-acct').value) {
+    document.getElementById('sd-f-msg').innerHTML = `<div class="fin-field-error">Liability Account is required.</div>`; valid = false;
+  }
+  const fromMonth = document.getElementById('sd-f-eff-from-month').value;
+  const fromYear = document.getElementById('sd-f-eff-from-year').value;
+  if (!fromMonth || !fromYear) {
+    document.getElementById('sd-f-msg').innerHTML = `<div class="fin-field-error">Effective From is required.</div>`; valid = false;
+  }
+  const toMonth = document.getElementById('sd-f-eff-to-month').value;
+  const toYear = document.getElementById('sd-f-eff-to-year').value;
+  if ((toMonth && !toYear) || (!toMonth && toYear)) {
+    document.getElementById('sd-f-msg').innerHTML = `<div class="fin-field-error">effective_to_year and effective_to_month must both be set or both null</div>`; valid = false;
+  } else if (toMonth && toYear && fromMonth && fromYear) {
+    const from = parseInt(fromYear) * 12 + parseInt(fromMonth);
+    const to = parseInt(toYear) * 12 + parseInt(toMonth);
+    if (to < from) { document.getElementById('sd-f-msg').innerHTML = `<div class="fin-field-error">effective_to must be &gt;= effective_from</div>`; valid = false; }
+  }
+  return valid;
+}
+async function _sdSubmit(id) {
+  if (!_sdValidate()) return;
+  const toMonth = document.getElementById('sd-f-eff-to-month').value;
+  const toYear = document.getElementById('sd-f-eff-to-year').value;
+  const payload = {
+    employee_id: _sdSelectedEmployeeId,
+    deduction_type: document.getElementById('sd-f-type').value,
+    priority_tier: _sdFormState.priority,
+    recipient_supplier_id: document.getElementById('sd-f-supplier').value ? parseInt(document.getElementById('sd-f-supplier').value) : null,
+    ref_number: (document.getElementById('sd-f-ref').value || '').trim() || null,
+    amount_type: _sdFormState.amountType,
+    amount: _sdFormState.amountType === 'fixed' ? document.getElementById('sd-f-amount').value : null,
+    percent_rate: _sdFormState.amountType !== 'fixed' ? document.getElementById('sd-f-percent').value : null,
+    liability_account_id: parseInt(document.getElementById('sd-f-liab-acct').value),
+    expense_account_id: document.getElementById('sd-f-exp-acct').value ? parseInt(document.getElementById('sd-f-exp-acct').value) : null,
+    effective_from_month: parseInt(document.getElementById('sd-f-eff-from-month').value),
+    effective_from_year: parseInt(document.getElementById('sd-f-eff-from-year').value),
+    effective_to_month: toMonth ? parseInt(toMonth) : null,
+    effective_to_year: toYear ? parseInt(toYear) : null,
+    is_recurring: document.getElementById('sd-f-recurring').checked,
+    notes: (document.getElementById('sd-f-notes').value || '').trim() || null,
+  };
+  const res = await apiFetch(id ? `${_SD_API}/${id}` : `${_SD_API}/`, {
+    method: id ? 'PATCH' : 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (res && res.ok) {
+    showToast(id ? 'Deduction updated.' : 'Deduction created.', 'success');
+    if (id) await window._splitRefreshSelected?.(); else await window._splitReload?.();
+    return;
+  }
+  if (!res) return;
+  document.getElementById('sd-f-msg').innerHTML = `<div class="fin-field-error">${_finEsc(await parseApiError(res))}</div>`;
+}
+
+// ── Detail actions — status-conditional lifecycle (§3.8) ─────────────────
+function _sdDetailActionsHtml(item) {
+  window._sdCurrentItem = item;
+  let actions = '';
+  if (item.status === 'active') {
+    actions += `<button class="fin-btn-outline" onclick="_sdPause(${item.id})">Pause</button>`;
+    actions += `<button class="fin-btn-outline" style="color:#c0392b;border-color:#c0392b;" onclick="_sdOpenEndModal(${item.id})">End</button>`;
+  } else if (item.status === 'paused') {
+    actions += `<button class="fin-btn-teal" onclick="_sdResume(${item.id})">Resume</button>`;
+    actions += `<button class="fin-btn-outline" style="color:#c0392b;border-color:#c0392b;" onclick="_sdOpenEndModal(${item.id})">End</button>`;
+  }
+  actions += `<button class="btn-danger" onclick="_sdDelete(${item.id})">Delete</button>`;
+  return `
+    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">${actions}</div>
+    <div id="sd-action-error" style="margin-top:12px;"></div>`;
+}
+async function _sdPause(id) {
+  const res = await apiFetch(`${_SD_API}/${id}/pause`, { method: 'POST' });
+  if (res && res.ok) { showToast('Deduction paused.', 'success'); await window._splitRefreshSelected?.(); }
+  else if (res) showToast(await parseApiError(res), 'error');
+}
+async function _sdResume(id) {
+  const res = await apiFetch(`${_SD_API}/${id}/resume`, { method: 'POST' });
+  if (res && res.ok) { showToast('Deduction resumed.', 'success'); await window._splitRefreshSelected?.(); }
+  else if (res) showToast(await parseApiError(res), 'error');
+}
+function _sdOpenEndModal(id) {
+  const wrap = document.createElement('div');
+  wrap.id = 'sd-end-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:var(--white);border-radius:8px;padding:24px;width:420px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 12px;font-size:1.05rem;color:var(--navy-700,#2c3e50);">End Deduction</h3>
+      <p style="font-size:0.88rem;color:#444;">End this deduction? It will stop applying from the current payroll period onward.</p>
+      <div id="sd-end-err" style="display:none;padding:10px 12px;border-radius:6px;background:var(--coral-100);color:var(--coral-600);font-size:0.82rem;margin-top:6px;"></div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-outline" onclick="_coaCloseModal('sd-end-modal-overlay')">Keep Deduction</button>
+        <button class="fin-btn-cancel" onclick="_sdSubmitEnd(${id})">End Deduction</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+async function _sdSubmitEnd(id) {
+  const errEl = document.getElementById('sd-end-err');
+  errEl.style.display = 'none';
+  const res = await apiFetch(`${_SD_API}/${id}/end`, { method: 'POST' });
+  if (res && res.ok) {
+    _coaCloseModal('sd-end-modal-overlay');
+    showToast('Deduction ended.', 'success');
+    await window._splitRefreshSelected?.();
+    return;
+  }
+  if (!res) return;
+  errEl.textContent = await parseApiError(res); errEl.style.display = 'block';
+}
+async function _sdDelete(id) {
+  if (!confirm('Delete this deduction? This cannot be undone.')) return;
+  const errEl = document.getElementById('sd-action-error');
+  const res = await apiFetch(`${_SD_API}/${id}`, { method: 'DELETE' });
+  if (res && res.ok) {
+    showToast('Deduction deleted.', 'success');
+    window._splitReload?.();
+  } else if (res && res.status === 409) {
+    const msg = await parseApiError(res);
+    if (errEl) errEl.innerHTML = `
+      <div style="background:var(--coral-100);color:var(--coral-600);padding:12px 14px;border-radius:8px;font-size:13px;">
+        ${_finEsc(msg)}
+        <div style="margin-top:10px;"><button class="btn" onclick="_sdOpenEndModal(${id})">End instead</button></div>
+      </div>`;
+  } else if (res) {
+    showToast(await parseApiError(res), 'error');
+  }
+}

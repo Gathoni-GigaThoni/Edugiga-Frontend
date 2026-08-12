@@ -329,6 +329,7 @@ function showDashboard() {
               <li id="sidebar-payroll-contractor-runs" onclick="loadView('payroll-contractor-runs')">Contractor Runs</li>
               <li id="sidebar-payroll-payslips" onclick="loadView('payroll-payslips')">Payslips</li>
               <li id="sidebar-payroll-p9a" onclick="loadView('payroll-p9a')">P9A Tax Deduction Card</li>
+              <li id="sidebar-payroll-salary-deductions" onclick="loadView('payroll-salary-deductions')">Deductions</li>
               <li class="dropdown">
                 ${flyoutGroupHeader('Utilities', 'payroll-utilities-dropdown')}
                 <ul id="payroll-utilities-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('payroll-utilities-dropdown')}">
@@ -855,7 +856,7 @@ const FORM_VIEWS = new Set([
   // Tendepay
   'tendepay-import', 'tendepay-fund-loads', 'tendepay-fund-loads-upload', 'tendepay-reconciliation',
   // HR / Payroll
-  'hr-employee-directory', 'payroll-esp', 'payroll-fi', 'payroll-runs', 'payroll-payslips',
+  'hr-employee-directory', 'payroll-esp', 'payroll-fi', 'payroll-runs', 'payroll-payslips', 'payroll-salary-deductions',
   // Procurement
   'procurement-suppliers-add', 'procurement-suppliers-edit', 'procurement-requisitions',
   // Communication
@@ -1284,6 +1285,9 @@ async function loadView(view) {
     case 'payroll-p9a':
       setActiveSidebarItem('sidebar-payroll-p9a');
       await loadP9AView(main); break;
+    case 'payroll-salary-deductions':
+      setActiveSidebarItem('sidebar-payroll-salary-deductions');
+      await loadPayrollSalaryDeductionsView(main); break;
     case 'payroll-fi':  loadPayrollFiListingView(main); break;
     case 'payroll-pay-accounts':
       setActiveSidebarItem('sidebar-payroll-pay-accounts'); openPayrollDropdowns();
