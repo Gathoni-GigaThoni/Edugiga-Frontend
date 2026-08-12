@@ -30,6 +30,7 @@ async function loadHrEmployeeDirectoryView(container) {
   const empRes = await apiFetch(`${API_BASE}/hr/employees`);
   const empList = (empRes && empRes.ok) ? _toArray(await empRes.json().catch(() => [])) : [];
   employeesData.splice(0, employeesData.length, ...empList);
+  _employeesCacheLoaded = true;
   await ensureDepartmentCache();
 
   container.innerHTML = `

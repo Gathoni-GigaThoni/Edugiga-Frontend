@@ -107,6 +107,23 @@ function departmentLabelFor(id) {
   return d ? d.name : '—';
 }
 
+// employeesData (config.js) is only ever populated as a side effect of
+// visiting HR ▸ Employee Directory (hr-list.js) — any employee-picker
+// dropdown opened first (P9A, Payslips, Salary Deductions/Advances, ...)
+// otherwise sees an empty cache. Call this before building such a dropdown;
+// it's a one-time fetch per session, not a refresh — loadHrEmployeeDirectoryView
+// still does its own unconditional fetch to keep the Directory itself live.
+let _employeesCacheLoaded = false;
+async function ensureEmployeesCache() {
+  if (_employeesCacheLoaded) return;
+  try {
+    const res = await apiFetch(`${API_BASE}/hr/employees`);
+    const list = (res && res.ok) ? _toArray(await res.json().catch(() => [])) : [];
+    employeesData.splice(0, employeesData.length, ...list);
+    _employeesCacheLoaded = true;
+  } catch (_) {}
+}
+
 // ── Shared Pay Grade label resolver (BE/FE Contract 2026-07-15 §4.1) ───────
 // ServiceProfileRead.pay_grade_id returns an id with no label — pre-fetch
 // once per view and resolve locally rather than a lookup per row.

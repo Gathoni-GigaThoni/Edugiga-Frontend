@@ -3274,20 +3274,40 @@ async function _tpLoadPayrollRunOptions() {
   if (!sel) return;
   const runType = (document.querySelector('input[name="tp-run-type"]:checked') || {}).value || 'payroll';
   try {
-    let runs = [];
+    // A run's own status flips to awaiting_payment the moment its voucher is
+    // approved (POST .../approve-voucher), but per the live openapi.json that
+    // same call only takes voucher.status to APPROVED — the voucher only
+    // becomes awaiting_tendepay once it's actually been exported/queued for
+    // Tendepay. So "awaiting_payment" alone overshoots: it can include runs
+    // whose voucher isn't ready to be matched against a statement import yet.
+    // Cross-check against the voucher's own status (payee_type=Staff covers
+    // both employee payroll and contractor vouchers — VoucherPayeeType has
+    // no separate "Contractor" value).
+    const [awaitingVchRes, paidVchRes] = await Promise.all([
+      apiFetch(`${API_BASE}/payables/payment-vouchers/?status=awaiting_tendepay&payee_type=Staff`),
+      apiFetch(`${API_BASE}/payables/payment-vouchers/?status=paid&payee_type=Staff`),
+    ]);
+    const awaitingVoucherIds = new Set(((awaitingVchRes && awaitingVchRes.ok) ? _toArray(await awaitingVchRes.json()) : []).map(v => v.id));
+    const paidVoucherIds = new Set(((paidVchRes && paidVchRes.ok) ? _toArray(await paidVchRes.json()) : []).map(v => v.id));
+
+    let awaiting = [], paid = [];
     if (runType === 'contractor') {
       const res = await apiFetch(`${API_BASE}/payroll/contractor-runs/`);
       const all = (res && res.ok) ? _toArray(await res.json()) : [];
-      runs = all.filter(r => r.status === 'awaiting_payment' || r.status === 'paid');
+      awaiting = all.filter(r => r.status === 'awaiting_payment');
+      paid = all.filter(r => r.status === 'paid');
     } else {
       const [awaitingRes, paidRes] = await Promise.all([
         apiFetch(`${API_BASE}/payroll/runs/?status=awaiting_payment`),
         apiFetch(`${API_BASE}/payroll/runs/?status=paid`),
       ]);
-      const awaiting = (awaitingRes && awaitingRes.ok) ? _toArray(await awaitingRes.json()) : [];
-      const paid     = (paidRes && paidRes.ok)     ? _toArray(await paidRes.json())     : [];
-      runs = [...awaiting, ...paid];
+      awaiting = (awaitingRes && awaitingRes.ok) ? _toArray(await awaitingRes.json()) : [];
+      paid     = (paidRes && paidRes.ok)     ? _toArray(await paidRes.json())     : [];
     }
+    const runs = [
+      ...awaiting.filter(r => r.payment_voucher_id != null && awaitingVoucherIds.has(r.payment_voucher_id)),
+      ...paid.filter(r => r.payment_voucher_id != null && paidVoucherIds.has(r.payment_voucher_id)),
+    ];
     sel.innerHTML = '<option value="">Please Select</option>' +
       runs.map(r => `<option value="${r.id}">${_finEsc(r.run_number || ('Run #' + r.id))}</option>`).join('');
   } catch (_) {}

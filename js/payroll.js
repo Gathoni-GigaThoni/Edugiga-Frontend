@@ -940,20 +940,26 @@ function _prParseSnapshot(raw) {
 }
 function _prOpenDeductionsModal(lineId) {
   const line = (_prCurrentRun?.lines || []).find(l => String(l.id) === String(lineId));
-  const deductions = line ? _prParseSnapshot(line.calculation_snapshot)?.deductions : null;
+  const snapshot = line ? _prParseSnapshot(line.calculation_snapshot) : null;
+  const deductions = snapshot?.deductions;
   let body;
   if (!deductions) {
     body = `<p style="font-size:0.88rem;color:#666;">No deduction breakdown available for this line — legacy payslips predate this envelope.</p>`;
   } else {
-    const cap = deductions.cap || {};
+    // Live shape (verified against a real calculation_snapshot, 2026-08-12):
+    // gross is on the snapshot root, not nested under deductions; the cap is
+    // two flat fields (cap_two_thirds/cap_used), not a "cap" sub-object with
+    // gross/remaining baked in — "remaining" isn't sent, so it's derived here.
+    const capTwoThirds = parseFloat(deductions.cap_two_thirds) || 0;
+    const capUsed = parseFloat(deductions.cap_used) || 0;
     const capRow = `
       <div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:14px;font-size:0.85rem;">
-        <div><span style="color:#888;">Gross Pay</span><br><strong>${_pvMoney(cap.gross)}</strong></div>
-        <div><span style="color:#888;">Two-thirds Cap</span><br><strong>${_pvMoney(cap.two_thirds_cap)}</strong></div>
-        <div><span style="color:#888;">Statutory Used</span><br><strong>${_pvMoney(cap.statutory_used)}</strong></div>
-        <div><span style="color:#888;">Remaining for Non-Statutory</span><br><strong>${_pvMoney(cap.remaining_after_statutory)}</strong></div>
+        <div><span style="color:#888;">Gross Pay</span><br><strong>${_pvMoney(snapshot.gross)}</strong></div>
+        <div><span style="color:#888;">Two-thirds Cap</span><br><strong>${_pvMoney(deductions.cap_two_thirds)}</strong></div>
+        <div><span style="color:#888;">Statutory Used</span><br><strong>${_pvMoney(deductions.cap_used)}</strong></div>
+        <div><span style="color:#888;">Remaining for Non-Statutory</span><br><strong>${_pvMoney(capTwoThirds - capUsed)}</strong></div>
       </div>`;
-    const rows = (deductions.lines || []).slice().sort((a, b) => (a.line_order ?? 0) - (b.line_order ?? 0)).map(l => {
+    const rows = (deductions.items || []).slice().sort((a, b) => (a.line_order ?? 0) - (b.line_order ?? 0)).map(l => {
       let note;
       if (l.skipped) note = `<span style="color:var(--coral-600,#B03030);background:var(--coral-100,#fbe3e3);padding:2px 8px;border-radius:10px;font-size:0.72rem;font-weight:600;">Skipped &mdash; ${_finEsc(l.skip_reason || '')}</span>`;
       else if (l.deferred_to_next_period) note = `<span style="color:#8a6d00;background:var(--gold-100,#fdf3d6);padding:2px 8px;border-radius:10px;font-size:0.72rem;font-weight:600;">Deferred to next period</span>`;
@@ -2032,7 +2038,8 @@ async function _prBulkSend(runId) {
 // reached paid/payslips_generated, so an empty result here just means no
 // payrun has completed yet, not a bug.
 async function loadPayrollPayslipsView(container) {
-  await renderSplitView({
+  await ensureEmployeesCache();
+  const cfg = {
     container,
     moduleKey: 'payroll.payslips',
     title: 'Payslips',
@@ -2067,7 +2074,34 @@ async function loadPayrollPayslipsView(container) {
       showToast('Payslips are generated from a Payroll Run once it is paid — open Payroll Runs to generate them.', 'info');
       loadView('payroll-runs');
     },
-  });
+  };
+  await renderSplitView(cfg);
+  _prInjectPayslipEmployeeFilter(cfg);
+}
+
+// The built-in Search box only substring-matches employee_code/payslip_number
+// against payslips already generated — an employee with no payslip yet (or
+// whose code you don't remember) can't be found. This adds an employee
+// picker, sourced from the full HR employeesData cache, that reloads via
+// GET /payroll/payslips?employee_id=... (server supports it) instead of just
+// filtering the already-fetched page. Same convention as
+// _sdInjectFilters/_sdEmployeeDatalistHtml (Salary Deductions/Advances).
+function _prInjectPayslipEmployeeFilter(cfg) {
+  const searchBox = document.querySelector('.split-left-search');
+  if (!searchBox) return;
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'padding:0 16px 10px;';
+  wrap.innerHTML = `
+    <input type="text" id="pr-payslip-filter-employee" list="pr-payslip-filter-employee-datalist" class="fin-form-input" style="width:100%;font-size:12px;" placeholder="Filter by employee…">
+    ${_sdEmployeeDatalistHtml('pr-payslip-filter-employee-datalist')}`;
+  searchBox.insertAdjacentElement('afterend', wrap);
+  document.getElementById('pr-payslip-filter-employee').addEventListener('change', () => _prReapplyPayslipFilter(cfg));
+}
+function _prReapplyPayslipFilter(cfg) {
+  const empLabel = document.getElementById('pr-payslip-filter-employee')?.value || '';
+  const emp = (employeesData || []).find(e => _sdComputeEmpLabel(e) === empLabel);
+  cfg.apiUrl = `${API_BASE}/payroll/payslips` + (emp ? `?employee_id=${emp.id}` : '');
+  window._splitReload && window._splitReload();
 }
 
 function _prMonthName(m) {
@@ -2088,6 +2122,7 @@ async function _prpResendPayslip(payslipId) {
 let _p9aSelectedEmp = null; // { id, employee_code, name }
 
 async function loadP9AView(container) {
+  await ensureEmployeesCache();
   const years = Array.from({length: 6}, (_, i) => new Date().getFullYear() - 4 + i);
   const empOptions = (employeesData || []).map(e => {
     const name = ((e.surname || e.first_name || '') + ' ' + (e.other_names || e.last_name || '')).trim();
