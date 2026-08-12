@@ -184,7 +184,6 @@ function showDashboard() {
               <li class="dropdown">
                 ${flyoutGroupHeader('Bank & Cash', 'fin-bankcash-dropdown')}
                 <ul id="fin-bankcash-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('fin-bankcash-dropdown')}">
-                  <li id="sidebar-fin-bc-mgmt"    class="sidebar-sub-sub" onclick="loadView('cash-bank-management')">Cash and Bank Management</li>
                   <li id="sidebar-fin-bc-recon"   class="sidebar-sub-sub" onclick="loadView('bank-cash-reconciliation-workspace')">Reconciliation Workspace</li>
                   <li id="sidebar-fin-bc-imports" class="sidebar-sub-sub" onclick="loadView('bank-cash-reconciliation-imports')">Statement Imports</li>
                 </ul>
@@ -371,7 +370,6 @@ function showDashboard() {
               <li onclick="loadView('user-management')">User Management</li>
               <li onclick="loadView('admin-roles')">Roles</li>
               <li onclick="loadView('admin-departments')">Departments</li>
-              <li onclick="loadView('admin-setup')">Setup</li>
             </ul>
           </div>
           ` : ''}
@@ -1109,9 +1107,6 @@ async function loadView(view) {
     case 'fin-payment-modes':
       setActiveSidebarItem('sidebar-fin-pay-modes'); openFinUtilitiesDropdown();
       loadFinPlaceholderView(main, 'Payment Modes'); break;
-    case 'cash-bank-management':
-      setActiveSidebarItem('sidebar-fin-bc-mgmt'); openFinBankCashDropdown();
-      showPlaceholder(main, 'Cash and Bank Management'); break;
     case 'bank-cash-reconciliation-workspace':
       setActiveSidebarItem('sidebar-fin-bc-recon'); openFinBankCashDropdown();
       await loadReconSessionsView(main); break;
@@ -1320,7 +1315,6 @@ async function loadView(view) {
     case 'admin-roles': await loadRolesListingView(main); break;
     case 'admin-role-permissions':
     case 'admin-role-edit': await renderRoleEditPage(main); break;
-    case 'admin-setup': showPlaceholder(main, 'Setup'); break;
     case 'admin-departments': await loadDepartmentsView(main); break;
     // Empty modules
     // Procurement
