@@ -1122,14 +1122,21 @@ function _prActionsHtml(run) {
   } else if (run.status === 'calculated') {
     html += `<button class="btn" onclick="_prApprove(${run.id})">Approve</button>`;
   } else if (run.status === 'approved') {
-    html += `<button class="btn" onclick="_prOpenCreateVoucherModal(${run.id})">Create Payment Voucher</button>`;
+    if (!run.payment_voucher_id) {
+      html += `<button class="btn" onclick="_prOpenCreateVoucherModal(${run.id})">Create Payment Voucher</button>`;
+    } else {
+      // Voucher is in DRAFT — awaits approval. SoD (approver != preparer) is
+      // enforced server-side; a 403 surfaces as a toast if the same person
+      // tries to approve their own draft.
+      html += `<button class="btn" onclick="_prApproveVoucher(${run.id})">Approve Payment Voucher</button>`;
+    }
   } else if (run.status === 'awaiting_payment') {
     html += `<div style="color:#666;font-size:0.9rem;">Awaiting Tendepay settlement. The run will move to Paid automatically once the payroll voucher is confirmed in a Tendepay import.</div>`;
   }
   if (['approved', 'awaiting_payment'].includes(run.status)) {
     html += `<button class="btn-danger" onclick="_prOpenVoidModal(${run.id})">Void</button>`;
   }
-  if (['approved', 'awaiting_payment', 'paid', 'payslips_generated'].includes(run.status)) {
+  if (['awaiting_payment', 'paid', 'payslips_generated'].includes(run.status)) {
     html += `
       <select id="pr-export-format-${run.id}" class="fin-form-select" style="width:auto;">
         <option value="xlsx">XLSX</option><option value="csv">CSV</option>
@@ -1258,7 +1265,7 @@ async function _prSubmitCreateVoucher(runId) {
   });
   if (res && res.ok) {
     document.getElementById('pr-cv-modal-overlay')?.remove();
-    showToast('Payment voucher created. Settle it via Tendepay Import to complete payroll.', 'success');
+    showToast('Draft payment voucher created. A different staff member must now approve it before Tendepay settlement can proceed.', 'success');
     await _prLoadRuns();
     await _prSelectRun(runId);
   } else if (res && res.status === 409) {
@@ -1266,6 +1273,22 @@ async function _prSubmitCreateVoucher(runId) {
   } else if (res) {
     showToast('Error: ' + await parseApiError(res), 'error');
   }
+}
+
+async function _prApproveVoucher(runId) {
+  // Two-step SoD gate: backend refuses (403) if the approver is the same
+  // person who prepared the voucher. Any 4xx surfaces verbatim via toast so
+  // ops sees the exact reason.
+  const res = await apiFetch(`${API_BASE}/payroll/runs/${runId}/approve-voucher`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+  });
+  if (res && res.ok) {
+    showToast('Payment voucher approved. Run is now Awaiting Payment — export the Tendepay bulk-pay file to settle.', 'success');
+    await _prLoadRuns();
+    await _prSelectRun(runId);
+    return;
+  }
+  if (res) showToast('Error: ' + await parseApiError(res), 'error');
 }
 
 // ==================== CONTRACTOR RUNS ====================
