@@ -209,10 +209,11 @@ function renderHrEditTabBasic() {
           <label class="hr-form-label">Employment Terms <span class="hr-required">*</span></label>
           <select id="hr-edit-employment-terms" class="hr-form-select">
             <option value="">Please Select</option>
-            <option value="Permanent" ${sel(r.employment_terms,'Permanent')}>Permanent</option>
-            <option value="Contract"  ${sel(r.employment_terms,'Contract')}>Contract</option>
-            <option value="Casual"    ${sel(r.employment_terms,'Casual')}>Casual</option>
-            <option value="Intern"    ${sel(r.employment_terms,'Intern')}>Intern</option>
+            <option value="permanent" ${sel(r.employment_terms,'permanent')}>Permanent</option>
+            <option value="contract"  ${sel(r.employment_terms,'contract')}>Contract</option>
+            <option value="casual"    ${sel(r.employment_terms,'casual')}>Casual</option>
+            <option value="intern"    ${sel(r.employment_terms,'intern')}>Intern</option>
+            <option value="part_time" ${sel(r.employment_terms,'part_time')}>Part-time</option>
           </select>
         </div>
         <div class="hr-form-group">
