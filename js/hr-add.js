@@ -644,6 +644,10 @@ function closeHrAddIdentityModal() {
   const ov = document.getElementById('hr-idoc-overlay'); if (ov) ov.style.display = 'none';
 }
 function saveHrIdentityDoc() {
+  // Capture whatever's currently typed into the tab (KRA PIN, WHT type,
+  // tax profile, etc.) before the innerHTML replacement below wipes the DOM —
+  // otherwise adding a doc mid-tab silently discards those fields.
+  saveHrAddCurrentTabState();
   const fileInput = document.getElementById('hr-idoc-file');
   hrAddFormState.identity_docs.push({
     doc_title:     document.getElementById('hr-idoc-title')?.value || '',
@@ -653,10 +657,13 @@ function saveHrIdentityDoc() {
   });
   closeHrAddIdentityModal();
   document.getElementById('hr-add-tab-content').innerHTML = renderHrAddTabIdentity();
+  loadHrWhtPaymentTypes('add', hrAddFormState.contractor_wht_payment_type);
 }
 function removeHrIdentityDoc(idx) {
+  saveHrAddCurrentTabState();
   hrAddFormState.identity_docs.splice(idx, 1);
   document.getElementById('hr-add-tab-content').innerHTML = renderHrAddTabIdentity();
+  loadHrWhtPaymentTypes('add', hrAddFormState.contractor_wht_payment_type);
 }
 
 // ---- Dependent modal ----

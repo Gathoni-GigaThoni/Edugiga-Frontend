@@ -320,11 +320,11 @@ function renderHrTaxProfileFieldset(prefix, s) {
   const isContractor = s.tax_profile === 'contractor';
   return `
     <div style="font-size:0.78rem;font-weight:600;color:var(--navy-700,#1B3057);text-transform:uppercase;margin:18px 0 10px;">Statutory pipeline</div>
-    <div class="hr-form-checkboxes" style="margin-bottom:14px;">
+    <div class="hr-radio-row" style="margin-bottom:14px;">
       <label class="hr-form-checkbox-label">
         <input type="radio" name="hr-${prefix}-tax-profile" value="employee" ${!isContractor ? 'checked' : ''} onchange="toggleHrTaxProfile('${prefix}')"> Employee (default)
       </label>
-      <label class="hr-form-checkbox-label" style="margin-left:20px;">
+      <label class="hr-form-checkbox-label">
         <input type="radio" name="hr-${prefix}-tax-profile" value="contractor" ${isContractor ? 'checked' : ''} onchange="toggleHrTaxProfile('${prefix}')"> Contractor
       </label>
     </div>
