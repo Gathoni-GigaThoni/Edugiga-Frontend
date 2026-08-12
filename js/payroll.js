@@ -2376,3 +2376,399 @@ async function _sdDelete(id) {
     showToast(await parseApiError(res), 'error');
   }
 }
+
+// ==================== EMPLOYEE SALARY ADVANCES (BE/FE Contract Addendum 2026-08-11 §4) ====
+// Mirrors the "raise, submit, DAS-approve, create-PV, deep-link into PV
+// detail" pattern from Supplier Invoice's create-payment-voucher flow
+// (js/payables.js:1117-1222), not Contractor Runs (which has no PV step).
+const _ADV_API = `${API_BASE}/payroll/advances`;
+const _ADV_REASON_TYPES = [
+  ['medical', 'Medical'], ['school_fees', 'School Fees'], ['emergency', 'Emergency'],
+  ['wedding', 'Wedding'], ['funeral', 'Funeral'], ['relocation', 'Relocation'], ['other', 'Other'],
+];
+const _ADV_REASON_LABEL = Object.fromEntries(_ADV_REASON_TYPES);
+const _ADV_STATUS_STYLE = {
+  draft:       'color:#666;background:#eee;',
+  submitted:   'color:#8a6d00;background:var(--gold-100,#fdf3d6);',
+  approved:    'color:#fff;background:var(--navy-700,#1B3057);',
+  rejected:    'color:var(--coral-600,#B03030);background:var(--coral-100,#fbe3e3);',
+  disbursed:   'color:#fff;background:var(--navy-700,#1B3057);',
+  repaying:    'color:#8a6d00;background:var(--gold-100,#fdf3d6);',
+  repaid:      'color:#1e7e34;background:#dcf3e2;',
+  written_off: 'color:#888;background:#eee;text-decoration:line-through;',
+  cancelled:   'color:#888;background:#eee;',
+};
+function _advStatusPill(status) {
+  const style = _ADV_STATUS_STYLE[status] || 'color:#666;background:#eee;';
+  return `<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.75rem;font-weight:600;${style}">${_finEsc((status || '').replace(/_/g, ' ') || '—')}</span>`;
+}
+
+// ── List (split-view) ────────────────────────────────────────────────────
+async function loadPayrollSalaryAdvancesView(container) {
+  await _pvLoadLookups();
+  const preselectId = window._advOpenId ?? null;
+  window._advOpenId = null;
+  const cfg = {
+    container,
+    title: 'Employee Salary Advances',
+    moduleKey: 'payroll.salary_advances',
+    breadcrumb: [
+      { label: 'Dashboard', view: null },
+      { label: 'Human Resource', view: null },
+      { label: 'Payroll', view: null },
+      { label: 'Advances' },
+    ],
+    apiUrl: `${_ADV_API}/`,
+    searchFields: ['advance_number'],
+    col1Label: 'Advance', col2Label: 'Amount',
+    col1: a => `<strong>${_finEsc(a.advance_number || '—')}</strong><br><span style="font-weight:400;font-size:12px;color:#888;">${_finEsc(_sdEmployeeLabel(a.employee_id))}</span>`,
+    col2: a => `${formatKES(a.approved_amount ?? a.principal)}<br>${_advStatusPill(a.status)}`,
+    rowLabel: a => a.advance_number || '—',
+    rowSub: a => `${_finEsc(_sdEmployeeLabel(a.employee_id))} &middot; ${_ADV_REASON_LABEL[a.reason_category] || a.reason_category || ''}`,
+    idKey: 'id',
+    preselectId,
+    detailFields: [
+      { label: 'Advance Number',   key: 'advance_number',        fmt: v => v || '—' },
+      { label: 'Employee',         key: 'employee_id',           fmt: v => _sdEmployeeLabel(v) },
+      { label: 'Status',           key: 'status',                fmt: v => _advStatusPill(v) },
+      { label: 'Principal',        key: 'principal',             fmt: v => formatKES(v) },
+      { label: 'Approved Amount',  key: 'approved_amount',       fmt: v => formatKES(v), hideWhen: item => item.approved_amount == null },
+      { label: 'Reason Category',  key: 'reason_category',       fmt: v => _ADV_REASON_LABEL[v] || v || '—' },
+      { label: 'Reason',           key: 'reason',                fmt: v => v || '—' },
+      { label: 'Repayment Type',   key: 'repayment_type',        fmt: (v, a) => v === 'installments' ? `Installments (${a.installment_count || '—'})${a.installment_amount != null ? ` of ${formatKES(a.installment_amount)}` : ''}` : 'Lump-sum' },
+      { label: 'First Repayment Period', key: 'first_repayment_month', fmt: (v, a) => v ? `${_PR_MONTHS[v]} ${a.first_repayment_year}` : '—' },
+      { label: 'Outstanding Principal', key: 'outstanding_principal', fullWidth: true,
+        fmt: v => `<div style="display:inline-block;background:var(--navy-700,#1B3057);color:#fff;border-radius:8px;padding:12px 18px;"><div style="font-size:11px;opacity:.75;text-transform:uppercase;letter-spacing:.05em;">Outstanding Principal</div><div style="font-size:1.3rem;font-weight:700;margin-top:2px;">${formatKES(v)}</div></div>` },
+      { label: 'Notes',            key: 'notes',                 fmt: v => v || '—' },
+      { label: 'Created By',       key: 'created_by',            fmt: v => v != null ? `Staff #${v}` : '—' },
+      { label: 'Created At',       key: 'created_at',             fmt: v => v ? new Date(v).toLocaleString() : '—' },
+      { label: 'Submitted At',     key: 'submitted_at',          fmt: v => v ? new Date(v).toLocaleString() : '—', hideWhen: item => !item.submitted_at },
+      { label: 'Approved By',      key: 'approved_by',           fmt: v => v != null ? `Staff #${v}` : '—', hideWhen: item => !item.approved_by },
+      { label: 'Approved At',      key: 'approved_at',           fmt: v => v ? new Date(v).toLocaleString() : '—', hideWhen: item => !item.approved_at },
+      { label: 'Rejection Reason', key: 'rejected_reason',       fmt: v => v || '—', hideWhen: item => item.status !== 'rejected' },
+    ],
+    canEdit: item => item.status === 'draft',
+    renderAdd: el => _advRenderForm(el),
+    detailActions: item => _advDetailActionsHtml(item),
+  };
+  await renderSplitView(cfg);
+  _advInjectFilters(cfg);
+}
+
+function _advInjectFilters(cfg) {
+  const searchBox = document.querySelector('.split-left-search');
+  if (!searchBox) return;
+  const years = Array.from({ length: 6 }, (_, i) => new Date().getFullYear() - 4 + i);
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'padding:0 16px 10px;display:flex;gap:8px;flex-wrap:wrap;';
+  wrap.innerHTML = `
+    <input type="text" id="adv-filter-employee" list="adv-filter-employee-datalist" class="fin-form-input" style="flex:1;min-width:150px;font-size:12px;" placeholder="Employee…">
+    ${_sdEmployeeDatalistHtml('adv-filter-employee-datalist')}
+    <select id="adv-filter-status" class="fin-form-select" style="flex:1;min-width:110px;font-size:12px;">
+      <option value="">All Statuses</option>
+      ${['draft', 'submitted', 'approved', 'rejected', 'disbursed', 'repaying', 'repaid', 'written_off', 'cancelled'].map(s => `<option value="${s}">${s.replace(/_/g, ' ')}</option>`).join('')}
+    </select>
+    <select id="adv-filter-year" class="fin-form-select" style="flex:1;min-width:90px;font-size:12px;">
+      <option value="">Any Year</option>${years.map(y => `<option value="${y}">${y}</option>`).join('')}
+    </select>`;
+  searchBox.insertAdjacentElement('afterend', wrap);
+  ['adv-filter-status', 'adv-filter-year'].forEach(id => document.getElementById(id).addEventListener('change', () => _advReapplyFilters(cfg)));
+  document.getElementById('adv-filter-employee').addEventListener('change', () => _advReapplyFilters(cfg));
+}
+function _advReapplyFilters(cfg) {
+  const status = document.getElementById('adv-filter-status')?.value || '';
+  const year = document.getElementById('adv-filter-year')?.value || '';
+  const empLabel = document.getElementById('adv-filter-employee')?.value || '';
+  const emp = (employeesData || []).find(e => _sdComputeEmpLabel(e) === empLabel);
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (year) params.set('year', year);
+  if (emp) params.set('employee_id', emp.id);
+  const qs = params.toString();
+  cfg.apiUrl = `${_ADV_API}/` + (qs ? `?${qs}` : '');
+  window._splitReload && window._splitReload();
+}
+
+// ── Create form (Save Draft only) ─────────────────────────────────────────
+let _advFormState = { repaymentType: 'lump_sum' };
+let _advSelectedEmployeeId = null;
+
+function _advSetRepaymentType(value) {
+  _advFormState.repaymentType = value;
+  _advRenderRepaymentSeg();
+  _advToggleInstallmentFields();
+}
+function _advRenderRepaymentSeg() {
+  const el = document.getElementById('adv-f-repayment-seg');
+  if (el) el.innerHTML = [['lump_sum', 'Lump-sum'], ['installments', 'Installments']]
+    .map(([v, l]) => `<button type="button" class="${_advFormState.repaymentType === v ? 'fin-btn-teal' : 'fin-btn-outline'}" onclick="_advSetRepaymentType('${v}')">${l}</button>`).join('');
+}
+function _advToggleInstallmentFields() {
+  const el = document.getElementById('adv-f-installments-group');
+  if (el) el.style.display = _advFormState.repaymentType === 'installments' ? '' : 'none';
+}
+function _advPickEmployee(label) {
+  const emp = (employeesData || []).find(e => _sdComputeEmpLabel(e) === label);
+  _advSelectedEmployeeId = emp ? emp.id : null;
+}
+
+function _advRenderForm(el) {
+  _advFormState = { repaymentType: 'lump_sum' };
+  _advSelectedEmployeeId = null;
+  el.innerHTML = `
+    <div class="fin-form-wrap" style="max-width:100%;">
+      <h3 class="fin-title" style="font-size:1rem;">Raise Salary Advance</h3>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Employee <span class="fin-required">*</span></label>
+        <input type="text" id="adv-f-employee" list="adv-employee-datalist" class="fin-form-input" placeholder="Search employee…" oninput="_advPickEmployee(this.value)">
+        ${_sdEmployeeDatalistHtml('adv-employee-datalist')}
+        <span class="fin-field-error" id="adv-f-employee-err"></span>
+      </div>
+      <div class="fin-form-grid-2">
+        <div class="fin-form-group">
+          <label class="fin-form-label">Principal (KES) <span class="fin-required">*</span></label>
+          <input type="number" id="adv-f-principal" class="fin-form-input" step="0.01" min="0.01">
+        </div>
+        <div class="fin-form-group">
+          <label class="fin-form-label">Reason Category <span class="fin-required">*</span></label>
+          <select id="adv-f-reason-category" class="fin-form-select">${_ADV_REASON_TYPES.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>
+        </div>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Reason <span class="fin-required">*</span></label>
+        <textarea id="adv-f-reason" class="fin-form-textarea" rows="3" placeholder="Free-text detail for the DAS approver."></textarea>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Repayment Type <span class="fin-required">*</span></label>
+        <div id="adv-f-repayment-seg" style="display:flex;gap:6px;"></div>
+      </div>
+      <div class="fin-form-group" id="adv-f-installments-group" style="display:none;">
+        <label class="fin-form-label">Installment Count <span class="fin-required">*</span></label>
+        <input type="number" id="adv-f-installment-count" class="fin-form-input" step="1" min="1">
+      </div>
+      <div class="fin-form-grid-2">
+        <div class="fin-form-group">
+          <label class="fin-form-label">First Repayment Period</label>
+          ${_sdMonthYearSelectHtml('adv-f-first-repayment', null, null, true)}
+          <span style="font-size:11px;color:#888;">Which payroll period will start repayment. Blank = start immediately after disbursement.</span>
+        </div>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Notes</label>
+        <textarea id="adv-f-notes" class="fin-form-textarea" rows="2"></textarea>
+      </div>
+      <div id="adv-f-msg" style="margin-top:12px;"></div>
+      <div class="fin-form-actions">
+        <button class="fin-btn-teal" onclick="_advSubmitAdd()">Save Draft</button>
+        <button class="fin-btn-cancel" onclick="window._splitReload && window._splitReload()">Cancel</button>
+      </div>
+    </div>`;
+  _advRenderRepaymentSeg();
+}
+
+function _advValidate() {
+  document.getElementById('adv-f-employee-err').textContent = '';
+  document.getElementById('adv-f-msg').innerHTML = '';
+  let valid = true;
+  if (!_advSelectedEmployeeId) { document.getElementById('adv-f-employee-err').textContent = 'Select a valid employee.'; valid = false; }
+  const principal = parseFloat(document.getElementById('adv-f-principal').value);
+  if (!(principal > 0)) { document.getElementById('adv-f-msg').innerHTML = `<div class="fin-field-error">Principal must be greater than 0.</div>`; valid = false; }
+  if (!(document.getElementById('adv-f-reason').value || '').trim()) { document.getElementById('adv-f-msg').innerHTML = `<div class="fin-field-error">Reason is required.</div>`; valid = false; }
+  if (_advFormState.repaymentType === 'installments') {
+    const count = parseInt(document.getElementById('adv-f-installment-count').value);
+    if (!(count >= 1)) { document.getElementById('adv-f-msg').innerHTML = `<div class="fin-field-error">installment_count is required when repayment_type = 'installments'</div>`; valid = false; }
+  }
+  const month = document.getElementById('adv-f-first-repayment-month').value;
+  const year = document.getElementById('adv-f-first-repayment-year').value;
+  if ((month && !year) || (!month && year)) {
+    document.getElementById('adv-f-msg').innerHTML = `<div class="fin-field-error">first_repayment_month and first_repayment_year must both be set or both null</div>`; valid = false;
+  }
+  return valid;
+}
+async function _advSubmitAdd() {
+  if (!_advValidate()) return;
+  const month = document.getElementById('adv-f-first-repayment-month').value;
+  const year = document.getElementById('adv-f-first-repayment-year').value;
+  const payload = {
+    employee_id: _advSelectedEmployeeId,
+    principal: document.getElementById('adv-f-principal').value,
+    reason_category: document.getElementById('adv-f-reason-category').value,
+    reason: document.getElementById('adv-f-reason').value.trim(),
+    repayment_type: _advFormState.repaymentType,
+    installment_count: _advFormState.repaymentType === 'installments' ? parseInt(document.getElementById('adv-f-installment-count').value) : null,
+    first_repayment_month: month ? parseInt(month) : null,
+    first_repayment_year: year ? parseInt(year) : null,
+    notes: (document.getElementById('adv-f-notes').value || '').trim() || null,
+  };
+  const res = await apiFetch(`${_ADV_API}/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  if (res && res.ok) { showToast('Advance saved as draft.', 'success'); await window._splitReload?.(); return; }
+  if (!res) return;
+  document.getElementById('adv-f-msg').innerHTML = `<div class="fin-field-error">${_finEsc(await parseApiError(res))}</div>`;
+}
+
+// ── Detail actions — status-conditional lifecycle + linked docs (§4.6-4.9) ──
+function _advDetailActionsHtml(item) {
+  window._advCurrentItem = item;
+  let linked = '';
+  if (item.status === 'submitted' && !item.document_approval_id) {
+    linked += `
+      <div style="background:var(--navy-50,#EEF3FA);border:1px solid var(--navy-100,#DCE6F5);border-radius:8px;padding:12px 16px;margin-bottom:12px;font-size:0.86rem;color:var(--navy-700,#1B3057);">
+        Awaiting DAS approval.
+        <br><a href="#" onclick="openDasQueueForType('employee_advance');return false;" style="color:var(--navy-700,#1B3057);font-weight:600;text-decoration:underline;">&rarr; Open the DAS queue</a>
+      </div>`;
+  }
+  if (item.disbursement_voucher_id) {
+    linked += `<div style="margin-bottom:10px;"><a href="#" onclick="_pvPvOpenDetail(${item.disbursement_voucher_id});return false;">&rarr; View Disbursement Voucher</a></div>`;
+  }
+  if (item.disbursement_journal_entry_id) {
+    linked += `<div style="margin-bottom:10px;"><a href="#" onclick="_jeOpenDetail(${item.disbursement_journal_entry_id});return false;">&rarr; View Disbursement JE</a></div>`;
+  }
+
+  let actions = '';
+  if (item.status === 'draft') {
+    actions += `<button class="fin-btn-teal" onclick="_advSubmitForApproval(${item.id})">Submit</button>`;
+    actions += `<button class="fin-btn-outline" style="color:#c0392b;border-color:#c0392b;" onclick="_advCancel(${item.id})">Cancel</button>`;
+  } else if (item.status === 'submitted') {
+    actions += `<button class="fin-btn-outline" style="color:#c0392b;border-color:#c0392b;" onclick="_advCancel(${item.id})">Cancel</button>`;
+  } else if (item.status === 'approved') {
+    const isCreator = typeof currentUser !== 'undefined' && currentUser && item.created_by != null && String(currentUser.id) === String(item.created_by);
+    if (isCreator) {
+      actions += `<div style="width:100%;color:var(--coral-600,#B03030);font-size:0.85rem;margin-bottom:8px;">You raised this advance — segregation of duties means you cannot create its disbursement voucher yourself.</div>`;
+    } else {
+      actions += `<button class="fin-btn-teal" onclick="_advOpenCreateVoucherModal(${item.id})">Create Disbursement Voucher</button>`;
+    }
+  }
+
+  const repayments = _advRepaymentsSectionHtml(item);
+  return `
+    ${linked}
+    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">${actions}</div>
+    <div id="adv-action-msg-${item.id}" style="margin-top:8px;"></div>
+    ${repayments}`;
+}
+
+async function _advSubmitForApproval(id) {
+  const res = await apiFetch(`${_ADV_API}/${id}/submit`, { method: 'POST' });
+  if (res && res.ok) { showToast('Advance submitted for approval.', 'success'); await window._splitRefreshSelected?.(); return; }
+  if (!res) return;
+  const msg = await parseApiError(res);
+  const el = document.getElementById(`adv-action-msg-${id}`);
+  if (el) el.innerHTML = `<div class="fin-field-error">${_finEsc(msg)}</div>`; else showToast(msg, 'error');
+}
+async function _advCancel(id) {
+  if (!confirm('Cancel this advance? This cannot be undone.')) return;
+  const res = await apiFetch(`${_ADV_API}/${id}/cancel`, { method: 'POST' });
+  if (res && res.ok) { showToast('Advance cancelled.', 'success'); await window._splitRefreshSelected?.(); return; }
+  if (!res) return;
+  const msg = await parseApiError(res);
+  const el = document.getElementById(`adv-action-msg-${id}`);
+  if (el) el.innerHTML = `<div class="fin-field-error">${_finEsc(msg)}</div>`; else showToast(msg, 'error');
+}
+
+// ── Repayments — rendered as a labeled section rather than a full tab
+// switcher, since it's the only extra table on this detail (§4.9) ────────
+function _advRepaymentsSectionHtml(item) {
+  const repayments = item.repayments || [];
+  let totalScheduled = 0, totalApplied = 0;
+  const rows = repayments.map(r => {
+    if (!r.skipped) { totalScheduled += parseFloat(r.scheduled_amount) || 0; totalApplied += parseFloat(r.actual_amount) || 0; }
+    const statusCell = r.skipped
+      ? `<span title="${_finEsc(r.skip_reason || '')}" style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.72rem;font-weight:600;color:var(--coral-600,#B03030);background:var(--coral-100,#fbe3e3);">Skipped</span>`
+      : `<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.72rem;font-weight:600;color:#fff;background:var(--navy-700,#1B3057);">Applied</span>`;
+    return `<tr>
+      <td>${r.payroll_run_id != null ? `#${r.payroll_run_id}` : '—'}</td>
+      <td style="text-align:right;">${formatKES(r.scheduled_amount)}</td>
+      <td style="text-align:right;">${formatKES(r.actual_amount)}</td>
+      <td>${statusCell}</td>
+      <td>${r.journal_entry_line_id != null ? `#${r.journal_entry_line_id}` : '—'}</td>
+      <td>${r.created_at ? new Date(r.created_at).toLocaleDateString() : '—'}</td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="6" class="fin-empty">No repayments yet.</td></tr>`;
+  return `
+    <div class="fin-section-label" style="margin-top:18px;">Repayments</div>
+    <div class="fin-table-wrap"><table class="fin-li-table">
+      <thead><tr><th>Payroll Run</th><th>Scheduled</th><th>Actual</th><th>Status</th><th>JE Line</th><th>When</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+    <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:10px;font-size:0.85rem;color:#555;">
+      <span>Total Scheduled: <strong>${formatKES(totalScheduled)}</strong></span>
+      <span>Total Applied: <strong>${formatKES(totalApplied)}</strong></span>
+      <span>Outstanding Principal: <strong>${formatKES(item.outstanding_principal)}</strong></span>
+    </div>`;
+}
+
+// ── Create Disbursement Voucher modal — clones the Supplier Invoice
+// create-payment-voucher shell (js/payables.js:1117-1222) ─────────────────
+function _advOpenCreateVoucherModal(id) {
+  const item = window._advCurrentItem;
+  const wrap = document.createElement('div');
+  wrap.id = 'adv-cv-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;overflow:auto;padding:24px;';
+  wrap.innerHTML = `
+    <div style="background:white;border-radius:8px;padding:24px;width:640px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 14px;font-size:1.05rem;color:#2c3e50;">Create Disbursement Voucher</h3>
+      <div class="fin-form-grid-2">
+        <div class="fin-form-group">
+          <label class="fin-form-label">Ledger <span class="fin-required">*</span></label>
+          <select id="adv-cv-ledger" class="fin-form-select"><option value="">Please Select</option>${_pvLedgerOptions(null)}</select>
+        </div>
+        <div class="fin-form-group">
+          <label class="fin-form-label">Cost Center <span class="fin-required">*</span></label>
+          <select id="adv-cv-cost-center" class="fin-form-select"><option value="">Please Select</option>${_pvCostCenterOptions(null)}</select>
+        </div>
+        <div class="fin-form-group">
+          <label class="fin-form-label">Department <span class="fin-required">*</span></label>
+          <select id="adv-cv-department" class="fin-form-select"><option value="">Please Select</option>${_pvDepartmentOptions(null)}</select>
+        </div>
+        <div class="fin-form-group">
+          <label class="fin-form-label">Debit Account</label>
+          <select id="adv-cv-debit-account" class="fin-form-select"><option value="">Please Select</option>${_pvAccountOptions(null)}</select>
+          <span style="font-size:11px;color:#888;">Blank = use the configured Employee Advance Receivable account.</span>
+        </div>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Description</label>
+        <input type="text" id="adv-cv-description" class="fin-form-input" value="${_finEsc(`Salary advance disbursement — ${item?.advance_number || ''}`.trim())}">
+      </div>
+      <div id="adv-cv-modal-err" style="width:100%;font-size:0.85rem;margin-top:8px;"></div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="document.getElementById('adv-cv-modal-overlay').remove()">Cancel</button>
+        <button class="fin-btn-teal" onclick="_advSubmitCreateVoucher(${id})">Create Voucher</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+async function _advSubmitCreateVoucher(id) {
+  const ledgerId = parseInt(document.getElementById('adv-cv-ledger').value, 10);
+  const costCenterId = parseInt(document.getElementById('adv-cv-cost-center').value, 10);
+  const departmentId = parseInt(document.getElementById('adv-cv-department').value, 10);
+  const errEl = document.getElementById('adv-cv-modal-err');
+  if (!ledgerId || !costCenterId || !departmentId) {
+    errEl.innerHTML = `<div style="color:var(--coral-600,#B03030);">Ledger, Cost Center and Department are all required.</div>`;
+    return;
+  }
+  const debitAccountEl = document.getElementById('adv-cv-debit-account');
+  const payload = {
+    ledger_id: ledgerId,
+    cost_center_id: costCenterId,
+    department_id: departmentId,
+    debit_account_id: debitAccountEl.value ? parseInt(debitAccountEl.value, 10) : null,
+    description: (document.getElementById('adv-cv-description').value || '').trim() || null,
+  };
+  const res = await apiFetch(`${_ADV_API}/${id}/create-voucher`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  if (res && res.ok) {
+    const data = await res.json();
+    document.getElementById('adv-cv-modal-overlay')?.remove();
+    showToast(`Voucher ${data.voucher_no || ''} created — continue the disbursement flow via Payment Vouchers.`, 'success');
+    _pvPvOpenDetail(data.payment_voucher_id);
+    return;
+  }
+  if (!res) return;
+  const msg = await parseApiError(res);
+  // A missing debit_account_id env var is an ops/config gap, not a user
+  // mistake — render it as a gold prompt rather than a coral error (§4.8).
+  const isConfigError = res.status === 400 && /EMPLOYEE_ADVANCE_RECEIVABLE_ACCOUNT_ID/.test(msg);
+  errEl.innerHTML = isConfigError
+    ? `<div style="background:var(--gold-100,#fdf3d6);color:#8a6d00;padding:10px 12px;border-radius:6px;">${_finEsc(msg)}</div>`
+    : `<div style="color:var(--coral-600,#B03030);">${_finEsc(msg)}</div>`;
+}
