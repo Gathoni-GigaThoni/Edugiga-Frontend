@@ -3166,7 +3166,7 @@ async function _tpFetchVoucherMap() {
 let _tpWiz = null;
 function _tpNewWizState() {
   return { step: 1, batchId: null, transactions: [], matchedCount: 0, unmatchedCount: 0, totalAmount: 0,
-    totalCharges: 0, legacyFormat: false, importMode: 'supplier', payrollRunId: null,
+    totalCharges: 0, legacyFormat: false, importMode: 'supplier', payrollRunId: null, contractorRunId: null,
     skippedRows: [], alreadyImported: [], voucherPicks: {}, confirmedIds: {}, voucherMap: {} };
 }
 
@@ -3232,9 +3232,18 @@ async function _tpRenderStep1() {
           <label><input type="radio" name="tp-import-mode" value="supplier" checked onchange="_tpToggleImportMode()"> Supplier payments</label>
           <label><input type="radio" name="tp-import-mode" value="payroll" onchange="_tpToggleImportMode()"> Payroll return statement</label>
         </div>
-        <div id="tp-import-payroll-run-wrap" style="display:none;margin-top:10px;max-width:340px;">
-          <label class="fin-form-label">Payroll Run <span class="fin-required">*</span></label>
-          <select id="tp-import-payroll-run" class="fin-form-select"><option value="">Please Select</option></select>
+        <div id="tp-import-payroll-run-wrap" style="display:none;margin-top:10px;">
+          <div class="fin-form-group" style="max-width:340px;">
+            <label class="fin-form-label">Run Type</label>
+            <div style="display:flex;gap:20px;margin-top:6px;">
+              <label><input type="radio" name="tp-run-type" value="payroll" checked onchange="_tpToggleRunType()"> Payroll</label>
+              <label><input type="radio" name="tp-run-type" value="contractor" onchange="_tpToggleRunType()"> Contractor</label>
+            </div>
+          </div>
+          <div class="fin-form-group" style="max-width:340px;">
+            <label class="fin-form-label" id="tp-import-run-label">Payroll Run <span class="fin-required">*</span></label>
+            <select id="tp-import-payroll-run" class="fin-form-select"><option value="">Please Select</option></select>
+          </div>
         </div>
       </div>
       <div style="margin-top:16px;display:flex;gap:10px;align-items:center;">
@@ -3253,17 +3262,32 @@ function _tpToggleImportMode() {
   if (wrap) wrap.style.display = mode === 'payroll' ? 'block' : 'none';
 }
 
+function _tpToggleRunType() {
+  const runType = (document.querySelector('input[name="tp-run-type"]:checked') || {}).value || 'payroll';
+  const label = document.getElementById('tp-import-run-label');
+  if (label) label.innerHTML = (runType === 'contractor' ? 'Contractor Run' : 'Payroll Run') + ' <span class="fin-required">*</span>';
+  _tpLoadPayrollRunOptions();
+}
+
 async function _tpLoadPayrollRunOptions() {
   const sel = document.getElementById('tp-import-payroll-run');
   if (!sel) return;
+  const runType = (document.querySelector('input[name="tp-run-type"]:checked') || {}).value || 'payroll';
   try {
-    const [awaitingRes, paidRes] = await Promise.all([
-      apiFetch(`${API_BASE}/payroll/runs/?status=awaiting_payment`),
-      apiFetch(`${API_BASE}/payroll/runs/?status=paid`),
-    ]);
-    const awaiting = (awaitingRes && awaitingRes.ok) ? _toArray(await awaitingRes.json()) : [];
-    const paid     = (paidRes && paidRes.ok)     ? _toArray(await paidRes.json())     : [];
-    const runs = [...awaiting, ...paid];
+    let runs = [];
+    if (runType === 'contractor') {
+      const res = await apiFetch(`${API_BASE}/payroll/contractor-runs/`);
+      const all = (res && res.ok) ? _toArray(await res.json()) : [];
+      runs = all.filter(r => r.status === 'awaiting_payment' || r.status === 'paid');
+    } else {
+      const [awaitingRes, paidRes] = await Promise.all([
+        apiFetch(`${API_BASE}/payroll/runs/?status=awaiting_payment`),
+        apiFetch(`${API_BASE}/payroll/runs/?status=paid`),
+      ]);
+      const awaiting = (awaitingRes && awaitingRes.ok) ? _toArray(await awaitingRes.json()) : [];
+      const paid     = (paidRes && paidRes.ok)     ? _toArray(await paidRes.json())     : [];
+      runs = [...awaiting, ...paid];
+    }
     sel.innerHTML = '<option value="">Please Select</option>' +
       runs.map(r => `<option value="${r.id}">${_finEsc(r.run_number || ('Run #' + r.id))}</option>`).join('');
   } catch (_) {}
@@ -3278,15 +3302,21 @@ async function _tpDownloadTemplate() {
 async function _tpUploadFile(input) {
   const file = input.files[0];
   if (!file) return;
-  const mode = (document.querySelector('input[name="tp-import-mode"]:checked') || {}).value || 'supplier';
-  const payrollRunId = document.getElementById('tp-import-payroll-run')?.value || '';
-  if (mode === 'payroll' && !payrollRunId) { showToast('Payroll Run is required for a payroll return statement.', 'error'); return; }
+  const outerMode = (document.querySelector('input[name="tp-import-mode"]:checked') || {}).value || 'supplier';
+  const runType = (document.querySelector('input[name="tp-run-type"]:checked') || {}).value || 'payroll';
+  const mode = outerMode === 'payroll' ? runType : outerMode; // 'supplier' | 'payroll' | 'contractor'
+  const runId = document.getElementById('tp-import-payroll-run')?.value || '';
+  if (outerMode === 'payroll' && !runId) {
+    showToast(`${runType === 'contractor' ? 'Contractor Run' : 'Payroll Run'} is required for a payroll return statement.`, 'error');
+    return;
+  }
   const statusEl = document.getElementById('tp-upload-status');
   if (statusEl) statusEl.textContent = 'Uploading…';
   const fd = new FormData();
   fd.append('file', file);
   fd.append('import_mode', mode);
-  if (mode === 'payroll') fd.append('payroll_run_id', payrollRunId);
+  if (mode === 'contractor') fd.append('contractor_run_id', runId);
+  else if (mode === 'payroll') fd.append('payroll_run_id', runId);
   const res = await apiFetch(`${_TP_BASE}/import`, { method: 'POST', body: fd });
   if (!res || !res.ok) {
     if (statusEl) statusEl.textContent = '';
@@ -3302,7 +3332,8 @@ async function _tpUploadFile(input) {
   _tpWiz.totalCharges = data.total_charges ?? 0;
   _tpWiz.legacyFormat = !!data.legacy_format;
   _tpWiz.importMode = data.import_mode || mode;
-  _tpWiz.payrollRunId = data.payroll_run_id ?? (mode === 'payroll' ? parseInt(payrollRunId, 10) : null);
+  _tpWiz.payrollRunId = data.payroll_run_id ?? (mode === 'payroll' ? parseInt(runId, 10) : null);
+  _tpWiz.contractorRunId = data.contractor_run_id ?? (mode === 'contractor' ? parseInt(runId, 10) : null);
   _tpWiz.skippedRows = data.skipped_rows || [];
   _tpWiz.alreadyImported = data.already_imported || [];
   _tpWiz.voucherMap = await _tpFetchVoucherMap();
@@ -3438,18 +3469,17 @@ async function _tpConfirmImport() {
   const unmatchedAction = (document.querySelector('input[name="tp-unmatched-action"]:checked') || {}).value || 'suspense';
   if (!ledgerId || !costCenterId) { showToast('Ledger and Cost Center are required.', 'error'); return; }
 
-  const isPayroll = _tpWiz.importMode === 'payroll';
+  // Exactly one target FK per match, dispatched by import_mode: supplier ->
+  // voucher_id, payroll -> payroll_run_line_id, contractor -> contractor_run_line_id.
+  const idField = _tpWiz.importMode === 'contractor' ? 'contractor_run_line_id'
+    : _tpWiz.importMode === 'payroll' ? 'payroll_run_line_id' : 'voucher_id';
   const confirmedMatches = [];
   _tpWiz.transactions.forEach(t => {
     if (t.amount_mismatch) return; // cannot auto-tick; operator must resolve the mismatch first
     if (t.matched_voucher_id != null && _tpWiz.confirmedIds[t.id]) {
-      confirmedMatches.push(isPayroll
-        ? { tendepay_transaction_id: t.id, payroll_run_line_id: t.matched_voucher_id, match_method: 'auto' }
-        : { tendepay_transaction_id: t.id, voucher_id: t.matched_voucher_id, match_method: 'auto' });
+      confirmedMatches.push({ tendepay_transaction_id: t.id, [idField]: t.matched_voucher_id, match_method: 'auto' });
     } else if (_tpWiz.voucherPicks[t.id]) {
-      confirmedMatches.push(isPayroll
-        ? { tendepay_transaction_id: t.id, payroll_run_line_id: _tpWiz.voucherPicks[t.id], match_method: 'manual' }
-        : { tendepay_transaction_id: t.id, voucher_id: _tpWiz.voucherPicks[t.id], match_method: 'manual' });
+      confirmedMatches.push({ tendepay_transaction_id: t.id, [idField]: _tpWiz.voucherPicks[t.id], match_method: 'manual' });
     }
   });
 
@@ -3485,7 +3515,7 @@ function _tpRenderValidationErrors(errors) {
   const body = document.getElementById('tp-wiz-body');
   if (!body) return;
   const list = errors.map(e => {
-    const label = e.tendepay_transaction_id ?? e.payroll_run_line_id ?? e.row ?? '';
+    const label = e.tendepay_transaction_id ?? e.payroll_run_line_id ?? e.contractor_run_line_id ?? e.row ?? '';
     const msg = e.msg || e.detail || (typeof e === 'string' ? e : JSON.stringify(e));
     return `<li>${label !== '' ? `<strong>${_finEsc(String(label))}:</strong> ` : ''}${_finEsc(msg)}</li>`;
   }).join('');

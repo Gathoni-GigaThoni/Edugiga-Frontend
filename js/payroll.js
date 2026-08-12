@@ -1225,12 +1225,11 @@ function _prOpenCreateVoucherModal(runId) {
           <select id="pr-cv-ledger" class="fin-form-select"><option value="">Please Select</option>${_pvLedgerOptions(null)}</select></div>
         <div class="fin-form-group"><label class="fin-form-label">Cost Center <span class="fin-required">*</span></label>
           <select id="pr-cv-cost-center" class="fin-form-select"><option value="">Please Select</option>${_pvCostCenterOptions(null)}</select></div>
-        <div class="fin-form-group"><label class="fin-form-label">Department <span class="fin-required">*</span></label>
-          <select id="pr-cv-department" class="fin-form-select"><option value="">Please Select</option>${_pvDepartmentOptions(null)}</select></div>
-        <div class="fin-form-group"><label class="fin-form-label">Debit Account <span class="fin-required">*</span></label>
-          <select id="pr-cv-debit" class="fin-form-select"><option value="">Please Select</option>${_pvAccountOptions(null)}</select></div>
         <div class="fin-form-group"><label class="fin-form-label">Tendepay Wallet <span class="fin-required">*</span></label>
           <select id="pr-cv-wallet" class="fin-form-select"><option value="">Please Select</option>${_pvTendepayWalletOptions(null)}</select></div>
+      </div>
+      <div style="background:#EEF3FA;border-left:3px solid var(--navy-400,#4A6FA5);border-radius:6px;padding:10px 14px;margin:12px 0;font-size:12.5px;color:var(--navy-900,#0D2137);line-height:1.5;">
+        Payroll salary expense was booked per-department when this run was approved (each employee&#39;s department maps to its own salary-expense account). This voucher only settles <b>Net Pay Payable</b> via Tendepay — no Department or Debit Account selection is needed.
       </div>
       <div class="fin-form-group"><label class="fin-form-label">Description</label><textarea id="pr-cv-description" class="fin-form-textarea" rows="2"></textarea></div>
       <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
@@ -1242,19 +1241,20 @@ function _prOpenCreateVoucherModal(runId) {
 }
 
 async function _prSubmitCreateVoucher(runId) {
+  // Department + debit account are intentionally not collected — see the modal
+  // helper text. Server auto-sets debit_account_id = NET_PAY_PAYABLE_ACCOUNT_ID
+  // and stamps department_id null (a payroll run spans every department).
   const ledgerId = parseInt(document.getElementById('pr-cv-ledger').value, 10);
   const costCenterId = parseInt(document.getElementById('pr-cv-cost-center').value, 10);
-  const departmentId = parseInt(document.getElementById('pr-cv-department').value, 10);
-  const debitAccountId = parseInt(document.getElementById('pr-cv-debit').value, 10);
   const walletId = parseInt(document.getElementById('pr-cv-wallet').value, 10);
   const description = document.getElementById('pr-cv-description').value.trim() || null;
-  if (!ledgerId || !costCenterId || !departmentId || !debitAccountId || !walletId) {
-    showToast('Ledger, Cost Center, Department, Debit Account and Tendepay Wallet are all required.', 'error');
+  if (!ledgerId || !costCenterId || !walletId) {
+    showToast('Ledger, Cost Center and Tendepay Wallet are all required.', 'error');
     return;
   }
   const res = await apiFetch(`${API_BASE}/payroll/runs/${runId}/create-voucher`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ledger_id: ledgerId, cost_center_id: costCenterId, department_id: departmentId, tendepay_wallet_account_id: walletId, debit_account_id: debitAccountId, description }),
+    body: JSON.stringify({ ledger_id: ledgerId, cost_center_id: costCenterId, tendepay_wallet_account_id: walletId, description }),
   });
   if (res && res.ok) {
     document.getElementById('pr-cv-modal-overlay')?.remove();
