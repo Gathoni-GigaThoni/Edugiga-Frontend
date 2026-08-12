@@ -835,6 +835,7 @@ function _prRenderDetail(right, run) {
       <div>
         <div style="font-size:1.15rem;font-weight:700;">${_finEsc(run.run_number)}</div>
         <div style="opacity:0.85;font-size:0.85rem;">${_PR_MONTHS[run.period_month] || ''} ${run.period_year} &middot; ${_prBadge(run.status)}</div>
+        ${!['draft', 'calculated'].includes(run.status) ? _prJeLinkOrTag(run) : ''}
       </div>
       <div style="margin-left:auto;display:flex;gap:24px;">
         <div><div style="opacity:0.7;font-size:0.75rem;">GROSS</div><div style="font-weight:700;">${_pvMoney(run.total_gross)}</div></div>
@@ -873,14 +874,15 @@ function _prPaymentStatusBadge(status) {
   return `<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:0.78rem;font-weight:600;color:${color};background:${bg};">${_finEsc(status || 'pending')}</span>`;
 }
 
-function _prRenderLinesTab(el, run) {
+async function _prRenderLinesTab(el, run) {
   const lines = run.lines || [];
+  await _prLoadOutstandingAdvances(run);
   el.innerHTML = `
     <div class="fin-table-wrap"><table class="fin-table">
-      <thead><tr><th>Employee Code</th><th>Basic Salary</th><th>Gross Pay</th><th>NSSF</th><th>SHIF</th><th>PAYE</th><th>Housing Levy</th><th>Total Deductions</th><th>Net Pay</th><th>Payment Status</th><th>Tendepay Ref</th><th>Receipt</th><th>Paid At</th><th>Failure Reason</th></tr></thead>
+      <thead><tr><th>Employee Code</th><th>Basic Salary</th><th>Gross Pay</th><th>NSSF</th><th>SHIF</th><th>PAYE</th><th>Housing Levy</th><th>Total Deductions</th><th>Net Pay</th><th>Deductions</th><th>Payment Status</th><th>Tendepay Ref</th><th>Receipt</th><th>Paid At</th><th>Failure Reason</th></tr></thead>
       <tbody>
         ${lines.length ? lines.map(l => `<tr>
-          <td>${_finEsc(l.employee_code)}</td>
+          <td>${_finEsc(l.employee_code)}${_prAdvancePreviewPill(l.employee_id)}</td>
           <td>${_pvMoney(l.basic_salary)}</td>
           <td>${_pvMoney(l.gross_pay)}</td>
           <td>${_pvMoney(l.nssf_employee)}</td>
@@ -889,18 +891,111 @@ function _prRenderLinesTab(el, run) {
           <td>${_pvMoney(l.housing_levy_employee)}</td>
           <td>${_pvMoney(l.total_deductions)}</td>
           <td>${_pvMoney(l.net_pay)}</td>
+          <td>${l.calculation_snapshot ? `<a href="#" onclick="_prOpenDeductionsModal(${l.id});return false;">View</a>` : '—'}</td>
           <td>${_prPaymentStatusBadge(l.payment_status)}</td>
           <td>${_finEsc(l.tendepay_reference || '—')}</td>
           <td>${_finEsc(l.gateway_receipt || '—')}</td>
           <td>${l.paid_at ? _pvDate(l.paid_at) : '—'}</td>
           <td>${l.payment_status === 'failed' ? `<span style="color:#c0392b;">${_finEsc(l.failure_reason || '—')}</span>` : ''}</td>
-        </tr>`).join('') : `<tr><td colspan="14" class="fin-empty">No lines yet &mdash; run Calculate first.</td></tr>`}
+        </tr>`).join('') : `<tr><td colspan="15" class="fin-empty">No lines yet &mdash; run Calculate first.</td></tr>`}
       </tbody>
     </table></div>
     <div id="pr-payslips-panel" style="margin-top:20px;"></div>`;
   if (run.status === 'paid' || run.status === 'payslips_generated') {
     _prRenderPayslipsPanel(document.getElementById('pr-payslips-panel'), run);
   }
+}
+
+// ── Outstanding-advances preview — batched once per run-detail view across
+// all employee lines, not per-row (§4.10 of the addendum) ────────────────
+let _prOutstandingAdvancesCache = new Map();
+async function _prLoadOutstandingAdvances(run) {
+  const employeeIds = [...new Set((run.lines || []).map(l => l.employee_id).filter(id => id != null && !_prOutstandingAdvancesCache.has(id)))];
+  if (!employeeIds.length) return;
+  await Promise.all(employeeIds.map(async id => {
+    const res = await apiFetch(`${_ADV_API}/employee/${id}/outstanding`);
+    _prOutstandingAdvancesCache.set(id, (res && res.ok) ? _toArray(await res.json()) : []);
+  }));
+}
+function _prAdvancePreviewPill(employeeId) {
+  const outstanding = (_prOutstandingAdvancesCache.get(employeeId) || []).filter(a => parseFloat(a.next_installment_amount) > 0);
+  if (!outstanding.length) return '';
+  const total = outstanding.reduce((sum, a) => sum + (parseFloat(a.next_installment_amount) || 0), 0);
+  const tooltip = outstanding.map(a => `${a.advance_number}: ${formatKES(a.next_installment_amount)}`).join(' | ');
+  const label = outstanding.length === 1
+    ? `Will deduct ${formatKES(outstanding[0].next_installment_amount)} for advance ${_finEsc(outstanding[0].advance_number)}`
+    : `Will deduct ${formatKES(total)} across ${outstanding.length} advances`;
+  return `<br><span title="${_finEsc(tooltip)}" style="display:inline-block;margin-top:4px;padding:2px 8px;border-radius:10px;font-size:0.68rem;font-weight:600;color:#fff;background:var(--navy-700,#1B3057);">${label}</span>`;
+}
+
+// ── Deductions breakdown modal (§5.4-5.5) — calculation_snapshot is a JSON
+// string on the wire (confirmed via live openapi.json, not a nested object
+// as the addendum's example implied), so it needs parsing; legacy payslips
+// predate the envelope entirely and get the classic "no breakdown" message.
+function _prParseSnapshot(raw) {
+  if (!raw) return null;
+  if (typeof raw === 'object') return raw;
+  try { return JSON.parse(raw); } catch (_) { return null; }
+}
+function _prOpenDeductionsModal(lineId) {
+  const line = (_prCurrentRun?.lines || []).find(l => String(l.id) === String(lineId));
+  const deductions = line ? _prParseSnapshot(line.calculation_snapshot)?.deductions : null;
+  let body;
+  if (!deductions) {
+    body = `<p style="font-size:0.88rem;color:#666;">No deduction breakdown available for this line — legacy payslips predate this envelope.</p>`;
+  } else {
+    const cap = deductions.cap || {};
+    const capRow = `
+      <div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:14px;font-size:0.85rem;">
+        <div><span style="color:#888;">Gross Pay</span><br><strong>${_pvMoney(cap.gross)}</strong></div>
+        <div><span style="color:#888;">Two-thirds Cap</span><br><strong>${_pvMoney(cap.two_thirds_cap)}</strong></div>
+        <div><span style="color:#888;">Statutory Used</span><br><strong>${_pvMoney(cap.statutory_used)}</strong></div>
+        <div><span style="color:#888;">Remaining for Non-Statutory</span><br><strong>${_pvMoney(cap.remaining_after_statutory)}</strong></div>
+      </div>`;
+    const rows = (deductions.lines || []).slice().sort((a, b) => (a.line_order ?? 0) - (b.line_order ?? 0)).map(l => {
+      let note;
+      if (l.skipped) note = `<span style="color:var(--coral-600,#B03030);background:var(--coral-100,#fbe3e3);padding:2px 8px;border-radius:10px;font-size:0.72rem;font-weight:600;">Skipped &mdash; ${_finEsc(l.skip_reason || '')}</span>`;
+      else if (l.deferred_to_next_period) note = `<span style="color:#8a6d00;background:var(--gold-100,#fdf3d6);padding:2px 8px;border-radius:10px;font-size:0.72rem;font-weight:600;">Deferred to next period</span>`;
+      else if (parseFloat(l.applied_amount) < parseFloat(l.scheduled_amount)) note = `<span style="color:#8a6d00;">Partially applied &mdash; remainder deferred</span>`;
+      else note = `<span style="color:#1e7e34;">&#10003;</span>`;
+      let category = _finEsc(l.description || '');
+      if (l.source_type === 'salary_deduction' && l.source_id != null) category = `<a href="#" onclick="_sdOpenFromBreakdown(${l.source_id});return false;">${category}</a>`;
+      else if (l.source_type === 'advance_repayment' && l.source_id != null) category = `<a href="#" onclick="_advOpenFromBreakdown(${l.source_id});return false;">${category}</a>`;
+      return `<tr>
+        <td>${category}</td>
+        <td>${l.priority_tier ? _sdPriorityPill(l.priority_tier) : '<span style="color:#888;">&mdash;</span>'}</td>
+        <td style="text-align:right;">${_pvMoney(l.scheduled_amount)}</td>
+        <td style="text-align:right;">${_pvMoney(l.applied_amount)}</td>
+        <td>${note}</td>
+      </tr>`;
+    }).join('') || `<tr><td colspan="5" class="fin-empty">No deduction lines.</td></tr>`;
+    body = `${capRow}<div class="fin-table-wrap"><table class="fin-li-table">
+      <thead><tr><th>Category</th><th>Priority</th><th>Scheduled</th><th>Applied</th><th>Note</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+  }
+  const wrap = document.createElement('div');
+  wrap.id = 'pr-deductions-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;overflow:auto;padding:24px;';
+  wrap.innerHTML = `
+    <div style="background:white;border-radius:8px;padding:24px;width:720px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 14px;font-size:1.05rem;color:#2c3e50;">Deductions Breakdown &mdash; ${_finEsc(line?.employee_code || '')}</h3>
+      ${body}
+      <div style="display:flex;justify-content:flex-end;margin-top:16px;">
+        <button class="fin-btn-cancel" onclick="document.getElementById('pr-deductions-modal-overlay').remove()">Close</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+function _sdOpenFromBreakdown(id) {
+  document.getElementById('pr-deductions-modal-overlay')?.remove();
+  window._sdOpenId = id;
+  loadView('payroll-salary-deductions');
+}
+function _advOpenFromBreakdown(id) {
+  document.getElementById('pr-deductions-modal-overlay')?.remove();
+  window._advOpenId = id;
+  loadView('payroll-salary-advances');
 }
 
 function _prReconStatCard(label, value, bg, fg) {
@@ -946,6 +1041,79 @@ async function _prRenderReconciliationTab(el, run) {
     ${retryBtn}`;
 }
 
+// approval_journal_entry_id is not yet on the live PayrollRunRead schema
+// (verified against openapi.json) — treat "absent" the same as "null" so
+// this renders correctly today and needs no change once the backend adds
+// the field (§5.2 of the addendum: null is a legitimate operator-configured
+// state, not an error, when PAYROLL_GL_POSTING_ENABLED=false).
+function _prJeLinkOrTag(run) {
+  if (run.approval_journal_entry_id != null) {
+    return `<div style="margin-top:6px;"><a href="#" onclick="_jeOpenDetail(${run.approval_journal_entry_id});return false;" style="color:#fff;text-decoration:underline;font-size:0.82rem;">&rarr; View Journal Entry</a></div>`;
+  }
+  return `<div style="margin-top:6px;" title="This run was approved with PAYROLL_GL_POSTING_ENABLED=false. The ledger is intentionally out of sync — ask ops if this should be re-approved once accounts are seeded.">
+    <span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.72rem;font-weight:600;color:#8a6d00;background:var(--gold-100,#fdf3d6);">GL posting disabled</span>
+  </div>`;
+}
+
+// ── Void — reverses the approval JE, restores advance balances, wipes lines
+// (§5.3 of the addendum). Refuses PAID; server 400 is the backstop for the
+// button gate below. ──────────────────────────────────────────────────────
+function _prVoidCounts(run) {
+  const lines = run.lines || [];
+  const advanceIds = new Set();
+  lines.forEach(l => {
+    const deductions = _prParseSnapshot(l.calculation_snapshot)?.deductions;
+    (deductions?.lines || []).forEach(d => {
+      if (d.source_type === 'advance_repayment' && d.source_id != null && !d.skipped) advanceIds.add(d.source_id);
+    });
+  });
+  return { lineCount: lines.length, advanceCount: advanceIds.size };
+}
+function _prOpenVoidModal(runId) {
+  const run = _prCurrentRun || {};
+  const { lineCount, advanceCount } = _prVoidCounts(run);
+  const wrap = document.createElement('div');
+  wrap.id = 'pr-void-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:white;border-radius:8px;padding:24px;width:480px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 12px;font-size:1.05rem;color:#2c3e50;">Void payroll run ${_finEsc(run.run_number || '')}?</h3>
+      <div style="font-size:0.85rem;color:#444;line-height:1.6;">
+        Voiding will:
+        <ul style="margin:8px 0 0;padding-left:20px;">
+          <li>Reverse the approval journal entry${run.approval_journal_entry_id != null ? ` (JE #${run.approval_journal_entry_id})` : ''}</li>
+          <li>Wipe all ${lineCount} payroll line${lineCount === 1 ? '' : 's'} and their deduction breakdowns</li>
+          <li>Restore advance repayment balances for ${advanceCount} advance${advanceCount === 1 ? '' : 's'} that received installments from this run</li>
+          <li>Return the run to CALCULATED status</li>
+        </ul>
+        <p style="margin-top:10px;font-weight:600;">This cannot be undone. Payslips will need regeneration.</p>
+      </div>
+      <div id="pr-void-err" style="display:none;padding:10px 12px;border-radius:6px;background:var(--coral-100);color:var(--coral-600);font-size:0.82rem;margin-top:10px;"></div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-outline" onclick="document.getElementById('pr-void-modal-overlay').remove()">Cancel</button>
+        <button class="btn-danger" onclick="_prSubmitVoid(${runId})">Void run</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+async function _prSubmitVoid(runId) {
+  const errEl = document.getElementById('pr-void-err');
+  errEl.style.display = 'none';
+  const res = await apiFetch(`${API_BASE}/payroll/runs/${runId}/void`, { method: 'POST' });
+  if (res && res.ok) {
+    document.getElementById('pr-void-modal-overlay')?.remove();
+    showToast('Run voided. Advance repayments restored. Payslips wiped.', 'success');
+    await _prLoadRuns();
+    _prRenderList();
+    await _prSelectRun(runId);
+    return;
+  }
+  if (!res) return;
+  // 400 on a PAID run ("reverse via Tendepay first") is the backstop for the
+  // button gate below — surfaced verbatim, in the modal rather than a toast.
+  errEl.textContent = await parseApiError(res); errEl.style.display = 'block';
+}
+
 function _prActionsHtml(run) {
   let html = '';
   if (run.status === 'draft') {
@@ -956,6 +1124,9 @@ function _prActionsHtml(run) {
     html += `<button class="btn" onclick="_prOpenCreateVoucherModal(${run.id})">Create Payment Voucher</button>`;
   } else if (run.status === 'awaiting_payment') {
     html += `<div style="color:#666;font-size:0.9rem;">Awaiting Tendepay settlement. The run will move to Paid automatically once the payroll voucher is confirmed in a Tendepay import.</div>`;
+  }
+  if (['approved', 'awaiting_payment'].includes(run.status)) {
+    html += `<button class="btn-danger" onclick="_prOpenVoidModal(${run.id})">Void</button>`;
   }
   if (['approved', 'awaiting_payment', 'paid', 'payslips_generated'].includes(run.status)) {
     html += `
@@ -2031,6 +2202,8 @@ function _sdSupplierLabel(id) {
 // ── List (split-view) ────────────────────────────────────────────────────
 async function loadPayrollSalaryDeductionsView(container) {
   await Promise.all([_pvLoadLookups(), _sdEnsureActiveSuppliers()]);
+  const preselectId = window._sdOpenId ?? null;
+  window._sdOpenId = null;
   const cfg = {
     container,
     title: 'Salary Deductions',
@@ -2043,6 +2216,7 @@ async function loadPayrollSalaryDeductionsView(container) {
     ],
     apiUrl: `${_SD_API}/`,
     searchFields: ['ref_number'],
+    preselectId,
     col1Label: 'Employee', col2Label: 'Amount',
     col1: d => `<strong>${_finEsc(_sdEmployeeLabel(d.employee_id))}</strong><br><span style="font-weight:400;font-size:12px;color:#888;">${_finEsc(_SD_TYPE_LABEL[d.deduction_type] || d.deduction_type)} ${_sdPriorityPill(d.priority_tier)}</span>`,
     col2: d => `${_sdAmountSummary(d)}<br>${_sdStatusPill(d.status)}`,
