@@ -910,6 +910,7 @@ async function _prRenderLinesTab(el, run) {
 // all employee lines, not per-row (§4.10 of the addendum) ────────────────
 let _prOutstandingAdvancesCache = new Map();
 async function _prLoadOutstandingAdvances(run) {
+  if (!canView('payroll.salary_advances')) return; // avoid firing per-employee 403s for roles without this module
   const employeeIds = [...new Set((run.lines || []).map(l => l.employee_id).filter(id => id != null && !_prOutstandingAdvancesCache.has(id)))];
   if (!employeeIds.length) return;
   await Promise.all(employeeIds.map(async id => {
