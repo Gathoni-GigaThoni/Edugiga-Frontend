@@ -3162,6 +3162,34 @@ async function _tpFetchVoucherMap() {
   return map;
 }
 
+function _tpEmployeeLabel(code) {
+  const emp = (employeesData || []).find(e => e.employee_code === code);
+  const name = emp ? ((emp.surname || emp.first_name || '') + ' ' + (emp.other_names || emp.last_name || '')).trim() : '';
+  return name ? `${code} — ${name}` : (code || '');
+}
+
+// For payroll/contractor imports, a statement row matches to one *employee's*
+// run line (payroll_run_line_id / contractor_run_line_id) — the run-level
+// voucher (PaymentVoucher.id) is a totally different ID space. The old code
+// looked matched_voucher_id up in the voucher map regardless of mode, which
+// either showed the wrong voucher's number (on an ID collision) or a bare
+// "#<line id>" — reinforcing "this matches a PV" when it never did.
+async function _tpFetchMatchTargetMap() {
+  if (_tpWiz.importMode === 'supplier') return _tpFetchVoucherMap();
+  const map = {};
+  try {
+    const runId = _tpWiz.importMode === 'contractor' ? _tpWiz.contractorRunId : _tpWiz.payrollRunId;
+    const url = _tpWiz.importMode === 'contractor'
+      ? `${API_BASE}/payroll/contractor-runs/${runId}` : `${API_BASE}/payroll/runs/${runId}`;
+    const res = await apiFetch(url);
+    if (res && res.ok) {
+      const run = await res.json();
+      (run.lines || []).forEach(l => { map[l.id] = _tpEmployeeLabel(l.employee_code); });
+    }
+  } catch (_) {}
+  return map;
+}
+
 // ── Import Statement wizard (3 steps: upload → review → confirm) ──────────
 let _tpWiz = null;
 function _tpNewWizState() {
@@ -3364,7 +3392,7 @@ async function _tpUploadFile(input) {
   _tpWiz.contractorRunId = data.contractor_run_id ?? (mode === 'contractor' ? parseInt(runId, 10) : null);
   _tpWiz.skippedRows = data.skipped_rows || [];
   _tpWiz.alreadyImported = data.already_imported || [];
-  _tpWiz.voucherMap = await _tpFetchVoucherMap();
+  _tpWiz.voucherMap = await _tpFetchMatchTargetMap();
   // Pre-tick rows the backend is confident about — exact/high confidence auto-match;
   // medium confidence is never pre-ticked, the operator must confirm manually (§5.5).
   _tpWiz.transactions.forEach(t => {
@@ -3384,11 +3412,14 @@ function _tpConfidencePill(conf) {
 
 function _tpRenderStep2() {
   const body = document.getElementById('tp-wiz-body');
+  const isLineMode = _tpWiz.importMode !== 'supplier'; // payroll/contractor match to a run line (employee), not a voucher
+  const targetNoun = isLineMode ? 'employee' : 'voucher';
+  const refColLabel = isLineMode ? 'Employee Code' : 'Voucher Ref';
   const rows = _tpWiz.transactions.map(t => {
     let matchCell;
     if (t.amount_mismatch) {
       matchCell = `<div style="background:var(--coral-100,#fde0de);color:var(--coral-600,#c0392b);padding:8px 10px;border-radius:6px;font-size:0.78rem;">
-        Amount mismatch — statement says ${_tpMoney(t.amount)}, voucher ${_finEsc(t.voucher_ref || '')} expects ${_tpMoney(t.expected_amount ?? t.expected)}. Resolve before confirming.
+        Amount mismatch — statement says ${_tpMoney(t.amount)}, ${targetNoun} ${_finEsc(t.voucher_ref || '')} expects ${_tpMoney(t.expected_amount ?? t.expected)}. Resolve before confirming.
       </div>`;
     } else if (t.matched_voucher_id != null) {
       const checked = _tpWiz.confirmedIds[t.id] ? 'checked' : '';
@@ -3400,8 +3431,8 @@ function _tpRenderStep2() {
       matchCell = `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.78rem;font-weight:600;color:#c0392b;background:#fde0de;">Unrecognised wallet</span>`;
     } else if (t.possible_voucher_ids && t.possible_voucher_ids.length) {
       matchCell = `<select class="fin-form-select" style="width:auto;" onchange="_tpWiz.voucherPicks[${t.id}]=this.value?parseInt(this.value,10):null;">
-        <option value="">-- Pick voucher --</option>
-        ${t.possible_voucher_ids.map(id => `<option value="${id}" ${_tpWiz.voucherPicks[t.id] === id ? 'selected' : ''}>${_finEsc(_tpWiz.voucherMap[id] || ('Voucher #' + id))}</option>`).join('')}
+        <option value="">-- Pick ${targetNoun} --</option>
+        ${t.possible_voucher_ids.map(id => `<option value="${id}" ${_tpWiz.voucherPicks[t.id] === id ? 'selected' : ''}>${_finEsc(_tpWiz.voucherMap[id] || (targetNoun + ' #' + id))}</option>`).join('')}
       </select>`;
     } else {
       matchCell = `<span style="color:#888;">No match</span>`;
@@ -3451,7 +3482,7 @@ function _tpRenderStep2() {
         <div class="fin-controls-left">${_tpWiz.matchedCount} matched, ${_tpWiz.unmatchedCount} unmatched &middot; Total ${_tpMoney(_tpWiz.totalAmount)} &middot; Transaction Charges ${_tpMoney(_tpWiz.totalCharges)}</div>
       </div>
       <div class="fin-table-wrap"><table class="fin-table">
-        <thead><tr><th>Tendepay Ref</th><th>Wallet</th><th>Payee</th><th>Service/Account</th><th>Amount</th><th>Charge</th><th>Date</th><th>Receipt</th><th>Voucher Ref</th><th>Match</th></tr></thead>
+        <thead><tr><th>Tendepay Ref</th><th>Wallet</th><th>Payee</th><th>Service/Account</th><th>Amount</th><th>Charge</th><th>Date</th><th>Receipt</th><th>${_finEsc(refColLabel)}</th><th>Match</th></tr></thead>
         <tbody>${rows || '<tr><td colspan="10" class="fin-empty">No transactions in this file.</td></tr>'}</tbody>
       </table></div>
       ${skippedHtml}
