@@ -3243,6 +3243,7 @@ async function _tpRenderStep1() {
           <div class="fin-form-group" style="max-width:340px;">
             <label class="fin-form-label" id="tp-import-run-label">Payroll Run <span class="fin-required">*</span></label>
             <select id="tp-import-payroll-run" class="fin-form-select"><option value="">Please Select</option></select>
+            <div id="tp-import-run-hint" style="font-size:0.8rem;margin-top:4px;"></div>
           </div>
         </div>
       </div>
@@ -3272,6 +3273,9 @@ function _tpToggleRunType() {
 async function _tpLoadPayrollRunOptions() {
   const sel = document.getElementById('tp-import-payroll-run');
   if (!sel) return;
+  const hint = document.getElementById('tp-import-run-hint');
+  const setHint = (msg, isError) => { if (hint) hint.innerHTML = msg ? `<span style="color:${isError ? 'var(--coral-600,#c0392b)' : '#888'};">${_finEsc(msg)}</span>` : ''; };
+  setHint('');
   const runType = (document.querySelector('input[name="tp-run-type"]:checked') || {}).value || 'payroll';
   try {
     // A run's own status flips to awaiting_payment the moment its voucher is
@@ -3287,12 +3291,20 @@ async function _tpLoadPayrollRunOptions() {
       apiFetch(`${API_BASE}/payables/payment-vouchers/?status=awaiting_tendepay&payee_type=Staff`),
       apiFetch(`${API_BASE}/payables/payment-vouchers/?status=paid&payee_type=Staff`),
     ]);
+    // Any of these four calls failing (403/422/500/etc.) used to be swallowed
+    // silently into an empty list, so a fetch error and "genuinely zero runs
+    // qualify" both rendered as the same unexplained empty dropdown. Surface
+    // failures instead of hiding them.
+    const failures = [];
+    if (awaitingVchRes && !awaitingVchRes.ok) failures.push(`awaiting-Tendepay vouchers: ${await parseApiError(awaitingVchRes)}`);
+    if (paidVchRes && !paidVchRes.ok) failures.push(`paid vouchers: ${await parseApiError(paidVchRes)}`);
     const awaitingVoucherIds = new Set(((awaitingVchRes && awaitingVchRes.ok) ? _toArray(await awaitingVchRes.json()) : []).map(v => v.id));
     const paidVoucherIds = new Set(((paidVchRes && paidVchRes.ok) ? _toArray(await paidVchRes.json()) : []).map(v => v.id));
 
     let awaiting = [], paid = [];
     if (runType === 'contractor') {
       const res = await apiFetch(`${API_BASE}/payroll/contractor-runs/`);
+      if (res && !res.ok) failures.push(`contractor runs: ${await parseApiError(res)}`);
       const all = (res && res.ok) ? _toArray(await res.json()) : [];
       awaiting = all.filter(r => r.status === 'awaiting_payment');
       paid = all.filter(r => r.status === 'paid');
@@ -3301,8 +3313,14 @@ async function _tpLoadPayrollRunOptions() {
         apiFetch(`${API_BASE}/payroll/runs/?status=awaiting_payment`),
         apiFetch(`${API_BASE}/payroll/runs/?status=paid`),
       ]);
+      if (awaitingRes && !awaitingRes.ok) failures.push(`awaiting-payment runs: ${await parseApiError(awaitingRes)}`);
+      if (paidRes && !paidRes.ok) failures.push(`paid runs: ${await parseApiError(paidRes)}`);
       awaiting = (awaitingRes && awaitingRes.ok) ? _toArray(await awaitingRes.json()) : [];
       paid     = (paidRes && paidRes.ok)     ? _toArray(await paidRes.json())     : [];
+    }
+    if (failures.length) {
+      console.error('Tendepay run picker: fetch failure(s)', failures);
+      setHint(`Could not fully load runs — ${failures.join('; ')}`, true);
     }
     const runs = [
       ...awaiting.filter(r => r.payment_voucher_id != null && awaitingVoucherIds.has(r.payment_voucher_id)),
@@ -3310,7 +3328,13 @@ async function _tpLoadPayrollRunOptions() {
     ];
     sel.innerHTML = '<option value="">Please Select</option>' +
       runs.map(r => `<option value="${r.id}">${_finEsc(r.run_number || ('Run #' + r.id))}</option>`).join('');
-  } catch (_) {}
+    if (!failures.length && runs.length === 0) {
+      setHint('No runs are currently queued for Tendepay. A run only appears here once its Payment Voucher has been queued via Payables ("Queue for Tendepay").', false);
+    }
+  } catch (err) {
+    console.error('Tendepay run picker: unexpected error', err);
+    setHint('Could not load payroll runs — see console for details.', true);
+  }
 }
 
 async function _tpDownloadTemplate() {
