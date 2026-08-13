@@ -3278,15 +3278,14 @@ async function _tpLoadPayrollRunOptions() {
   setHint('');
   const runType = (document.querySelector('input[name="tp-run-type"]:checked') || {}).value || 'payroll';
   try {
-    // A run's own status flips to awaiting_payment the moment its voucher is
-    // approved (POST .../approve-voucher), but per the live openapi.json that
-    // same call only takes voucher.status to APPROVED — the voucher only
-    // becomes awaiting_tendepay once it's actually been exported/queued for
-    // Tendepay. So "awaiting_payment" alone overshoots: it can include runs
-    // whose voucher isn't ready to be matched against a statement import yet.
-    // Cross-check against the voucher's own status (payee_type=Staff covers
-    // both employee payroll and contractor vouchers — VoucherPayeeType has
-    // no separate "Contractor" value).
+    // The run's own `status` is NOT a reliable signal for "ready to import" —
+    // confirmed live: a run can sit at `approved` indefinitely while its
+    // voucher has already progressed past that to `awaiting_tendepay` (queued)
+    // or `paid`. The voucher's own status is the authoritative signal, so we
+    // fetch runs unfiltered and match purely on `payment_voucher_id` against
+    // the voucher ID sets below (payee_type=Staff covers both employee
+    // payroll and contractor vouchers — VoucherPayeeType has no separate
+    // "Contractor" value).
     const [awaitingVchRes, paidVchRes] = await Promise.all([
       apiFetch(`${API_BASE}/payables/payment-vouchers/?status=awaiting_tendepay&payee_type=Staff`),
       apiFetch(`${API_BASE}/payables/payment-vouchers/?status=paid&payee_type=Staff`),
@@ -3301,31 +3300,16 @@ async function _tpLoadPayrollRunOptions() {
     const awaitingVoucherIds = new Set(((awaitingVchRes && awaitingVchRes.ok) ? _toArray(await awaitingVchRes.json()) : []).map(v => v.id));
     const paidVoucherIds = new Set(((paidVchRes && paidVchRes.ok) ? _toArray(await paidVchRes.json()) : []).map(v => v.id));
 
-    let awaiting = [], paid = [];
-    if (runType === 'contractor') {
-      const res = await apiFetch(`${API_BASE}/payroll/contractor-runs/`);
-      if (res && !res.ok) failures.push(`contractor runs: ${await parseApiError(res)}`);
-      const all = (res && res.ok) ? _toArray(await res.json()) : [];
-      awaiting = all.filter(r => r.status === 'awaiting_payment');
-      paid = all.filter(r => r.status === 'paid');
-    } else {
-      const [awaitingRes, paidRes] = await Promise.all([
-        apiFetch(`${API_BASE}/payroll/runs/?status=awaiting_payment`),
-        apiFetch(`${API_BASE}/payroll/runs/?status=paid`),
-      ]);
-      if (awaitingRes && !awaitingRes.ok) failures.push(`awaiting-payment runs: ${await parseApiError(awaitingRes)}`);
-      if (paidRes && !paidRes.ok) failures.push(`paid runs: ${await parseApiError(paidRes)}`);
-      awaiting = (awaitingRes && awaitingRes.ok) ? _toArray(await awaitingRes.json()) : [];
-      paid     = (paidRes && paidRes.ok)     ? _toArray(await paidRes.json())     : [];
-    }
+    const runsUrl = runType === 'contractor' ? `${API_BASE}/payroll/contractor-runs/` : `${API_BASE}/payroll/runs/`;
+    const runsRes = await apiFetch(runsUrl);
+    if (runsRes && !runsRes.ok) failures.push(`${runType} runs: ${await parseApiError(runsRes)}`);
+    const allRuns = (runsRes && runsRes.ok) ? _toArray(await runsRes.json()) : [];
     if (failures.length) {
       console.error('Tendepay run picker: fetch failure(s)', failures);
       setHint(`Could not fully load runs — ${failures.join('; ')}`, true);
     }
-    const runs = [
-      ...awaiting.filter(r => r.payment_voucher_id != null && awaitingVoucherIds.has(r.payment_voucher_id)),
-      ...paid.filter(r => r.payment_voucher_id != null && paidVoucherIds.has(r.payment_voucher_id)),
-    ];
+    const runs = allRuns.filter(r => r.payment_voucher_id != null &&
+      (awaitingVoucherIds.has(r.payment_voucher_id) || paidVoucherIds.has(r.payment_voucher_id)));
     sel.innerHTML = '<option value="">Please Select</option>' +
       runs.map(r => `<option value="${r.id}">${_finEsc(r.run_number || ('Run #' + r.id))}</option>`).join('');
     if (!failures.length && runs.length === 0) {
