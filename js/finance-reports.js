@@ -226,6 +226,7 @@ async function _repGenerate(routeKey) {
     else if (def.layout === 'ap-reconciliation') _repRenderApReconciliation(def, data);
     else if (routeKey === 'reports-supplier-statements') _repRenderSupplierStatement(def, data);
     else if (routeKey === 'reports-trial-balance') _repRenderTrialBalance(def, data);
+    else if (routeKey === 'reports-cash-book' || routeKey === 'reports-general-ledger') _repRenderLedgerLines(def, data);
     else _repRenderTable(def, data);
   } catch (e) { showToast('Network error generating report.', 'error'); }
 }
@@ -242,7 +243,7 @@ async function _repExport(routeKey, format) {
 
 // ── Table layout (most reports) ─────────────────────────────────────────────
 function _repRenderTable(def, data) {
-  const rows = Array.isArray(data) ? data : (data.data || data.items || data.results || data.rows || []);
+  const rows = Array.isArray(data) ? data : (data.data || data.items || data.results || data.rows || data.lines || []);
   const out = document.getElementById('rep-output');
   if (!rows.length) { out.innerHTML = '<div class="fin-table-wrap"><table class="fin-table"><tbody><tr><td class="fin-empty">No data for the selected criteria.</td></tr></tbody></table></div>'; return; }
 
@@ -314,6 +315,62 @@ function _repRenderTrialBalance(def, data) {
     </div>`;
 }
 
+// ── Cash Book / General Ledger — DR/CR split ────────────────────────────────
+// BE shape (GeneralLedgerLine): { je_id, jv_number, entry_date, reference,
+// account_id, account_name, account_number, line_type, amount, running_balance }.
+// Rendered as one row per JE line with amount split across DEBIT/CREDIT
+// columns based on line_type. Cash book usually spans multiple cash-and-bank
+// accounts (bank_account_id omitted), so we show the ACCOUNT column too; the
+// GL page can pass a single account_id filter but the column stays legible.
+function _repRenderLedgerLines(def, data) {
+  const out = document.getElementById('rep-output');
+  const rows = (data && Array.isArray(data.lines)) ? data.lines : [];
+  if (!rows.length) {
+    out.innerHTML = '<div class="fin-table-wrap"><table class="fin-table"><tbody><tr><td class="fin-empty">No data for the selected criteria.</td></tr></tbody></table></div>';
+    return;
+  }
+  const cols = [
+    ['entry_date',      'DATE'],
+    ['jv_number',       'JV NO.'],
+    ['account_name',    'ACCOUNT'],
+    ['reference',       'REFERENCE'],
+    ['debit',           'DEBIT'],
+    ['credit',          'CREDIT'],
+    ['running_balance', 'BALANCE'],
+  ];
+  let totalDr = 0, totalCr = 0;
+  const bodyRows = rows.map(r => {
+    const amt = parseFloat(r.amount || 0) || 0;
+    const isDr = (r.line_type || '').toString().toLowerCase() === 'debit';
+    const dr = isDr ? amt : 0;
+    const cr = isDr ? 0 : amt;
+    totalDr += dr;
+    totalCr += cr;
+    const view = {
+      entry_date: r.entry_date,
+      jv_number: r.jv_number,
+      account_name: r.account_name,
+      reference: r.reference,
+      debit: dr || '',
+      credit: cr || '',
+      running_balance: r.running_balance,
+    };
+    return `<tr>${cols.map(([k]) => `<td>${_repCell(view[k])}</td>`).join('')}</tr>`;
+  }).join('');
+  const totalsRow = cols.map(([k], i) => {
+    if (i === 0) return '<td><strong>TOTAL</strong></td>';
+    if (k === 'debit')  return `<td><strong>${_pvMoney(totalDr)}</strong></td>`;
+    if (k === 'credit') return `<td><strong>${_pvMoney(totalCr)}</strong></td>`;
+    return '<td></td>';
+  }).join('');
+  out.innerHTML = `
+    <div class="fin-table-wrap"><table class="fin-table">
+      <thead><tr>${cols.map(([,label]) => `<th>${_finEsc(label)}</th>`).join('')}</tr></thead>
+      <tbody>${bodyRows}</tbody>
+      <tfoot><tr class="fin-tfoot-total">${totalsRow}</tr></tfoot>
+    </table></div>`;
+}
+
 // ── Notes of Financial Statement — labelled schedule cards ──────────────────
 function _repRenderNotes(def, data) {
   const notes = Array.isArray(data) ? data : (data.notes || data.data || data.items || []);
@@ -356,21 +413,32 @@ function _repRenderStatement(def, data) {
   if (!data || typeof data !== 'object') { out.innerHTML = '<p class="fin-empty">No data for the selected criteria.</p>'; return; }
 
   if (def.statementType === 'cf') {
-    const op = data.operating || [], inv = data.investing || [], fin = data.financing || [];
-    if (!op.length && !inv.length && !fin.length) { out.innerHTML = `<pre style="white-space:pre-wrap;">${_finEsc(JSON.stringify(data, null, 2))}</pre>`; return; }
-    const netOp = data.net_operating ?? op.reduce((s,i)=>s+(parseFloat(i.amount||0)),0);
-    const netInv = data.net_investing ?? inv.reduce((s,i)=>s+(parseFloat(i.amount||0)),0);
-    const netFin = data.net_financing ?? fin.reduce((s,i)=>s+(parseFloat(i.amount||0)),0);
-    const opening = data.opening_cash_balance ?? 0;
+    // BE returns CashFlowSection objects: {items: [...], net: "..."}. The
+    // pre-2026-08-15 renderer treated each section as a bare array, so
+    // `.length` was undefined, the emptiness guard fired, and the raw JSON
+    // fell through into a <pre> block on screen. Unpack .items / .net.
+    const opItems = (data.operating && Array.isArray(data.operating.items)) ? data.operating.items : [];
+    const invItems = (data.investing && Array.isArray(data.investing.items)) ? data.investing.items : [];
+    const finItems = (data.financing && Array.isArray(data.financing.items)) ? data.financing.items : [];
+    if (!opItems.length && !invItems.length && !finItems.length) {
+      out.innerHTML = '<div class="fin-table-wrap"><table class="fin-table"><tbody><tr><td class="fin-empty">No data for the selected criteria.</td></tr></tbody></table></div>';
+      return;
+    }
+    // Prefer server-computed nets so the FE never drifts from the BE math.
+    const netOp = parseFloat(data.operating?.net ?? 0) || 0;
+    const netInv = parseFloat(data.investing?.net ?? 0) || 0;
+    const netFin = parseFloat(data.financing?.net ?? 0) || 0;
+    const opening = parseFloat(data.opening_cash_balance ?? 0) || 0;
+    const closing = parseFloat(data.closing_cash_balance ?? (opening + netOp + netInv + netFin)) || 0;
     const netChange = netOp + netInv + netFin;
     out.innerHTML = `
       <div class="fin-form-wrap" style="max-width:680px;">
-        ${_repSection('Operating Activities', op)}
-        ${_repSection('Investing Activities', inv)}
-        ${_repSection('Financing Activities', fin)}
+        ${_repSection('Operating Activities', opItems)}
+        ${_repSection('Investing Activities', invItems)}
+        ${_repSection('Financing Activities', finItems)}
         ${_repGrandTotal('Net Change in Cash', netChange)}
         <div style="display:flex;justify-content:space-between;padding:4px 0;"><span>Opening Cash Balance</span><span>${_pvMoney(opening)}</span></div>
-        <div style="display:flex;justify-content:space-between;padding:4px 0;font-weight:bold;"><span>Closing Cash Balance</span><span>${_pvMoney(opening + netChange)}</span></div>
+        <div style="display:flex;justify-content:space-between;padding:4px 0;font-weight:bold;"><span>Closing Cash Balance</span><span>${_pvMoney(closing)}</span></div>
       </div>`;
   } else if (def.statementType === 'sce') {
     const adjustments = data.adjustments || [];
