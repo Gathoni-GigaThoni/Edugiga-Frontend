@@ -33,8 +33,8 @@ const REPORT_DEFS = {
   'reports-general-ledger': { title: 'General Ledger', api: 'general-ledger', dateMode: 'range',
     extra: [{ key: 'account_id', label: 'Account', type: 'account' }],
     columns: [['date','DATE'],['jv_number','JV NUMBER'],['description','DESCRIPTION'],['debit','DEBIT'],['credit','CREDIT'],['running_balance','RUNNING BALANCE']] },
-  'reports-trial-balance': { title: 'Trial Balance', api: 'trial-balance', dateMode: 'range',
-    columns: [['number','NUMBER'],['account_name','ACCOUNT NAME'],['account_type','TYPE'],['debits','DEBIT'],['credits','CREDIT']], totals: true },
+  'reports-trial-balance': { title: 'Trial Balance', api: 'trial-balance', dateMode: 'asof',
+    columns: [['number','NUMBER'],['account_name','ACCOUNT NAME'],['account_type','TYPE'],['debit_balance','DEBIT'],['credit_balance','CREDIT']], totals: true },
   'reports-cash-book': { title: 'Cash Book', api: 'cash-book', dateMode: 'range',
     extra: [{ key: 'bank_account_id', label: 'Bank Account', type: 'account' }],
     columns: [['date','DATE'],['description','DESCRIPTION'],['reference','REFERENCE'],['debit','DEBIT'],['credit','CREDIT'],['balance','BALANCE']] },
@@ -298,8 +298,8 @@ function _repRenderTrialBalance(def, data) {
   const bodyRows = rows.map(r => `<tr>${cols.map(([k]) => `<td>${_repCell(r[k])}</td>`).join('')}</tr>`).join('');
   const totalsRow = cols.map(([k], i) => {
     if (i === 0) return `<td><strong>TOTAL</strong></td>`;
-    if (k === 'debits') return `<td><strong>${_pvMoney(data.total_debits)}</strong></td>`;
-    if (k === 'credits') return `<td><strong>${_pvMoney(data.total_credits)}</strong></td>`;
+    if (k === 'debit_balance') return `<td><strong>${_pvMoney(data.total_debits)}</strong></td>`;
+    if (k === 'credit_balance') return `<td><strong>${_pvMoney(data.total_credits)}</strong></td>`;
     return `<td></td>`;
   }).join('');
 
@@ -325,8 +325,18 @@ function _repRenderTrialBalance(def, data) {
 function _repRenderLedgerLines(def, data) {
   const out = document.getElementById('rep-output');
   const rows = (data && Array.isArray(data.lines)) ? data.lines : [];
+  // Cash Book carries a standard box header (opening / receipts / payments
+  // / closing). GL doesn't; the header renders only when the fields exist.
+  const hasBoxHeader = data && data.opening_balance !== undefined;
+  const boxHeaderHtml = hasBoxHeader ? `
+    <div class="fin-form-wrap" style="max-width:520px;margin-bottom:14px;">
+      <div style="display:flex;justify-content:space-between;padding:4px 0;"><span>Opening Balance</span><span>${_pvMoney(data.opening_balance)}</span></div>
+      <div style="display:flex;justify-content:space-between;padding:4px 0;"><span>Total Receipts (DR)</span><span>${_pvMoney(data.total_receipts)}</span></div>
+      <div style="display:flex;justify-content:space-between;padding:4px 0;"><span>Total Payments (CR)</span><span>${_pvMoney(data.total_payments)}</span></div>
+      <div style="display:flex;justify-content:space-between;padding:6px 0;font-weight:bold;border-top:2px solid #2c3e50;"><span>Closing Balance</span><span>${_pvMoney(data.closing_balance)}</span></div>
+    </div>` : '';
   if (!rows.length) {
-    out.innerHTML = '<div class="fin-table-wrap"><table class="fin-table"><tbody><tr><td class="fin-empty">No data for the selected criteria.</td></tr></tbody></table></div>';
+    out.innerHTML = boxHeaderHtml + '<div class="fin-table-wrap"><table class="fin-table"><tbody><tr><td class="fin-empty">No line activity for the selected criteria.</td></tr></tbody></table></div>';
     return;
   }
   const cols = [
@@ -363,7 +373,7 @@ function _repRenderLedgerLines(def, data) {
     if (k === 'credit') return `<td><strong>${_pvMoney(totalCr)}</strong></td>`;
     return '<td></td>';
   }).join('');
-  out.innerHTML = `
+  out.innerHTML = boxHeaderHtml + `
     <div class="fin-table-wrap"><table class="fin-table">
       <thead><tr>${cols.map(([,label]) => `<th>${_finEsc(label)}</th>`).join('')}</tr></thead>
       <tbody>${bodyRows}</tbody>
@@ -453,21 +463,57 @@ function _repRenderStatement(def, data) {
         ${_repGrandTotal('Closing Net Assets / Equity', closing)}
       </div>`;
   } else if (def.statementType === 'bank') {
-    const bookBalance = data.book_balance ?? 0;
-    const depositsInTransit = data.deposits_in_transit ?? 0;
-    const outstandingCheques = data.outstanding_cheques ?? 0;
-    const adjustedBook = data.adjusted_book_balance ?? (bookBalance + depositsInTransit - outstandingCheques);
-    const bankStatement = data.bank_statement_balance ?? 0;
-    const variance = data.variance ?? (adjustedBook - bankStatement);
-    out.innerHTML = `
-      <div class="fin-form-wrap" style="max-width:560px;">
+    // Accountant-standard four-corner reconciliation. Both sides adjust
+    // toward the same true cash figure:
+    //   adjusted_book       = book − unbooked_charges + unbooked_credits
+    //   adjusted_statement  = statement + deposits_in_transit − outstanding_cheques
+    // Pre-2026-08-15 the FE math applied statement-side items to the
+    // book side, which was silently wrong but latent because bank rec
+    // never returned real data. Now that the BE is populated, this
+    // renderer computes the correct arithmetic AND prefers the
+    // server-computed values so FE/BE can't drift.
+    const bookBalance         = parseFloat(data.book_balance ?? 0) || 0;
+    const unbookedCharges     = parseFloat(data.unbooked_bank_charges ?? 0) || 0;
+    const unbookedCredits     = parseFloat(data.unbooked_bank_credits ?? 0) || 0;
+    const depositsInTransit   = parseFloat(data.deposits_in_transit ?? 0) || 0;
+    const outstandingCheques  = parseFloat(data.outstanding_cheques ?? 0) || 0;
+    const bankStatement       = data.bank_statement_balance != null
+                                 ? parseFloat(data.bank_statement_balance) : null;
+    const adjustedBook        = data.adjusted_book_balance != null
+                                 ? parseFloat(data.adjusted_book_balance)
+                                 : (bookBalance - unbookedCharges + unbookedCredits);
+    const adjustedStatement   = data.adjusted_statement_balance != null
+                                 ? parseFloat(data.adjusted_statement_balance)
+                                 : (bankStatement != null ? bankStatement + depositsInTransit - outstandingCheques : null);
+    const variance            = data.variance != null
+                                 ? parseFloat(data.variance)
+                                 : (adjustedStatement != null ? adjustedBook - adjustedStatement : null);
+    const isReconciled        = data.is_reconciled === true || (variance != null && Math.abs(variance) < 0.005);
+    const warnings            = Array.isArray(data.warnings) ? data.warnings : [];
+
+    const warningBlock = warnings.length ? `
+      <div style="padding:10px 14px;border-radius:6px;border-left:3px solid #c99;background:#fff6f6;color:#844;font-size:0.85rem;margin-bottom:12px;">
+        ${warnings.map(w => `<div>• ${_finEsc(w)}</div>`).join('')}
+      </div>` : '';
+
+    const varianceColor = variance == null ? '#666' : (isReconciled ? '#1e7e34' : '#c0392b');
+    const varianceText = variance == null ? 'N/A (no statement balance)' : _pvMoney(variance);
+
+    out.innerHTML = warningBlock + `
+      <div class="fin-form-wrap" style="max-width:600px;">
+        <div style="font-weight:bold;color:#2c3e50;margin-bottom:6px;">Book side</div>
         <div style="display:flex;justify-content:space-between;padding:6px 0;"><span>Book Balance (from GL)</span><span>${_pvMoney(bookBalance)}</span></div>
-        <div style="display:flex;justify-content:space-between;padding:6px 0 6px 16px;"><span>Add: Deposits in Transit</span><span>${_pvMoney(depositsInTransit)}</span></div>
-        <div style="display:flex;justify-content:space-between;padding:6px 0 6px 16px;"><span>Less: Outstanding Cheques</span><span>${_pvMoney(outstandingCheques)}</span></div>
+        <div style="display:flex;justify-content:space-between;padding:4px 0 4px 16px;"><span>Less: Unbooked bank charges</span><span>(${_pvMoney(unbookedCharges)})</span></div>
+        <div style="display:flex;justify-content:space-between;padding:4px 0 4px 16px;"><span>Add: Unbooked bank credits</span><span>${_pvMoney(unbookedCredits)}</span></div>
         <div style="display:flex;justify-content:space-between;padding:6px 0;font-weight:bold;border-top:1px solid #ddd;"><span>Adjusted Book Balance</span><span>${_pvMoney(adjustedBook)}</span></div>
-        <div style="display:flex;justify-content:space-between;padding:6px 0;"><span>Bank Statement Balance</span><span>${_pvMoney(bankStatement)}</span></div>
-        <div style="display:flex;justify-content:space-between;padding:10px 0;font-weight:bold;font-size:1.05rem;border-top:2px solid #2c3e50;color:${Math.abs(variance) > 0.005 ? '#c0392b' : '#1e7e34'};">
-          <span>Variance</span><span>${_pvMoney(variance)}</span>
+        <div style="height:12px;"></div>
+        <div style="font-weight:bold;color:#2c3e50;margin-bottom:6px;">Statement side</div>
+        <div style="display:flex;justify-content:space-between;padding:6px 0;"><span>Bank Statement Balance</span><span>${bankStatement != null ? _pvMoney(bankStatement) : '<em>not available</em>'}</span></div>
+        <div style="display:flex;justify-content:space-between;padding:4px 0 4px 16px;"><span>Add: Deposits in transit</span><span>${_pvMoney(depositsInTransit)}</span></div>
+        <div style="display:flex;justify-content:space-between;padding:4px 0 4px 16px;"><span>Less: Outstanding cheques</span><span>(${_pvMoney(outstandingCheques)})</span></div>
+        <div style="display:flex;justify-content:space-between;padding:6px 0;font-weight:bold;border-top:1px solid #ddd;"><span>Adjusted Statement Balance</span><span>${adjustedStatement != null ? _pvMoney(adjustedStatement) : '<em>N/A</em>'}</span></div>
+        <div style="display:flex;justify-content:space-between;padding:10px 0;font-weight:bold;font-size:1.05rem;border-top:2px solid #2c3e50;color:${varianceColor};">
+          <span>${isReconciled ? 'Reconciled ✓' : 'Variance'}</span><span>${varianceText}</span>
         </div>
       </div>`;
   }
