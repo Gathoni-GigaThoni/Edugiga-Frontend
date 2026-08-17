@@ -507,8 +507,14 @@ function _pvPvFormHtml(v) {
     </div>`;
 }
 
+// Set only when editing a PV already linked to a supplier invoice — the
+// over-vouch pre-check (§3.2). null on the plain create form and on any PV
+// not yet linked to an invoice, where the guard doesn't apply.
+let _pvEditLinkedRemaining = null;
+
 async function loadPayablesPaymentVouchersAddView(container) {
   await _pvLoadLookups();
+  _pvEditLinkedRemaining = null;
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -590,6 +596,7 @@ async function loadPayablesPaymentVouchersEditView(container) {
   if (!res || !res.ok) { showToast('Could not load payment voucher.', 'error'); loadView('payables-payment-vouchers'); return; }
   const v = await res.json();
   if (v.status !== 'draft' && v.status !== 'submitted') { showToast('Only draft or submitted vouchers can be edited.', 'error'); loadView('payables-payment-vouchers'); return; }
+  _pvEditLinkedRemaining = null;
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -599,6 +606,7 @@ async function loadPayablesPaymentVouchersEditView(container) {
         </div>
       </div>
       <div class="fin-form-wrap">
+        <div id="pv-f-overvouch-panel"></div>
         ${_pvPvFormHtml(v)}
         <div class="fin-form-actions">
           <button class="fin-btn-outline" onclick="_pvPvPrint(${v.id})">Print</button>
@@ -607,10 +615,41 @@ async function loadPayablesPaymentVouchersEditView(container) {
         </div>
       </div>
     </div>`;
+  // Over-vouch pre-check (§3.2) — only applies once the voucher is already
+  // linked to a supplier invoice; excludes this PV itself from "already
+  // vouched" since editing its amount replaces its own contribution.
+  if (v.linked_supplier_invoice_id) {
+    const [invRes, allVouchers] = await Promise.all([
+      apiFetch(`${_PV_SI_API}/${v.linked_supplier_invoice_id}`),
+      _pvSiFetchAllVouchers(),
+    ]);
+    const inv = (invRes && invRes.ok) ? await invRes.json() : null;
+    if (inv) {
+      const otherVouchers = allVouchers.filter(ov => String(ov.linked_supplier_invoice_id) === String(inv.id) && String(ov.id) !== String(v.id));
+      const invoiceAmount = parseFloat(inv.amount) || 0;
+      const vouchedTotal = _pvSiVouchedTotal(otherVouchers);
+      const remaining = Math.max(invoiceAmount - vouchedTotal, 0);
+      _pvEditLinkedRemaining = remaining;
+      const panel = document.getElementById('pv-f-overvouch-panel');
+      if (panel) panel.innerHTML = `
+        <div style="background:#EEF3FA;border-left:3px solid var(--navy-400,#4A6FA5);border-radius:6px;padding:12px 16px;margin-bottom:16px;display:flex;gap:24px;">
+          <div><span style="color:#888;">Invoice Amount</span><br><strong>${_pvMoney(invoiceAmount)}</strong></div>
+          <div><span style="color:#888;">Already Vouched (other PVs)</span><br><strong>${_pvMoney(vouchedTotal)}</strong></div>
+          <div><span style="color:#888;">Remaining</span><br><strong>${_pvMoney(remaining)}</strong></div>
+        </div>`;
+    }
+  }
 }
 
 async function _pvPvSubmitEdit(id) {
   if (!_pvPvValidate()) return;
+  if (_pvEditLinkedRemaining != null) {
+    const amount = parseFloat(document.getElementById('pv-f-amount').value);
+    if (amount > _pvEditLinkedRemaining) {
+      document.getElementById('pv-f-amount-err').textContent = `Amount exceeds the remaining balance on the linked invoice (${_pvMoney(_pvEditLinkedRemaining)}).`;
+      return;
+    }
+  }
   try {
     const res = await apiFetch(`${_PV_PV_API}${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(_pvPvPayload()) });
     if (res && res.ok) { showToast('Payment voucher updated.', 'success'); loadView('payables-payment-vouchers'); }
@@ -883,11 +922,14 @@ async function _pvSiLoadVouchersMap() {
   });
   _pvSiInvoiceVouchersMap = map;
 }
-// Sum of an invoice's linked vouchers that still count toward settlement —
-// a rejected voucher never happened, so it's excluded from both the
-// "Already Vouched" total and the over-vouch pre-check.
+// Sum of an invoice's linked vouchers that still count toward settlement.
+// Matches the backend's vouched_total_for_invoice helper (§3.2/§3.4 of the
+// 2026-08-17 addendum): DRAFT/REJECTED/CANCELLED PVs never happened (or
+// haven't yet) and are excluded from both the "Already Vouched" total and
+// the over-vouch pre-check — only submitted/approved/awaiting_tendepay/paid
+// count as "live".
 function _pvSiVouchedTotal(vouchers) {
-  return (vouchers || []).filter(v => v.status !== 'rejected')
+  return (vouchers || []).filter(v => !['draft', 'rejected', 'cancelled'].includes(v.status))
     .reduce((s, v) => s + (parseFloat(v.amount) || 0), 0);
 }
 
@@ -1326,6 +1368,7 @@ function _pvSiGoPage(p, url) { _pvSiPage = p; _pvRenderSiTable(url); }
 
 function _pvSiFormHtml(inv) {
   return `
+    <div id="si-conflict-banner" style="display:none;margin-bottom:14px;padding:10px 14px;border-radius:6px;border-left:3px solid var(--coral-500);background:var(--coral-100);color:var(--coral-600);font-size:0.85rem;"></div>
     <div class="fin-form-grid-2">
       <div class="fin-form-group">
         <label class="fin-form-label">Supplier <span class="fin-required">*</span></label>
@@ -1412,11 +1455,24 @@ function _pvSiPayload() {
   };
 }
 // Surfaces the backend's expense_account_id 400 inline on that field
-// verbatim; any other error falls back to the generic toast.
+// verbatim; a 409 (duplicate supplier+invoice_number) shows a conflict
+// banner with a jump straight to the existing invoice — same pattern as
+// the class-store conflict in inventory.js. Any other error falls back to
+// the generic toast.
 async function _pvSiHandleSaveError(res) {
   const msg = await parseApiError(res);
   if (res.status === 400 && /expense_account_id/i.test(msg)) {
     document.getElementById('si-f-expense-err').textContent = msg;
+  } else if (res.status === 409) {
+    const banner = document.getElementById('si-conflict-banner');
+    const m = msg.match(/\(id=(\d+)\)/);
+    const existingId = m ? parseInt(m[1], 10) : null;
+    if (banner) {
+      banner.style.display = 'block';
+      banner.innerHTML = `${_finEsc(msg)}` + (existingId ? ` <a href="#" onclick="_pvSiOpenDetail(${existingId});return false;" style="color:var(--navy-700,#1B3057);font-weight:600;">Open existing invoice</a>` : '');
+    } else {
+      showToast(msg, 'error');
+    }
   } else {
     showToast('Error: ' + msg, 'error');
   }
@@ -2319,16 +2375,17 @@ async function loadPayablesImprestSurrendersView(container) {
       <div id="pv-isr-table-container"></div>
     </div>`;
   const rows = _pvIsSessionRecords.length === 0
-    ? `<tr><td colspan="4" class="fin-empty">No records found.</td></tr>`
+    ? `<tr><td colspan="5" class="fin-empty">No records found.</td></tr>`
     : _pvIsSessionRecords.map(s => `<tr>
         <td>Warrant #${s.imprest_warrant_id}</td>
         <td>${_pvMoney(s.amount_spent)}</td>
         <td>${_pvMoney(s.amount_returned)}</td>
         <td>${_pvDate(s.surrender_date)}</td>
+        <td>${s.journal_entry_id ? `<a href="#" onclick="_jeOpenDetail(${s.journal_entry_id});return false;">View JE</a>` : '—'}</td>
       </tr>`).join('');
   document.getElementById('pv-isr-table-container').innerHTML = `
     <div class="fin-table-wrap"><table class="fin-table">
-      <thead><tr><th>WARRANT REF</th><th>AMOUNT SPENT</th><th>AMOUNT SURRENDERED</th><th>DATE</th></tr></thead>
+      <thead><tr><th>WARRANT REF</th><th>AMOUNT SPENT</th><th>AMOUNT SURRENDERED</th><th>DATE</th><th>JOURNAL ENTRY</th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div>`;
 }
@@ -2370,6 +2427,12 @@ async function loadPayablesImprestSurrendersAddView(container) {
           <input type="date" id="isr-f-date" class="fin-form-input">
           <span class="fin-field-error" id="isr-f-date-err"></span>
         </div>
+        <div class="fin-form-group" id="isr-f-expense-wrap" style="display:none;">
+          <label class="fin-form-label">Expense Account <span class="fin-required">*</span></label>
+          <select id="isr-f-expense-account" class="fin-form-select"><option value="">Please Select</option>${_pvAccountOptions(null)}</select>
+          <span style="font-size:11px;color:var(--grey-500,#888);">Required when amount spent is greater than zero — the P&amp;L account the spend is charged to.</span>
+          <span class="fin-field-error" id="isr-f-expense-err"></span>
+        </div>
         <div class="fin-form-actions">
           <button class="fin-btn-teal" onclick="_pvIsrSubmitAdd()">Submit</button>
           <button class="fin-btn-cancel" onclick="loadView('payables-imprest-surrenders')">Cancel</button>
@@ -2383,6 +2446,8 @@ function _pvIsrRecalc() {
   const authorized = opt ? parseFloat(opt.dataset.amount || 0) : 0;
   const spent = parseFloat(document.getElementById('isr-f-spent').value) || 0;
   document.getElementById('isr-f-surrendered').value = Math.max(0, authorized - spent).toFixed(2);
+  const wrap = document.getElementById('isr-f-expense-wrap');
+  if (wrap) wrap.style.display = spent > 0 ? '' : 'none';
 }
 async function _pvIsrSubmitAdd() {
   let valid = true;
@@ -2397,19 +2462,35 @@ async function _pvIsrSubmitAdd() {
   const surrendered = parseFloat(document.getElementById('isr-f-surrendered').value);
   document.getElementById('isr-f-surrendered-err').textContent = (surrendered >= 0) ? '' : 'Required.';
   if (!(surrendered >= 0)) valid = false;
+  const expenseAccountEl = document.getElementById('isr-f-expense-account');
+  const expenseAccountId = expenseAccountEl.value ? parseInt(expenseAccountEl.value, 10) : null;
+  document.getElementById('isr-f-expense-err').textContent = '';
+  if (spent > 0 && !expenseAccountId) {
+    document.getElementById('isr-f-expense-err').textContent = 'Required when amount spent is greater than zero.';
+    valid = false;
+  }
   if (!valid) return;
   const payload = {
     imprest_warrant_id: parseInt(document.getElementById('isr-f-warrant').value, 10),
     amount_spent: spent,
     amount_returned: surrendered,
     surrender_date: document.getElementById('isr-f-date').value,
+    expense_account_id: spent > 0 ? expenseAccountId : null,
   };
   try {
     const res = await apiFetch(_PV_IS_API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     if (res && res.ok) {
+      const created = await res.json().catch(() => payload);
       showToast('Imprest surrender recorded.', 'success');
-      _pvIsSessionRecords.push(payload);
+      _pvIsSessionRecords.push(created);
       loadView('payables-imprest-surrenders');
-    } else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+    } else if (res) {
+      const msg = await parseApiError(res);
+      if (res.status === 400 && /expense_account_id/i.test(msg)) {
+        document.getElementById('isr-f-expense-err').textContent = msg;
+      } else {
+        showToast('Error: ' + msg, 'error');
+      }
+    }
   } catch (e) { showToast('Network error.', 'error'); }
 }
