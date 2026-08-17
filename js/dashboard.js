@@ -851,7 +851,7 @@ const FORM_VIEWS = new Set([
   'payables-expense-claims-add', 'payables-expense-claim-disbursements-add',
   'payables-petty-cash-applications-add', 'payables-petty-cash-disbursements-add',
   'payables-imprest-warrants-add', 'payables-imprest-disbursements-add', 'payables-imprest-surrenders-add',
-  'journal-entries-add', 'journal-entries-edit',
+  'journal-entries-add', 'journal-entries-edit', 'fiscal-years-add',
   // Tendepay
   'tendepay-import', 'tendepay-fund-loads', 'tendepay-fund-loads-upload', 'tendepay-reconciliation',
   // HR / Payroll
@@ -1103,7 +1103,9 @@ async function loadView(view) {
       loadFinPlaceholderView(main, 'Sub Groups'); break;
     case 'fin-fiscal-years':
       setActiveSidebarItem('sidebar-fin-fiscal'); openFinUtilitiesDropdown();
-      loadFinPlaceholderView(main, 'Fiscal Years'); break;
+      await loadFiscalYearsView(main); break;
+    case 'fiscal-years-add':
+      openFinUtilitiesDropdown(); await loadFiscalYearAddView(main); break;
     case 'fin-payment-modes':
       setActiveSidebarItem('sidebar-fin-pay-modes'); openFinUtilitiesDropdown();
       loadFinPlaceholderView(main, 'Payment Modes'); break;

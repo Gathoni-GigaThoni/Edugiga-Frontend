@@ -281,10 +281,11 @@ function _jeFormShellHtml(je) {
           </div>
           <div class="fin-form-group">
             <label class="fin-form-label">Date <span class="fin-required">*</span></label>
-            <input type="date" id="je-f-date" class="fin-form-input" value="${je?.entry_date || ''}">
+            <input type="date" id="je-f-date" class="fin-form-input" value="${je?.entry_date || ''}" onchange="_jeCheckLockedPeriod()">
             <span class="fin-field-error" id="je-f-date-err"></span>
           </div>
         </div>
+        <div id="je-lock-panel"></div>
       </div>
 
       <div class="fin-filter-section">
@@ -315,8 +316,48 @@ function _jeFormShellHtml(je) {
     </div>`;
 }
 
+// Locked-period guard (BE/FE Contract Addendum 2026-08-17 §1.9). Reads the
+// closed-FY cache from fiscal-years.js — if the picked entry_date falls on
+// or before a closed fiscal year's end_date, non-super-admins are blocked
+// from posting and super-admins must supply a written override reason.
+function _jeCheckLockedPeriod() {
+  const panel = document.getElementById('je-lock-panel');
+  const submitBtn = document.getElementById('je-submit-btn');
+  if (!panel) return;
+  const entryDate = document.getElementById('je-f-date').value;
+  const locking = _fyFindLockingYear(entryDate);
+  if (!locking) {
+    panel.innerHTML = '';
+    if (submitBtn) submitBtn.disabled = false;
+    return;
+  }
+  if (_isSuperAdmin()) {
+    panel.innerHTML = `
+      <div style="background:var(--gold-100,#fdf3d0);border-left:3px solid var(--gold-500,#C9A227);border-radius:6px;padding:12px 16px;margin-top:12px;color:#7a6110;">
+        This entry date falls within closed fiscal year <strong>${_finEsc(locking.code)}</strong> (${_pvDate(locking.end_date)}). Provide a written reason to override the lock:
+        <div class="fin-form-group" style="margin-top:10px;">
+          <textarea id="je-f-lock-reason" class="fin-form-textarea" rows="2" maxlength="400" oninput="_jeLockReasonChanged()"></textarea>
+          <span class="fin-field-error" id="je-f-lock-reason-err"></span>
+        </div>
+      </div>`;
+    _jeLockReasonChanged();
+  } else {
+    panel.innerHTML = `
+      <div style="background:var(--gold-100,#fdf3d0);border-left:3px solid var(--gold-500,#C9A227);border-radius:6px;padding:12px 16px;margin-top:12px;color:#7a6110;">
+        This entry date falls within closed fiscal year <strong>${_finEsc(locking.code)}</strong> (${_pvDate(locking.end_date)}). Posting to closed periods requires super-admin authorisation.
+      </div>`;
+    if (submitBtn) submitBtn.disabled = true;
+  }
+}
+function _jeLockReasonChanged() {
+  const submitBtn = document.getElementById('je-submit-btn');
+  const reason = (document.getElementById('je-f-lock-reason')?.value || '').trim();
+  if (submitBtn) submitBtn.disabled = reason.length < 3;
+}
+
 async function loadJournalEntryAddView(container) {
   await _pvLoadLookups();
+  await _fyLoadClosedCache();
   _jeDebitLines = [{ account_id: '', amount: '' }];
   _jeCreditLines = [{ account_id: '', amount: '' }];
   container.innerHTML = `
@@ -329,7 +370,7 @@ async function loadJournalEntryAddView(container) {
       </div>
       ${_jeFormShellHtml(null)}
       <div class="fin-form-actions">
-        <button class="fin-btn-teal" onclick="_jeSubmitAdd()">Submit</button>
+        <button class="fin-btn-teal" id="je-submit-btn" onclick="_jeSubmitAdd()">Submit</button>
         <button class="fin-btn-cancel" onclick="loadView('journal-entries')">Cancel</button>
       </div>
     </div>`;
@@ -363,7 +404,7 @@ function _jePayload() {
     ..._jeDebitLines.map((l, i) => ({ account_id: l.account_id, line_type: 'debit', amount: parseFloat(l.amount), line_order: i + 1 })),
     ..._jeCreditLines.map((l, i) => ({ account_id: l.account_id, line_type: 'credit', amount: parseFloat(l.amount), line_order: _jeDebitLines.length + i + 1 })),
   ];
-  return {
+  const payload = {
     ledger_id: parseInt(document.getElementById('je-f-ledger').value, 10),
     cost_center_id: parseInt(document.getElementById('je-f-cost-center').value, 10),
     currency: document.getElementById('je-f-currency').value.trim() || 'KES',
@@ -372,13 +413,24 @@ function _jePayload() {
     notes: document.getElementById('je-f-notes').value.trim() || null,
     lines,
   };
+  const lockReasonEl = document.getElementById('je-f-lock-reason');
+  if (lockReasonEl && lockReasonEl.value.trim()) payload.lock_override_reason = lockReasonEl.value.trim();
+  return payload;
 }
 async function _jeSubmitAdd() {
   if (!_jeValidate()) return;
   try {
     const res = await apiFetch(_JE_API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(_jePayload()) });
-    if (res && res.ok) { showToast('Journal entry created. Status: Draft.', 'success'); loadView('journal-entries'); }
-    else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+    if (res && res.ok) { showToast('Journal entry created. Status: Draft.', 'success'); loadView('journal-entries'); return; }
+    if (res && res.status === 409) {
+      // Backstop for a stale closed-FY cache — refresh it and surface the
+      // server's reason verbatim (§1.9).
+      await _fyLoadClosedCache(true);
+      showToast('Error: ' + await parseApiError(res), 'error');
+      _jeCheckLockedPeriod();
+      return;
+    }
+    if (res) showToast('Error: ' + await parseApiError(res), 'error');
   } catch (e) { showToast('Network error.', 'error'); }
 }
 
