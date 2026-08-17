@@ -356,6 +356,7 @@ function showDashboard() {
           <div class="flyout-module-body" id="flyout-body-asset-management" data-label="Assets" hidden>
             <ul id="asset-management-dropdown" class="dropdown-menu">
               <li id="sidebar-asset-fixed-assets" onclick="loadView('finance-fixed-assets')">Fixed Asset Register</li>
+              <li id="sidebar-asset-categories" onclick="loadView('assets-categories')">Categories</li>
             </ul>
           </div>
 
@@ -853,6 +854,7 @@ const FORM_VIEWS = new Set([
   'payables-petty-cash-applications-add', 'payables-petty-cash-disbursements-add',
   'payables-imprest-warrants-add', 'payables-imprest-disbursements-add', 'payables-imprest-surrenders-add',
   'journal-entries-add', 'journal-entries-edit', 'fiscal-years-add', 'finance-je-review',
+  'assets-categories-add', 'assets-categories-edit',
   // Tendepay
   'tendepay-import', 'tendepay-fund-loads', 'tendepay-fund-loads-upload', 'tendepay-reconciliation',
   // HR / Payroll
@@ -1221,6 +1223,15 @@ async function loadView(view) {
     case 'finance-fixed-assets':
       setActiveSidebarItem('sidebar-asset-fixed-assets');
       await loadFixedAssetsView(main); break;
+    case 'assets-categories':
+      setActiveSidebarItem('sidebar-asset-categories');
+      await loadAssetCategoriesView(main); break;
+    case 'assets-categories-add':
+      setActiveSidebarItem('sidebar-asset-categories');
+      await loadAssetCategoriesAddView(main); break;
+    case 'assets-categories-edit':
+      setActiveSidebarItem('sidebar-asset-categories');
+      await loadAssetCategoriesEditView(main); break;
     case 'utilities': showPlaceholder(main, 'Utilities'); break;
     case 'finance-setup':
       setActiveSidebarItem('sidebar-fin-setup-main'); openFinSetupDropdown();
