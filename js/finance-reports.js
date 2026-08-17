@@ -63,10 +63,20 @@ const REPORT_DEFS = {
   'reports-fee-reminder': { title: 'Fee Reminder', api: 'fee-reminder', dateMode: 'asof',
     extra: [{ key: 'days_overdue_threshold', label: 'Days Overdue Threshold', type: 'number', default: 30 }],
     columns: [['student_name','STUDENT NAME'],['student_id','STUDENT ID'],['invoice_ref','INVOICE REF'],['amount_due','AMOUNT DUE'],['days_overdue','DAYS OVERDUE']] },
-  'reports-students-arrears-analysis': { title: 'Students Arrears Analysis', api: 'aged-student-debtors', dateMode: 'asof',
-    columns: [['student_name','STUDENT NAME'],['student_id','STUDENT ID'],['current','CURRENT'],['30_days','30 DAYS'],['60_days','60 DAYS'],['90_days','90+ DAYS'],['total','TOTAL']] },
-  'reports-customer-aging-analysis': { title: 'Customer Aging Analysis', api: 'customer-aging-analysis', dateMode: 'asof',
-    columns: [['student_name','STUDENT NAME'],['student_id','STUDENT ID'],['current','CURRENT'],['30_days','30 DAYS'],['60_days','60 DAYS'],['90_days','90+ DAYS'],['total','TOTAL']] },
+  // Both endpoints return the identical AgedStudentDebtorsReport shape
+  // (confirmed via openapi.json: customer-aging-analysis's 200 response
+  // literally $refs AgedStudentDebtorsReport, the same schema as
+  // aged-student-debtors) — an object with current/30_days/60_days/90_plus
+  // arrays of PER-INVOICE rows (entity_id/invoice_id/invoice_number/
+  // student_id/amount_due/amount_paid/balance/due_date/days_overdue, no
+  // student_name field) plus a totals object, NOT a flat array of
+  // per-student rows with student_name/current/30_days/etc as the old
+  // `columns` here assumed. That mismatch meant _repRenderTable's generic
+  // data.data/items/results/rows/lines extraction never found an array to
+  // render, so both reports silently showed "No data" regardless of
+  // whether unpaid invoices existed. See _repRenderAgedStudentDebtors.
+  'reports-students-arrears-analysis': { title: 'Students Arrears Analysis', api: 'aged-student-debtors', dateMode: 'asof', layout: 'aged-student-debtors' },
+  'reports-customer-aging-analysis': { title: 'Customer Aging Analysis', api: 'customer-aging-analysis', dateMode: 'asof', layout: 'aged-student-debtors' },
   'reports-student-prepayment-analysis': { title: 'Student Prepayment Analysis', api: 'student-prepayment-analysis', dateMode: 'asof',
     columns: [['student_name','STUDENT NAME'],['student_id','STUDENT ID'],['credit_balance','CREDIT BALANCE']] },
   'reports-aged-payables': { title: 'Aged Payables', api: 'aged-payables', dateMode: 'asof',
@@ -120,6 +130,7 @@ async function loadFinanceReportView(container, routeKey) {
   if (!def) { container.innerHTML = '<p>Unknown report.</p>'; return; }
   await _pvLoadLookups();
   if ((def.extra || []).some(f => f.type === 'class')) await _rcvLoadLookups({ classes: true });
+  if (def.layout === 'aged-student-debtors') await _rcvLoadLookups({ students: true });
 
   let dateInputsHtml = '';
   if (def.dateMode === 'range') {
@@ -222,6 +233,7 @@ async function _repGenerate(routeKey) {
     else if (def.layout === 'notes') _repRenderNotes(def, data);
     else if (def.layout === 'fixed-assets-schedule') _repRenderFixedAssetsSchedule(data);
     else if (def.layout === 'consolidated-student-debtors') _repRenderConsolidatedDebtors(data);
+    else if (def.layout === 'aged-student-debtors') _repRenderAgedStudentDebtors(data);
     else if (def.layout === 'student-fee-analysis') _repRenderStudentFeeAnalysis(data);
     else if (def.layout === 'ap-reconciliation') _repRenderApReconciliation(def, data);
     else if (routeKey === 'reports-supplier-statements') _repRenderSupplierStatement(def, data);
@@ -757,6 +769,65 @@ function _repFaScheduleGlReconciliationHtml(gl) {
         ${(gl.drift_categories||[]).length ? `<div style="margin-top:8px;font-size:0.85rem;color:#666;">Drift in: ${gl.drift_categories.map(c=>_finEsc(c)).join(', ')}</div>` : ''}
       </div>
     </details>`;
+}
+
+// ── Aged Student Debtors (Students Arrears Analysis / Customer Aging
+// Analysis — same backend shape, see the REPORT_DEFS comment above). The
+// response buckets PER-INVOICE rows into current/30_days/60_days/90_plus
+// arrays; this aggregates them into one row per student (matching what
+// both report titles promise) while keeping each bucket's invoice numbers
+// visible underneath its amount so a variance can be traced to a specific
+// unpaid invoice. Totals footer reads data.totals directly so it never
+// drifts from the backend's own sums. Same digit-prefixed-key trap as
+// Consolidated Student Debtors below — bucket keys are read with bracket
+// access throughout, never dot access.
+const _REP_AGING_BUCKETS = [['current','CURRENT'],['30_days','30 DAYS'],['60_days','60 DAYS'],['90_plus','90+ DAYS']];
+function _repRenderAgedStudentDebtors(data) {
+  const out = document.getElementById('rep-output');
+  const buckets = _REP_AGING_BUCKETS.map(([k]) => k);
+  const anyRows = buckets.some(k => (data[k] || []).length > 0);
+  if (!data || !anyRows) { out.innerHTML = '<div class="fin-table-wrap"><table class="fin-table"><tbody><tr><td class="fin-empty">No unpaid student invoices for the selected criteria.</td></tr></tbody></table></div>'; return; }
+
+  // student_id -> { current: [rows], 30_days: [rows], ... }
+  const byStudent = {};
+  buckets.forEach(bucket => {
+    (data[bucket] || []).forEach(row => {
+      const sid = row.student_id;
+      if (!byStudent[sid]) byStudent[sid] = { current: [], '30_days': [], '60_days': [], '90_plus': [] };
+      byStudent[sid][bucket].push(row);
+    });
+  });
+
+  const bucketCell = (rows) => {
+    const sum = rows.reduce((s, r) => s + (parseFloat(r.balance) || 0), 0);
+    if (!rows.length) return `<td>${_pvMoney(0)}</td>`;
+    const refs = rows.map(r => _finEsc(r.invoice_number)).join(', ');
+    return `<td>${_pvMoney(sum)}<br><span style="font-size:0.75rem;color:#888;">${refs}</span></td>`;
+  };
+
+  const studentIds = Object.keys(byStudent).sort((a, b) => _rcvStudentName(a).localeCompare(_rcvStudentName(b)));
+  const bodyRows = studentIds.map(sid => {
+    const b = byStudent[sid];
+    const total = buckets.reduce((s, k) => s + b[k].reduce((s2, r) => s2 + (parseFloat(r.balance) || 0), 0), 0);
+    return `<tr>
+      <td>${_finEsc(_rcvStudentName(sid))}</td>
+      <td>#${_finEsc(String(sid))}</td>
+      ${buckets.map(k => bucketCell(b[k])).join('')}
+      <td><strong>${_pvMoney(total)}</strong></td>
+    </tr>`;
+  }).join('');
+
+  const totals = data.totals || {};
+  out.innerHTML = `
+    <div class="fin-table-wrap"><table class="fin-table">
+      <thead><tr><th>STUDENT NAME</th><th>STUDENT ID</th>${_REP_AGING_BUCKETS.map(([,l]) => `<th>${l}</th>`).join('')}<th>TOTAL</th></tr></thead>
+      <tbody>${bodyRows}</tbody>
+      <tfoot><tr class="fin-tfoot-total">
+        <td colspan="2"><strong>TOTALS</strong></td>
+        ${_REP_AGING_BUCKETS.map(([k]) => `<td><strong>${_pvMoney(totals[k])}</strong></td>`).join('')}
+        <td><strong>${_pvMoney(totals.grand_total)}</strong></td>
+      </tr></tfoot>
+    </table></div>`;
 }
 
 // ── Consolidated Student Debtors (2026-07-21 addendum §8.1) ─────────────────
