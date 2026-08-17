@@ -3548,8 +3548,23 @@ async function _tpConfirmImport() {
   });
   if (res && res.ok) {
     const data = await res.json();
-    const jvNumbers = (data.posted_journal_entries || []).map(j => (typeof j === 'object' ? (j.jv_number || j.id) : j)).join(', ');
-    let msg = `Batch confirmed. ${confirmedMatches.length} vouchers paid, ${(data.posted_journal_entries || []).length} journal entries posted.${jvNumbers ? ' (' + jvNumbers + ')' : ''}`;
+    // TendepayConfirmResult is a discriminated union on `mode` (addendum
+    // §8.3) — supplier responses carry posted_journal_entries[], but
+    // payroll/contractor responses don't have that field at all, they carry
+    // voucher_journal_entry_id + paid_line_count + run_completed instead.
+    // Reading posted_journal_entries unconditionally silently produced "0
+    // journal entries posted" on every payroll/contractor confirm even
+    // though a voucher JE had in fact posted.
+    let msg;
+    if (data.mode === 'payroll' || data.mode === 'contractor') {
+      const runNoun = data.mode === 'payroll' ? 'payroll run' : 'contractor run';
+      msg = `Batch confirmed. ${data.paid_line_count ?? confirmedMatches.length} line(s) paid`;
+      if (data.voucher_journal_entry_id) msg += `, voucher JE #${data.voucher_journal_entry_id} posted`;
+      msg += data.run_completed ? `. The ${runNoun} is now fully paid.` : `. The ${runNoun} still has unpaid lines.`;
+    } else {
+      const jvNumbers = (data.posted_journal_entries || []).map(j => (typeof j === 'object' ? (j.jv_number || j.id) : j)).join(', ');
+      msg = `Batch confirmed. ${confirmedMatches.length} vouchers paid, ${(data.posted_journal_entries || []).length} journal entries posted.${jvNumbers ? ' (' + jvNumbers + ')' : ''}`;
+    }
     if (data.charges_journal_entry_id) msg += ` Transaction Charges JE #${data.charges_journal_entry_id}.`;
     showToast(msg, 'success');
     loadView('tendepay-import-history');
@@ -3838,8 +3853,18 @@ async function _tpHistConfirmBatch(batch, modalWrap) {
 
   if (res && res.ok) {
     const data = await res.json();
-    const jvNumbers = (data.posted_journal_entries || []).map(j => (typeof j === 'object' ? (j.jv_number || j.id) : j)).join(', ');
-    let msg = `Batch confirmed. ${confirmedMatches.length} vouchers paid, ${(data.posted_journal_entries || []).length} journal entries posted.${jvNumbers ? ' (' + jvNumbers + ')' : ''}`;
+    // Discriminated union on `mode` (§8.3) — see the matching comment on
+    // _tpConfirmImport above.
+    let msg;
+    if (data.mode === 'payroll' || data.mode === 'contractor') {
+      const runNoun = data.mode === 'payroll' ? 'payroll run' : 'contractor run';
+      msg = `Batch confirmed. ${data.paid_line_count ?? confirmedMatches.length} line(s) paid`;
+      if (data.voucher_journal_entry_id) msg += `, voucher JE #${data.voucher_journal_entry_id} posted`;
+      msg += data.run_completed ? `. The ${runNoun} is now fully paid.` : `. The ${runNoun} still has unpaid lines.`;
+    } else {
+      const jvNumbers = (data.posted_journal_entries || []).map(j => (typeof j === 'object' ? (j.jv_number || j.id) : j)).join(', ');
+      msg = `Batch confirmed. ${confirmedMatches.length} vouchers paid, ${(data.posted_journal_entries || []).length} journal entries posted.${jvNumbers ? ' (' + jvNumbers + ')' : ''}`;
+    }
     if (data.charges_journal_entry_id) msg += ` Transaction Charges JE #${data.charges_journal_entry_id}.`;
     showToast(msg, 'success');
     modalWrap.remove();
