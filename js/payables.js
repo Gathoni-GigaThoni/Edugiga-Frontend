@@ -989,7 +989,14 @@ async function loadPayablesSupplierInvoicesView(container) {
       {label:'Invoice Date', key:'invoice_date', fmt:v=>_pvDate(v)},
       {label:'Due Date',     key:'due_date', fmt:v=>_pvDate(v)},
       {label:'Amount',       key:'amount', fmt:v=>_pvMoney(v)},
-      {label:'Expense Account', key:'expense_account_id', fmt:v=>v?_pvAccountName(v):'—'},
+      {label:'Expense Account', key:'expense_account_id', hideWhen: inv=>(inv.lines||[]).length>0, fmt:v=>v?_pvAccountName(v):'—'},
+      {label:'Lines', key:'lines', hideWhen: inv=>!(inv.lines||[]).length, fullWidth:true, fmt:(v)=>`
+        <table class="fin-li-table"><thead><tr><th>#</th><th>Description</th><th>Qty</th><th>Unit Price</th><th>Line Total</th><th>Expense Account</th></tr></thead>
+        <tbody>${(v||[]).map(l=>`<tr>
+          <td>${l.line_no}</td><td>${_finEsc(l.description)}</td><td>${l.quantity}</td>
+          <td>${_pvMoney(l.unit_price)}</td><td>${_pvMoney(l.line_total)}</td>
+          <td>${_finEsc(_pvAccountName(l.expense_account_id))}</td>
+        </tr>`).join('')}</tbody></table>`},
       {label:'Status',       key:'status', fmt:v=>_siStatusBadge(v)},
       {label:'Accrual Journal Entry', key:'accrual_journal_entry_id', fmt:(v,inv)=>{
         if (!v) return '—';
@@ -1420,8 +1427,143 @@ function _pvSiFormHtml(inv) {
     </div>`;
 }
 
+// ── Multi-line / From-GRN modes (§5.6, Add form only — Edit stays the
+// legacy single-account shape). SupplierInvoiceCreate requires exactly one
+// of expense_account_id / lines / goods_received_note_id (confirmed via
+// openapi.json), so the three modes are mutually exclusive on submit too.
+let _pvSiMode = 'single';
+let _pvSiLines = [];
+let _pvSiGrns = [];
+
+function _pvSiHeaderFieldsHtml(prefix) {
+  return `
+    <div class="fin-form-grid-2">
+      <div class="fin-form-group">
+        <label class="fin-form-label">Supplier <span class="fin-required">*</span></label>
+        <select id="${prefix}-supplier" class="fin-form-select"><option value="">Please Select</option>${_pvSupplierOptions(null)}</select>
+        <span class="fin-field-error" id="${prefix}-supplier-err"></span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Invoice Number <span class="fin-required">*</span></label>
+        <input type="text" id="${prefix}-invoice-number" class="fin-form-input">
+        <span class="fin-field-error" id="${prefix}-invno-err"></span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Invoice Date <span class="fin-required">*</span></label>
+        <input type="date" id="${prefix}-invoice-date" class="fin-form-input">
+        <span class="fin-field-error" id="${prefix}-invdate-err"></span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Due Date <span class="fin-required">*</span></label>
+        <input type="date" id="${prefix}-due-date" class="fin-form-input">
+        <span class="fin-field-error" id="${prefix}-duedate-err"></span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">eTIMS Number</label>
+        <input type="text" id="${prefix}-etims" class="fin-form-input">
+      </div>
+    </div>`;
+}
+function _pvSiValidateHeader(prefix) {
+  let valid = true;
+  [[`${prefix}-supplier`,`${prefix}-supplier-err`],[`${prefix}-invoice-number`,`${prefix}-invno-err`],
+    [`${prefix}-invoice-date`,`${prefix}-invdate-err`],[`${prefix}-due-date`,`${prefix}-duedate-err`]].forEach(([fid,eid]) => {
+    const v = document.getElementById(fid).value.trim();
+    document.getElementById(eid).textContent = v ? '' : 'This field is required.';
+    if (!v) valid = false;
+  });
+  return valid;
+}
+function _pvSiHeaderPayload(prefix) {
+  return {
+    supplier_id: parseInt(document.getElementById(`${prefix}-supplier`).value, 10),
+    invoice_number: document.getElementById(`${prefix}-invoice-number`).value.trim(),
+    invoice_date: document.getElementById(`${prefix}-invoice-date`).value,
+    due_date: document.getElementById(`${prefix}-due-date`).value,
+    etims_invoice_number: document.getElementById(`${prefix}-etims`).value.trim() || null,
+  };
+}
+
+function _pvSiLineRowHtml(line, idx) {
+  return `<tr>
+    <td>${idx + 1}</td>
+    <td><input type="text" class="fin-li-input" value="${_finEsc(line.description)}" oninput="_pvSiUpdateLine(${idx},'description',this.value)"></td>
+    <td><input type="number" class="fin-li-input" step="0.001" min="0.001" value="${line.quantity}" oninput="_pvSiUpdateLine(${idx},'quantity',this.value)"></td>
+    <td><input type="number" class="fin-li-input" step="0.01" min="0" value="${line.unit_price}" oninput="_pvSiUpdateLine(${idx},'unit_price',this.value)"></td>
+    <td>${_pvMoney((parseFloat(line.quantity)||0) * (parseFloat(line.unit_price)||0))}</td>
+    <td><select class="fin-li-input" onchange="_pvSiUpdateLine(${idx},'expense_account_id',this.value)"><option value="">Please Select</option>${_pvAccountOptions(line.expense_account_id)}</select></td>
+    <td><button class="fin-btn-li-rm" ${_pvSiLines.length<=1?'disabled':''} onclick="_pvSiRemoveLine(${idx})">&times;</button></td>
+  </tr>`;
+}
+function _pvSiRenderLines() {
+  const el = document.getElementById('si-lines-body');
+  if (el) el.innerHTML = _pvSiLines.map((l,i) => _pvSiLineRowHtml(l,i)).join('');
+  _pvSiRecalcLines();
+}
+function _pvSiAddLine() { _pvSiLines.push({ description:'', quantity:'1', unit_price:'', expense_account_id:'' }); _pvSiRenderLines(); }
+function _pvSiRemoveLine(idx) { if (_pvSiLines.length<=1) return; _pvSiLines.splice(idx,1); _pvSiRenderLines(); }
+function _pvSiUpdateLine(idx, key, val) { _pvSiLines[idx][key] = key==='expense_account_id' ? (val?parseInt(val,10):'') : val; _pvSiRenderLines(); }
+function _pvSiRecalcLines() {
+  const sum = _pvSiLines.reduce((s,l) => s + (parseFloat(l.quantity)||0) * (parseFloat(l.unit_price)||0), 0);
+  const totalEl = document.getElementById('si-lines-total');
+  if (totalEl) totalEl.textContent = _pvMoney(sum);
+  const amountEl = document.getElementById('si-ml-amount');
+  if (amountEl) amountEl.value = sum.toFixed(2);
+  return sum;
+}
+
+async function _pvSiLoadGrns() {
+  const res = await apiFetch(`${API_BASE}/inventory/grn/?status=approved`);
+  _pvSiGrns = (res && res.ok) ? _toArray(await res.json()) : [];
+}
+
+function _pvSiModeBodyHtml() {
+  if (_pvSiMode === 'multiline') {
+    return `
+      ${_pvSiHeaderFieldsHtml('si-ml')}
+      <div class="fin-form-group">
+        <label class="fin-form-label">Amount (KES) <span class="fin-required">*</span></label>
+        <input type="number" id="si-ml-amount" class="fin-form-input" step="0.01" min="0.01" disabled>
+        <span style="font-size:11px;color:var(--grey-500,#888);">Auto-computed as the sum of line totals below.</span>
+      </div>
+      <div class="fin-section-label">Lines</div>
+      <table class="fin-li-table">
+        <thead><tr><th>#</th><th>Description</th><th>Qty</th><th>Unit Price</th><th>Line Total</th><th>Expense Account</th><th></th></tr></thead>
+        <tbody id="si-lines-body"></tbody>
+      </table>
+      <a href="#" style="color:#2db3b3;font-weight:600;text-decoration:underline;font-size:0.88rem;" onclick="_pvSiAddLine();return false;">+ Add Line</a>
+      <div style="margin-top:10px;font-weight:bold;">Total: <span id="si-lines-total">KES 0.00</span></div>
+      <span class="fin-field-error" id="si-lines-err"></span>`;
+  }
+  if (_pvSiMode === 'grn') {
+    return `
+      ${_pvSiHeaderFieldsHtml('si-grn')}
+      <div class="fin-form-group">
+        <label class="fin-form-label">Goods Received Note <span class="fin-required">*</span></label>
+        <select id="si-grn-note" class="fin-form-select">
+          <option value="">Please Select</option>
+          ${_pvSiGrns.map(g => `<option value="${g.id}">${_finEsc(g.grn_number)} — ${_finEsc(_pvSupplierName(g.supplier_id))} (${_pvMoney(g.total_value)})</option>`).join('')}
+        </select>
+        <span style="font-size:11px;color:var(--grey-500,#888);">Lines are derived from the GRN's received items.</span>
+        <span class="fin-field-error" id="si-grn-note-err"></span>
+      </div>`;
+  }
+  return _pvSiFormHtml(null);
+}
+
+function _pvSiSwitchMode(mode) {
+  _pvSiMode = mode;
+  document.querySelectorAll('.si-mode-btn').forEach(b => b.classList.toggle('fin-btn-teal', b.dataset.mode === mode));
+  document.querySelectorAll('.si-mode-btn').forEach(b => b.classList.toggle('fin-btn-outline', b.dataset.mode !== mode));
+  const body = document.getElementById('si-mode-body');
+  if (body) body.innerHTML = _pvSiModeBodyHtml();
+  if (mode === 'multiline') { _pvSiLines = [{ description:'', quantity:'1', unit_price:'', expense_account_id:'' }]; _pvSiRenderLines(); }
+}
+
 async function loadPayablesSupplierInvoicesAddView(container) {
   await _pvLoadLookups();
+  await _pvSiLoadGrns();
+  _pvSiMode = 'single';
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -1431,7 +1573,12 @@ async function loadPayablesSupplierInvoicesAddView(container) {
         </div>
       </div>
       <div class="fin-form-wrap">
-        ${_pvSiFormHtml(null)}
+        <div style="display:flex;gap:8px;margin-bottom:16px;">
+          <button class="si-mode-btn fin-btn-teal" data-mode="single" onclick="_pvSiSwitchMode('single')">Single Account</button>
+          <button class="si-mode-btn fin-btn-outline" data-mode="multiline" onclick="_pvSiSwitchMode('multiline')">Multi-line</button>
+          <button class="si-mode-btn fin-btn-outline" data-mode="grn" onclick="_pvSiSwitchMode('grn')">From GRN</button>
+        </div>
+        <div id="si-mode-body">${_pvSiModeBodyHtml()}</div>
         <div class="fin-form-actions">
           <button class="fin-btn-teal" onclick="_pvSiSubmitAdd()">Submit</button>
           <button class="fin-btn-cancel" onclick="loadView('payables-supplier-invoices')">Cancel</button>
@@ -1473,8 +1620,9 @@ function _pvSiPayload() {
 // the generic toast.
 async function _pvSiHandleSaveError(res) {
   const msg = await parseApiError(res);
-  if (res.status === 400 && /expense_account_id/i.test(msg)) {
-    document.getElementById('si-f-expense-err').textContent = msg;
+  const expenseErrEl = document.getElementById('si-f-expense-err');
+  if (res.status === 400 && /expense_account_id/i.test(msg) && expenseErrEl) {
+    expenseErrEl.textContent = msg;
   } else if (res.status === 409) {
     const banner = document.getElementById('si-conflict-banner');
     const m = msg.match(/\(id=(\d+)\)/);
@@ -1489,10 +1637,46 @@ async function _pvSiHandleSaveError(res) {
     showToast('Error: ' + msg, 'error');
   }
 }
+function _pvSiMultilinePayload() {
+  if (!_pvSiValidateHeader('si-ml')) return null;
+  const sum = _pvSiRecalcLines();
+  let linesValid = true;
+  _pvSiLines.forEach(l => {
+    if (!l.description.trim() || !(parseFloat(l.quantity) > 0) || !(parseFloat(l.unit_price) >= 0) || !l.expense_account_id) linesValid = false;
+  });
+  document.getElementById('si-lines-err').textContent = linesValid ? '' : 'Every line needs a description, quantity > 0, unit price and expense account.';
+  if (!linesValid) return null;
+  if (!(sum > 0)) { document.getElementById('si-lines-err').textContent = 'Line totals must sum to more than 0.'; return null; }
+  return {
+    ..._pvSiHeaderPayload('si-ml'),
+    amount: sum,
+    lines: _pvSiLines.map((l, i) => ({
+      line_no: i + 1, description: l.description.trim(),
+      quantity: l.quantity, unit_price: l.unit_price,
+      line_total: ((parseFloat(l.quantity)||0) * (parseFloat(l.unit_price)||0)).toFixed(2),
+      expense_account_id: l.expense_account_id,
+    })),
+  };
+}
+function _pvSiGrnPayload() {
+  if (!_pvSiValidateHeader('si-grn')) return null;
+  const grnId = document.getElementById('si-grn-note').value;
+  document.getElementById('si-grn-note-err').textContent = grnId ? '' : 'This field is required.';
+  if (!grnId) return null;
+  const grn = _pvSiGrns.find(g => String(g.id) === grnId);
+  return {
+    ..._pvSiHeaderPayload('si-grn'),
+    amount: grn ? grn.total_value : 0,
+    goods_received_note_id: parseInt(grnId, 10),
+  };
+}
 async function _pvSiSubmitAdd() {
-  if (!_pvSiValidate()) return;
+  let payload;
+  if (_pvSiMode === 'multiline') { payload = _pvSiMultilinePayload(); if (!payload) return; }
+  else if (_pvSiMode === 'grn') { payload = _pvSiGrnPayload(); if (!payload) return; }
+  else { if (!_pvSiValidate()) return; payload = _pvSiPayload(); }
   try {
-    const res = await apiFetch(_PV_SI_API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(_pvSiPayload()) });
+    const res = await apiFetch(_PV_SI_API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     if (res && res.ok) { showToast('Supplier invoice created successfully.', 'success'); loadView('payables-supplier-invoices'); }
     else if (res) await _pvSiHandleSaveError(res);
   } catch (e) { showToast('Network error.', 'error'); }
