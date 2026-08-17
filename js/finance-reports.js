@@ -490,6 +490,14 @@ function _repRenderStatement(def, data) {
                                  : (adjustedStatement != null ? adjustedBook - adjustedStatement : null);
     const isReconciled        = data.is_reconciled === true || (variance != null && Math.abs(variance) < 0.005);
     const warnings            = Array.isArray(data.warnings) ? data.warnings : [];
+    // The addendum's "reconciling_items[]" isn't the live field name — the
+    // deployed BankReconciliationReport carries the same reconciling-item
+    // detail as unbooked_bank_lines[] (BankReconciliationLineRow: line_id,
+    // posting_date, description, reference, amount), confirmed via
+    // openapi.json. Rendering that field since it's what's actually on the
+    // wire.
+    const reconcilingItems    = Array.isArray(data.unbooked_bank_lines) ? data.unbooked_bank_lines : [];
+    const gatewayBalance      = data.gateway_balance != null ? parseFloat(data.gateway_balance) : null;
 
     const warningBlock = warnings.length ? `
       <div style="padding:10px 14px;border-radius:6px;border-left:3px solid #c99;background:#fff6f6;color:#844;font-size:0.85rem;margin-bottom:12px;">
@@ -498,6 +506,23 @@ function _repRenderStatement(def, data) {
 
     const varianceColor = variance == null ? '#666' : (isReconciled ? '#1e7e34' : '#c0392b');
     const varianceText = variance == null ? 'N/A (no statement balance)' : _pvMoney(variance);
+
+    const reconcilingItemsBlock = reconcilingItems.length ? `
+      <div style="margin-top:16px;">
+        <div style="font-weight:bold;color:#2c3e50;margin-bottom:6px;">Reconciling Items</div>
+        <div class="fin-table-wrap"><table class="fin-table">
+          <thead><tr><th>DATE</th><th>DESCRIPTION</th><th>REFERENCE</th><th>AMOUNT</th></tr></thead>
+          <tbody>${reconcilingItems.map(li => `<tr>
+            <td>${_pvDate(li.posting_date)}</td>
+            <td>${_finEsc(li.description || '')}</td>
+            <td>${_finEsc(li.reference || '—')}</td>
+            <td>${_pvMoney(li.amount)}</td>
+          </tr>`).join('')}</tbody>
+        </table></div>
+      </div>` : '';
+
+    const gatewayBalanceBlock = gatewayBalance != null ? `
+      <div style="display:flex;justify-content:space-between;padding:6px 0;margin-top:8px;border-top:1px solid #ddd;"><span>Gateway Balance</span><span>${_pvMoney(gatewayBalance)}</span></div>` : '';
 
     out.innerHTML = warningBlock + `
       <div class="fin-form-wrap" style="max-width:600px;">
@@ -515,7 +540,9 @@ function _repRenderStatement(def, data) {
         <div style="display:flex;justify-content:space-between;padding:10px 0;font-weight:bold;font-size:1.05rem;border-top:2px solid #2c3e50;color:${varianceColor};">
           <span>${isReconciled ? 'Reconciled ✓' : 'Variance'}</span><span>${varianceText}</span>
         </div>
-      </div>`;
+        ${gatewayBalanceBlock}
+      </div>
+      ${reconcilingItemsBlock}`;
   }
 }
 
@@ -696,7 +723,40 @@ function _repRenderFixedAssetsSchedule(data) {
       </tr></thead>
       <tbody>${rows}</tbody>
       <tfoot>${totalsRow}</tfoot>
-    </table></div>`;
+    </table></div>
+    ${_repFaScheduleGlReconciliationHtml(data.gl_reconciliation)}`;
+}
+
+// GL Reconciliation Summary — embedded on the FAS report (§10.5 of the
+// 2026-08-17 addendum, confirmed live as FixedAssetGLReconciliationSummary
+// on FixedAssetScheduleReport.gl_reconciliation). Collapsible, default open.
+function _repFaScheduleGlReconciliationHtml(gl) {
+  if (!gl) return '';
+  const costDrift = parseFloat(gl.total_cost_drift) || 0;
+  const accumDrift = parseFloat(gl.total_accumulated_drift) || 0;
+  const pendingCap = parseFloat(gl.total_pending_capitalisation) || 0;
+  const driftColor = (v) => v === 0 ? '#1e7e34' : 'var(--coral-600,#c0392b)';
+  return `
+    <details open style="margin-top:20px;">
+      <summary style="cursor:pointer;font-weight:bold;color:#2c3e50;margin-bottom:8px;">GL Reconciliation Summary</summary>
+      <div class="fin-form-wrap" style="max-width:520px;margin-top:8px;">
+        <div style="display:flex;justify-content:space-between;padding:6px 0;">
+          <span>Register vs GL</span>
+          <span style="color:${gl.is_gl_balanced ? '#1e7e34' : 'var(--coral-600,#c0392b)'};font-weight:600;">${gl.is_gl_balanced ? 'Balanced ✓' : 'Out of balance'}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:6px 0;">
+          <span>Total Cost Drift</span><span style="color:${driftColor(costDrift)};">${_pvMoney(costDrift)}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:6px 0;">
+          <span>Total Accumulated Depreciation Drift</span><span style="color:${driftColor(accumDrift)};">${_pvMoney(accumDrift)}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:6px 0;">
+          <span>Pending Capitalisation</span><span>${_pvMoney(pendingCap)}</span>
+        </div>
+        ${gl.has_pending_drafts ? `<div style="margin-top:8px;padding:8px 12px;border-radius:6px;background:var(--gold-100);border-left:3px solid var(--gold-500);color:#7a6110;font-size:0.85rem;">There are pending draft assets awaiting confirmation — see Assets &rsaquo; Fixed Assets &rsaquo; Pending Confirmation.</div>` : ''}
+        ${(gl.drift_categories||[]).length ? `<div style="margin-top:8px;font-size:0.85rem;color:#666;">Drift in: ${gl.drift_categories.map(c=>_finEsc(c)).join(', ')}</div>` : ''}
+      </div>
+    </details>`;
 }
 
 // ── Consolidated Student Debtors (2026-07-21 addendum §8.1) ─────────────────
