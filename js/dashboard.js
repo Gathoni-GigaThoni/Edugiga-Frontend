@@ -1081,7 +1081,10 @@ async function loadView(view) {
       loadFinPlaceholderView(main, 'Deposit Slip'); break;
     case 'fin-credit-notes':
       setActiveSidebarItem('sidebar-fin-credit'); openFinReceivablesDropdown();
-      loadFinPlaceholderView(main, 'Credit Notes'); break;
+      await loadFinCreditNotesView(main); break;
+    case 'fin-credit-notes-add':
+      openFinReceivablesDropdown();
+      await loadCreditNoteAddView(main); break;
     case 'fin-coop-unmatched':
       setActiveSidebarItem('sidebar-fin-coop'); openFinReceivablesDropdown();
       await loadCoopUnmatchedView(main); break;

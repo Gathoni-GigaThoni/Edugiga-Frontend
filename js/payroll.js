@@ -952,13 +952,36 @@ function _prOpenDeductionsModal(lineId) {
     // gross/remaining baked in — "remaining" isn't sent, so it's derived here.
     const capTwoThirds = parseFloat(deductions.cap_two_thirds) || 0;
     const capUsed = parseFloat(deductions.cap_used) || 0;
+    // P0-11 (2026-08-17 addendum §F.1) — optional split of cap_used into
+    // statutory/non-statutory. Only present on runs calculated after the
+    // fix; legacy snapshots keep the single combined cap_used figure, so
+    // this renders additively rather than replacing it.
+    const hasSplit = deductions.cap_used_statutory != null || deductions.cap_used_non_statutory != null;
     const capRow = `
       <div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:14px;font-size:0.85rem;">
         <div><span style="color:#888;">Gross Pay</span><br><strong>${_pvMoney(snapshot.gross)}</strong></div>
         <div><span style="color:#888;">Two-thirds Cap</span><br><strong>${_pvMoney(deductions.cap_two_thirds)}</strong></div>
         <div><span style="color:#888;">Statutory Used</span><br><strong>${_pvMoney(deductions.cap_used)}</strong></div>
         <div><span style="color:#888;">Remaining for Non-Statutory</span><br><strong>${_pvMoney(capTwoThirds - capUsed)}</strong></div>
-      </div>`;
+      </div>
+      ${hasSplit ? `
+      <div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:14px;font-size:0.85rem;padding:10px 14px;background:#f7f7f7;border-radius:6px;">
+        <div><span style="color:#888;">&#8618; Statutory (of cap used)</span><br><strong>${_pvMoney(deductions.cap_used_statutory || 0)}</strong></div>
+        <div><span style="color:#888;">&#8618; Non-Statutory (of cap used)</span><br><strong>${_pvMoney(deductions.cap_used_non_statutory || 0)}</strong></div>
+      </div>` : ''}`;
+    // P0-11 §F.3 — employer-side statutory contributions, also optional/additive.
+    const employerParts = [
+      ['NSSF', snapshot.nssf?.employer],
+      ['SHIF', snapshot.shif?.employer],
+      ['Housing Levy', snapshot.housing_levy?.employer],
+    ].filter(([, v]) => v != null);
+    const employerRow = employerParts.length ? `
+      <div style="margin-bottom:14px;">
+        <div style="font-size:0.78rem;color:#888;margin-bottom:6px;">Employer Contributions</div>
+        <div style="display:flex;gap:20px;flex-wrap:wrap;font-size:0.85rem;">
+          ${employerParts.map(([label, v]) => `<div><span style="color:#888;">${label}</span><br><strong>${_pvMoney(v)}</strong></div>`).join('')}
+        </div>
+      </div>` : '';
     const rows = (deductions.items || []).slice().sort((a, b) => (a.line_order ?? 0) - (b.line_order ?? 0)).map(l => {
       let note;
       if (l.skipped) note = `<span style="color:var(--coral-600,#B03030);background:var(--coral-100,#fbe3e3);padding:2px 8px;border-radius:10px;font-size:0.72rem;font-weight:600;">Skipped &mdash; ${_finEsc(l.skip_reason || '')}</span>`;
@@ -976,7 +999,7 @@ function _prOpenDeductionsModal(lineId) {
         <td>${note}</td>
       </tr>`;
     }).join('') || `<tr><td colspan="5" class="fin-empty">No deduction lines.</td></tr>`;
-    body = `${capRow}<div class="fin-table-wrap"><table class="fin-li-table">
+    body = `${capRow}${employerRow}<div class="fin-table-wrap"><table class="fin-li-table">
       <thead><tr><th>Category</th><th>Priority</th><th>Scheduled</th><th>Applied</th><th>Note</th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div>`;

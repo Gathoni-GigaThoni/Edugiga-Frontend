@@ -3260,19 +3260,13 @@ async function _tpRenderStep1() {
       </table></div>
       ${notesHtml}
       <div class="fin-form-group" style="margin-top:16px;">
-        <label class="fin-form-label">Mode</label>
+        <label class="fin-form-label">Import Mode</label>
         <div style="display:flex;gap:20px;margin-top:6px;">
           <label><input type="radio" name="tp-import-mode" value="supplier" checked onchange="_tpToggleImportMode()"> Supplier payments</label>
           <label><input type="radio" name="tp-import-mode" value="payroll" onchange="_tpToggleImportMode()"> Payroll return statement</label>
+          <label><input type="radio" name="tp-import-mode" value="contractor" onchange="_tpToggleImportMode()"> Contractor return statement</label>
         </div>
         <div id="tp-import-payroll-run-wrap" style="display:none;margin-top:10px;">
-          <div class="fin-form-group" style="max-width:340px;">
-            <label class="fin-form-label">Run Type</label>
-            <div style="display:flex;gap:20px;margin-top:6px;">
-              <label><input type="radio" name="tp-run-type" value="payroll" checked onchange="_tpToggleRunType()"> Payroll</label>
-              <label><input type="radio" name="tp-run-type" value="contractor" onchange="_tpToggleRunType()"> Contractor</label>
-            </div>
-          </div>
           <div class="fin-form-group" style="max-width:340px;">
             <label class="fin-form-label" id="tp-import-run-label">Payroll Run <span class="fin-required">*</span></label>
             <select id="tp-import-payroll-run" class="fin-form-select"><option value="">Please Select</option></select>
@@ -3290,17 +3284,17 @@ async function _tpRenderStep1() {
   await _tpLoadPayrollRunOptions();
 }
 
+// Contractor promoted to a top-level peer of Supplier/Payroll (2026-08-18
+// addendum alignment) — was previously a nested "Run Type" sub-radio under
+// Payroll. All downstream logic already keyed off the resolved mode string
+// ('supplier'|'payroll'|'contractor'), so this is a pure UI reshuffle.
 function _tpToggleImportMode() {
   const mode = (document.querySelector('input[name="tp-import-mode"]:checked') || {}).value || 'supplier';
   const wrap = document.getElementById('tp-import-payroll-run-wrap');
-  if (wrap) wrap.style.display = mode === 'payroll' ? 'block' : 'none';
-}
-
-function _tpToggleRunType() {
-  const runType = (document.querySelector('input[name="tp-run-type"]:checked') || {}).value || 'payroll';
+  if (wrap) wrap.style.display = (mode === 'payroll' || mode === 'contractor') ? 'block' : 'none';
   const label = document.getElementById('tp-import-run-label');
-  if (label) label.innerHTML = (runType === 'contractor' ? 'Contractor Run' : 'Payroll Run') + ' <span class="fin-required">*</span>';
-  _tpLoadPayrollRunOptions();
+  if (label) label.innerHTML = (mode === 'contractor' ? 'Contractor Run' : 'Payroll Run') + ' <span class="fin-required">*</span>';
+  if (mode === 'payroll' || mode === 'contractor') _tpLoadPayrollRunOptions();
 }
 
 async function _tpLoadPayrollRunOptions() {
@@ -3309,7 +3303,7 @@ async function _tpLoadPayrollRunOptions() {
   const hint = document.getElementById('tp-import-run-hint');
   const setHint = (msg, isError) => { if (hint) hint.innerHTML = msg ? `<span style="color:${isError ? 'var(--coral-600,#c0392b)' : '#888'};">${_finEsc(msg)}</span>` : ''; };
   setHint('');
-  const runType = (document.querySelector('input[name="tp-run-type"]:checked') || {}).value || 'payroll';
+  const runType = (document.querySelector('input[name="tp-import-mode"]:checked') || {}).value || 'payroll';
   try {
     // The run's own `status` is NOT a reliable signal for "ready to import" —
     // confirmed live: a run can sit at `approved` indefinitely while its
@@ -3363,12 +3357,10 @@ async function _tpDownloadTemplate() {
 async function _tpUploadFile(input) {
   const file = input.files[0];
   if (!file) return;
-  const outerMode = (document.querySelector('input[name="tp-import-mode"]:checked') || {}).value || 'supplier';
-  const runType = (document.querySelector('input[name="tp-run-type"]:checked') || {}).value || 'payroll';
-  const mode = outerMode === 'payroll' ? runType : outerMode; // 'supplier' | 'payroll' | 'contractor'
+  const mode = (document.querySelector('input[name="tp-import-mode"]:checked') || {}).value || 'supplier'; // 'supplier' | 'payroll' | 'contractor'
   const runId = document.getElementById('tp-import-payroll-run')?.value || '';
-  if (outerMode === 'payroll' && !runId) {
-    showToast(`${runType === 'contractor' ? 'Contractor Run' : 'Payroll Run'} is required for a payroll return statement.`, 'error');
+  if ((mode === 'payroll' || mode === 'contractor') && !runId) {
+    showToast(`${mode === 'contractor' ? 'Contractor Run' : 'Payroll Run'} is required for a ${mode === 'contractor' ? 'contractor' : 'payroll'} return statement.`, 'error');
     return;
   }
   const statusEl = document.getElementById('tp-upload-status');

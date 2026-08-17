@@ -79,8 +79,15 @@ const REPORT_DEFS = {
   'reports-customer-aging-analysis': { title: 'Customer Aging Analysis', api: 'customer-aging-analysis', dateMode: 'asof', layout: 'aged-student-debtors' },
   'reports-student-prepayment-analysis': { title: 'Student Prepayment Analysis', api: 'student-prepayment-analysis', dateMode: 'asof',
     columns: [['student_name','STUDENT NAME'],['student_id','STUDENT ID'],['credit_balance','CREDIT BALANCE']] },
-  'reports-aged-payables': { title: 'Aged Payables', api: 'aged-payables', dateMode: 'asof',
-    columns: [['supplier_name','SUPPLIER NAME'],['current','CURRENT'],['30_days','30 DAYS'],['60_days','60 DAYS'],['90_days','90+ DAYS'],['total','TOTAL']] },
+  // Same bucketed-report shape as aged-student-debtors, confirmed via
+  // openapi.json ($ref AgedPayablesReport): current/30_days/60_days/
+  // 90_plus/disputed arrays of AgingSupplierRow (per-invoice, keyed by
+  // supplier_id — no supplier_name field) plus a totals object and a
+  // separate total_disputed. The old flat columns guess (supplier_name/
+  // current/30_days/.../total) never matched a real array, so this report
+  // silently showed "No data" the same way the two aged-student-debtors
+  // reports did before their dedicated renderer — see _repRenderAgedPayables.
+  'reports-aged-payables': { title: 'Aged Payables', api: 'aged-payables', dateMode: 'asof', layout: 'aged-payables' },
   // AP sub-ledger vs GL control account. The comment this replaced claimed
   // "Always 200s — configured/is_reconciled drive the render, not the HTTP
   // status" — that no longer matches the live schema: the endpoint's date
@@ -234,6 +241,7 @@ async function _repGenerate(routeKey) {
     else if (def.layout === 'fixed-assets-schedule') _repRenderFixedAssetsSchedule(data);
     else if (def.layout === 'consolidated-student-debtors') _repRenderConsolidatedDebtors(data);
     else if (def.layout === 'aged-student-debtors') _repRenderAgedStudentDebtors(data);
+    else if (def.layout === 'aged-payables') _repRenderAgedPayables(data);
     else if (def.layout === 'student-fee-analysis') _repRenderStudentFeeAnalysis(data);
     else if (def.layout === 'ap-reconciliation') _repRenderApReconciliation(def, data);
     else if (routeKey === 'reports-supplier-statements') _repRenderSupplierStatement(def, data);
@@ -828,6 +836,81 @@ function _repRenderAgedStudentDebtors(data) {
         <td><strong>${_pvMoney(totals.grand_total)}</strong></td>
       </tr></tfoot>
     </table></div>`;
+}
+
+// ── Aged Payables (2026-08-15 M3 refactor) — same bucketed-report shape as
+// aged-student-debtors, keyed by supplier_id/invoice_id instead of
+// student_id. `disputed[]`/`total_disputed` are new: still real liabilities,
+// shown in their own section rather than folded into the aged buckets
+// (AgingTotals.grand_total has no disputed component server-side).
+function _repRenderAgedPayables(data) {
+  const out = document.getElementById('rep-output');
+  const buckets = _REP_AGING_BUCKETS.map(([k]) => k);
+  const disputedRows = (data && data.disputed) || [];
+  const anyRows = buckets.some(k => (data?.[k] || []).length > 0) || disputedRows.length > 0;
+  if (!data || !anyRows) { out.innerHTML = '<div class="fin-table-wrap"><table class="fin-table"><tbody><tr><td class="fin-empty">No unpaid supplier invoices for the selected criteria.</td></tr></tbody></table></div>'; return; }
+
+  // supplier_id -> { current: [rows], 30_days: [rows], ... }
+  const bySupplier = {};
+  buckets.forEach(bucket => {
+    (data[bucket] || []).forEach(row => {
+      const sid = row.supplier_id;
+      if (!bySupplier[sid]) bySupplier[sid] = { current: [], '30_days': [], '60_days': [], '90_plus': [] };
+      bySupplier[sid][bucket].push(row);
+    });
+  });
+
+  const bucketCell = (rows) => {
+    const sum = rows.reduce((s, r) => s + (parseFloat(r.balance) || 0), 0);
+    if (!rows.length) return `<td>${_pvMoney(0)}</td>`;
+    const refs = rows.map(r => _finEsc(r.invoice_number)).join(', ');
+    return `<td>${_pvMoney(sum)}<br><span style="font-size:0.75rem;color:#888;">${refs}</span></td>`;
+  };
+
+  const supplierIds = Object.keys(bySupplier).sort((a, b) => _pvSupplierName(a).localeCompare(_pvSupplierName(b)));
+  const bodyRows = supplierIds.map(sid => {
+    const b = bySupplier[sid];
+    const total = buckets.reduce((s, k) => s + b[k].reduce((s2, r) => s2 + (parseFloat(r.balance) || 0), 0), 0);
+    return `<tr>
+      <td>${_finEsc(_pvSupplierName(sid))}</td>
+      ${buckets.map(k => bucketCell(b[k])).join('')}
+      <td><strong>${_pvMoney(total)}</strong></td>
+    </tr>`;
+  }).join('');
+
+  const totals = data.totals || {};
+  const disputedSection = disputedRows.length ? (() => {
+    const bySupplierDisputed = {};
+    disputedRows.forEach(row => {
+      const sid = row.supplier_id;
+      (bySupplierDisputed[sid] = bySupplierDisputed[sid] || []).push(row);
+    });
+    const dRows = Object.keys(bySupplierDisputed).sort((a, b) => _pvSupplierName(a).localeCompare(_pvSupplierName(b))).map(sid => {
+      const rows = bySupplierDisputed[sid];
+      const sum = rows.reduce((s, r) => s + (parseFloat(r.balance) || 0), 0);
+      const refs = rows.map(r => _finEsc(r.invoice_number)).join(', ');
+      return `<tr><td>${_finEsc(_pvSupplierName(sid))}</td><td>${_pvMoney(sum)}<br><span style="font-size:0.75rem;color:#888;">${refs}</span></td></tr>`;
+    }).join('');
+    return `
+      <div class="fin-section-label" style="margin-top:20px;color:var(--coral-600);">Disputed — contested, still a liability, excluded from the aging totals above</div>
+      <div class="fin-table-wrap"><table class="fin-table">
+        <thead><tr><th>SUPPLIER NAME</th><th>DISPUTED BALANCE</th></tr></thead>
+        <tbody>${dRows}</tbody>
+        <tfoot><tr class="fin-tfoot-total"><td><strong>TOTAL DISPUTED</strong></td><td><strong>${_pvMoney(data.total_disputed)}</strong></td></tr></tfoot>
+      </table></div>`;
+  })() : '';
+
+  out.innerHTML = `
+    <div class="fin-table-wrap"><table class="fin-table">
+      <thead><tr><th>SUPPLIER NAME</th>${_REP_AGING_BUCKETS.map(([,l]) => `<th>${l}</th>`).join('')}<th>TOTAL</th></tr></thead>
+      <tbody>${bodyRows}</tbody>
+      <tfoot><tr class="fin-tfoot-total">
+        <td><strong>TOTALS</strong></td>
+        ${_REP_AGING_BUCKETS.map(([k]) => `<td><strong>${_pvMoney(totals[k])}</strong></td>`).join('')}
+        <td><strong>${_pvMoney(totals.grand_total)}</strong></td>
+      </tr></tfoot>
+    </table></div>
+    ${disputedSection}`;
 }
 
 // ── Consolidated Student Debtors (2026-07-21 addendum §8.1) ─────────────────

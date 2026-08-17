@@ -1252,7 +1252,10 @@ async function loadInvoiceDetailView(container, invoiceId) {
              <button class="fin-btn-cancel" onclick="rcvInvoiceCancel(${inv.id})">Cancel Invoice</button>`;
   } else if (status==='issued'||status==='partially_paid'||status==='overdue') {
     actions=`${canAdd('finance.receivables') ? `<button class="fin-btn-teal" onclick="openRecordPaymentModal(${inv.id},${bal})">Record Payment</button>` : ''}
-             <button class="fin-btn-cancel" onclick="rcvInvoiceCancel(${inv.id})">Cancel Invoice</button>`;
+             <button class="fin-btn-cancel" onclick="rcvInvoiceCancel(${inv.id})">Cancel Invoice</button>
+             ${canAdd('finance.receivables') ? `<button class="fin-btn-outline" onclick="window._cnPresetInvoiceId=${inv.id};loadView('fin-credit-notes-add');">Issue Credit Note</button>` : ''}`;
+  } else if (status==='paid') {
+    actions=`${canAdd('finance.receivables') ? `<button class="fin-btn-outline" onclick="window._cnPresetInvoiceId=${inv.id};loadView('fin-credit-notes-add');">Issue Credit Note</button>` : ''}`;
   }
   container.innerHTML = `
     <div class="fin-page">
