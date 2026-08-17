@@ -227,6 +227,7 @@ function showDashboard() {
               </li>
               <li onclick="loadView('cancellations')">Cancellations</li>
               <li onclick="loadView('journal-entries')">Journal Entries</li>
+              <li id="sidebar-fin-je-review" onclick="loadView('finance-je-review')">JE Review</li>
               <li class="dropdown">
                 ${flyoutGroupHeader('Utilities', 'fin-utilities-dropdown')}
                 <ul id="fin-utilities-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('fin-utilities-dropdown')}">
@@ -851,7 +852,7 @@ const FORM_VIEWS = new Set([
   'payables-expense-claims-add', 'payables-expense-claim-disbursements-add',
   'payables-petty-cash-applications-add', 'payables-petty-cash-disbursements-add',
   'payables-imprest-warrants-add', 'payables-imprest-disbursements-add', 'payables-imprest-surrenders-add',
-  'journal-entries-add', 'journal-entries-edit', 'fiscal-years-add',
+  'journal-entries-add', 'journal-entries-edit', 'fiscal-years-add', 'finance-je-review',
   // Tendepay
   'tendepay-import', 'tendepay-fund-loads', 'tendepay-fund-loads-upload', 'tendepay-reconciliation',
   // HR / Payroll
@@ -1214,6 +1215,9 @@ async function loadView(view) {
       await loadJournalEntryAddView(main); break;
     case 'journal-entries-edit':
       await loadJournalEntryEditView(main); break;
+    case 'finance-je-review':
+      setActiveSidebarItem('sidebar-fin-je-review');
+      await loadJeReviewView(main); break;
     case 'finance-fixed-assets':
       setActiveSidebarItem('sidebar-asset-fixed-assets');
       await loadFixedAssetsView(main); break;

@@ -471,3 +471,227 @@ async function _jeSubmitEdit(id) {
     else if (res) showToast('Error: ' + await parseApiError(res), 'error');
   } catch (e) { showToast('Network error.', 'error'); }
 }
+
+// ==================== PART C — JE REVIEW ====================
+// BE/FE Contract Addendum 2026-08-17 §9. Draft-JE review queue —
+// depreciation, disposal, and manual DRAFTs land here (source is a fixed
+// 3-value enum on the live backend: depreciation | disposal | manual, not
+// an open-ended list per the addendum's own hedge). Reuses the
+// finance.journal_entries permission scope.
+
+const _JE_DRAFTS_API = `${API_BASE}/journal-entries/drafts`;
+let _jeReviewData = [];
+let _jeReviewSelected = new Set();
+let _jeReviewFilters = { source: '', start_date: '', end_date: '' };
+
+async function loadJeReviewView(container) {
+  await _pvLoadLookups();
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">JE Review</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; JE Review</div>
+      </div>
+      <div class="fin-filter-section">
+        <div class="fin-form-grid-2">
+          <div class="fin-form-group">
+            <label class="fin-form-label">Source</label>
+            <select id="jer-f-source" class="fin-form-select" onchange="_jeReviewFilterChanged()">
+              <option value="">All</option>
+              <option value="depreciation">Depreciation</option>
+              <option value="disposal">Disposal</option>
+              <option value="manual">Manual</option>
+            </select>
+          </div>
+          <div class="fin-form-grid-2">
+            <div class="fin-form-group">
+              <label class="fin-form-label">Start Date</label>
+              <input type="date" id="jer-f-start" class="fin-form-input" onchange="_jeReviewFilterChanged()">
+            </div>
+            <div class="fin-form-group">
+              <label class="fin-form-label">End Date</label>
+              <input type="date" id="jer-f-end" class="fin-form-input" onchange="_jeReviewFilterChanged()">
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="jer-bulk-bar" style="display:none;background:var(--navy-900,#0D2137);color:#fff;border-radius:6px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;">
+        <span id="jer-bulk-count">0 selected</span>
+        <button class="fin-btn-teal" onclick="_jeReviewBulkApprove()">Bulk Approve</button>
+      </div>
+      <div id="jer-table-container"></div>
+    </div>`;
+  await _jeReviewLoad();
+}
+
+function _jeReviewFilterChanged() {
+  _jeReviewFilters.source = document.getElementById('jer-f-source').value;
+  _jeReviewFilters.start_date = document.getElementById('jer-f-start').value;
+  _jeReviewFilters.end_date = document.getElementById('jer-f-end').value;
+  _jeReviewLoad();
+}
+
+async function _jeReviewLoad() {
+  renderSkeletonRows('jer-table-container', 7);
+  const params = new URLSearchParams();
+  if (_jeReviewFilters.source) params.set('source', _jeReviewFilters.source);
+  if (_jeReviewFilters.start_date) params.set('start_date', _jeReviewFilters.start_date);
+  if (_jeReviewFilters.end_date) params.set('end_date', _jeReviewFilters.end_date);
+  const res = await apiFetch(`${_JE_DRAFTS_API}?${params.toString()}`);
+  _jeReviewData = (res && res.ok) ? _toArray(await res.json()) : [];
+  _jeReviewSelected.clear();
+  _jeReviewRenderTable();
+}
+
+function _jeReviewRenderTable() {
+  const rows = _jeReviewData.length === 0
+    ? `<tr><td colspan="7" class="fin-empty">No draft entries found.</td></tr>`
+    : _jeReviewData.map(je => `<tr>
+        <td><input type="checkbox" ${_jeReviewSelected.has(je.id) ? 'checked' : ''} onchange="_jeReviewToggle(${je.id},this.checked)"></td>
+        <td><a href="#" onclick="_jeReviewOpenDetail(${je.id});return false;">${_finEsc(je.jv_number)}</a></td>
+        <td>${_finEsc(je.reference)}</td>
+        <td>${_pvDate(je.entry_date)}</td>
+        <td>${je.line_count}</td>
+        <td>${_pvMoney(je.total_amount)}</td>
+        <td>Staff #${je.created_by}</td>
+      </tr>`).join('');
+  document.getElementById('jer-table-container').innerHTML = `
+    <div class="fin-table-wrap"><table class="fin-table">
+      <thead><tr><th></th><th>JV NUMBER</th><th>REFERENCE</th><th>DATE</th><th>LINES</th><th>AMOUNT</th><th>CREATED BY</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+  _jeReviewUpdateBulkBar();
+}
+
+function _jeReviewToggle(id, checked) {
+  if (checked) _jeReviewSelected.add(id); else _jeReviewSelected.delete(id);
+  _jeReviewUpdateBulkBar();
+}
+function _jeReviewUpdateBulkBar() {
+  const bar = document.getElementById('jer-bulk-bar');
+  const count = document.getElementById('jer-bulk-count');
+  if (!bar || !count) return;
+  bar.style.display = _jeReviewSelected.size > 0 ? 'flex' : 'none';
+  count.textContent = `${_jeReviewSelected.size} selected`;
+}
+
+async function _jeReviewBulkApprove() {
+  const ids = Array.from(_jeReviewSelected);
+  if (ids.length === 0) return;
+  await _jeReviewApproveIds(ids);
+}
+
+async function _jeReviewApproveIds(ids) {
+  const res = await apiFetch(`${API_BASE}/journal-entries/bulk-approve`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ entry_ids: ids }),
+  });
+  if (!res) return;
+  if (!res.ok) { showToast('Error: ' + await parseApiError(res), 'error'); return; }
+  const result = await res.json();
+  const approvedCount = (result.approved || []).length;
+  const skipped = result.skipped || [];
+  showToast(`${approvedCount} approved, ${skipped.length} skipped.`, skipped.length > 0 ? 'error' : 'success');
+  if (skipped.length > 0) _jeReviewShowSkippedModal(skipped);
+  document.getElementById('je-detail-modal-overlay')?.remove();
+  await _jeReviewLoad();
+}
+
+function _jeReviewShowSkippedModal(skipped) {
+  const byId = {};
+  _jeReviewData.forEach(je => { byId[je.id] = je.jv_number; });
+  const rows = skipped.map(s => `<tr><td>${_finEsc(byId[s.id] || ('#' + s.id))}</td><td>${_finEsc(s.reason || '')}</td></tr>`).join('');
+  const wrap = document.createElement('div');
+  wrap.id = 'jer-skipped-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:10000;';
+  wrap.innerHTML = `
+    <div style="background:white;border-radius:8px;padding:24px;width:520px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 14px;color:#2c3e50;">Skipped Entries</h3>
+      <table class="fin-li-table"><thead><tr><th>JV Number</th><th>Reason</th></tr></thead><tbody>${rows}</tbody></table>
+      <div style="display:flex;justify-content:flex-end;margin-top:18px;">
+        <button class="fin-btn-cancel" onclick="document.getElementById('jer-skipped-modal-overlay').remove()">Close</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+
+async function _jeReviewOpenDetail(id) {
+  const res = await apiFetch(`${_JE_API}${id}`);
+  if (!res || !res.ok) { showToast('Could not load journal entry.', 'error'); return; }
+  const je = await res.json();
+  _jeReviewShowDetailModal(je);
+}
+
+function _jeReviewShowDetailModal(je) {
+  const debits = (je.lines || []).filter(l => l.line_type === 'debit');
+  const credits = (je.lines || []).filter(l => l.line_type === 'credit');
+  const lineRows = (lines) => lines.map(l => `<tr><td>${_finEsc(_pvAccountName(l.account_id))}</td><td>${_pvMoney(l.amount)}</td></tr>`).join('');
+  const wrap = document.createElement('div');
+  wrap.id = 'je-detail-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:white;border-radius:8px;padding:28px;width:560px;max-height:85vh;overflow:auto;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 4px;color:#2c3e50;">Journal Voucher ${_finEsc(je.jv_number)}</h3>
+      <div style="color:#777;font-size:0.85rem;margin-bottom:16px;">${_pvBadge(je.status)}</div>
+      <div class="fin-info-grid" style="margin-bottom:16px;">
+        <div class="fin-info-item"><span class="fin-info-label">Ledger</span><span class="fin-info-value">${_finEsc(_pvLedgerName(je.ledger_id))}</span></div>
+        <div class="fin-info-item"><span class="fin-info-label">Cost Center</span><span class="fin-info-value">${_finEsc(_pvCostCenterName(je.cost_center_id))}</span></div>
+        <div class="fin-info-item"><span class="fin-info-label">Reference</span><span class="fin-info-value">${_finEsc(je.reference)}</span></div>
+        <div class="fin-info-item"><span class="fin-info-label">Date</span><span class="fin-info-value">${_pvDate(je.entry_date)}</span></div>
+      </div>
+      <div class="fin-section-label">Debit</div>
+      <table class="fin-li-table"><thead><tr><th>Account</th><th>Amount</th></tr></thead><tbody>${lineRows(debits)}</tbody></table>
+      <div class="fin-section-label">Credit</div>
+      <table class="fin-li-table"><thead><tr><th>Account</th><th>Amount</th></tr></thead><tbody>${lineRows(credits)}</tbody></table>
+      ${je.notes ? `<p style="margin-top:10px;color:#555;"><strong>Notes:</strong> ${_finEsc(je.notes)}</p>` : ''}
+      <div style="display:flex;gap:10px;margin-top:20px;justify-content:flex-end;">
+        ${je.status === 'draft' ? `
+          <button class="fin-btn-cancel" style="background:var(--coral-500,#D94040);color:#fff;" onclick="_jeReviewOpenRejectModal(${je.id})">Reject</button>
+          <button class="fin-btn-teal" onclick="_jeReviewApproveIds([${je.id}])">Approve</button>
+        ` : ''}
+        <button class="fin-btn-cancel" onclick="document.getElementById('je-detail-modal-overlay').remove()">Close</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+
+function _jeReviewOpenRejectModal(id) {
+  const wrap = document.createElement('div');
+  wrap.id = 'jer-reject-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:10000;';
+  wrap.innerHTML = `
+    <div style="background:white;border-radius:8px;padding:24px;width:480px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 12px;color:#2c3e50;">Reject Draft Entry</h3>
+      <div style="background:var(--coral-100);border-left:3px solid var(--coral-500);border-radius:6px;padding:10px 14px;color:var(--coral-600);font-size:0.85rem;margin-bottom:14px;">
+        Rejecting hard-deletes this draft JE. The reason is audit-logged.
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Reason <span class="fin-required">*</span></label>
+        <textarea id="jer-reject-reason" class="fin-form-textarea" rows="3" maxlength="500" oninput="document.getElementById('jer-reject-count').textContent=this.value.length"></textarea>
+        <span style="font-size:11px;color:var(--grey-500,#888);"><span id="jer-reject-count">0</span>/500</span>
+        <span class="fin-field-error" id="jer-reject-err"></span>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="document.getElementById('jer-reject-modal-overlay').remove()">Cancel</button>
+        <button class="fin-btn-teal" style="background:var(--coral-500,#D94040);" onclick="_jeReviewSubmitReject(${id})">Reject</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+
+async function _jeReviewSubmitReject(id) {
+  const reason = document.getElementById('jer-reject-reason').value.trim();
+  if (reason.length < 3) {
+    document.getElementById('jer-reject-err').textContent = 'Reason must be at least 3 characters.';
+    return;
+  }
+  const res = await apiFetch(`${_JE_API}${id}/reject`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }) });
+  if (!res) return;
+  if (res.status === 204 || res.ok) {
+    document.getElementById('jer-reject-modal-overlay')?.remove();
+    document.getElementById('je-detail-modal-overlay')?.remove();
+    showToast('Draft entry rejected.', 'success');
+    await _jeReviewLoad();
+    return;
+  }
+  showToast('Error: ' + await parseApiError(res), 'error');
+}
