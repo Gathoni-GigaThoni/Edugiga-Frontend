@@ -301,6 +301,28 @@ function _repRenderTable(def, data) {
     </table></div>`;
 }
 
+// ── null_subtype_accounts — data-quality banner (2026-08-17 addendum,
+// shipped live on TrialBalanceReport/BalanceSheetReport/IncomeExpenseReport
+// as of 2026-08-18). NullSubtypeAccountRow: {account_id, number,
+// account_name, account_type}. These accounts still appear inline under
+// their normal "Unclassified" subtype group (see _repGroups) — this banner
+// is just a fast, walk-the-tree-free pointer to go fix them.
+function _repReclassifyAccount(accountId) {
+  window._coaOpenEditId = accountId;
+  loadView('fin-chart-of-accounts');
+}
+function _repNullSubtypeBanner(accounts) {
+  if (!accounts || !accounts.length) return '';
+  const n = accounts.length;
+  return `
+    <div style="padding:10px 14px;border-radius:6px;border-left:3px solid var(--gold-500,#C9A227);background:var(--gold-100,#fdf3d6);color:#7a6110;font-size:0.85rem;margin-bottom:14px;">
+      <strong>${n} account${n === 1 ? '' : 's'} need${n === 1 ? 's' : ''} subtype classification</strong> — shown as "Unclassified" below until fixed:
+      <ul style="margin:6px 0 0 18px;">
+        ${accounts.map(a => `<li>${_finEsc(a.number)} — ${_finEsc(a.account_name)} &middot; <a href="#" onclick="_repReclassifyAccount(${a.account_id});return false;">Reclassify</a></li>`).join('')}
+      </ul>
+    </div>`;
+}
+
 // ── Trial Balance ────────────────────────────────────────────────────────
 // Confirmed live shape (openapi.json, 2026-07-23): the response is an object
 // { start_date, end_date, accounts: [...], total_debits, total_credits,
@@ -324,7 +346,7 @@ function _repRenderTrialBalance(def, data) {
   }).join('');
 
   const balanced = data.is_balanced === true;
-  out.innerHTML = `
+  out.innerHTML = _repNullSubtypeBanner(data.null_subtype_accounts) + `
     <div class="fin-table-wrap"><table class="fin-table">
       <thead><tr>${cols.map(([,label]) => `<th>${_finEsc(label)}</th>`).join('')}</tr></thead>
       <tbody>${bodyRows}</tbody>
@@ -602,8 +624,12 @@ function _repRenderSchoolSoFP(data) {
   const totalLiabEq = parseFloat(data.total_liabilities_equity || 0);
   const diff = totalAssets - totalLiabEq;
   const balanced = data.is_balanced === true;
+  // reports-statement-of-financial-position nests the BalanceSheetReport
+  // under .current (vs. reports-balance-sheet, which returns it at root) —
+  // null_subtype_accounts lives wherever the actual report body does.
+  const nullSubtypeAccounts = data.null_subtype_accounts || data.current?.null_subtype_accounts;
 
-  out.innerHTML = `
+  out.innerHTML = _repNullSubtypeBanner(nullSubtypeAccounts) + `
     <div class="fin-form-wrap" style="max-width:720px;">
       <div style="font-weight:700;color:#2c3e50;margin:4px 0 6px;">Non-current assets</div>
       ${_repGroups(data.non_current_asset_groups)}
@@ -661,7 +687,7 @@ function _repRenderSchoolSoCI(data) {
   const totalOpex = parseFloat(data.total_operating_expenses || 0);
   const netSurplusFromOps = grossSurplus - totalOpex;
 
-  out.innerHTML = `
+  out.innerHTML = _repNullSubtypeBanner(data.null_subtype_accounts) + `
     <div class="fin-form-wrap" style="max-width:720px;">
       <div style="font-weight:700;color:#2c3e50;margin:4px 0 6px;">Revenue</div>
       ${_repGroups(data.revenue_groups)}

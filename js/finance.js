@@ -895,6 +895,28 @@ function _sgMemberNamesHtml(group) {
   return memberNames.length ? memberNames.map(n => _finEsc(n)).join(', ') : '—';
 }
 
+// sibling_adjustments[] shipped live 2026-08-18 (was absent when this module
+// was first built) — one row per retroactive discount adjustment posted
+// against an open invoice when group composition changed, each with its own
+// reversing JE (DR income / CR AR Control). Rendered only when non-empty.
+function _sgAdjustmentsHtml(group) {
+  const adjustments = group.sibling_adjustments || [];
+  if (!adjustments.length) return '';
+  return `
+    <div style="margin-top:14px;">
+      <div style="font-size:0.78rem;font-weight:600;color:var(--navy-700,#1B3057);text-transform:uppercase;margin-bottom:6px;">Discount Adjustments</div>
+      <div class="fin-table-wrap"><table class="fin-li-table">
+        <thead><tr><th>Student</th><th>Invoice</th><th style="text-align:right;">Amount</th><th>JE</th></tr></thead>
+        <tbody>${adjustments.map(a => `<tr>
+          <td>${_finEsc(_invStudentName(a.student_id))}</td>
+          <td>${_finEsc(a.invoice_number || ('#' + a.invoice_id))}</td>
+          <td style="text-align:right;">${_pvMoney(a.amount)}</td>
+          <td><a href="#" onclick="_jeOpenDetail(${a.journal_entry_id});return false;">View JE</a></td>
+        </tr>`).join('')}</tbody>
+      </table></div>
+    </div>`;
+}
+
 function _sgKnownGroupCardHtml(group) {
   return `
     <div style="background:#f9fafb;border:1px solid #e0e0e0;border-radius:6px;padding:14px 16px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:12px;">
@@ -995,6 +1017,7 @@ async function sgLookupById() {
           <div id="sg-add-student-dd" class="fin-action-dropdown" style="display:none;max-height:200px;overflow-y:auto;position:absolute;top:100%;left:0;width:100%;z-index:100;"></div>
         </div>
       </div>
+      ${_sgAdjustmentsHtml(group)}
     </div>`;
 }
 
@@ -1738,6 +1761,81 @@ async function loadReceivePaymentsView(container) {
       return `<button class="btn" onclick="openReceiptPdf(${p.id})">&#128438; Print Receipt</button>`;
     },
   });
+  container.insertAdjacentHTML('beforeend', _paAllocationsSectionHtml());
+}
+
+// ── Payment Allocations by Student (2026-08-18) — PaymentAllocationRead.
+// voided/voided_at shipped live; this is genuinely new surface (no existing
+// view reads allocations at all — confirmed nothing to remove per the audit).
+// This is a different, older resource (PaymentRead, via
+// /receivables/student-finance/payments/student/{id}) than the Receipt list
+// above (FinReceiptRead, via /receivables/receipts) — separate lookup rather
+// than merged into the split view above.
+//
+// "Payment history" per the addendum's own framing → dim voided rows rather
+// than hide them (contrast with a balance drilldown, which would filter them
+// out — no such drilldown exists in this codebase to apply that half to).
+function _paAllocationsSectionHtml() {
+  return `
+    <div class="fin-filter-section" style="margin-top:24px;">
+      <div class="fin-section-label">Payment Allocations by Student</div>
+      <div style="position:relative;max-width:420px;">
+        <input id="pa-student-search" class="fin-search-input" style="width:100%!important" placeholder="Search student by name or SOIS ID&#8230;" oninput="_paStudentSearch(this.value)" autocomplete="off">
+        <div id="pa-student-dd" class="fin-action-dropdown" style="display:none;max-height:220px;overflow-y:auto;position:absolute;top:100%;left:0;width:100%;z-index:100;"></div>
+      </div>
+      <div id="pa-results" style="margin-top:14px;"></div>
+    </div>`;
+}
+
+let _paSearchTimer = null;
+function _paStudentSearch(val) {
+  clearTimeout(_paSearchTimer);
+  const dd = document.getElementById('pa-student-dd');
+  if (!dd) return;
+  if (!val.trim()) { dd.style.display = 'none'; return; }
+  _paSearchTimer = setTimeout(async () => {
+    const res = await apiFetch(`${API_BASE}/students/?search=${encodeURIComponent(val.trim())}`);
+    const list = (res && res.ok) ? await res.json() : [];
+    dd.innerHTML = list.length ? list.slice(0, 10).map(s => {
+      const name = _finEsc(`${s.first_name||''} ${s.last_name||''}`.trim());
+      const idLabel = _finEsc(s.student_id||'');
+      return `<a href="#" class="fin-search-option" onclick="_paStudentSelect(${s.id},'${idLabel} — ${name}');return false;">
+         <span class="fin-search-option-name">${name}</span>
+         <span class="fin-search-option-sub">${idLabel}</span>
+       </a>`;
+    }).join('') : '<div style="padding:10px 14px;color:#888;font-size:0.88rem;">No results found</div>';
+    dd.style.display = 'block';
+  }, 300);
+}
+
+async function _paStudentSelect(studentId, label) {
+  const inp = document.getElementById('pa-student-search');
+  if (inp) inp.value = label;
+  const dd = document.getElementById('pa-student-dd');
+  if (dd) dd.style.display = 'none';
+  const resultsEl = document.getElementById('pa-results');
+  resultsEl.innerHTML = '<p style="color:#888;">Loading&#8230;</p>';
+  const res = await apiFetch(`${API_BASE}/receivables/student-finance/payments/student/${studentId}`);
+  if (!res || !res.ok) { resultsEl.innerHTML = `<p style="color:#c0392b;font-size:0.88rem;">${res ? _finEsc(await parseApiError(res)) : 'Network error.'}</p>`; return; }
+  const payments = _toArray(await res.json());
+  if (!payments.length) { resultsEl.innerHTML = '<p style="color:#888;font-size:0.88rem;">No payments found for this student.</p>'; return; }
+  resultsEl.innerHTML = payments.map(p => `
+    <div style="background:#f9fafb;border:1px solid #e0e0e0;border-radius:6px;padding:12px 16px;margin-bottom:10px;">
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <div><strong>${_finEsc(p.receipt_number || ('Payment #' + p.id))}</strong> &middot; ${_finEsc(p.payment_method || '')}</div>
+        <div>${_finFmt(parseFloat(p.amount)||0)} &middot; ${_finEsc((p.payment_date||'').split('T')[0]||'')}</div>
+      </div>
+      ${(p.allocations||[]).length ? `
+      <table class="fin-li-table" style="margin-top:8px;">
+        <thead><tr><th>Fee Line</th><th style="text-align:right;">Allocated</th><th>Status</th></tr></thead>
+        <tbody>${p.allocations.map(a => `
+          <tr style="${a.voided ? 'opacity:0.5;text-decoration:line-through;' : ''}">
+            <td>#${a.student_fee_id}</td>
+            <td style="text-align:right;">${_finFmt(parseFloat(a.amount_allocated)||0)}</td>
+            <td style="text-decoration:none;">${a.voided ? `<span style="color:var(--coral-600);font-weight:600;">Voided${a.voided_at ? ' ' + _pvDate(a.voided_at) : ''}</span>` : '<span style="color:#1e7e34;">Active</span>'}</td>
+          </tr>`).join('')}</tbody>
+      </table>` : '<p style="color:#888;font-size:0.82rem;margin-top:6px;">No allocation lines.</p>'}
+    </div>`).join('');
 }
 
 // Receipt PDF — same standalone-document pattern/theme as the Fee Statement
@@ -1890,6 +1988,14 @@ async function loadChartOfAccountsView(container) {
   };
   await renderSplitView(cfg);
   _coaInjectSubtypeFilter(cfg);
+  // "Reclassify" deep-link from a report's null_subtype_accounts banner
+  // (finance-reports.js) — set the account, navigate here, open its edit
+  // form once the cache this depends on has loaded. Cleared after use.
+  if (window._coaOpenEditId != null) {
+    const id = window._coaOpenEditId;
+    window._coaOpenEditId = null;
+    if (chartOfAccountsData.some(a => String(a.id) === String(id))) openCoaEdit(id);
+  }
 }
 
 // No first-class filter-row concept in renderSplitView beyond free-text
@@ -4883,8 +4989,52 @@ async function _rtReload() {
       {label:'Initiated By',                       key:'initiated_by',         fmt:v=>v?_finEsc(String(v)):'Paybill (customer-initiated)'},
       {label:'Transaction Date',                   key:'transaction_date',     fmt:v=>_rtDate(v)},
     ],
-    detailActions: t => _rtBankDetailsCard(t),
+    detailActions: t => _rtRequeryBlock(t) + _rtBankDetailsCard(t),
   });
+}
+
+// Manual requery — POST /receivables/transactions/{id}/requery, confirmed
+// live 2026-08-18. Only useful on a transaction that hasn't reached a
+// terminal state; the endpoint re-queries the gateway and, on SUCCESS,
+// idempotently creates the receipt + JE via the same confirm_transaction()
+// path as the webhook.
+const _RT_NON_TERMINAL = new Set(['initiated', 'pending', 'failed', 'timeout']);
+function _rtRequeryBlock(t) {
+  if (!_RT_NON_TERMINAL.has(t.status)) return '';
+  return `
+    <div style="margin-bottom:14px;">
+      <button class="fin-btn-outline" onclick="_rtRequery(${t.id})">Requery Gateway</button>
+      <div id="rt-requery-msg"></div>
+    </div>`;
+}
+async function _rtRequery(id) {
+  const msgEl = document.getElementById('rt-requery-msg');
+  if (msgEl) msgEl.innerHTML = '';
+  const res = await apiFetch(`${_RT_BASE}/${id}/requery`, { method: 'POST' });
+  if (!res) return;
+  if (res.ok) {
+    showToast('Requeried — transaction status refreshed.', 'success');
+    await window._splitRefreshSelected?.();
+    await _rtLoadSummary();
+    return;
+  }
+  const msg = await parseApiError(res);
+  // Documented failure surfacing on this endpoint: 400 no status query,
+  // 502 gateway raised, 503 gateway not implemented, 500 config_error (e.g.
+  // COOP_SETTLEMENT_ACCOUNT_ID unset) or any other non-terminal confirm
+  // outcome — 500 specifically so a caller can't mistake a silent no-op
+  // for success. The transaction stays non-terminal server-side either way.
+  if (res.status === 500) {
+    _pvShowGoldConfigMsg(msgEl, msg);
+  } else if (res.status === 502) {
+    _pvShowCoralMsg(msgEl, 'Gateway error while requerying — try again shortly.');
+  } else if (res.status === 503) {
+    _pvShowCoralMsg(msgEl, "Requery isn't implemented for this transaction's gateway yet.");
+  } else if (res.status === 400) {
+    _pvShowCoralMsg(msgEl, msg || "This transaction's gateway does not support a status query.");
+  } else {
+    showToast('Error: ' + msg, 'error');
+  }
 }
 
 // Co-op IPN bank-side fields (BE/FE Contract Addendum 2026-08-06 §2.4) — only
@@ -5034,6 +5184,7 @@ function _coopDetailActions(item) {
         <input type="text" id="coop-manual-search" class="fin-form-input" placeholder="Search by name or admission number…" oninput="_coopSearchStudent(${item.id}, this.value)" autocomplete="off">
         <div id="coop-manual-search-dd" style="display:none;position:absolute;z-index:20;background:#fff;border:1px solid var(--grey-200,#D6DAE3);border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,0.12);max-height:220px;overflow-y:auto;width:100%;"></div>
       </div>
+      <div id="coop-assign-msg"></div>
       <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--grey-100,#eee);">
         <button class="fin-btn-cancel" onclick="_coopOpenRejectModal(${item.id})">Reject</button>
       </div>
@@ -5070,6 +5221,8 @@ document.addEventListener('click', (e) => {
 });
 
 async function _coopAssign(unmatchedId, studentId) {
+  const msgEl = document.getElementById('coop-assign-msg');
+  if (msgEl) msgEl.innerHTML = '';
   const res = await apiFetch(`${_COOP_API}/${unmatchedId}/assign`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -5080,6 +5233,12 @@ async function _coopAssign(unmatchedId, studentId) {
     const data = await res.json().catch(() => ({}));
     showToast(`Assigned to ${data.resolved_student_id ? 'student #' + data.resolved_student_id : 'student'}. Fee balance updated.`, 'success');
     await _coopReload();
+  } else if (res.status === 500) {
+    // Same confirm_transaction() config_error path as manual requery
+    // (§ receivables/transactions/{id}/requery) — surfaced distinctly so
+    // ops sees "configuration needed" rather than a generic failure. The
+    // queue row stays pending_review either way, safe to retry once fixed.
+    _pvShowGoldConfigMsg(msgEl, await parseApiError(res));
   } else {
     showToast('Error: ' + await parseApiError(res), 'error');
   }

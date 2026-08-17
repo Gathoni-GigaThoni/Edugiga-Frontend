@@ -65,6 +65,11 @@ async function loadFinCreditNotesView(container) {
       {label:'Approved At', key:'approved_at', hideWhen: cn=>!cn.approved_at, fmt:v=>_pvDate(v)},
       {label:'Rejection Reason', key:'rejection_reason', fullWidth:true, hideWhen: cn=>cn.status!=='rejected', fmt:v=>v||'—'},
       {label:'Original Receipt', key:'original_receipt_id', fmt:v=>v?`#${v}`:'—'},
+      // journal_entry_id shipped live 2026-08-18 (was absent when this module
+      // was first built) — link when set; row omitted entirely when null
+      // rather than showing a dash, since legacy CNs genuinely have no
+      // reversal JE and a dash would imply one is just hidden.
+      {label:'Reversal JE', key:'journal_entry_id', hideWhen: cn=>!cn.journal_entry_id, fmt:v=>`<a href="#" onclick="_jeOpenDetail(${v});return false;">View Reversal JE</a>`},
       {label:'Created', key:'created_at', fmt:v=>_pvDate(v)},
     ],
     renderAdd: _pvAddPlaceholder('Credit Note', 'fin-credit-notes-add', 'Issue a credit note against a fee invoice.'),
