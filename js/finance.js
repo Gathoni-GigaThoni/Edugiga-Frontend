@@ -2028,15 +2028,19 @@ const _COA_CASH_FLOW_GROUPS = [
   'Cashflow from Financing Activities',
 ];
 
-// The 48-value account_subtype axis (2026-07-21 addendum §1.2). One copy —
-// the Add/Edit form picker, the Reclassify dialog, and the Fixed Asset
-// Register's Asset Class picker all read from this same constant so a
-// diverging local copy can never send a value the backend rejects.
-// Asset's first 7 entries are exactly the "non-current" subset (order
-// matters — Fixed Assets slices this array for its Asset Class dropdown).
+// The account_subtype axis (2026-07-21 addendum §1.2, split + extended by
+// the 2026-08-17 addendum §5.5/§5.7). One copy — the Add/Edit form picker,
+// the Reclassify dialog, Asset Categories' Cost Subtype picker, and the
+// Fixed Asset Register's Asset Class picker all read from this same
+// constant so a diverging local copy can never send a value the backend
+// rejects. Asset's first 8 entries are exactly the "non-current" subset
+// (order matters — Fixed Assets slices this array for its category/class
+// dropdowns). 'Land and Buildings' was split into 'Land' + 'Buildings' by
+// migration p5q6r7s8t9u0 — confirmed live via openapi.json, the combined
+// value no longer exists on the backend.
 const ACCOUNT_SUBTYPES_BY_TYPE = {
   Asset: [
-    'Land and Buildings', 'Motor Vehicles', 'Furniture and Fittings',
+    'Land', 'Buildings', 'Motor Vehicles', 'Furniture and Fittings',
     'Computers and Equipment', 'Kitchen Equipment', 'Playground Equipment',
     'Intangible Asset',
     'Cash and Bank', 'Student Receivable', 'Other Receivable', 'Inventory', 'Prepayment',
@@ -2050,17 +2054,18 @@ const ACCOUNT_SUBTYPES_BY_TYPE = {
   Income: [
     'Tuition Revenue', 'Transport Revenue', 'Meals Revenue', 'Extra-Curricular Revenue',
     'Admission Revenue', 'Uniform Sales', 'Other Student Fees', 'Other Income',
+    'Gain on Disposal of Assets',
   ],
   Expense: [
     'Cost of Uniforms Sold', 'Teaching Staff Costs', 'Non-Teaching Staff Costs',
     'Teaching Supplies', 'Meals and Kitchen', 'Transport Operating',
     'Repairs and Maintenance', 'Utilities', 'Rent and Rates', 'Insurance and Licences',
     'Staff Welfare', 'Depreciation', 'Marketing and Admissions', 'Professional Fees',
-    'Office Admin', 'Financial Charge', 'Tax Expense',
+    'Office Admin', 'Financial Charge', 'Tax Expense', 'Loss on Disposal of Assets',
   ],
 };
-// Non-current asset subtypes only — the seven that can hold Fixed Assets (§5).
-const ACCOUNT_SUBTYPES_NON_CURRENT_ASSET = ACCOUNT_SUBTYPES_BY_TYPE.Asset.slice(0, 7);
+// Non-current asset subtypes only — the eight that can hold Fixed Assets (§5).
+const ACCOUNT_SUBTYPES_NON_CURRENT_ASSET = ACCOUNT_SUBTYPES_BY_TYPE.Asset.slice(0, 8);
 
 function _coaSubtypeOptions(accountType, selected) {
   const opts = ACCOUNT_SUBTYPES_BY_TYPE[accountType] || [];
