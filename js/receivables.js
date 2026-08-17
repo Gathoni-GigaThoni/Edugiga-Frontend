@@ -1299,14 +1299,35 @@ async function loadInvoiceDetailView(container, invoiceId) {
         <button class="fin-btn-outline" onclick="loadView('fin-fee-invoices')">&#8592; Back to List</button>
       </div>`:
       `<div style="margin-top:16px;"><button class="fin-btn-outline" onclick="loadView('fin-fee-invoices')">&#8592; Back to List</button></div>`}
+      <div id="inv-action-msg"></div>
     </div>`;
+}
+
+// 500 classification per the 2026-08-17 addendum §2.3: an unset
+// AR_CONTROL_ACCOUNT_ID is an ops/config gap (gold, "ask ops"); a line item
+// with no revenue account configured is a workflow error the operator can
+// actually fix (coral, verbatim + actionable copy). Same gold/coral split
+// as _pvSiShowActionMsg in payables.js.
+function _rcvShowActionMsg(text, kind) {
+  const el = document.getElementById('inv-action-msg');
+  const isGold = kind === 'config';
+  const html = `<div style="margin-top:14px;padding:10px 14px;border-radius:6px;border-left:3px solid ${isGold ? 'var(--gold-500)' : 'var(--coral-500)'};background:${isGold ? 'var(--gold-100)' : 'var(--coral-100)'};color:${isGold ? '#7a6110' : 'var(--coral-600)'};font-size:0.85rem;">${isGold ? '<strong>Configuration needed — ask ops.</strong><br>' : ''}${_finEsc(text)}</div>`;
+  if (el) el.innerHTML = html; else showToast(text, 'error');
 }
 
 async function rcvInvoiceIssue(id) {
   if (!confirm('Issue this invoice? It will become visible to payers.')) return;
   const res = await apiFetch(`${API_BASE}/receivables/fee-invoices/${id}/issue`, { method:'POST' });
-  if (res && res.ok) { showToast('Invoice issued.','success'); loadInvoiceDetailView(document.getElementById('main-content'),id); }
-  else if (res) { showToast('Error: '+await parseApiError(res),'error'); }
+  if (res && res.ok) { showToast('Invoice issued.','success'); loadInvoiceDetailView(document.getElementById('main-content'),id); return; }
+  if (!res) return;
+  const msg = await parseApiError(res);
+  if (res.status === 500 && /AR_CONTROL_ACCOUNT_ID/i.test(msg)) {
+    _rcvShowActionMsg('AR control account not configured — ask ops to set AR_CONTROL_ACCOUNT_ID.', 'config');
+  } else if (res.status === 500) {
+    _rcvShowActionMsg('Cannot issue — one or more line items have no revenue account configured. Fix the fee items before issuing.', 'workflow');
+  } else {
+    showToast('Error: ' + msg, 'error');
+  }
 }
 
 async function rcvInvoiceCancel(id) {
