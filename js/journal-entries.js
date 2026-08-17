@@ -538,7 +538,15 @@ async function _jeReviewLoad() {
   if (_jeReviewFilters.start_date) params.set('start_date', _jeReviewFilters.start_date);
   if (_jeReviewFilters.end_date) params.set('end_date', _jeReviewFilters.end_date);
   const res = await apiFetch(`${_JE_DRAFTS_API}?${params.toString()}`);
-  _jeReviewData = (res && res.ok) ? _toArray(await res.json()) : [];
+  if (res && res.ok) {
+    _jeReviewData = _toArray(await res.json());
+  } else {
+    // A failed request must never render as an indistinguishable "no
+    // drafts" empty state — that reads as "nothing to review" when the
+    // fetch actually failed. Surface the server's reason verbatim.
+    _jeReviewData = [];
+    if (res) showToast('Could not load draft entries: ' + await parseApiError(res), 'error');
+  }
   _jeReviewSelected.clear();
   _jeReviewRenderTable();
 }
