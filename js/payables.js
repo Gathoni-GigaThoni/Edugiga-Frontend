@@ -97,6 +97,18 @@ function _pvBadge(status) {
   return `<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:0.78rem;font-weight:600;color:${colors[color].split(';')[0]};background:${colors[color].split(';')[1].replace('background:','')};">${_finEsc((status || '').replace(/_/g,' '))}</span>`;
 }
 
+// Shared config (gold) / workflow (coral) inline message renderer — same
+// classification rule as _pvSiShowActionMsg, generalised for any target
+// element (imprest float 424s/409s, replenishment ceiling, etc).
+function _pvShowGoldConfigMsg(el, text) {
+  if (!el) { showToast(text, 'error'); return; }
+  el.innerHTML = `<div style="margin-top:10px;padding:10px 14px;border-radius:6px;border-left:3px solid var(--gold-500);background:var(--gold-100);color:#7a6110;font-size:0.85rem;"><strong>Configuration needed — ask ops.</strong><br>${_finEsc(text)}</div>`;
+}
+function _pvShowCoralMsg(el, text) {
+  if (!el) { showToast(text, 'error'); return; }
+  el.innerHTML = `<div style="margin-top:10px;padding:10px 14px;border-radius:6px;border-left:3px solid var(--coral-500);background:var(--coral-100);color:var(--coral-600);font-size:0.85rem;">${_finEsc(text)}</div>`;
+}
+
 // ── A.3 Document number preview ─────────────────────────────────────────────
 async function _pvPreviewNextNumber(listUrl, fieldName, prefix, digits) {
   try {
@@ -1957,11 +1969,99 @@ async function _pvPcaSubmitAdd() {
 }
 
 // ==================== A.10.2 PETTY CASH DISBURSEMENTS ====================
+// Post-2026-08-15 imprest float refactor (addendum §4). The float balance
+// and ceiling come from the Petty Cash Report (closing_float as-of today,
+// float_ceiling) — no dedicated balance endpoint exists, and this is the
+// GL-backed source of truth the addendum asks for.
 let _pvPcdData = [], _pvPcdApprovedApps = [];
+let _pvPcdTab = 'disbursements';
+let _pvPcdReplenishments = [];
 const _PV_PCD_API = `${API_BASE}/payables/petty-cash-disbursements`;
+const _PV_PCR_API = `${API_BASE}/payables/petty-cash-replenishments`;
+
+async function _pvPcdLoadFloatReport() {
+  const end = new Date().toISOString().split('T')[0];
+  const res = await apiFetch(`${API_BASE}/reports/petty-cash-report?start_date=2000-01-01&end_date=${end}`);
+  return (res && res.ok) ? await res.json() : null;
+}
+
+function _pvPcdFloatCardHtml(report) {
+  if (!report || !report.float_account_configured) {
+    return `<div style="background:var(--gold-100);border-left:3px solid var(--gold-500);border-radius:6px;padding:12px 16px;margin-bottom:16px;color:#7a6110;font-size:0.85rem;"><strong>Configuration needed — ask ops.</strong><br>Petty cash float account not configured.</div>`;
+  }
+  const balance = parseFloat(report.closing_float) || 0;
+  const ceiling = report.float_ceiling != null ? parseFloat(report.float_ceiling) : null;
+  let color = 'var(--navy-900,#0D2137)';
+  if (balance < 0) color = 'var(--coral-500,#D94040)';
+  else if (ceiling && balance / ceiling > 0.8) color = 'var(--gold-500,#C9A227)';
+  return `
+    <div style="display:flex;gap:16px;margin-bottom:16px;">
+      <div style="flex:1;background:${color};color:#fff;border-radius:8px;padding:14px 18px;">
+        <div style="font-size:11px;opacity:.8;">Current Float Balance</div>
+        <div style="font-size:1.3rem;font-weight:700;">${_pvMoney(report.closing_float)}</div>
+      </div>
+      ${ceiling != null ? `
+      <div style="flex:1;background:var(--navy-900,#0D2137);color:#fff;border-radius:8px;padding:14px 18px;">
+        <div style="font-size:11px;opacity:.8;">Ceiling</div>
+        <div style="font-size:1.3rem;font-weight:700;">${_pvMoney(ceiling)}</div>
+      </div>` : ''}
+    </div>`;
+}
 
 async function loadPayablesPettyCashDisbursementsView(container) {
   await _pvLoadLookups();
+  const report = await _pvPcdLoadFloatReport();
+  container.innerHTML = `
+    <div class="fin-page">
+      ${_pvPcdFloatCardHtml(report)}
+      <div class="fin-controls-row" style="margin-bottom:12px;">
+        <div class="fin-controls-left" style="display:flex;gap:8px;">
+          <button class="${_pvPcdTab==='disbursements'?'fin-btn-teal':'fin-btn-outline'}" onclick="_pvPcdSwitchTab('disbursements')">Disbursements</button>
+          <button class="${_pvPcdTab==='replenishments'?'fin-btn-teal':'fin-btn-outline'}" onclick="_pvPcdSwitchTab('replenishments')">Replenishment History</button>
+        </div>
+        <div class="fin-controls-right"><button class="fin-btn-teal" onclick="_pvPcrOpenReplenishModal()">+ Replenish</button></div>
+      </div>
+      <div id="pcd-tab-container"></div>
+    </div>`;
+  await _pvPcdRenderTab();
+}
+
+async function _pvPcdSwitchTab(tab) {
+  _pvPcdTab = tab;
+  await _pvPcdRenderTab();
+}
+
+async function _pvPcdRenderTab() {
+  const sub = document.getElementById('pcd-tab-container');
+  if (!sub) return;
+  if (_pvPcdTab === 'replenishments') {
+    await _pvPcrRenderHistory(sub);
+  } else {
+    await _pvPcdRenderDisbursementsSplitView(sub);
+  }
+}
+
+async function _pvPcrRenderHistory(container) {
+  container.innerHTML = `<p style="color:#888;padding:12px 0;">Loading&#8230;</p>`;
+  const res = await apiFetch(_PV_PCR_API);
+  _pvPcdReplenishments = (res && res.ok) ? _toArray(await res.json()) : [];
+  const rows = _pvPcdReplenishments.length === 0
+    ? `<tr><td colspan="5" class="fin-empty">No replenishments recorded.</td></tr>`
+    : _pvPcdReplenishments.map(r => `<tr>
+        <td>${_pvDate(r.replenishment_date)}</td>
+        <td>${_pvMoney(r.amount)}</td>
+        <td>${_finEsc(_pvAccountName(r.source_bank_account_id))}</td>
+        <td>${_finEsc(r.notes || '—')}</td>
+        <td>${r.journal_entry_id ? `<a href="#" onclick="_jeOpenDetail(${r.journal_entry_id});return false;">View JE</a>` : '—'}</td>
+      </tr>`).join('');
+  container.innerHTML = `
+    <div class="fin-table-wrap"><table class="fin-table">
+      <thead><tr><th>DATE</th><th>AMOUNT</th><th>SOURCE BANK</th><th>NOTES</th><th>JOURNAL ENTRY</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+}
+
+async function _pvPcdRenderDisbursementsSplitView(container) {
   await renderSplitView({
     container,
     moduleKey: 'finance.payables',
@@ -2024,12 +2124,9 @@ async function loadPayablesPettyCashDisbursementsAddView(container) {
             <select id="pcd-f-debit" class="fin-form-select"><option value="">Please Select</option>${_pvAccountOptions()}</select>
             <span class="fin-field-error" id="pcd-f-debit-err"></span>
           </div>
-          <div class="fin-form-group">
-            <label class="fin-form-label">Credit Bank Account <span class="fin-required">*</span></label>
-            <select id="pcd-f-credit" class="fin-form-select"><option value="">Please Select</option>${_pvAccountOptions()}</select>
-            <span class="fin-field-error" id="pcd-f-credit-err"></span>
-          </div>
         </div>
+        <div style="font-size:11px;color:var(--grey-500,#888);margin-bottom:8px;">Cash comes out of the Petty Cash Float account — server-configured, no picker needed here.</div>
+        <div id="pcd-conflict-msg"></div>
         <div class="fin-form-actions">
           <button class="fin-btn-teal" onclick="_pvPcdSubmitAdd()">Submit</button>
           <button class="fin-btn-cancel" onclick="loadView('payables-petty-cash-disbursements')">Cancel</button>
@@ -2039,7 +2136,7 @@ async function loadPayablesPettyCashDisbursementsAddView(container) {
 }
 async function _pvPcdSubmitAdd() {
   let valid = true;
-  [['pcd-f-app','pcd-f-app-err'],['pcd-f-date','pcd-f-date-err'],['pcd-f-debit','pcd-f-debit-err'],['pcd-f-credit','pcd-f-credit-err']].forEach(([fid,eid]) => {
+  [['pcd-f-app','pcd-f-app-err'],['pcd-f-date','pcd-f-date-err'],['pcd-f-debit','pcd-f-debit-err']].forEach(([fid,eid]) => {
     const v = document.getElementById(fid).value.trim();
     document.getElementById(eid).textContent = v ? '' : 'This field is required.';
     if (!v) valid = false;
@@ -2053,13 +2150,97 @@ async function _pvPcdSubmitAdd() {
     disbursed_amount: amount,
     disbursement_date: document.getElementById('pcd-f-date').value,
     debit_account_id: parseInt(document.getElementById('pcd-f-debit').value, 10),
-    credit_bank_account_id: parseInt(document.getElementById('pcd-f-credit').value, 10),
   };
+  const msgEl = document.getElementById('pcd-conflict-msg');
+  if (msgEl) msgEl.innerHTML = '';
   try {
     const res = await apiFetch(_PV_PCD_API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    if (res && res.ok) { showToast('Disbursement recorded.', 'success'); loadView('payables-petty-cash-disbursements'); }
-    else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+    if (res && res.ok) { showToast('Disbursement recorded.', 'success'); loadView('payables-petty-cash-disbursements'); return; }
+    if (!res) return;
+    const msg = await parseApiError(res);
+    if (res.status === 424) {
+      _pvShowGoldConfigMsg(msgEl, 'Petty cash float account not configured — ask ops.');
+    } else if (res.status === 409) {
+      _pvShowCoralMsg(msgEl, msg);
+    } else {
+      showToast('Error: ' + msg, 'error');
+    }
   } catch (e) { showToast('Network error.', 'error'); }
+}
+
+// ── Replenish the imprest float (§4.2) ──────────────────────────────────
+function _pvPcrOpenReplenishModal() {
+  const wrap = document.createElement('div');
+  wrap.id = 'pcr-replenish-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;overflow:auto;padding:24px;';
+  wrap.innerHTML = `
+    <div style="background:white;border-radius:8px;padding:24px;width:520px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 14px;color:#2c3e50;">Replenish Petty Cash Float</h3>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Date <span class="fin-required">*</span></label>
+        <input type="date" id="pcr-f-date" class="fin-form-input" value="${new Date().toISOString().split('T')[0]}">
+        <span class="fin-field-error" id="pcr-f-date-err"></span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Amount (KES) <span class="fin-required">*</span></label>
+        <input type="number" id="pcr-f-amount" class="fin-form-input" step="0.01" min="0.01">
+        <span class="fin-field-error" id="pcr-f-amount-err"></span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Source Bank Account <span class="fin-required">*</span></label>
+        <select id="pcr-f-source" class="fin-form-select"><option value="">Please Select</option>${_pvAccountOptions()}</select>
+        <span class="fin-field-error" id="pcr-f-source-err"></span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Notes</label>
+        <textarea id="pcr-f-notes" class="fin-form-textarea" rows="2" maxlength="500"></textarea>
+      </div>
+      <div id="pcr-replenish-msg"></div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="document.getElementById('pcr-replenish-modal-overlay').remove()">Cancel</button>
+        <button class="fin-btn-teal" onclick="_pvPcrSubmitReplenish()">Replenish</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+async function _pvPcrSubmitReplenish() {
+  let valid = true;
+  const date = document.getElementById('pcr-f-date').value;
+  document.getElementById('pcr-f-date-err').textContent = date ? '' : 'This field is required.';
+  if (!date) valid = false;
+  const amount = parseFloat(document.getElementById('pcr-f-amount').value);
+  document.getElementById('pcr-f-amount-err').textContent = (amount > 0) ? '' : 'Amount must be greater than 0.';
+  if (!(amount > 0)) valid = false;
+  const sourceId = document.getElementById('pcr-f-source').value;
+  document.getElementById('pcr-f-source-err').textContent = sourceId ? '' : 'This field is required.';
+  if (!sourceId) valid = false;
+  if (!valid) return;
+  const payload = {
+    replenishment_date: date,
+    amount,
+    source_bank_account_id: parseInt(sourceId, 10),
+    notes: document.getElementById('pcr-f-notes').value.trim() || null,
+  };
+  const msgEl = document.getElementById('pcr-replenish-msg');
+  msgEl.innerHTML = '';
+  const res = await apiFetch(_PV_PCR_API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  if (!res) return;
+  if (res.ok) {
+    const rep = await res.json();
+    document.getElementById('pcr-replenish-modal-overlay')?.remove();
+    showToast(`Float topped up by ${_pvMoney(amount)}.${rep.journal_entry_id ? ' → View JE' : ''}`, 'success');
+    _pvPcdTab = 'replenishments';
+    await loadView('payables-petty-cash-disbursements');
+    return;
+  }
+  const msg = await parseApiError(res);
+  if (res.status === 424) {
+    _pvShowGoldConfigMsg(msgEl, 'Petty cash float account not configured — ask ops.');
+  } else if (res.status === 409) {
+    _pvShowCoralMsg(msgEl, msg);
+  } else {
+    showToast('Error: ' + msg, 'error');
+  }
 }
 
 // ==================== A.11.1 IMPREST WARRANT ====================
