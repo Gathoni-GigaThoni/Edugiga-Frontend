@@ -15,6 +15,39 @@ function _tpWalletRoleSort(a, b) {
   return (_TP_WALLET_ROLE_ORDER[a.wallet_role] ?? 99) - (_TP_WALLET_ROLE_ORDER[b.wallet_role] ?? 99);
 }
 
+// Money-holding accounts registry — single source of truth for the Cash Book
+// and Cashflow Statement per-account pickers. Endpoint returns every active
+// Cash-and-Bank GL account tagged as bank / wallet / petty_cash, so pickers
+// can pass gl_account_id (Cash Book) or cash_account_id (CFS) directly —
+// including Tendepay wallets and Petty Cash Float, which have no
+// BankAccount row and used to 404 when the FE sent bank_account_id.
+let _repMoneyHoldingAccounts = null;
+async function _repLoadMoneyHoldingAccounts() {
+  if (_repMoneyHoldingAccounts !== null) return;
+  const res = await apiFetch(`${API_BASE}/lookups/money-holding-accounts`);
+  _repMoneyHoldingAccounts = (res && res.ok) ? _toArray(await res.json()) : [];
+}
+const _REP_MH_KIND_ORDER = { bank: 0, petty_cash: 1, wallet: 2 };
+const _REP_MH_KIND_LABEL = { bank: 'Banks', petty_cash: 'Petty Cash', wallet: 'Wallets' };
+function _repMoneyHoldingOptions() {
+  const groups = { bank: [], petty_cash: [], wallet: [] };
+  (_repMoneyHoldingAccounts || []).forEach(a => {
+    const kind = groups[a.kind] ? a.kind : 'wallet';
+    groups[kind].push(a);
+  });
+  return Object.keys(groups)
+    .sort((a, b) => (_REP_MH_KIND_ORDER[a] ?? 99) - (_REP_MH_KIND_ORDER[b] ?? 99))
+    .filter(k => groups[k].length)
+    .map(k => {
+      const opts = groups[k].map(a => {
+        const numPfx = a.number ? `${a.number} - ` : '';
+        const suffix = k === 'bank' && a.bank_name ? ` (${a.bank_name})` : '';
+        return `<option value="${a.gl_account_id}">${_finEsc(numPfx + a.account_name + suffix)}</option>`;
+      }).join('');
+      return `<optgroup label="${_REP_MH_KIND_LABEL[k]}">${opts}</optgroup>`;
+    }).join('');
+}
+
 function _repHumanize(key) {
   return String(key).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
@@ -36,7 +69,7 @@ const REPORT_DEFS = {
   'reports-trial-balance': { title: 'Trial Balance', api: 'trial-balance', dateMode: 'asof',
     columns: [['number','NUMBER'],['account_name','ACCOUNT NAME'],['account_type','TYPE'],['debit_balance','DEBIT'],['credit_balance','CREDIT']], totals: true },
   'reports-cash-book': { title: 'Cash Book', api: 'cash-book', dateMode: 'range',
-    extra: [{ key: 'bank_account_id', label: 'Bank Account', type: 'account' }],
+    extra: [{ key: 'gl_account_id', label: 'Cash / Bank Account', type: 'money_holding' }],
     columns: [['date','DATE'],['description','DESCRIPTION'],['reference','REFERENCE'],['debit','DEBIT'],['credit','CREDIT'],['balance','BALANCE']] },
   'reports-petty-cash-report': { title: 'Petty Cash Report', api: 'petty-cash-report', dateMode: 'range',
     columns: [['date','DATE'],['applicant','APPLICANT'],['purpose','PURPOSE'],['amount','AMOUNT'],['type','TYPE'],['status','STATUS']] },
@@ -105,7 +138,8 @@ const REPORT_DEFS = {
   'reports-statement-of-financial-performance': { title: 'Statement of Financial Performance', api: 'statement-of-financial-performance', dateMode: 'range', layout: 'statement', statementType: 'sfp' },
   'reports-statement-of-financial-position': { title: 'Statement of Financial Position', api: 'statement-of-financial-position', dateMode: 'asof', compareDate: true, layout: 'statement', statementType: 'bs' },
   'reports-notes-of-financial-statement': { title: 'Notes of Financial Statement', api: 'notes-of-financial-statement', dateMode: 'range', layout: 'notes' },
-  'reports-cashflow-statement': { title: 'Cashflow Statement', api: 'cashflow-statement', dateMode: 'range', layout: 'statement', statementType: 'cf' },
+  'reports-cashflow-statement': { title: 'Cashflow Statement', api: 'cashflow-statement', dateMode: 'range', layout: 'statement', statementType: 'cf',
+    extra: [{ key: 'cash_account_id', label: 'Cash / Bank Account', type: 'money_holding' }] },
   'reports-statement-of-changes-in-net-assets': { title: 'Statement of Changes in Net Assets', api: 'statement-of-changes-in-net-assets', dateMode: 'range', layout: 'statement', statementType: 'sce' },
   'reports-bank-reconciliation': { title: 'Bank Reconciliation Report', api: 'bank-reconciliation', dateMode: 'asof', layout: 'statement', statementType: 'bank',
     extra: [{ key: 'bank_account_id', label: 'Bank Account', type: 'account', required: true }] },
@@ -137,6 +171,7 @@ async function loadFinanceReportView(container, routeKey) {
   if (!def) { container.innerHTML = '<p>Unknown report.</p>'; return; }
   await _pvLoadLookups();
   if ((def.extra || []).some(f => f.type === 'class')) await _rcvLoadLookups({ classes: true });
+  if ((def.extra || []).some(f => f.type === 'money_holding')) await _repLoadMoneyHoldingAccounts();
   if (def.layout === 'aged-student-debtors') await _rcvLoadLookups({ students: true });
 
   let dateInputsHtml = '';
@@ -153,6 +188,7 @@ async function loadFinanceReportView(container, routeKey) {
 
   const extraHtml = (def.extra || []).map(f => {
     if (f.type === 'account') return `<div class="fin-filter-field"><label class="fin-filter-label">${f.label}${f.required ? ' *' : ''}</label><select id="rep-x-${f.key}" class="fin-filter-select"><option value="">${f.required ? 'Please Select' : 'All'}</option>${_pvAccountOptions()}</select></div>`;
+    if (f.type === 'money_holding') return `<div class="fin-filter-field"><label class="fin-filter-label">${f.label}${f.required ? ' *' : ''}</label><select id="rep-x-${f.key}" class="fin-filter-select"><option value="">${f.required ? 'Please Select' : 'All'}</option>${_repMoneyHoldingOptions()}</select></div>`;
     if (f.type === 'ledger') return `<div class="fin-filter-field"><label class="fin-filter-label">${f.label}</label><select id="rep-x-${f.key}" class="fin-filter-select"><option value="">All</option>${_pvLedgerOptions()}</select></div>`;
     if (f.type === 'supplier') return `<div class="fin-filter-field"><label class="fin-filter-label">${f.label}${f.required ? ' *' : ''}</label><select id="rep-x-${f.key}" class="fin-filter-select"><option value="">Please Select</option>${_pvSupplierOptions()}</select></div>`;
     if (f.type === 'tendepaywallet') return `<div class="fin-filter-field"><label class="fin-filter-label">${f.label}</label><select id="rep-x-${f.key}" class="fin-filter-select"><option value="">All</option>${_pvTendepayWalletOptions()}</select></div>`;
