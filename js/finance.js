@@ -5103,6 +5103,9 @@ function _coopStatusBadge(status) {
 }
 
 let _coopStatusFilter = 'pending_review';
+// Ops → Recovery sub-tab (BE/FE Contract Addendum 2026-08-18 §B.4) — sits
+// alongside the existing pending/resolved/rejected queue, not inside it.
+let _coopTopTab = 'queue';
 
 async function loadCoopUnmatchedView(container) {
   container.innerHTML = `
@@ -5111,11 +5114,124 @@ async function loadCoopUnmatchedView(container) {
         <h2 class="fin-title">Unmatched Co-op Payments</h2>
         <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Receivables &rsaquo; Unmatched Co-op Payments</div>
       </div>
-      <div id="coop-status-tabs" style="display:flex;gap:8px;margin-bottom:16px;"></div>
-      <div id="coop-split"></div>
+      <div id="coop-top-tabs" style="display:flex;gap:8px;margin-bottom:18px;border-bottom:1px solid var(--grey-100,#eee);padding-bottom:12px;"></div>
+      <div id="coop-tab-body"></div>
     </div>`;
-  _coopRenderTabs();
-  await _coopReload();
+  _coopTopTab = 'queue';
+  _coopRenderTopTabs();
+  await _coopRenderTabBody();
+}
+
+function _coopRenderTopTabs() {
+  const el = document.getElementById('coop-top-tabs');
+  if (!el) return;
+  const tabs = [['queue', 'Queue'], ['recovery', 'Ops Recovery']];
+  el.innerHTML = tabs.map(([val, label]) => {
+    const active = _coopTopTab === val;
+    return `<button class="${active ? 'fin-btn-teal' : 'fin-btn-outline'}" style="padding:7px 18px;font-size:0.85rem;" onclick="_coopSetTopTab('${val}')">${label}</button>`;
+  }).join('');
+}
+
+async function _coopSetTopTab(tab) {
+  _coopTopTab = tab;
+  _coopRenderTopTabs();
+  await _coopRenderTabBody();
+}
+
+async function _coopRenderTabBody() {
+  const body = document.getElementById('coop-tab-body');
+  if (!body) return;
+  if (_coopTopTab === 'recovery') {
+    _coopRenderRecoveryTab(body);
+  } else {
+    body.innerHTML = `<div id="coop-status-tabs" style="display:flex;gap:8px;margin-bottom:16px;"></div><div id="coop-split"></div>`;
+    _coopRenderTabs();
+    await _coopReload();
+  }
+}
+
+// ── Ops Recovery — /rerun and /sweep (§B.2/B.3) ─────────────────────────────
+function _coopRenderRecoveryTab(body) {
+  body.innerHTML = `
+    <div class="fin-form-wrap" style="max-width:520px;">
+      <h3 style="margin-top:0;font-size:1rem;color:var(--navy-700,#1B3057);">Rerun a stuck transaction</h3>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Transaction ID <span class="fin-required">*</span></label>
+        <input type="number" id="coop-rerun-txid" class="fin-form-input" min="1">
+        <span style="font-size:11px;color:var(--grey-500,#888);">The numeric ID of the stuck Co-op CREDIT transaction. Find it via the variance investigation UI or the raw transactions list.</span>
+      </div>
+      <div id="coop-rerun-msg"></div>
+      <div class="fin-form-actions">
+        <button class="fin-btn-teal" onclick="_coopRerun()">Rerun</button>
+      </div>
+    </div>
+    <div class="fin-form-wrap" style="max-width:520px;margin-top:30px;">
+      <h3 style="margin-top:0;font-size:1rem;color:var(--navy-700,#1B3057);">Sweep stuck transactions</h3>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Max Scan</label>
+        <input type="number" id="coop-sweep-max" class="fin-form-input" value="100" min="1" max="1000">
+        <span style="font-size:11px;color:var(--grey-500,#888);">Upper bound on how many stuck transactions to attempt in this sweep. Safe to run repeatedly.</span>
+      </div>
+      <div id="coop-sweep-msg"></div>
+      <div class="fin-form-actions">
+        <button class="fin-btn-teal" onclick="_coopSweepConfirm()">Sweep</button>
+      </div>
+      <div style="font-size:11px;color:var(--grey-500,#888);margin-top:8px;">Safe to run repeatedly. The matcher's PENDING guard + the unique constraint on Co-op TransactionId mean duplicate re-runs won't create duplicate receipts.</div>
+    </div>`;
+}
+
+async function _coopRerun() {
+  const txIdEl = document.getElementById('coop-rerun-txid');
+  const msgEl = document.getElementById('coop-rerun-msg');
+  if (msgEl) msgEl.innerHTML = '';
+  const txId = parseInt(txIdEl?.value, 10);
+  if (!txId) { showToast('Transaction ID is required.', 'error'); return; }
+  const res = await apiFetch(`${_COOP_API}/rerun/${txId}`, { method: 'POST' });
+  if (!res) return;
+  if (res.ok) {
+    const data = await res.json().catch(() => ({}));
+    if (data.status === 'success') {
+      showToast('Matched and confirmed — receipt created.', 'success');
+    } else if (data.queued_unmatched) {
+      msgEl.innerHTML = `<div style="margin-top:10px;padding:10px 14px;border-radius:6px;border-left:3px solid var(--gold-500);background:var(--gold-100);color:#7a6110;font-size:0.85rem;">Queued for manual review — check the <a href="#" onclick="_coopSetTopTab('queue');return false;">Unmatched Queue</a> tab.</div>`;
+    } else {
+      showToast('No change — transaction still pending.', 'info');
+    }
+    return;
+  }
+  if (res.status === 404) {
+    showToast(`Transaction ${txId} not found.`, 'error');
+  } else if (res.status === 422 || res.status === 409) {
+    _pvShowCoralMsg(msgEl, await parseApiError(res));
+  } else {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
+}
+
+function _coopSweepConfirm() {
+  const maxScan = parseInt(document.getElementById('coop-sweep-max')?.value, 10) || 100;
+  if (!confirm(`Attempt to re-run the matcher for up to ${maxScan} stuck Co-op transactions?`)) return;
+  _coopSweep(maxScan);
+}
+async function _coopSweep(maxScan) {
+  const msgEl = document.getElementById('coop-sweep-msg');
+  if (msgEl) msgEl.innerHTML = '';
+  const res = await apiFetch(`${_COOP_API}/sweep?max_scan=${maxScan}`, { method: 'POST' });
+  if (!res) return;
+  if (res.ok) {
+    const data = await res.json();
+    const stillCoral = data.still_unmatched > 0;
+    msgEl.innerHTML = `
+      <div style="margin-top:10px;padding:14px 16px;border-radius:6px;background:#f9fafb;border:1px solid #e5e7eb;font-size:0.88rem;">
+        <div style="font-weight:600;margin-bottom:8px;">Sweep complete.</div>
+        <div>Scanned: ${data.scanned}</div>
+        <div style="color:var(--navy-700,#1B3057);font-weight:600;">Matched: ${data.matched}</div>
+        <div style="color:${stillCoral ? '#8a6d00' : '#666'};">Still unmatched: ${data.still_unmatched}</div>
+        ${stillCoral ? `<div style="margin-top:8px;"><a href="#" onclick="_coopSetTopTab('queue');return false;">&rarr; Review the Unmatched Queue tab</a></div>` : ''}
+      </div>`;
+  } else {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
 }
 
 function _coopRenderTabs() {
@@ -5253,6 +5369,16 @@ async function _coopAssign(unmatchedId, studentId) {
     // ops sees "configuration needed" rather than a generic failure. The
     // queue row stays pending_review either way, safe to retry once fixed.
     _pvShowGoldConfigMsg(msgEl, await parseApiError(res));
+  } else if (res.status === 409) {
+    // Recovery-4 (2026-08-18 addendum §B) — /assign now gates on
+    // confirm_transaction() returning "confirmed" before marking the row
+    // RESOLVED; a 409 means someone else already processed it from another
+    // session (race), rolled back server-side. Don't mark RESOLVED here —
+    // reload replaces the detail pane (the row's status may have changed),
+    // so this is a toast rather than an inline message that would vanish
+    // under the refresh before it's ever read.
+    showToast(await parseApiError(res), 'error');
+    await _coopReload();
   } else {
     showToast('Error: ' + await parseApiError(res), 'error');
   }
