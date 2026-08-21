@@ -1245,8 +1245,12 @@ async function _prCalculate(runId) {
 }
 async function _prApprove(runId) {
   const res = await apiFetch(`${API_BASE}/payroll/runs/${runId}/approve`, { method: 'POST' });
-  if (res && res.ok) { showToast('Payroll run approved.', 'success'); await _prLoadRuns(); await _prSelectRun(runId); }
-  else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+  if (res && res.ok) { showToast('Payroll run approved.', 'success'); await _prLoadRuns(); await _prSelectRun(runId); return; }
+  if (!res) return;
+  const msg = await parseApiError(res);
+  const msgEl = document.getElementById('pr-export-error');
+  if (isPeriodLockError(res.status, msg)) showPeriodLockError(msgEl, msg);
+  else showToast('Error: ' + msg, 'error');
 }
 
 function _prOpenCreateVoucherModal(runId) {
@@ -1576,7 +1580,9 @@ async function _crApprove(runId) {
   } else if (res.status === 403) {
     showToast('You cannot approve a run you created (segregation of duties).', 'error');
   } else {
-    showToast('Error: ' + await parseApiError(res), 'error');
+    const msg = await parseApiError(res);
+    if (isPeriodLockError(res.status, msg)) showPeriodLockError(document.getElementById('cr-warnings'), msg);
+    else showToast('Error: ' + msg, 'error');
   }
 }
 

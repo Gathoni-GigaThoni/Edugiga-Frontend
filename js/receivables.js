@@ -1357,9 +1357,13 @@ async function openRecordPaymentModal(invoiceId, balanceDue) {
   overlay.innerHTML = `
     <div style="background:#fff;border-radius:8px;padding:28px;max-width:480px;width:92%;max-height:90vh;overflow-y:auto;">
       <h3 style="margin-top:0;">Record Payment</h3>
+      <div style="background:#EEF3FA;border-left:3px solid var(--navy-400,#4A6FA5);border-radius:6px;padding:10px 14px;margin-bottom:14px;">
+        <span style="color:#888;font-size:0.82rem;">Amount available</span><br><strong>KES ${_finFmt(balanceDue)}</strong>
+      </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Amount <span class="fin-required">*</span></label>
-        <input type="number" id="rcv-pay-amount" class="fin-form-input" step="0.01" min="0.01" value="${_finFmt(balanceDue).replace(/,/g,'')}">
+        <input type="number" id="rcv-pay-amount" class="fin-form-input" step="0.01" min="0.01" value="${_finFmt(balanceDue).replace(/,/g,'')}" oninput="_rcvPayValidateAmount(${balanceDue})">
+        <span class="fin-field-error" id="rcv-pay-amount-err"></span>
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Payment Method <span class="fin-required">*</span></label>
@@ -1391,12 +1395,27 @@ async function openRecordPaymentModal(invoiceId, balanceDue) {
         <label class="fin-form-label">Notes</label>
         <textarea id="rcv-pay-notes" class="fin-form-input" rows="2" style="resize:vertical;"></textarea>
       </div>
+      <div id="rcv-pay-submit-msg"></div>
       <div class="fin-form-actions">
-        <button class="fin-btn-teal" onclick="submitRecordPayment(${invoiceId})">Submit Payment</button>
+        <button class="fin-btn-teal" id="rcv-pay-submit-btn" onclick="submitRecordPayment(${invoiceId})">Submit Payment</button>
         <button class="fin-btn-cancel" onclick="_rcvCloseModal()">Cancel</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
+}
+
+// Manual over-payment guard (BE/FE Contract Addendum 2026-08-18 §E.1) — the
+// backend no longer silently clamps amount to outstanding, it 409s. Gate on
+// the client first so the operator sees it before submitting; the server
+// 409 stays as the safety net in submitRecordPayment below.
+function _rcvPayValidateAmount(balanceDue) {
+  const amountEl = document.getElementById('rcv-pay-amount');
+  const errEl = document.getElementById('rcv-pay-amount-err');
+  const btn = document.getElementById('rcv-pay-submit-btn');
+  const amount = parseFloat(amountEl?.value);
+  const overpaid = !isNaN(amount) && amount > balanceDue + 0.005;
+  if (errEl) errEl.textContent = overpaid ? 'Amount exceeds outstanding balance across selected invoices.' : '';
+  if (btn) btn.disabled = overpaid;
 }
 
 async function submitRecordPayment(invoiceId) {
@@ -1416,6 +1435,8 @@ async function submitRecordPayment(invoiceId) {
     debit_cash_account_id: debitId,
     notes: notes || null,
   };
+  const msgEl = document.getElementById('rcv-pay-submit-msg');
+  if (msgEl) msgEl.innerHTML = '';
   const res = await apiFetch(`${API_BASE}/receivables/receipts`, {
     method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload),
   });
@@ -1423,7 +1444,18 @@ async function submitRecordPayment(invoiceId) {
     showToast('Payment recorded.','success');
     _rcvCloseModal();
     loadInvoiceDetailView(document.getElementById('main-content'), invoiceId);
-  } else if (res) { showToast('Error: '+await parseApiError(res),'error'); }
+    return;
+  }
+  if (!res) return;
+  const msg = await parseApiError(res);
+  if (res.status === 409) {
+    const errEl = document.getElementById('rcv-pay-amount-err');
+    if (isPeriodLockError(res.status, msg)) showPeriodLockError(msgEl, msg);
+    else if (errEl) errEl.textContent = msg;
+    else showPeriodLockError(msgEl, msg);
+  } else {
+    showToast('Error: '+msg,'error');
+  }
 }
 
 // ==================== MODULE 5 — BULK INVOICE GENERATE ====================

@@ -606,6 +606,10 @@ function openFinPayablesDropdown() {
   const dd = document.getElementById('fin-payables-dropdown');
   if (dd) dd.style.display = 'block';
 }
+function openFinAuditDropdown() {
+  const dd = document.getElementById('fin-audit-dropdown');
+  if (dd) dd.style.display = 'block';
+}
 function openFinTendepayDropdown() {
   const dd = document.getElementById('fin-tendepay-dropdown');
   if (dd) dd.style.display = 'block';
@@ -3622,6 +3626,7 @@ function _tpRenderStep3() {
         <button class="fin-btn-cancel" onclick="_tpWiz.step=2;_tpRenderWizStep();">Back</button>
         <button class="fin-btn-teal" onclick="_tpConfirmImport()">Confirm Import</button>
       </div>
+      <div id="tp-confirm-msg"></div>
     </div>`;
 }
 
@@ -3672,8 +3677,17 @@ async function _tpConfirmImport() {
     showToast(msg, 'success');
     loadView('tendepay-import-history');
   } else if (res && res.status === 409) {
-    showToast('This batch has already been confirmed.', 'error');
-    loadView('tendepay-import-history');
+    // The global period-lock guard (§G) now also emits 409 from this
+    // endpoint — don't assume "already confirmed" without checking the
+    // message, or a locked-period rejection gets mislabeled and the batch
+    // is wrongly redirected to history as if it were done.
+    const msg = await parseApiError(res);
+    if (isPeriodLockError(res.status, msg)) {
+      showPeriodLockError(document.getElementById('tp-confirm-msg'), msg);
+    } else {
+      showToast('This batch has already been confirmed.', 'error');
+      loadView('tendepay-import-history');
+    }
   } else if (res) {
     const body = await res.json().catch(() => null);
     if (body && Array.isArray(body.validation_errors) && body.validation_errors.length) {
@@ -5790,6 +5804,7 @@ async function _reconWsOpenAdjustModal() {
       <div class="fin-form-group">
         <label class="fin-form-label">Posting Date <span class="fin-required">*</span></label>
         <input type="date" id="recon-adj-date" class="fin-form-input" value="${today}">
+        <div id="recon-adj-date-msg"></div>
       </div>
       <div class="fin-section-label" style="margin-top:10px;">Debit</div>
       <table class="fin-li-table">
@@ -5869,6 +5884,8 @@ async function _reconWsSubmitAdjustment() {
     ..._reconAdjCreditLines.filter(l => l.account_id && l.amount).map(l => ({ account_id: l.account_id, line_type: 'credit', amount: l.amount })),
   ];
   if (lines.length < 2) { showToast('Add at least one debit and one credit line.', 'error'); return; }
+  const dateMsgEl = document.getElementById('recon-adj-date-msg');
+  if (dateMsgEl) dateMsgEl.innerHTML = '';
   const res = await apiFetch(`${_RECON_API}/sessions/${_reconWsSessionId}/adjust`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -5881,7 +5898,9 @@ async function _reconWsSubmitAdjustment() {
     showToast(`Adjustment posted (${data.jv_number}).`, 'success');
     await _reconWsRefresh();
   } else {
-    showToast('Error: ' + await parseApiError(res), 'error');
+    const msg = await parseApiError(res);
+    if (isPeriodLockError(res.status, msg)) showPeriodLockError(dateMsgEl, msg);
+    else showToast('Error: ' + msg, 'error');
   }
 }
 

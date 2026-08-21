@@ -216,6 +216,12 @@ function showDashboard() {
                 </ul>
               </li>
               <li class="dropdown">
+                ${flyoutGroupHeader('Audit', 'fin-audit-dropdown')}
+                <ul id="fin-audit-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('fin-audit-dropdown')}">
+                  <li id="sidebar-fin-tv-mismatches" class="sidebar-sub-sub" onclick="loadView('finance-audit-tv-mismatches')">Tax Voucher Mismatches</li>
+                </ul>
+              </li>
+              <li class="dropdown">
                 ${flyoutGroupHeader('Receivables', 'fin-receivables-dropdown')}
                 <ul id="fin-receivables-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('fin-receivables-dropdown')}">
                   <li id="sidebar-fin-rcv-pay"   class="sidebar-sub-sub" onclick="loadView('fin-receive-payments')">Receive Payments</li>
@@ -1088,6 +1094,9 @@ async function loadView(view) {
     case 'fin-coop-unmatched':
       setActiveSidebarItem('sidebar-fin-coop'); openFinReceivablesDropdown();
       await loadCoopUnmatchedView(main); break;
+    case 'finance-audit-tv-mismatches':
+      setActiveSidebarItem('sidebar-fin-tv-mismatches'); openFinAuditDropdown();
+      await loadTvMismatchesAuditView(main); break;
     // Utilities sub-modules
     case 'fin-chart-of-accounts':
       setActiveSidebarItem('sidebar-fin-coa'); openFinUtilitiesDropdown();

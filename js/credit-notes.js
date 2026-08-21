@@ -2,9 +2,8 @@
 // FE Alignment Sweep 2026-08-18 — this module previously routed straight to
 // loadFinPlaceholderView; the backend has always had the full
 // /api/receivables/credit-notes/ lifecycle (confirmed via openapi.json).
-// Live shape: CreditNoteRead has no journal_entry_id — applying a credit
-// note does not (yet) surface a JE link the way SI/PV/imprest do, so the
-// detail view intentionally has no "View JE" row.
+// CreditNoteRead.journal_entry_id shipped later the same day — see the
+// "Reversal JE" detail row below, omitted (not dashed) when null.
 
 const _CN_API = `${API_BASE}/receivables/credit-notes`;
 
@@ -84,7 +83,7 @@ function _cnDetailActions(cn) {
             <button class="fin-btn-cancel" style="background:var(--coral-500,#D94040);color:#fff;" onclick="_cnOpenRejectModal(${cn.id})">Reject</button>`;
   }
   if (cn.status === 'approved') {
-    return `<button class="fin-btn-teal" onclick="_cnOpenApplyModal(${cn.id},'${_finEsc(cn.credit_note_number||('#'+cn.id))}',${cn.amount})">Apply to Invoice</button>`;
+    return `<button class="fin-btn-teal" onclick="_cnOpenApplyModal(${cn.id},'${_finEsc(cn.credit_note_number||('#'+cn.id))}',${cn.amount},${cn.fee_invoice_id})">Apply to Invoice</button>`;
   }
   return '';
 }
@@ -131,7 +130,11 @@ async function _cnSubmitReject(id) {
   }
 }
 
-function _cnOpenApplyModal(id, cnNumber, amount) {
+async function _cnOpenApplyModal(id, cnNumber, amount, feeInvoiceId) {
+  await _cnFetchAllInvoices();
+  const inv = _cnInvoiceById(feeInvoiceId);
+  const outstanding = inv ? (parseFloat(inv.amount_due)||0) - (parseFloat(inv.amount_paid)||0) : null;
+  const overApplies = outstanding != null && parseFloat(amount) > outstanding + 0.005;
   const wrap = document.createElement('div');
   wrap.id = 'cn-apply-modal-overlay';
   wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
@@ -141,22 +144,34 @@ function _cnOpenApplyModal(id, cnNumber, amount) {
       <p style="font-size:0.9rem;color:var(--grey-700,#444);line-height:1.5;">
         Apply <strong>${_finEsc(cnNumber)}</strong> (${_pvMoney(amount)}) against its fee invoice? This reduces the invoice balance and cannot be undone.
       </p>
+      ${outstanding != null ? `<div style="background:#EEF3FA;border-left:3px solid var(--navy-400,#4A6FA5);border-radius:6px;padding:10px 14px;margin-top:6px;">
+        <span style="color:#888;font-size:0.82rem;">Invoice outstanding</span><br><strong>${_pvMoney(outstanding)}</strong>
+      </div>` : ''}
+      ${overApplies ? `<div style="background:var(--coral-100);border-left:3px solid var(--coral-500);border-radius:6px;padding:10px 14px;margin-top:10px;color:var(--coral-600);font-size:0.85rem;">CN amount exceeds this invoice's outstanding balance.</div>` : ''}
+      <div id="cn-apply-modal-msg"></div>
       <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
         <button class="fin-btn-cancel" onclick="document.getElementById('cn-apply-modal-overlay').remove()">Cancel</button>
-        <button class="fin-btn-teal" onclick="_cnApply(${id})">Apply</button>
+        <button class="fin-btn-teal" ${overApplies ? 'disabled' : ''} onclick="_cnApply(${id})">Apply</button>
       </div>
     </div>`;
   document.body.appendChild(wrap);
 }
 async function _cnApply(id) {
+  const msgEl = document.getElementById('cn-apply-modal-msg');
   const res = await apiFetch(`${_CN_API}/${id}/apply`, { method: 'POST' });
-  document.getElementById('cn-apply-modal-overlay')?.remove();
   if (!res) return;
   if (res.ok) {
+    document.getElementById('cn-apply-modal-overlay')?.remove();
     showToast('Credit note applied to invoice.', 'success');
     await window._splitRefreshSelected?.();
+    return;
+  }
+  const msg = await parseApiError(res);
+  if (res.status === 409) {
+    showPeriodLockError(msgEl, msg);
   } else {
-    showToast('Error: ' + await parseApiError(res), 'error');
+    document.getElementById('cn-apply-modal-overlay')?.remove();
+    showToast('Error: ' + msg, 'error');
   }
 }
 

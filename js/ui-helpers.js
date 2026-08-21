@@ -1,6 +1,27 @@
 // ==================== UI HELPERS ====================
 // Shared utilities used across all modules.
 
+// ── Period-lock guard (BE/FE Contract Addendum 2026-08-18 §G) ───────────────
+// The locked-period guard that used to live on 3 endpoints now fires from a
+// Session.before_flush event on every JE-emitting form. Same 409 shape
+// everywhere ("Cannot post: entry_date {date} is in a closed fiscal period
+// ..."), so one detector + one renderer keeps every call site consistent.
+// Adapted from the addendum's isPeriodLockError(res, body) to this codebase's
+// actual error flow, where parseApiError(res) already consumes res.json()
+// once and returns the flattened detail string — re-reading res.json() here
+// would throw on an already-consumed stream.
+function isPeriodLockError(status, msg) {
+  return status === 409 && typeof msg === 'string' && msg.startsWith('Cannot post: entry_date');
+}
+// Only the manual JE form (journal-entries.js) exposes lock_override_reason —
+// every other JE-emitting form's fix is "pick a different date," so this is
+// a terminal coral message, never paired with a bypass affordance.
+function showPeriodLockError(el, msg) {
+  const text = msg || 'Cannot post: entry_date is in a closed fiscal period.';
+  if (!el) { showToast(text, 'error'); return; }
+  el.innerHTML = `<div style="margin-top:10px;padding:10px 14px;border-radius:6px;border-left:3px solid var(--coral-500);background:var(--coral-100);color:var(--coral-600);font-size:0.85rem;">${typeof _finEsc === 'function' ? _finEsc(text) : text}</div>`;
+}
+
 // ── Money formatting ─────────────────────────────────────────────────────────
 function formatKES(v) {
   const n = parseFloat(v);

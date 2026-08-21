@@ -385,8 +385,12 @@ async function _pvPvSubmitForApproval(id) {
 }
 async function _pvPvApprove(id) {
   const res = await apiFetch(`${_PV_PV_API}${id}/approve`, { method: 'POST' });
-  if (res && res.ok) { showToast('Payment voucher approved.', 'success'); await window._splitRefreshSelected?.(); }
-  else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+  if (res && res.ok) { showToast('Payment voucher approved.', 'success'); await window._splitRefreshSelected?.(); return; }
+  if (!res) return;
+  const msg = await parseApiError(res);
+  const msgEl = document.getElementById('pv-link-msg');
+  if (isPeriodLockError(res.status, msg)) showPeriodLockError(msgEl, msg);
+  else showToast('Error: ' + msg, 'error');
 }
 function _pvPvReject(id) {
   _pvShowReasonModal('Reject Payment Voucher', async (reason) => {
@@ -438,7 +442,10 @@ async function _pvPvPrint(id) {
 }
 
 // ── Add / Edit form ──────────────────────────────────────────────────────────
-function _pvPvFormHtml(v) {
+// lockedTaxType — set when this PV backs a TaxVoucher (§D.3): the backend
+// resolves+locks debit_account_id from the TV's tax_type, so the picker
+// renders read-only with a "Locked" pill instead of an editable select.
+function _pvPvFormHtml(v, lockedTaxType) {
   const payeeType = v?.payee_type || '';
   return `
     <div class="fin-form-grid-2">
@@ -462,9 +469,18 @@ function _pvPvFormHtml(v) {
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Debit Account</label>
+        ${lockedTaxType ? `
+        <input type="hidden" id="pv-f-debit-account" value="${v?.debit_account_id || ''}">
+        <div class="fin-form-input" style="background:#f3f4f6;display:flex;align-items:center;gap:8px;">
+          ${_finEsc(v?.debit_account_id ? _pvAccountName(v.debit_account_id) : '—')}
+          <span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:0.72rem;font-weight:600;color:#8a6d00;background:#f5e6a8;">Locked</span>
+        </div>
+        <span style="font-size:11px;color:var(--grey-500,#888);">Backs a ${_finEsc(lockedTaxType)} Tax Voucher — debit account is locked to the ${_finEsc(lockedTaxType)} payable. To change, ops must update the env var.</span>
+        ` : `
         <select id="pv-f-debit-account" class="fin-form-select">
           <option value="">Please Select</option>${_pvAccountOptions(v?.debit_account_id)}
         </select>
+        `}
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Tendepay Wallet</label>
@@ -516,7 +532,8 @@ function _pvPvFormHtml(v) {
     <div class="fin-form-group">
       <label class="fin-form-label">Notes</label>
       <textarea id="pv-f-notes" class="fin-form-textarea" rows="4">${_finEsc(v?.notes || '')}</textarea>
-    </div>`;
+    </div>
+    <div id="pv-f-submit-msg"></div>`;
 }
 
 // Set only when editing a PV already linked to a supplier invoice — the
@@ -594,10 +611,15 @@ function _pvPvPayload() {
 
 async function _pvPvSubmitAdd() {
   if (!_pvPvValidate()) return;
+  const msgEl = document.getElementById('pv-f-submit-msg');
+  if (msgEl) msgEl.innerHTML = '';
   try {
     const res = await apiFetch(_PV_PV_API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(_pvPvPayload()) });
-    if (res && res.ok) { showToast('Payment voucher created successfully.', 'success'); loadView('payables-payment-vouchers'); }
-    else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+    if (res && res.ok) { showToast('Payment voucher created successfully.', 'success'); loadView('payables-payment-vouchers'); return; }
+    if (!res) return;
+    const msg = await parseApiError(res);
+    if (isPeriodLockError(res.status, msg)) showPeriodLockError(msgEl, msg);
+    else showToast('Error: ' + msg, 'error');
   } catch (e) { showToast('Network error.', 'error'); }
 }
 
@@ -609,6 +631,13 @@ async function loadPayablesPaymentVouchersEditView(container) {
   const v = await res.json();
   if (v.status !== 'draft' && v.status !== 'submitted') { showToast('Only draft or submitted vouchers can be edited.', 'error'); loadView('payables-payment-vouchers'); return; }
   _pvEditLinkedRemaining = null;
+  // §D.3 — cross-reference the tax-vouchers list to detect whether this PV
+  // backs a TaxVoucher (no flat field for this on PaymentVoucherRead itself;
+  // _pvTvPvId already handles the flat-vs-nested payment_voucher_id shape).
+  const tvRes = await apiFetch(_PV_TV_API);
+  const tvList = (tvRes && tvRes.ok) ? _toArray(await tvRes.json()) : [];
+  const backingTv = tvList.find(tv => String(_pvTvPvId(tv)) === String(v.id));
+  const lockedTaxType = backingTv ? (_pvTvField(backingTv, 'tax_type') || 'statutory') : null;
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -619,7 +648,7 @@ async function loadPayablesPaymentVouchersEditView(container) {
       </div>
       <div class="fin-form-wrap">
         <div id="pv-f-overvouch-panel"></div>
-        ${_pvPvFormHtml(v)}
+        ${_pvPvFormHtml(v, lockedTaxType)}
         <div class="fin-form-actions">
           <button class="fin-btn-outline" onclick="_pvPvPrint(${v.id})">Print</button>
           <button class="fin-btn-teal" onclick="_pvPvSubmitEdit(${v.id})">Update</button>
@@ -662,10 +691,16 @@ async function _pvPvSubmitEdit(id) {
       return;
     }
   }
+  const msgEl = document.getElementById('pv-f-submit-msg');
+  if (msgEl) msgEl.innerHTML = '';
   try {
     const res = await apiFetch(`${_PV_PV_API}${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(_pvPvPayload()) });
-    if (res && res.ok) { showToast('Payment voucher updated.', 'success'); loadView('payables-payment-vouchers'); }
-    else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+    if (res && res.ok) { showToast('Payment voucher updated.', 'success'); loadView('payables-payment-vouchers'); return; }
+    if (!res) return;
+    const msg = await parseApiError(res);
+    if (isPeriodLockError(res.status, msg)) showPeriodLockError(msgEl, msg);
+    else if (res.status === 409 && /tax voucher/i.test(msg)) showPeriodLockError(msgEl, msg);
+    else showToast('Error: ' + msg, 'error');
   } catch (e) { showToast('Network error.', 'error'); }
 }
 
@@ -707,6 +742,14 @@ async function loadPayablesTaxVouchersView(container) {
       {label:'Tax Type',   key:'tax_type', fmt:v=>v||'—'},
       {label:'Ledger',     key:'ledger_id', fmt:(_,tv)=>_pvLedgerName(_pvTvField(tv,'ledger_id'))},
       {label:'Amount',     key:'amount', fmt:(_,tv)=>_pvMoney(_pvTvField(tv,'amount'))},
+      // Debit account is server-resolved from tax_type (§D.1) and locked —
+      // never render an editable picker for it on a Tax Voucher.
+      {label:'Debit Account', key:'debit_account_id', fmt:(_,tv)=>{
+        const id = _pvTvField(tv, 'debit_account_id');
+        if (!id) return '—';
+        return `${_finEsc(_pvAccountName(id))} <span style="display:inline-block;margin-left:6px;padding:1px 8px;border-radius:10px;font-size:0.72rem;font-weight:600;color:#8a6d00;background:#f5e6a8;">Locked</span>
+          <div style="font-size:11px;color:var(--grey-500,#888);margin-top:4px;">Debit account is locked to the ${_finEsc(_pvTvField(tv,'tax_type')||'')} liability account. To change, ops must update the env var.</div>`;
+      }},
       {label:'Status',     key:'status', fmt:(_,tv)=>_pvBadge(_pvTvField(tv,'status'))},
       {label:'Date',       key:'created_at', fmt:(_,tv)=>_pvDate(_pvTvField(tv,'created_at'))},
     ],
@@ -769,7 +812,8 @@ function _pvTvFormHtml() {
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Tax Type <span class="fin-required">*</span></label>
-        <select id="tv-f-tax-type" class="fin-form-select"><option value="">Please Select</option>${_PV_TAX_TYPES.map(t=>`<option value="${t}">${t}</option>`).join('')}</select>
+        <select id="tv-f-tax-type" class="fin-form-select"><option value="">Please Select</option>${_PV_TAX_TYPES.filter(t=>t!=='WHT').map(t=>`<option value="${t}">${t}</option>`).join('')}</select>
+        <span style="font-size:11px;color:var(--grey-500,#888);">WHT is not created here — it remits automatically when a WHT-bearing payment voucher is marked paid.</span>
         <span class="fin-field-error" id="tv-f-taxtype-err"></span>
       </div>
       <div class="fin-form-group">
@@ -818,6 +862,7 @@ async function loadPayablesTaxVouchersAddView(container) {
       </div>
       <div class="fin-form-wrap">
         ${_pvTvFormHtml()}
+        <div id="tv-f-submit-msg"></div>
         <div class="fin-form-actions">
           <button class="fin-btn-teal" onclick="_pvTvSubmitAdd()">Submit</button>
           <button class="fin-btn-cancel" onclick="loadView('payables-tax-vouchers')">Cancel</button>
@@ -856,11 +901,77 @@ async function _pvTvSubmitAdd() {
     period_year: parseInt(document.getElementById('tv-f-period-year').value, 10),
     kra_payment_slip_ref: document.getElementById('tv-f-kra-ref').value.trim() || null,
   };
+  const msgEl = document.getElementById('tv-f-submit-msg');
+  if (msgEl) msgEl.innerHTML = '';
   try {
     const res = await apiFetch(_PV_TV_API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    if (res && res.ok) { showToast('Tax voucher created successfully.', 'success'); loadView('payables-tax-vouchers'); }
-    else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+    if (res && res.ok) { showToast('Tax voucher created successfully.', 'success'); loadView('payables-tax-vouchers'); return; }
+    if (!res) return;
+    const msg = await parseApiError(res);
+    // §D.1 — an unset env var for the chosen tax type's liability account is
+    // a 400 naming the exact env-var; that's an ops config gap, not a
+    // mistake the operator made, so gold not coral.
+    if (res.status === 400 && /_LIABILITY_ACCOUNT_ID/i.test(msg)) {
+      _pvShowGoldConfigMsg(msgEl, msg);
+    } else {
+      showToast('Error: ' + msg, 'error');
+    }
   } catch (e) { showToast('Network error.', 'error'); }
+}
+
+// ── Tax Voucher Mismatches audit (§D.4) ─────────────────────────────────────
+// Diagnostic only, no mutation actions — the accountant reclassifies via the
+// existing Journal Entries module. Response schema is unconfirmed (`{}` in
+// openapi.json, same as the rest of this file's report-shaped endpoints), so
+// the items list goes through _toArray and every field read defensively.
+async function loadTvMismatchesAuditView(container) {
+  await _pvLoadLookups();
+  container.innerHTML = `<div class="fin-page"><p class="sa-loading">Loading&#8230;</p></div>`;
+  const res = await apiFetch(`${_PV_TV_API}audit/mismatched-debit-account`);
+  if (!res || !res.ok) {
+    container.innerHTML = `<div class="fin-page"><p class="fin-error-msg">Could not load the Tax Voucher mismatches audit.</p></div>`;
+    return;
+  }
+  const data = await res.json().catch(() => ({}));
+  const items = _toArray(data.items ?? data);
+  const count = data.count ?? items.length;
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Tax Voucher Mismatches</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Audit &rsaquo; Tax Voucher Mismatches</div>
+      </div>
+      ${count === 0 ? `
+      <div style="background:#EEF3FA;border-left:3px solid var(--navy-400,#4A6FA5);border-radius:6px;padding:16px 20px;font-size:0.95rem;">
+        &#10003; No Tax Voucher mismatches — the debit-account lock-down is holding.
+      </div>` : `
+      <div style="background:#EEF3FA;border-left:3px solid var(--navy-400,#4A6FA5);border-radius:6px;padding:14px 20px;font-weight:600;margin-bottom:16px;">
+        ${count} mismatched Tax Voucher${count===1?'':'s'} found.
+      </div>
+      <div class="fin-table-wrap">
+        <table class="fin-table">
+          <thead><tr>
+            <th>Voucher No</th><th>Tax Type</th><th>Period</th><th>Amount</th><th>Status</th>
+            <th>Actual Account</th><th>Expected Account</th><th></th>
+          </tr></thead>
+          <tbody>
+            ${items.map(it => `<tr>
+              <td><strong>${_finEsc(it.voucher_no || '—')}</strong></td>
+              <td><span style="display:inline-block;padding:2px 9px;border-radius:10px;font-size:0.78rem;font-weight:600;background:#eef1f5;color:#5F6B7C;">${_finEsc(it.tax_type || '—')}</span></td>
+              <td>${_finEsc(it.period || '—')}</td>
+              <td>${_pvMoney(it.amount)}</td>
+              <td>${_pvBadge(it.status)}</td>
+              <td style="color:var(--coral-600,#c0392b);">${_finEsc(it.actual_debit_account_id!=null?_pvAccountName(it.actual_debit_account_id):'—')}</td>
+              <td style="color:var(--navy-700,#1B3057);">${_finEsc(it.expected_debit_account_id!=null?_pvAccountName(it.expected_debit_account_id):'—')}</td>
+              <td>${it.journal_entry_id ? `<button class="fin-btn-outline" style="padding:4px 10px;font-size:0.8rem;" onclick="_jeOpenDetail(${it.journal_entry_id})">View JE</button>` : '—'}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <p style="font-size:0.85rem;color:var(--grey-600,#5F6B7C);margin-top:14px;line-height:1.6;">
+        These vouchers were created before the debit-account lock-down landed. The accountant should post a reclassifying JE to move the amount from the actual account to the expected account. Click "View JE" to see the underlying payment JE.
+      </p>`}
+    </div>`;
 }
 
 async function loadPayablesTaxVouchersUpcomingView(container) {
@@ -1839,7 +1950,16 @@ async function loadPayablesExpenseClaimsView(container) {
     ],
     renderAdd: _pvAddPlaceholder('Expense Claim', 'payables-expense-claims-add', 'Submit a new staff expense claim.'),
     onAdd: () => loadView('payables-expense-claims-add'),
+    detailActions: _pvEcDetailActions,
   });
+}
+function _pvEcDetailActions(c) {
+  const buttons = c.status === 'submitted'
+    ? `<button class="fin-btn-teal" onclick="_pvEcApprove(${c.id})">Approve</button>
+       <button class="fin-btn-cancel" onclick="_pvEcReject(${c.id})">Reject</button>`
+    : '';
+  return `<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">${buttons}</div>
+    <div id="pv-ec-detail-msg" style="width:100%;"></div>`;
 }
 function _pvRenderEcTable() {
   document.getElementById('pv-ec-total').textContent = _pvEcData.length;
@@ -1870,13 +1990,17 @@ function _pvRenderEcTable() {
 }
 async function _pvEcApprove(id) {
   const res = await apiFetch(`${_PV_EC_API}/${id}/approve`, { method: 'POST' });
-  if (res && res.ok) { showToast('Expense claim approved.', 'success'); loadPayablesExpenseClaimsView(document.getElementById('main-content')); }
-  else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+  if (res && res.ok) { showToast('Expense claim approved.', 'success'); await window._splitRefreshSelected?.(); return; }
+  if (!res) return;
+  const msg = await parseApiError(res);
+  const msgEl = document.getElementById('pv-ec-detail-msg');
+  if (isPeriodLockError(res.status, msg)) showPeriodLockError(msgEl, msg);
+  else showToast('Error: ' + msg, 'error');
 }
 function _pvEcReject(id) {
   _pvShowReasonModal('Reject Expense Claim', async (reason) => {
     const res = await apiFetch(`${_PV_EC_API}/${id}/reject`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }) });
-    if (res && res.ok) { showToast('Expense claim rejected.', 'success'); loadPayablesExpenseClaimsView(document.getElementById('main-content')); }
+    if (res && res.ok) { showToast('Expense claim rejected.', 'success'); await window._splitRefreshSelected?.(); }
     else if (res) showToast('Error: ' + await parseApiError(res), 'error');
   });
 }
@@ -2853,6 +2977,8 @@ async function _pvIsrSubmitAdd() {
       const msg = await parseApiError(res);
       if (res.status === 400 && /expense_account_id/i.test(msg)) {
         document.getElementById('isr-f-expense-err').textContent = msg;
+      } else if (isPeriodLockError(res.status, msg)) {
+        document.getElementById('isr-f-date-err').textContent = msg;
       } else {
         showToast('Error: ' + msg, 'error');
       }
