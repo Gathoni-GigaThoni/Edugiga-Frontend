@@ -3371,6 +3371,14 @@ async function _tpRenderStep1() {
           </div>
         </div>
       </div>
+      <div class="fin-form-group" style="max-width:420px;">
+        <label class="fin-form-label">Tendepay Wallet <span class="fin-required">*</span></label>
+        <select id="tp-import-wallet-account" class="fin-form-select">
+          <option value="">Please Select</option>
+          ${(_pvAccounts || []).filter(a => a.wallet_role === 'main' || a.wallet_role === 'mini').sort((a,b) => (a.wallet_role === b.wallet_role ? (a.account_name || '').localeCompare(b.account_name || '') : (a.wallet_role === 'main' ? -1 : 1))).map(w => `<option value="${w.id}">${_finEsc(w.account_name || ('Account #' + w.id))}${w.wallet_role === 'main' ? ' — Main' : ''}</option>`).join('')}
+        </select>
+        <div style="font-size:0.78rem;color:#666;margin-top:4px;">The wallet these payments were sent from. Applied to every row in this batch — the template has no ACCOUNT column because of this. Rows that carry their own ACCOUNT (e.g. a raw Tendepay export spanning wallets) still override the pick on a per-row basis.</div>
+      </div>
       <div id="tp-expected-cols-wrap"></div>
       <div style="margin-top:16px;display:flex;gap:10px;align-items:center;">
         <button class="fin-btn-outline" onclick="_tpDownloadTemplate()">Download Template</button>
@@ -3495,8 +3503,13 @@ async function _tpUploadFile(input) {
   if (!file) return;
   const mode = (document.querySelector('input[name="tp-import-mode"]:checked') || {}).value || 'supplier'; // 'supplier' | 'payroll' | 'contractor'
   const runId = document.getElementById('tp-import-payroll-run')?.value || '';
+  const walletId = document.getElementById('tp-import-wallet-account')?.value || '';
   if ((mode === 'payroll' || mode === 'contractor') && !runId) {
     showToast(`${mode === 'contractor' ? 'Contractor Run' : 'Payroll Run'} is required for a ${mode === 'contractor' ? 'contractor' : 'payroll'} return statement.`, 'error');
+    return;
+  }
+  if (!walletId) {
+    showToast('Tendepay Wallet is required — pick the wallet these payments were sent from.', 'error');
     return;
   }
   const statusEl = document.getElementById('tp-upload-status');
@@ -3504,6 +3517,7 @@ async function _tpUploadFile(input) {
   const fd = new FormData();
   fd.append('file', file);
   fd.append('import_mode', mode);
+  fd.append('wallet_account_id', walletId);
   if (mode === 'contractor') fd.append('contractor_run_id', runId);
   else if (mode === 'payroll') fd.append('payroll_run_id', runId);
   const res = await apiFetch(`${_TP_BASE}/import`, { method: 'POST', body: fd });
