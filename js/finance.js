@@ -3350,26 +3350,13 @@ function _tpRenderWizStep() {
 }
 
 async function _tpRenderStep1() {
+  // Mode selector renders first — it is the single control that decides which
+  // template we download, which columns the on-page table shows, and which
+  // notes blurb accompanies them. Everything downstream keys off it.
   const body = document.getElementById('tp-wiz-body');
-  body.innerHTML = '<p class="sa-loading">Loading column contract&#8230;</p>';
-  let cols = { required_columns: [], optional_columns: [], notes: '' };
-  try {
-    const res = await apiFetch(`${_TP_BASE}/import/expected-columns`);
-    if (res && res.ok) cols = await res.json();
-  } catch (_) {}
-  const colRows = (list, required) => (list || []).map(c => `
-    <tr><td>${_finEsc(c.header || c.name || '')}</td><td>${required ? 'Required' : 'Optional'}</td><td>${_finEsc(c.description || '')}</td><td>${_finEsc(c.example ?? '')}</td></tr>`).join('');
-  const notesHtml = cols.notes ? `
-    <div style="background:#eef3fb;border-radius:8px;padding:12px 16px;margin:12px 0;font-size:0.85rem;color:#2c3e50;white-space:pre-wrap;">${_finEsc(cols.notes)}</div>` : '';
   body.innerHTML = `
     <div class="fin-form-wrap">
-      <div class="fin-section-label">Expected File Format</div>
-      <div class="fin-table-wrap"><table class="fin-table">
-        <thead><tr><th>Column</th><th>Required</th><th>Description</th><th>Example</th></tr></thead>
-        <tbody>${colRows(cols.required_columns, true)}${colRows(cols.optional_columns, false)}</tbody>
-      </table></div>
-      ${notesHtml}
-      <div class="fin-form-group" style="margin-top:16px;">
+      <div class="fin-form-group">
         <label class="fin-form-label">Import Mode</label>
         <div style="display:flex;gap:20px;margin-top:6px;">
           <label><input type="radio" name="tp-import-mode" value="supplier" checked onchange="_tpToggleImportMode()"> Supplier payments</label>
@@ -3384,6 +3371,7 @@ async function _tpRenderStep1() {
           </div>
         </div>
       </div>
+      <div id="tp-expected-cols-wrap"></div>
       <div style="margin-top:16px;display:flex;gap:10px;align-items:center;">
         <button class="fin-btn-outline" onclick="_tpDownloadTemplate()">Download Template</button>
         <input type="file" id="tp-upload-file" accept=".csv,.xlsx,.xls" style="display:none;" onchange="_tpUploadFile(this)">
@@ -3392,6 +3380,35 @@ async function _tpRenderStep1() {
       </div>
     </div>`;
   await _tpLoadPayrollRunOptions();
+  await _tpRefreshExpectedCols('supplier');
+}
+
+// Rebuild the "Columns in this template" table for the picked mode. Called
+// on initial render and every time the mode radio changes. The table + notes
+// come straight from GET /expected-columns?mode=... — same source of truth
+// as the template file itself, so what the operator sees on the page is
+// exactly what a download will contain and what an upload will be parsed as.
+async function _tpRefreshExpectedCols(mode) {
+  const wrap = document.getElementById('tp-expected-cols-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = '<p class="sa-loading">Loading column contract&#8230;</p>';
+  let cols = { required_columns: [], optional_columns: [], notes: '' };
+  try {
+    const res = await apiFetch(`${_TP_BASE}/import/expected-columns?mode=${encodeURIComponent(mode)}`);
+    if (res && res.ok) cols = await res.json();
+  } catch (_) {}
+  const colRows = (list, required) => (list || []).map(c => `
+    <tr><td>${_finEsc(c.header || c.name || '')}</td><td>${required ? 'Required' : 'Optional'}</td><td>${_finEsc(c.description || '')}</td><td>${_finEsc(c.example ?? '')}</td></tr>`).join('');
+  const notesHtml = cols.notes ? `
+    <div style="background:#eef3fb;border-radius:8px;padding:12px 16px;margin:12px 0;font-size:0.85rem;color:#2c3e50;white-space:pre-wrap;">${_finEsc(cols.notes)}</div>` : '';
+  wrap.innerHTML = `
+    <div class="fin-section-label" style="margin-top:16px;">Columns in this template</div>
+    <div style="font-size:0.82rem;color:#666;margin-bottom:6px;">These are the exact columns the template you download will contain — nothing more, nothing less. Fill them in for each payment on the statement.</div>
+    <div class="fin-table-wrap"><table class="fin-table">
+      <thead><tr><th>Column</th><th>Required</th><th>Description</th><th>Example</th></tr></thead>
+      <tbody>${colRows(cols.required_columns, true)}${colRows(cols.optional_columns, false)}</tbody>
+    </table></div>
+    ${notesHtml}`;
 }
 
 // Contractor promoted to a top-level peer of Supplier/Payroll (2026-08-18
@@ -3405,6 +3422,8 @@ function _tpToggleImportMode() {
   const label = document.getElementById('tp-import-run-label');
   if (label) label.innerHTML = (mode === 'contractor' ? 'Contractor Run' : 'Payroll Run') + ' <span class="fin-required">*</span>';
   if (mode === 'payroll' || mode === 'contractor') _tpLoadPayrollRunOptions();
+  // Keep the on-page columns table honest with the picked mode.
+  _tpRefreshExpectedCols(mode);
 }
 
 async function _tpLoadPayrollRunOptions() {
@@ -3459,7 +3478,14 @@ async function _tpLoadPayrollRunOptions() {
 }
 
 async function _tpDownloadTemplate() {
-  await authBlobDownload(`${_TP_BASE}/import/template`, 'tendepay-import-template.xlsx', {
+  // Template is mode-specific: supplier => PV NUMBER, payroll => EMPLOYEE
+  // CODE, contractor => CONTRACTOR CODE for the match-key column.
+  // Source order: (1) Step-1 mode radio when it's still in the DOM, then
+  // (2) the batch mode carried on the wizard state (Step 2 legacy-banner
+  // download hits this path), then (3) supplier as a safe default.
+  const radio = document.querySelector('input[name="tp-import-mode"]:checked');
+  const mode = (radio && radio.value) || (_tpWiz && _tpWiz.importMode) || 'supplier';
+  await authBlobDownload(`${_TP_BASE}/import/template?mode=${encodeURIComponent(mode)}`, `tendepay-${mode}-template.xlsx`, {
     errorPrefix: 'Could not download template: ',
   });
 }
