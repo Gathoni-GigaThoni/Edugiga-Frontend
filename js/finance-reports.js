@@ -477,15 +477,29 @@ function _repRenderNotes(def, data) {
 }
 
 // ── Statement layout (Cashflow / SCNA / Bank Reconciliation) ──
-function _repSection(title, items) {
+// colorByFlow (CFS only): amount is now server-signed (CR non-cash = +
+// inflow, DR non-cash = − outflow — 2026-08-24 addendum §A). Direction is
+// derived from the sign, not from a line_type field (removed from the wire).
+// SCE/bank-rec statement types don't pass this flag — their amounts aren't
+// inflow/outflow-signed the same way.
+// net (CFS only): reads CashFlowSection.net straight off the wire rather
+// than re-summing items. The server now guarantees sum(items.amount) ===
+// net by construction (§A.1), so this is a documentation choice, not a
+// correctness fix — but it means the FE can never drift from that
+// invariant even if a future edge case needs a special-cased audit trail.
+function _repSection(title, items, colorByFlow, net) {
   if (!items || !items.length) return '';
-  const total = items.reduce((s, it) => s + (parseFloat(it.amount ?? it.value ?? 0) || 0), 0);
+  const total = net != null ? (parseFloat(net) || 0) : items.reduce((s, it) => s + (parseFloat(it.amount ?? it.value ?? 0) || 0), 0);
   return `
     <div style="margin-bottom:16px;">
       <div style="font-weight:bold;color:#2c3e50;margin-bottom:6px;">${_finEsc(title)}</div>
-      ${items.map(it => `<div style="display:flex;justify-content:space-between;padding:4px 0 4px 16px;border-bottom:1px solid #f5f5f5;">
-        <span>${_finEsc(it.name || it.account_name || it.label || '')}</span><span>${_pvMoney(it.amount ?? it.value)}</span>
-      </div>`).join('')}
+      ${items.map(it => {
+        const amt = parseFloat(it.amount ?? it.value ?? 0) || 0;
+        const color = colorByFlow ? (amt >= 0 ? 'var(--navy-700,#1B3057)' : 'var(--coral-600,#c0392b)') : 'inherit';
+        return `<div style="display:flex;justify-content:space-between;padding:4px 0 4px 16px;border-bottom:1px solid #f5f5f5;">
+        <span>${_finEsc(it.name || it.account_name || it.label || '')}</span><span style="color:${color};">${_pvMoney(it.amount ?? it.value)}</span>
+      </div>`;
+      }).join('')}
       <div style="display:flex;justify-content:space-between;padding:6px 0;font-weight:bold;border-top:1px solid #ddd;margin-top:4px;">
         <span>Total ${_finEsc(title)}</span><span>${_pvMoney(total)}</span>
       </div>
@@ -521,9 +535,9 @@ function _repRenderStatement(def, data) {
     const netChange = netOp + netInv + netFin;
     out.innerHTML = `
       <div class="fin-form-wrap" style="max-width:680px;">
-        ${_repSection('Operating Activities', opItems)}
-        ${_repSection('Investing Activities', invItems)}
-        ${_repSection('Financing Activities', finItems)}
+        ${_repSection('Operating Activities', opItems, true, data.operating?.net)}
+        ${_repSection('Investing Activities', invItems, true, data.investing?.net)}
+        ${_repSection('Financing Activities', finItems, true, data.financing?.net)}
         ${_repGrandTotal('Net Change in Cash', netChange)}
         <div style="display:flex;justify-content:space-between;padding:4px 0;"><span>Opening Cash Balance</span><span>${_pvMoney(opening)}</span></div>
         <div style="display:flex;justify-content:space-between;padding:4px 0;font-weight:bold;"><span>Closing Cash Balance</span><span>${_pvMoney(closing)}</span></div>

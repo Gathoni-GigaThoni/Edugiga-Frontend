@@ -3372,12 +3372,12 @@ async function _tpRenderStep1() {
         </div>
       </div>
       <div class="fin-form-group" style="max-width:420px;">
-        <label class="fin-form-label">Tendepay Wallet <span class="fin-required">*</span></label>
+        <label class="fin-form-label">Tendepay Wallet</label>
         <select id="tp-import-wallet-account" class="fin-form-select">
-          <option value="">Please Select</option>
-          ${(_pvAccounts || []).filter(a => a.wallet_role === 'main' || a.wallet_role === 'mini').sort((a,b) => (a.wallet_role === b.wallet_role ? (a.account_name || '').localeCompare(b.account_name || '') : (a.wallet_role === 'main' ? -1 : 1))).map(w => `<option value="${w.id}">${_finEsc(w.account_name || ('Account #' + w.id))}${w.wallet_role === 'main' ? ' — Main' : ''}</option>`).join('')}
+          <option value="">Pick the wallet this batch settled from</option>
         </select>
-        <div style="font-size:0.78rem;color:#666;margin-top:4px;">The wallet these payments were sent from. Applied to every row in this batch — the template has no ACCOUNT column because of this. Rows that carry their own ACCOUNT (e.g. a raw Tendepay export spanning wallets) still override the pick on a per-row basis.</div>
+        <div style="font-size:0.78rem;color:#666;margin-top:4px;">Optional for uploads that carry an ACCOUNT column per row (raw Tendepay exports). Required for the thin per-mode template — every row will settle from this wallet.</div>
+        <div id="tp-import-wallet-error" style="font-size:0.8rem;color:var(--coral-600,#c0392b);margin-top:4px;"></div>
       </div>
       <div id="tp-expected-cols-wrap"></div>
       <div style="margin-top:16px;display:flex;gap:10px;align-items:center;">
@@ -3387,6 +3387,7 @@ async function _tpRenderStep1() {
         <span id="tp-upload-status" style="color:#888;font-size:0.85rem;"></span>
       </div>
     </div>`;
+  await _tpLoadWalletOptions();
   await _tpLoadPayrollRunOptions();
   await _tpRefreshExpectedCols('supplier');
 }
@@ -3485,6 +3486,21 @@ async function _tpLoadPayrollRunOptions() {
   }
 }
 
+// Sourced from the money-holding-accounts lookup (2026-08-18 §F.3), not
+// /api/bank-accounts or the general accounts list — Tendepay wallets have no
+// BankAccount row, and this is the same registry the Cash Book / Cashflow
+// Statement pickers already use (js/finance-reports.js). Filtered
+// client-side to kind === "wallet"; label is the bare account_name per the
+// 2026-08-24 addendum (no main/mini distinction on this lookup's shape).
+async function _tpLoadWalletOptions() {
+  const sel = document.getElementById('tp-import-wallet-account');
+  if (!sel) return;
+  await _repLoadMoneyHoldingAccounts();
+  const wallets = (_repMoneyHoldingAccounts || []).filter(a => a.kind === 'wallet');
+  sel.innerHTML = '<option value="">Pick the wallet this batch settled from</option>' +
+    wallets.map(w => `<option value="${w.gl_account_id}">${_finEsc(w.account_name || ('Account #' + w.gl_account_id))}</option>`).join('');
+}
+
 async function _tpDownloadTemplate() {
   // Template is mode-specific: supplier => PV NUMBER, payroll => EMPLOYEE
   // CODE, contractor => CONTRACTOR CODE for the match-key column.
@@ -3504,26 +3520,36 @@ async function _tpUploadFile(input) {
   const mode = (document.querySelector('input[name="tp-import-mode"]:checked') || {}).value || 'supplier'; // 'supplier' | 'payroll' | 'contractor'
   const runId = document.getElementById('tp-import-payroll-run')?.value || '';
   const walletId = document.getElementById('tp-import-wallet-account')?.value || '';
+  const walletErrEl = document.getElementById('tp-import-wallet-error');
+  if (walletErrEl) walletErrEl.textContent = '';
   if ((mode === 'payroll' || mode === 'contractor') && !runId) {
     showToast(`${mode === 'contractor' ? 'Contractor Run' : 'Payroll Run'} is required for a ${mode === 'contractor' ? 'contractor' : 'payroll'} return statement.`, 'error');
     return;
   }
-  if (!walletId) {
-    showToast('Tendepay Wallet is required — pick the wallet these payments were sent from.', 'error');
-    return;
-  }
+  // wallet_account_id is optional on the wire (§B.5/B.6) — a raw Tendepay
+  // export with a per-row ACCOUNT column needs no batch fallback at all.
+  // Only include it when picked, so an empty string never lands on the
+  // nullable-int form field.
   const statusEl = document.getElementById('tp-upload-status');
   if (statusEl) statusEl.textContent = 'Uploading…';
   const fd = new FormData();
   fd.append('file', file);
   fd.append('import_mode', mode);
-  fd.append('wallet_account_id', walletId);
+  if (walletId) fd.append('wallet_account_id', walletId);
   if (mode === 'contractor') fd.append('contractor_run_id', runId);
   else if (mode === 'payroll') fd.append('payroll_run_id', runId);
   const res = await apiFetch(`${_TP_BASE}/import`, { method: 'POST', body: fd });
   if (!res || !res.ok) {
     if (statusEl) statusEl.textContent = '';
-    showToast('Upload failed: ' + (res ? await parseApiError(res) : 'network error'), 'error');
+    const detail = res ? await parseApiError(res) : 'network error';
+    // Server-side wallet validation (bad/inactive account, wrong wallet_role)
+    // reads as a picker-level problem, not a generic upload failure — surface
+    // it inline next to the picker, verbatim, instead of only as a toast.
+    if (res && res.status === 400 && /wallet_account_id/i.test(detail) && walletErrEl) {
+      walletErrEl.textContent = detail;
+    } else {
+      showToast('Upload failed: ' + detail, 'error');
+    }
     return;
   }
   const data = await res.json();
