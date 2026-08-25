@@ -477,33 +477,46 @@ function _repRenderNotes(def, data) {
 }
 
 // ── Statement layout (Cashflow / SCNA / Bank Reconciliation) ──
-// colorByFlow (CFS only): amount is now server-signed (CR non-cash = +
-// inflow, DR non-cash = − outflow — 2026-08-24 addendum §A). Direction is
-// derived from the sign, not from a line_type field (removed from the wire).
-// SCE/bank-rec statement types don't pass this flag — their amounts aren't
-// inflow/outflow-signed the same way.
-// net (CFS only): reads CashFlowSection.net straight off the wire rather
-// than re-summing items. The server now guarantees sum(items.amount) ===
-// net by construction (§A.1), so this is a documentation choice, not a
-// correctness fix — but it means the FE can never drift from that
+// Accounting convention: outflows print in parentheses rather than with a
+// minus sign, matching the printed statement format the finance team works
+// from. Amounts are server-signed (CR non-cash = + inflow, DR non-cash = −
+// outflow — 2026-08-24 addendum §A), so the sign alone decides the bracket.
+function _repCfMoney(v) {
+  const n = parseFloat(v) || 0;
+  return n < 0 ? `(${_pvMoney(Math.abs(n))})` : _pvMoney(n);
+}
+// Section nets read CashFlowSection.net straight off the wire rather than
+// re-summing items. The server guarantees sum(items.amount) === net by
+// construction (§A.1), so this keeps the FE from ever drifting from that
 // invariant even if a future edge case needs a special-cased audit trail.
-function _repSection(title, items, colorByFlow, net) {
-  if (!items || !items.length) return '';
-  const total = net != null ? (parseFloat(net) || 0) : items.reduce((s, it) => s + (parseFloat(it.amount ?? it.value ?? 0) || 0), 0);
-  return `
-    <div style="margin-bottom:16px;">
-      <div style="font-weight:bold;color:#2c3e50;margin-bottom:6px;">${_finEsc(title)}</div>
-      ${items.map(it => {
+// colourFlows is off for the closing summary section, whose rows are cash
+// balances rather than inflows/outflows — tinting those inflow-blue would
+// read as a direction they don't have.
+function _repCfSection(num, title, items, net, netLabel, colourFlows) {
+  const rows = (items || []).length
+    ? items.map(it => {
         const amt = parseFloat(it.amount ?? it.value ?? 0) || 0;
-        const color = colorByFlow ? (amt >= 0 ? 'var(--navy-700,#1B3057)' : 'var(--coral-600,#c0392b)') : 'inherit';
-        return `<div style="display:flex;justify-content:space-between;padding:4px 0 4px 16px;border-bottom:1px solid #f5f5f5;">
-        <span>${_finEsc(it.name || it.account_name || it.label || '')}</span><span style="color:${color};">${_pvMoney(it.amount ?? it.value)}</span>
-      </div>`;
-      }).join('')}
-      <div style="display:flex;justify-content:space-between;padding:6px 0;font-weight:bold;border-top:1px solid #ddd;margin-top:4px;">
-        <span>Total ${_finEsc(title)}</span><span>${_pvMoney(total)}</span>
-      </div>
-    </div>`;
+        const cls = colourFlows ? (amt < 0 ? ' is-out' : ' is-in') : '';
+        return `<tr>
+          <td>${_finEsc(it.name || it.account_name || it.label || '')}</td>
+          <td class="rep-cf-amt${cls}">${_repCfMoney(amt)}</td>
+        </tr>`;
+      }).join('')
+    : '<tr><td colspan="2" class="rep-cf-none">No movements in this period.</td></tr>';
+  return `
+    <section class="rep-cf-section">
+      <h3 class="rep-cf-section-title">${num}. ${_finEsc(title)}</h3>
+      <table class="rep-cf-table">
+        <thead><tr><th>Description</th><th class="rep-cf-amt">Amount (KES)</th></tr></thead>
+        <tbody>
+          ${rows}
+          <tr class="rep-cf-net">
+            <td>${_finEsc(netLabel)}</td>
+            <td class="rep-cf-amt">${_repCfMoney(net)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>`;
 }
 function _repGrandTotal(label, value) {
   return `<div style="display:flex;justify-content:space-between;padding:10px 0;font-weight:bold;font-size:1.05rem;border-top:2px solid #2c3e50;margin-top:8px;">
@@ -533,14 +546,29 @@ function _repRenderStatement(def, data) {
     const opening = parseFloat(data.opening_cash_balance ?? 0) || 0;
     const closing = parseFloat(data.closing_cash_balance ?? (opening + netOp + netInv + netFin)) || 0;
     const netChange = netOp + netInv + netFin;
+
+    const startDate = data.start_date || document.getElementById('rep-start-date')?.value;
+    const endDate = data.end_date || document.getElementById('rep-end-date')?.value;
+    const periodLine = (startDate && endDate)
+      ? `For the period ${_pvDate(startDate)} to ${_pvDate(endDate)}`
+      : '';
+
     out.innerHTML = `
-      <div class="fin-form-wrap" style="max-width:680px;">
-        ${_repSection('Operating Activities', opItems, true, data.operating?.net)}
-        ${_repSection('Investing Activities', invItems, true, data.investing?.net)}
-        ${_repSection('Financing Activities', finItems, true, data.financing?.net)}
-        ${_repGrandTotal('Net Change in Cash', netChange)}
-        <div style="display:flex;justify-content:space-between;padding:4px 0;"><span>Opening Cash Balance</span><span>${_pvMoney(opening)}</span></div>
-        <div style="display:flex;justify-content:space-between;padding:4px 0;font-weight:bold;"><span>Closing Cash Balance</span><span>${_pvMoney(closing)}</span></div>
+      <div class="rep-cf">
+        <div class="rep-cf-head">
+          <div class="rep-cf-head-title">Cash Flow Statement</div>
+          ${periodLine ? `<div class="rep-cf-head-period">${_finEsc(periodLine)}</div>` : ''}
+        </div>
+        ${_repCfSection(1, 'Cash Flows from Operating Activities', opItems, netOp,
+          `Net Cash ${netOp < 0 ? 'Used in' : 'Provided by'} Operating Activities`, true)}
+        ${_repCfSection(2, 'Cash Flows from Investing Activities', invItems, netInv,
+          `Net Cash ${netInv < 0 ? 'Used in' : 'Provided by'} Investing Activities`, true)}
+        ${_repCfSection(3, 'Cash Flows from Financing Activities', finItems, netFin,
+          `Net Cash ${netFin < 0 ? 'Used in' : 'Provided by'} Financing Activities`, true)}
+        ${_repCfSection(4, `Net ${netChange < 0 ? 'Decrease' : 'Increase'} in Cash and Cash Equivalents`, [
+          { name: 'Net Cash at Beginning of Period', amount: opening },
+          { name: `Net ${netChange < 0 ? 'Decrease' : 'Increase'} in Cash and Cash Equivalents`, amount: netChange },
+        ], closing, 'Net Cash at End of Period', false)}
       </div>`;
   } else if (def.statementType === 'sce') {
     const adjustments = data.adjustments || [];

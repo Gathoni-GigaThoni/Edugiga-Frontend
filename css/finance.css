@@ -549,3 +549,68 @@
 .fin-segmented button + button { border-left: 1px solid var(--grey-200); }
 .fin-segmented button.active { background: var(--navy-700); color: var(--white); }
 .fin-segmented button:hover:not(.active) { background: var(--grey-50); }
+
+/* ── Cash Flow Statement (reports-cashflow-statement) ── */
+.rep-cf {
+  max-width: 720px;
+  background: #fff;
+  border: 1px solid var(--grey-100);
+  border-radius: var(--radius-md);
+  padding: 26px 30px 30px;
+}
+.rep-cf-head {
+  text-align: center;
+  padding-bottom: 16px;
+  margin-bottom: 22px;
+  border-bottom: 2px solid var(--navy-700);
+}
+.rep-cf-head-title {
+  font-size: 1.15rem;
+  font-weight: bold;
+  color: var(--navy-900);
+  letter-spacing: 0.02em;
+}
+.rep-cf-head-period {
+  margin-top: 4px;
+  font-size: 0.85rem;
+  color: var(--grey-800);
+}
+.rep-cf-section { margin-bottom: 26px; }
+.rep-cf-section:last-child { margin-bottom: 0; }
+.rep-cf-section-title {
+  font-size: 0.95rem;
+  font-weight: bold;
+  color: var(--navy-900);
+  margin: 0 0 8px;
+}
+.rep-cf-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.rep-cf-table th {
+  background: var(--grey-50);
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 0.82rem;
+  color: var(--grey-800);
+  font-weight: bold;
+  border: 1px solid var(--grey-100);
+}
+.rep-cf-table td {
+  padding: 7px 12px;
+  border: 1px solid var(--grey-100);
+}
+.rep-cf-table .rep-cf-amt {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.rep-cf-table td.is-out { color: var(--coral-600); }
+.rep-cf-table td.is-in  { color: var(--navy-700); }
+.rep-cf-none { color: var(--grey-800); font-style: italic; }
+.rep-cf-net td {
+  font-weight: bold;
+  color: var(--navy-900);
+  background: var(--grey-50);
+}
