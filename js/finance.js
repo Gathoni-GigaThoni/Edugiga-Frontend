@@ -3283,8 +3283,8 @@ function _tpEmployeeLabel(code) {
   return name ? `${code} — ${name}` : (code || '');
 }
 
-// For payroll/contractor imports, a statement row matches to one *employee's*
-// run line (payroll_run_line_id / contractor_run_line_id) — the run-level
+// For payroll/consultant imports, a statement row matches to one *employee's*
+// run line (payroll_run_line_id / consultant_run_line_id) — the run-level
 // voucher (PaymentVoucher.id) is a totally different ID space. The old code
 // looked matched_voucher_id up in the voucher map regardless of mode, which
 // either showed the wrong voucher's number (on an ID collision) or a bare
@@ -3293,9 +3293,9 @@ async function _tpFetchMatchTargetMap() {
   if (_tpWiz.importMode === 'supplier') return _tpFetchVoucherMap();
   const map = {};
   try {
-    const runId = _tpWiz.importMode === 'contractor' ? _tpWiz.contractorRunId : _tpWiz.payrollRunId;
-    const url = _tpWiz.importMode === 'contractor'
-      ? `${API_BASE}/payroll/contractor-runs/${runId}` : `${API_BASE}/payroll/runs/${runId}`;
+    const runId = _tpWiz.importMode === 'consultant' ? _tpWiz.consultantRunId : _tpWiz.payrollRunId;
+    const url = _tpWiz.importMode === 'consultant'
+      ? `${API_BASE}/payroll/consultant-runs/${runId}` : `${API_BASE}/payroll/runs/${runId}`;
     const res = await apiFetch(url);
     if (res && res.ok) {
       const run = await res.json();
@@ -3309,7 +3309,7 @@ async function _tpFetchMatchTargetMap() {
 let _tpWiz = null;
 function _tpNewWizState() {
   return { step: 1, batchId: null, transactions: [], matchedCount: 0, unmatchedCount: 0, totalAmount: 0,
-    totalCharges: 0, legacyFormat: false, importMode: 'supplier', payrollRunId: null, contractorRunId: null,
+    totalCharges: 0, legacyFormat: false, importMode: 'supplier', payrollRunId: null, consultantRunId: null,
     skippedRows: [], alreadyImported: [], voucherPicks: {}, confirmedIds: {}, voucherMap: {} };
 }
 
@@ -3361,7 +3361,7 @@ async function _tpRenderStep1() {
         <div style="display:flex;gap:20px;margin-top:6px;">
           <label><input type="radio" name="tp-import-mode" value="supplier" checked onchange="_tpToggleImportMode()"> Supplier payments</label>
           <label><input type="radio" name="tp-import-mode" value="payroll" onchange="_tpToggleImportMode()"> Payroll return statement</label>
-          <label><input type="radio" name="tp-import-mode" value="contractor" onchange="_tpToggleImportMode()"> Contractor return statement</label>
+          <label><input type="radio" name="tp-import-mode" value="consultant" onchange="_tpToggleImportMode()"> Consultant return statement</label>
         </div>
         <div id="tp-import-payroll-run-wrap" style="display:none;margin-top:10px;">
           <div class="fin-form-group" style="max-width:340px;">
@@ -3420,17 +3420,17 @@ async function _tpRefreshExpectedCols(mode) {
     ${notesHtml}`;
 }
 
-// Contractor promoted to a top-level peer of Supplier/Payroll (2026-08-18
+// Consultant promoted to a top-level peer of Supplier/Payroll (2026-08-18
 // addendum alignment) — was previously a nested "Run Type" sub-radio under
 // Payroll. All downstream logic already keyed off the resolved mode string
-// ('supplier'|'payroll'|'contractor'), so this is a pure UI reshuffle.
+// ('supplier'|'payroll'|'consultant'), so this is a pure UI reshuffle.
 function _tpToggleImportMode() {
   const mode = (document.querySelector('input[name="tp-import-mode"]:checked') || {}).value || 'supplier';
   const wrap = document.getElementById('tp-import-payroll-run-wrap');
-  if (wrap) wrap.style.display = (mode === 'payroll' || mode === 'contractor') ? 'block' : 'none';
+  if (wrap) wrap.style.display = (mode === 'payroll' || mode === 'consultant') ? 'block' : 'none';
   const label = document.getElementById('tp-import-run-label');
-  if (label) label.innerHTML = (mode === 'contractor' ? 'Contractor Run' : 'Payroll Run') + ' <span class="fin-required">*</span>';
-  if (mode === 'payroll' || mode === 'contractor') _tpLoadPayrollRunOptions();
+  if (label) label.innerHTML = (mode === 'consultant' ? 'Consultant Run' : 'Payroll Run') + ' <span class="fin-required">*</span>';
+  if (mode === 'payroll' || mode === 'consultant') _tpLoadPayrollRunOptions();
   // Keep the on-page columns table honest with the picked mode.
   _tpRefreshExpectedCols(mode);
 }
@@ -3449,8 +3449,8 @@ async function _tpLoadPayrollRunOptions() {
     // or `paid`. The voucher's own status is the authoritative signal, so we
     // fetch runs unfiltered and match purely on `payment_voucher_id` against
     // the voucher ID sets below (payee_type=Staff covers both employee
-    // payroll and contractor vouchers — VoucherPayeeType has no separate
-    // "Contractor" value).
+    // payroll and consultant vouchers — VoucherPayeeType has no separate
+    // "Consultant" value).
     const [awaitingVchRes, paidVchRes] = await Promise.all([
       apiFetch(`${API_BASE}/payables/payment-vouchers/?status=awaiting_tendepay&payee_type=Staff`),
       apiFetch(`${API_BASE}/payables/payment-vouchers/?status=paid&payee_type=Staff`),
@@ -3465,7 +3465,7 @@ async function _tpLoadPayrollRunOptions() {
     const awaitingVoucherIds = new Set(((awaitingVchRes && awaitingVchRes.ok) ? _toArray(await awaitingVchRes.json()) : []).map(v => v.id));
     const paidVoucherIds = new Set(((paidVchRes && paidVchRes.ok) ? _toArray(await paidVchRes.json()) : []).map(v => v.id));
 
-    const runsUrl = runType === 'contractor' ? `${API_BASE}/payroll/contractor-runs/` : `${API_BASE}/payroll/runs/`;
+    const runsUrl = runType === 'consultant' ? `${API_BASE}/payroll/consultant-runs/` : `${API_BASE}/payroll/runs/`;
     const runsRes = await apiFetch(runsUrl);
     if (runsRes && !runsRes.ok) failures.push(`${runType} runs: ${await parseApiError(runsRes)}`);
     const allRuns = (runsRes && runsRes.ok) ? _toArray(await runsRes.json()) : [];
@@ -3503,7 +3503,7 @@ async function _tpLoadWalletOptions() {
 
 async function _tpDownloadTemplate() {
   // Template is mode-specific: supplier => PV NUMBER, payroll => EMPLOYEE
-  // CODE, contractor => CONTRACTOR CODE for the match-key column.
+  // CODE, consultant => CONSULTANT CODE for the match-key column.
   // Source order: (1) Step-1 mode radio when it's still in the DOM, then
   // (2) the batch mode carried on the wizard state (Step 2 legacy-banner
   // download hits this path), then (3) supplier as a safe default.
@@ -3517,13 +3517,13 @@ async function _tpDownloadTemplate() {
 async function _tpUploadFile(input) {
   const file = input.files[0];
   if (!file) return;
-  const mode = (document.querySelector('input[name="tp-import-mode"]:checked') || {}).value || 'supplier'; // 'supplier' | 'payroll' | 'contractor'
+  const mode = (document.querySelector('input[name="tp-import-mode"]:checked') || {}).value || 'supplier'; // 'supplier' | 'payroll' | 'consultant'
   const runId = document.getElementById('tp-import-payroll-run')?.value || '';
   const walletId = document.getElementById('tp-import-wallet-account')?.value || '';
   const walletErrEl = document.getElementById('tp-import-wallet-error');
   if (walletErrEl) walletErrEl.textContent = '';
-  if ((mode === 'payroll' || mode === 'contractor') && !runId) {
-    showToast(`${mode === 'contractor' ? 'Contractor Run' : 'Payroll Run'} is required for a ${mode === 'contractor' ? 'contractor' : 'payroll'} return statement.`, 'error');
+  if ((mode === 'payroll' || mode === 'consultant') && !runId) {
+    showToast(`${mode === 'consultant' ? 'Consultant Run' : 'Payroll Run'} is required for a ${mode === 'consultant' ? 'consultant' : 'payroll'} return statement.`, 'error');
     return;
   }
   // wallet_account_id is optional on the wire (§B.5/B.6) — a raw Tendepay
@@ -3536,7 +3536,7 @@ async function _tpUploadFile(input) {
   fd.append('file', file);
   fd.append('import_mode', mode);
   if (walletId) fd.append('wallet_account_id', walletId);
-  if (mode === 'contractor') fd.append('contractor_run_id', runId);
+  if (mode === 'consultant') fd.append('consultant_run_id', runId);
   else if (mode === 'payroll') fd.append('payroll_run_id', runId);
   const res = await apiFetch(`${_TP_BASE}/import`, { method: 'POST', body: fd });
   if (!res || !res.ok) {
@@ -3562,7 +3562,7 @@ async function _tpUploadFile(input) {
   _tpWiz.legacyFormat = !!data.legacy_format;
   _tpWiz.importMode = data.import_mode || mode;
   _tpWiz.payrollRunId = data.payroll_run_id ?? (mode === 'payroll' ? parseInt(runId, 10) : null);
-  _tpWiz.contractorRunId = data.contractor_run_id ?? (mode === 'contractor' ? parseInt(runId, 10) : null);
+  _tpWiz.consultantRunId = data.consultant_run_id ?? (mode === 'consultant' ? parseInt(runId, 10) : null);
   _tpWiz.skippedRows = data.skipped_rows || [];
   _tpWiz.alreadyImported = data.already_imported || [];
   _tpWiz.voucherMap = await _tpFetchMatchTargetMap();
@@ -3585,7 +3585,7 @@ function _tpConfidencePill(conf) {
 
 function _tpRenderStep2() {
   const body = document.getElementById('tp-wiz-body');
-  const isLineMode = _tpWiz.importMode !== 'supplier'; // payroll/contractor match to a run line (employee), not a voucher
+  const isLineMode = _tpWiz.importMode !== 'supplier'; // payroll/consultant match to a run line (employee), not a voucher
   const targetNoun = isLineMode ? 'employee' : 'voucher';
   const refColLabel = isLineMode ? 'Employee Code' : 'Voucher Ref';
   const rows = _tpWiz.transactions.map(t => {
@@ -3703,8 +3703,8 @@ async function _tpConfirmImport() {
   if (!ledgerId || !costCenterId) { showToast('Ledger and Cost Center are required.', 'error'); return; }
 
   // Exactly one target FK per match, dispatched by import_mode: supplier ->
-  // voucher_id, payroll -> payroll_run_line_id, contractor -> contractor_run_line_id.
-  const idField = _tpWiz.importMode === 'contractor' ? 'contractor_run_line_id'
+  // voucher_id, payroll -> payroll_run_line_id, consultant -> consultant_run_line_id.
+  const idField = _tpWiz.importMode === 'consultant' ? 'consultant_run_line_id'
     : _tpWiz.importMode === 'payroll' ? 'payroll_run_line_id' : 'voucher_id';
   const confirmedMatches = [];
   _tpWiz.transactions.forEach(t => {
@@ -3724,14 +3724,14 @@ async function _tpConfirmImport() {
     const data = await res.json();
     // TendepayConfirmResult is a discriminated union on `mode` (addendum
     // §8.3) — supplier responses carry posted_journal_entries[], but
-    // payroll/contractor responses don't have that field at all, they carry
+    // payroll/consultant responses don't have that field at all, they carry
     // voucher_journal_entry_id + paid_line_count + run_completed instead.
     // Reading posted_journal_entries unconditionally silently produced "0
-    // journal entries posted" on every payroll/contractor confirm even
+    // journal entries posted" on every payroll/consultant confirm even
     // though a voucher JE had in fact posted.
     let msg;
-    if (data.mode === 'payroll' || data.mode === 'contractor') {
-      const runNoun = data.mode === 'payroll' ? 'payroll run' : 'contractor run';
+    if (data.mode === 'payroll' || data.mode === 'consultant') {
+      const runNoun = data.mode === 'payroll' ? 'payroll run' : 'consultant run';
       msg = `Batch confirmed. ${data.paid_line_count ?? confirmedMatches.length} line(s) paid`;
       if (data.voucher_journal_entry_id) msg += `, voucher JE #${data.voucher_journal_entry_id} posted`;
       msg += data.run_completed ? `. The ${runNoun} is now fully paid.` : `. The ${runNoun} still has unpaid lines.`;
@@ -3772,7 +3772,7 @@ function _tpRenderValidationErrors(errors) {
   const body = document.getElementById('tp-wiz-body');
   if (!body) return;
   const list = errors.map(e => {
-    const label = e.tendepay_transaction_id ?? e.payroll_run_line_id ?? e.contractor_run_line_id ?? e.row ?? '';
+    const label = e.tendepay_transaction_id ?? e.payroll_run_line_id ?? e.consultant_run_line_id ?? e.row ?? '';
     const msg = e.msg || e.detail || (typeof e === 'string' ? e : JSON.stringify(e));
     return `<li>${label !== '' ? `<strong>${_finEsc(String(label))}:</strong> ` : ''}${_finEsc(msg)}</li>`;
   }).join('');
@@ -4039,8 +4039,8 @@ async function _tpHistConfirmBatch(batch, modalWrap) {
     // Discriminated union on `mode` (§8.3) — see the matching comment on
     // _tpConfirmImport above.
     let msg;
-    if (data.mode === 'payroll' || data.mode === 'contractor') {
-      const runNoun = data.mode === 'payroll' ? 'payroll run' : 'contractor run';
+    if (data.mode === 'payroll' || data.mode === 'consultant') {
+      const runNoun = data.mode === 'payroll' ? 'payroll run' : 'consultant run';
       msg = `Batch confirmed. ${data.paid_line_count ?? confirmedMatches.length} line(s) paid`;
       if (data.voucher_journal_entry_id) msg += `, voucher JE #${data.voucher_journal_entry_id} posted`;
       msg += data.run_completed ? `. The ${runNoun} is now fully paid.` : `. The ${runNoun} still has unpaid lines.`;

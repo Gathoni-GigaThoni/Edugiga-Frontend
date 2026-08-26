@@ -30,7 +30,7 @@ function renderHrEditPage(container, record) {
     ${hrEditModalsHtml()}
   `;
   loadDepartmentOptions('hr-edit-department', hrEditRecord.department_id);
-  loadHrWhtPaymentTypes('edit', hrEditRecord.contractor_wht_payment_type);
+  loadHrWhtPaymentTypes('edit', hrEditRecord.consultant_wht_payment_type);
 }
 
 function hrEditTabPlaceholder() {
@@ -348,14 +348,14 @@ async function updateHrEditBasic() {
 
   const taxProfileEl = document.querySelector('input[name="hr-edit-tax-profile"]:checked');
   const tax_profile = taxProfileEl ? taxProfileEl.value : 'employee';
-  const contractor_wht_payment_type = gv('hr-edit-wht-type');
-  if (tax_profile === 'contractor' && !contractor_wht_payment_type) {
-    showToast('Payment Type is required for contractor employees.', 'error'); return;
+  const consultant_wht_payment_type = gv('hr-edit-wht-type');
+  if (tax_profile === 'consultant' && !consultant_wht_payment_type) {
+    showToast('Payment Type is required for consultant employees.', 'error'); return;
   }
   hrEditRecord.tax_profile = tax_profile;
-  hrEditRecord.contractor_wht_payment_type = tax_profile === 'contractor' ? contractor_wht_payment_type : null;
-  hrEditRecord.is_non_resident = tax_profile === 'contractor' ? (document.getElementById('hr-edit-non-resident')?.checked || false) : false;
-  hrEditRecord.contractor_kra_pin = tax_profile === 'contractor' ? gvt('hr-edit-contractor-kra-pin') : null;
+  hrEditRecord.consultant_wht_payment_type = tax_profile === 'consultant' ? consultant_wht_payment_type : null;
+  hrEditRecord.is_non_resident = tax_profile === 'consultant' ? (document.getElementById('hr-edit-non-resident')?.checked || false) : false;
+  hrEditRecord.consultant_kra_pin = tax_profile === 'consultant' ? gvt('hr-edit-consultant-kra-pin') : null;
 
   hrEditRecord.employment_terms = employment_terms;
   hrEditRecord.last_name        = surname;
@@ -399,9 +399,9 @@ async function updateHrEditBasic() {
     emergency_contact_number:       ec?.phone || null,
     emergency_contact_relationship: ec?.relationship || null,
     tax_profile:                   hrEditRecord.tax_profile,
-    contractor_wht_payment_type:   hrEditRecord.contractor_wht_payment_type,
+    consultant_wht_payment_type:   hrEditRecord.consultant_wht_payment_type,
     is_non_resident:               hrEditRecord.is_non_resident,
-    contractor_kra_pin:            hrEditRecord.contractor_kra_pin,
+    consultant_kra_pin:            hrEditRecord.consultant_kra_pin,
   };
 
   const res = await apiFetch(`${API_BASE}/hr/employees/${empId}`, {
@@ -918,7 +918,7 @@ function switchHrEditTab(tabId) {
   const content = document.getElementById('hr-edit-tab-content');
   if (content) content.innerHTML = renderHrEditTabContent(tabId);
   loadDepartmentOptions('hr-edit-department', hrEditRecord.department_id);
-  loadHrWhtPaymentTypes('edit', hrEditRecord.contractor_wht_payment_type);
+  loadHrWhtPaymentTypes('edit', hrEditRecord.consultant_wht_payment_type);
   if (tabId === 'service-profile') {
     ensurePayGradeCache().then(() => {
       const c = document.getElementById('hr-edit-tab-content');

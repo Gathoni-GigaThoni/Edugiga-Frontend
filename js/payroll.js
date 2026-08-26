@@ -737,8 +737,8 @@ function _prRenderShell(container) {
   container.innerHTML = `
     ${renderBreadcrumb([{label:'Dashboard',view:null},{label:'Payroll',view:'payroll-runs'},{label:'Payroll Runs'}])}
     <div style="font-size:12px;color:#888;margin:-4px 0 10px;">
-      Employees only. Contractors are on their own runs &rarr;
-      <a href="#" onclick="loadView('payroll-contractor-runs');return false;">Contractor Runs</a>
+      Employees only. Consultants are on their own runs &rarr;
+      <a href="#" onclick="loadView('payroll-consultant-runs');return false;">Consultant Runs</a>
     </div>
     <div class="split-layout">
       <div class="split-left">
@@ -1324,10 +1324,10 @@ async function _prApproveVoucher(runId) {
   if (res) showToast('Error: ' + await parseApiError(res), 'error');
 }
 
-// ==================== CONTRACTOR RUNS ====================
+// ==================== CONSULTANT RUNS ====================
 // BE/FE Contract Addendum 2026-08-06 §6. Separate pipeline from Payroll
 // Runs (WHT-only, no PAYE/SHIF/NSSF/AHL) — regular payroll_runs now filter
-// contractors out. No withdraw/delete endpoint exists on the live backend
+// consultants out. No withdraw/delete endpoint exists on the live backend
 // (only list/create/detail/calculate/approve/fee-note), unlike the
 // addendum's action table which also mentions Delete/Withdraw — the FE
 // only wires what's actually there.
@@ -1351,7 +1351,7 @@ function _crBadge(status) {
   return `<span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:0.78rem;font-weight:600;color:${color};background:${bg};">${_finEsc((status || '').replace(/_/g, ' '))}</span>`;
 }
 
-async function loadContractorRunsView(container) {
+async function loadConsultantRunsView(container) {
   await _pvLoadLookups();
   await _crLoadRuns();
   _crRenderShell(container);
@@ -1361,7 +1361,7 @@ async function _crLoadRuns() {
   const params = new URLSearchParams();
   if (_crYearFilter) params.set('year', _crYearFilter);
   if (_crMonthFilter) params.set('month', _crMonthFilter);
-  const res = await apiFetch(`${API_BASE}/payroll/contractor-runs/?${params.toString()}`);
+  const res = await apiFetch(`${API_BASE}/payroll/consultant-runs/?${params.toString()}`);
   _crRuns = res && res.ok ? _toArray(await res.json()) : [];
 }
 
@@ -1371,15 +1371,15 @@ function _crFilteredRuns() {
 
 function _crRenderShell(container) {
   container.innerHTML = `
-    ${renderBreadcrumb([{label:'Dashboard',view:null},{label:'Payroll',view:'payroll-contractor-runs'},{label:'Contractor Runs'}])}
+    ${renderBreadcrumb([{label:'Dashboard',view:null},{label:'Payroll',view:'payroll-consultant-runs'},{label:'Consultant Runs'}])}
     <div style="background:#EEF3FA;border-left:3px solid var(--navy-400,#4A6FA5);border-radius:6px;padding:10px 16px;margin-bottom:14px;font-size:12.5px;color:var(--navy-900,#0D2137);">
       Employees only appear on the regular <a href="#" onclick="loadView('payroll-runs');return false;">Payroll Runs</a>.
-      Contractors (tax_profile = contractor) are on their own runs here.
+      Consultants (tax_profile = consultant) are on their own runs here.
     </div>
     <div class="split-layout">
       <div class="split-left">
         <div class="split-left-header">
-          <span class="split-left-title">Contractor Runs</span>
+          <span class="split-left-title">Consultant Runs</span>
           <span class="split-left-count">${_crFilteredRuns().length}</span>
         </div>
         <div style="display:flex;gap:6px;padding:8px 12px;flex-wrap:wrap;">
@@ -1432,7 +1432,7 @@ function _crRenderAddForm() {
   right.className = 'split-right-add';
   right.innerHTML = `
     <div class="fin-form-wrap">
-      <h3 class="fin-title" style="font-size:1.1rem;">New Contractor Run</h3>
+      <h3 class="fin-title" style="font-size:1.1rem;">New Consultant Run</h3>
       <div class="fin-form-grid-2">
         <div class="fin-form-group">
           <label class="fin-form-label">Period Month <span class="fin-required">*</span></label>
@@ -1456,14 +1456,14 @@ async function _crCreateRun() {
   const month = parseInt(document.getElementById('cr-add-month').value, 10);
   const year = parseInt(document.getElementById('cr-add-year').value, 10);
   if (!month || !year) { showToast('Period Month and Period Year are required.', 'error'); return; }
-  const res = await apiFetch(`${API_BASE}/payroll/contractor-runs/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ period_month: month, period_year: year }) });
+  const res = await apiFetch(`${API_BASE}/payroll/consultant-runs/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ period_month: month, period_year: year }) });
   if (res && res.ok) {
     const run = await res.json();
-    showToast('Contractor run created.', 'success');
+    showToast('Consultant run created.', 'success');
     await _crLoadRuns();
     await _crSelectRun(run.id);
   } else if (res && res.status === 409) {
-    showToast('A contractor run already exists for that period.', 'error');
+    showToast('A consultant run already exists for that period.', 'error');
   } else if (res) {
     showToast('Error: ' + await parseApiError(res), 'error');
   }
@@ -1475,8 +1475,8 @@ async function _crSelectRun(runId) {
   const right = document.getElementById('cr-right-panel');
   right.className = 'split-right-detail';
   right.innerHTML = '<p class="sa-loading">Loading&#8230;</p>';
-  const res = await apiFetch(`${API_BASE}/payroll/contractor-runs/${runId}`);
-  if (!res || !res.ok) { right.innerHTML = `<p class="fin-error-msg">Could not load contractor run.</p>`; return; }
+  const res = await apiFetch(`${API_BASE}/payroll/consultant-runs/${runId}`);
+  if (!res || !res.ok) { right.innerHTML = `<p class="fin-error-msg">Could not load consultant run.</p>`; return; }
   const run = await res.json();
   _crRenderDetail(right, run);
 }
@@ -1541,11 +1541,11 @@ function _crRenderDetail(right, run) {
 }
 
 async function _crCalculate(runId) {
-  const res = await apiFetch(`${API_BASE}/payroll/contractor-runs/${runId}/calculate`, { method: 'POST' });
+  const res = await apiFetch(`${API_BASE}/payroll/consultant-runs/${runId}/calculate`, { method: 'POST' });
   if (!res) return;
   if (res.ok) {
     const data = await res.json();
-    showToast('Contractor run calculated.', 'success');
+    showToast('Consultant run calculated.', 'success');
     await _crLoadRuns();
     await _crSelectRun(runId);
     if (data.warnings && data.warnings.length) _crRenderWarnings(data.warnings);
@@ -1560,7 +1560,7 @@ function _crRenderWarnings(warnings) {
   const reasonCopy = { no_contract_amount: 'Set the monthly consultancy fee on their service profile', missing_wht_payment_type: 'Set a WHT payment type on their statutory pipeline' };
   el.innerHTML = `
     <div style="background:#FBF3D9;border-left:3px solid var(--gold-500,#C9A227);border-radius:6px;padding:12px 16px;margin-bottom:14px;">
-      <div style="font-weight:600;font-size:0.85rem;color:#5c4a00;margin-bottom:8px;">${warnings.length} contractor${warnings.length===1?'':'s'} need onboarding before this run can be finalised.</div>
+      <div style="font-weight:600;font-size:0.85rem;color:#5c4a00;margin-bottom:8px;">${warnings.length} consultant${warnings.length===1?'':'s'} need onboarding before this run can be finalised.</div>
       <table style="width:100%;font-size:0.8rem;">
         ${warnings.map(w => `<tr>
           <td style="padding:3px 0;"><a href="#" onclick="${w.reason==='no_contract_amount' ? `_prGoToServiceProfile('${_finEsc(w.employee_code)}')` : `hrEditEmployee('${_finEsc(w.employee_code)}')`};return false;">${_finEsc(w.employee_code)} &mdash; ${_finEsc(w.employee_name)}</a></td>
@@ -1571,10 +1571,10 @@ function _crRenderWarnings(warnings) {
 }
 
 async function _crApprove(runId) {
-  const res = await apiFetch(`${API_BASE}/payroll/contractor-runs/${runId}/approve`, { method: 'POST' });
+  const res = await apiFetch(`${API_BASE}/payroll/consultant-runs/${runId}/approve`, { method: 'POST' });
   if (!res) return;
   if (res.ok) {
-    showToast('Contractor run approved.', 'success');
+    showToast('Consultant run approved.', 'success');
     await _crLoadRuns();
     await _crSelectRun(runId);
   } else if (res.status === 403) {
@@ -1587,7 +1587,7 @@ async function _crApprove(runId) {
 }
 
 async function _crDownloadFeeNote(runId, lineId) {
-  await authBlobDownload(`${API_BASE}/payroll/contractor-runs/${runId}/fee-note/${lineId}`, `FeeNote-${runId}-${lineId}.pdf`);
+  await authBlobDownload(`${API_BASE}/payroll/consultant-runs/${runId}/fee-note/${lineId}`, `FeeNote-${runId}-${lineId}.pdf`);
 }
 
 // ==================== STATUTORY RATES (Payroll > Utilities) ====================
@@ -2218,7 +2218,7 @@ async function _p9aDownloadFullYear() {
 
 async function _p9aDownloadBulk() {
   const year = document.getElementById('p9a-year')?.value;
-  if (!confirm(`Generate P9A for every employee in ${year}? Contractors are excluded.`)) return;
+  if (!confirm(`Generate P9A for every employee in ${year}? Consultants are excluded.`)) return;
   await authBlobDownload(`${API_BASE}/payroll/p9/bulk?year=${year}`, `P9A_${year}.zip`);
 }
 
@@ -2642,7 +2642,7 @@ async function _sdDelete(id) {
 // ==================== EMPLOYEE SALARY ADVANCES (BE/FE Contract Addendum 2026-08-11 §4) ====
 // Mirrors the "raise, submit, DAS-approve, create-PV, deep-link into PV
 // detail" pattern from Supplier Invoice's create-payment-voucher flow
-// (js/payables.js:1117-1222), not Contractor Runs (which has no PV step).
+// (js/payables.js:1117-1222), not Consultant Runs (which has no PV step).
 const _ADV_API = `${API_BASE}/payroll/advances`;
 const _ADV_REASON_TYPES = [
   ['medical', 'Medical'], ['school_fees', 'School Fees'], ['emergency', 'Emergency'],

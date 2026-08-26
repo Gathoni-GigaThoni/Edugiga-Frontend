@@ -19,7 +19,7 @@ function renderHrAddPage(container) {
 function _hrAddSetTabContent(tabId) {
   document.getElementById('hr-add-tab-content').innerHTML = renderHrAddTabContent(tabId);
   loadDepartmentOptions('hr-add-department', hrAddFormState.department_id);
-  loadHrWhtPaymentTypes('add', hrAddFormState.contractor_wht_payment_type);
+  loadHrWhtPaymentTypes('add', hrAddFormState.consultant_wht_payment_type);
 }
 
 function hrAddModalsHtml() {
@@ -164,8 +164,8 @@ function saveHrAddCurrentTabState() {
   set('kra_pin',          'hr-add-kra-pin');
   set('nssf_number',      'hr-add-nssf');
   set('shif_number',      'hr-add-shif');
-  set('contractor_wht_payment_type', 'hr-add-wht-type');
-  set('contractor_kra_pin',          'hr-add-contractor-kra-pin');
+  set('consultant_wht_payment_type', 'hr-add-wht-type');
+  set('consultant_kra_pin',          'hr-add-consultant-kra-pin');
   const taxProfileEl = document.querySelector('input[name="hr-add-tax-profile"]:checked');
   if (taxProfileEl) hrAddFormState.tax_profile = taxProfileEl.value;
   const nonResCb = document.getElementById('hr-add-non-resident');
@@ -464,8 +464,8 @@ async function submitHrAddEmployee() {
   if (!s.joining_date)        { showToast('Joining Date is required.', 'error'); return; }
   if (!s.probation_period)    { showToast('Probation Period is required.', 'error'); return; }
   if (!s.nationality)         { showToast('Nationality is required.', 'error'); return; }
-  if (s.tax_profile === 'contractor' && !s.contractor_wht_payment_type) {
-    showToast('Payment Type is required for contractor employees.', 'error'); return;
+  if (s.tax_profile === 'consultant' && !s.consultant_wht_payment_type) {
+    showToast('Payment Type is required for consultant employees.', 'error'); return;
   }
 
   // POST /hr/employees/onboard (EmployeeOnboardRequest) is the atomic
@@ -506,9 +506,9 @@ async function submitHrAddEmployee() {
     emergency_contact_relationship: s.emergency_contact?.relationship || null,
     department_id: s.department_id ? parseInt(s.department_id, 10) : null,
     tax_profile: s.tax_profile || 'employee',
-    contractor_wht_payment_type: s.tax_profile === 'contractor' ? s.contractor_wht_payment_type : null,
-    is_non_resident: s.tax_profile === 'contractor' ? !!s.is_non_resident : false,
-    contractor_kra_pin: s.tax_profile === 'contractor' ? (s.contractor_kra_pin || null) : null,
+    consultant_wht_payment_type: s.tax_profile === 'consultant' ? s.consultant_wht_payment_type : null,
+    is_non_resident: s.tax_profile === 'consultant' ? !!s.is_non_resident : false,
+    consultant_kra_pin: s.tax_profile === 'consultant' ? (s.consultant_kra_pin || null) : null,
   };
   const identity = {
     kra_pin: s.kra_pin || null,
@@ -657,13 +657,13 @@ function saveHrIdentityDoc() {
   });
   closeHrAddIdentityModal();
   document.getElementById('hr-add-tab-content').innerHTML = renderHrAddTabIdentity();
-  loadHrWhtPaymentTypes('add', hrAddFormState.contractor_wht_payment_type);
+  loadHrWhtPaymentTypes('add', hrAddFormState.consultant_wht_payment_type);
 }
 function removeHrIdentityDoc(idx) {
   saveHrAddCurrentTabState();
   hrAddFormState.identity_docs.splice(idx, 1);
   document.getElementById('hr-add-tab-content').innerHTML = renderHrAddTabIdentity();
-  loadHrWhtPaymentTypes('add', hrAddFormState.contractor_wht_payment_type);
+  loadHrWhtPaymentTypes('add', hrAddFormState.consultant_wht_payment_type);
 }
 
 // ---- Dependent modal ----

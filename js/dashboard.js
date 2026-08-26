@@ -332,7 +332,7 @@ function showDashboard() {
             <ul id="payroll-dropdown" class="dropdown-menu">
               <li id="sidebar-payroll-esp" onclick="loadView('payroll-esp')">Employee Service Profile</li>
               <li id="sidebar-payroll-runs" onclick="loadView('payroll-runs')">Payroll Runs</li>
-              <li id="sidebar-payroll-contractor-runs" onclick="loadView('payroll-contractor-runs')">Contractor Runs</li>
+              <li id="sidebar-payroll-consultant-runs" onclick="loadView('payroll-consultant-runs')">Consultant Runs</li>
               <li id="sidebar-payroll-payslips" onclick="loadView('payroll-payslips')">Payslips</li>
               <li id="sidebar-payroll-p9a" onclick="loadView('payroll-p9a')">P9A Tax Deduction Card</li>
               <li id="sidebar-payroll-salary-deductions" onclick="loadView('payroll-salary-deductions')">Deductions</li>
@@ -1298,9 +1298,9 @@ async function loadView(view) {
     case 'payroll-runs':
       setActiveSidebarItem('sidebar-payroll-runs');
       await loadPayrollRunsView(main); break;
-    case 'payroll-contractor-runs':
-      setActiveSidebarItem('sidebar-payroll-contractor-runs');
-      await loadContractorRunsView(main); break;
+    case 'payroll-consultant-runs':
+      setActiveSidebarItem('sidebar-payroll-consultant-runs');
+      await loadConsultantRunsView(main); break;
     case 'payroll-utilities-statutory-rates':
       setActiveSidebarItem('sidebar-payroll-statutory-rates'); openPayrollDropdowns();
       await loadStatutoryRatesView(main); break;

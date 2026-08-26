@@ -20,13 +20,13 @@ function renderHrEspFormPage(container) {
   }
   const lockedDept = departmentLabelFor(lockedDeptId);
 
-  // §3.2: "Basic Salary" reads as "Monthly Consultancy Fee" for contractors —
+  // §3.2: "Basic Salary" reads as "Monthly Consultancy Fee" for consultants —
   // same field/id, label text only. employeesData (EmployeeRead) already
   // carries tax_profile, so this reuses the exact lookup-by-code pattern the
   // department auto-populate above already relies on.
   const espEmpCode = locked ? hrEspFormState.lockedEmpCode : (sp.employee_code || '');
   const espEmp = employeesData.find(e => e.employee_code === espEmpCode);
-  const basicSalaryLabel = espEmp && espEmp.tax_profile === 'contractor' ? 'Monthly Consultancy Fee' : 'Basic Salary';
+  const basicSalaryLabel = espEmp && espEmp.tax_profile === 'consultant' ? 'Monthly Consultancy Fee' : 'Basic Salary';
 
   const empOptions = employeesData.map(e => {
     const name = ((e.surname || e.first_name || '') + ' ' + (e.other_names || e.last_name || '')).trim();
@@ -340,7 +340,7 @@ function onHrEspEmpCodeChange() {
   const deptEl = document.getElementById('hr-esp-department');
   if (deptEl) deptEl.value = emp ? departmentLabelFor(emp.department_id) : '';
   const labelEl = document.getElementById('hr-esp-basic-salary-label');
-  if (labelEl) labelEl.textContent = (emp && emp.tax_profile === 'contractor') ? 'Monthly Consultancy Fee' : 'Basic Salary';
+  if (labelEl) labelEl.textContent = (emp && emp.tax_profile === 'consultant') ? 'Monthly Consultancy Fee' : 'Basic Salary';
 }
 
 
