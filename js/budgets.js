@@ -20,6 +20,7 @@ const _BGT_MODULE_KEY = 'finance.budgeting.budgets';
 let _bgtYearFilter    = '';
 let _bgtAccountFilter = '';
 let _bgtAllYears      = [];   // years seen in the unfiltered list, for the Year picker
+let _bgtYearsLoaded   = false;
 
 function _bgtPeriodLabel(q) {
   return q ? `Q${q}` : 'Annual';
@@ -68,10 +69,24 @@ function _bgtApplyFilters() {
   loadView('finance-budgeting-budgets');
 }
 
+// The Year picker's option set has to be known BEFORE renderSplitView builds
+// the filter bar, and renderSplitView's own fetch is already narrowed by the
+// active filters — so the year set comes from its own unfiltered call, made
+// once per session.
+async function _bgtLoadYears() {
+  if (_bgtYearsLoaded) return;
+  const res = await apiFetch(_BGT_API);
+  if (res && res.ok) {
+    _bgtAllYears = Array.from(new Set(_toArray(await res.json()).map(b => b.period_year).filter(Boolean)));
+    _bgtYearsLoaded = true;
+  }
+}
+
 async function loadBudgetsView(container) {
   // CoA map is pre-fetched once so account_id resolves locally on every row —
   // same pattern as the Payables split views.
   await _pvLoadLookups();
+  await _bgtLoadYears();
   await renderSplitView({
     container,
     moduleKey: _BGT_MODULE_KEY,
@@ -90,11 +105,12 @@ async function loadBudgetsView(container) {
     rowLabel: b => _finEsc(_bgtRowName(b)),
     rowSub:   b => `${b.period_year} · ${_bgtPeriodLabel(b.period_quarter)}`,
     idKey: 'id',
-    // Only refresh the Year picker's option set from an UNFILTERED list —
-    // filtering by 2026 would otherwise collapse the picker to just 2026 and
-    // strand the operator there.
+    // Keep the picker honest when the current view IS the unfiltered list —
+    // a year that just gained its first budget shows up without a reload.
+    // Never widened from a filtered fetch, which would collapse the picker to
+    // the filtered year and strand the operator there.
     onFetched: rows => {
-      if (_bgtYearFilter) return;
+      if (_bgtYearFilter || _bgtAccountFilter) return;
       _bgtAllYears = Array.from(new Set(_toArray(rows).map(b => b.period_year).filter(Boolean)));
     },
     detailFields: [
@@ -229,6 +245,7 @@ async function _bgtSave(id) {
   if (!res) { _bgtBanner('Network error — the budget was not saved.'); return; }
   if (res.ok) {
     showToast(id ? 'Budget updated.' : 'Budget created.', 'success');
+    _bgtYearsLoaded = false;   // a new period_year may have just appeared
     loadView('finance-budgeting-budgets');
     return;
   }
