@@ -77,7 +77,7 @@ async function _finBuildLedger(studentId) {
     receipts.forEach(r => rows.push({
       date:        r.payment_date || '',
       term:        '-',
-      description: `Payment (${r.payment_method || 'N/A'})`,
+      description: `Payment (${receiptMethodLabel(r.payment_method)})`,
       debit:       0,
       credit:      parseFloat(r.amount) || 0
     }));
@@ -1729,6 +1729,27 @@ async function submitSponAllocAdd() {
 
 let _rcvPayPerPage = 10, _rcvPayPage = 1, _rcvPaySearch = '';
 
+// Method filter chips (addendum 2026-08-26 §A.5). /receivables/receipts takes
+// no payment_method query param, so this filters the already-fetched list
+// client-side via renderSplitView's listFilterFn hook.
+let _rcvPayMethodFilter = '';
+
+function _rcvPayMethodChipsHtml() {
+  const chip = (val, label) => {
+    const on = _rcvPayMethodFilter === val;
+    return `<button type="button" class="fin-btn-outline" onclick="_rcvPaySetMethodFilter('${val}')"
+      style="padding:4px 11px;font-size:0.78rem;${on ? 'background:var(--navy-700,#1B3057);color:#fff;border-color:var(--navy-700,#1B3057);' : ''}">${label}</button>`;
+  };
+  return `<div style="display:flex;gap:6px;padding:8px 12px;flex-wrap:wrap;">
+    ${chip('', 'All')}${RECEIPT_PAYMENT_METHODS.map(([v, l]) => chip(v, l)).join('')}
+  </div>`;
+}
+
+function _rcvPaySetMethodFilter(v) {
+  _rcvPayMethodFilter = v;
+  loadView('fin-receive-payments');
+}
+
 async function loadReceivePaymentsView(container) {
   await _invLoadLookups();
   await renderSplitView({
@@ -1742,6 +1763,8 @@ async function loadReceivePaymentsView(container) {
     ],
     apiUrl: `${API_BASE}/receivables/receipts`,
     searchFields: ['receipt_number','reference'],
+    listFilters: _rcvPayMethodChipsHtml(),
+    listFilterFn: p => !_rcvPayMethodFilter || p.payment_method === _rcvPayMethodFilter,
     col1Label: 'Receipt No', col2Label: 'Student',
     col1: p => p.receipt_number || `#${p.id}`,
     col2: p => _invStudentName(p.student_id) || '—',
@@ -1752,7 +1775,7 @@ async function loadReceivePaymentsView(container) {
       {label:'Receipt No',    key:'receipt_number', fmt:v=>v||'—'},
       {label:'Student',       key:'student_id', fmt:v=>_invStudentName(v)},
       {label:'Invoice',       key:'fee_invoice_id', fmt:v=>v?`#${v}`:'—'},
-      {label:'Payment Method',key:'payment_method', fmt:v=>v||'—'},
+      {label:'Payment Method',key:'payment_method', fmt:v=>receiptMethodLabel(v)},
       {label:'Reference',     key:'reference', fmt:v=>v||'—'},
       {label:'Date',          key:'payment_date', fmt:v=>v?v.split('T')[0]:'—'},
       {label:'Amount',        key:'amount', fmt:v=>_finFmt(parseFloat(v)||0)},
@@ -1830,7 +1853,7 @@ async function _paStudentSelect(studentId, label) {
   resultsEl.innerHTML = payments.map(p => `
     <div style="background:#f9fafb;border:1px solid #e0e0e0;border-radius:6px;padding:12px 16px;margin-bottom:10px;">
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-        <div><strong>${_finEsc(p.receipt_number || ('Payment #' + p.id))}</strong> &middot; ${_finEsc(p.payment_method || '')}</div>
+        <div><strong>${_finEsc(p.receipt_number || ('Payment #' + p.id))}</strong> &middot; ${_finEsc(receiptMethodLabel(p.payment_method))}</div>
         <div>${_finFmt(parseFloat(p.amount)||0)} &middot; ${_finEsc((p.payment_date||'').split('T')[0]||'')}</div>
       </div>
       ${(p.allocations||[]).length ? `
@@ -1877,7 +1900,7 @@ async function openReceiptPdf(receiptId) {
   const receiptNo    = receipt.receipt_number || `#${receipt.id}`;
   const paymentDate  = receipt.payment_date ? receipt.payment_date.split('T')[0] : '-';
   const printedOn    = new Date().toLocaleString('en-GB', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' });
-  const methodLabel  = (receipt.payment_method || '-').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  const methodLabel  = receiptMethodLabel(receipt.payment_method);
   const amount       = parseFloat(receipt.amount) || 0;
 
   win.document.open();

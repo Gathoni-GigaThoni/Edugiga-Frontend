@@ -2615,6 +2615,10 @@ function _renderStudentViewBody(d, activeTab) {
         </div>
         <div class="stu-view-name">${_esc(`${d.first_name||''} ${d.last_name||''}`.trim())}</div>
         <div class="stu-view-id">${_esc(d.student_id||'')}</div>
+        <div style="font-size:0.78rem;color:#666;margin-top:2px;text-align:center;">
+          Payment alias: <strong style="color:var(--navy-700,#1B3057);letter-spacing:0.5px;">${_esc(d.payment_alias || '(not assigned)')}</strong>
+          <div style="font-size:0.72rem;color:#999;margin-top:1px;">Parents can pay to this shortcode.</div>
+        </div>
         <div class="stu-view-card-rows">
           ${_svRow('Gender',         d.gender)}
           ${_svRow('Level',          d.class_name||d.level_of_academics)}
@@ -2666,6 +2670,7 @@ function _renderStuViewTab(tabName, d) {
   if (tabName === 'Personal Data') return `
     <div class="stu-detail-grid">
       ${_dRow('Student ID',       d.student_id)}
+      ${_dRow('Payment Alias',    d.payment_alias || '(not assigned)')}
       ${_dRow('Surname',          d.last_name)}
       ${_dRow('Other Name',       d.first_name)}
       ${_dRow('Joining Date',     d.joining_date)}

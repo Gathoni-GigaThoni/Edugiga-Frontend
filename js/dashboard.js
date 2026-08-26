@@ -686,10 +686,15 @@ async function renderSplitView(cfg) {
     return;
   }
 
+  // cfg.listFilterFn is an optional client-side predicate applied before the
+  // search term — for screens whose list endpoint has no matching query param
+  // (e.g. /receivables/receipts takes no payment_method filter). Omitted
+  // everywhere else, so behaviour is unchanged without it.
   function getFiltered() {
-    if (!searchTerm) return allItems;
+    let items = typeof cfg.listFilterFn === 'function' ? allItems.filter(cfg.listFilterFn) : allItems;
+    if (!searchTerm) return items;
     const q = searchTerm.toLowerCase();
-    return allItems.filter(item =>
+    return items.filter(item =>
       (cfg.searchFields || []).some(f => (item[f] || '').toString().toLowerCase().includes(q))
     );
   }

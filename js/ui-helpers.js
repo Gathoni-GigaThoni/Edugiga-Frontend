@@ -29,6 +29,32 @@ function formatKES(v) {
   return 'KES ' + n.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+// ── Receipt payment methods ──────────────────────────────────────────────────
+// ReceiptPaymentMethod on the wire (verified on the live OpenAPI):
+// cash | bank_transfer | mpesa | cheque | card | coop_paybill. coop_paybill
+// arrived with Co-op Bank B2B v1.4 (addendum 2026-08-26 §A.5) and is written
+// by BOTH the 2023 IPN receiver and the v1.4 pipeline — receipts carrying it
+// are created by webhook, never by hand, but the value still has to render
+// and filter everywhere the other methods do.
+//
+// A generic underscore -> Title Case transform mangles this one specifically
+// ("Coop Paybill"), so the label comes from the map, not from string surgery.
+const RECEIPT_PAYMENT_METHODS = [
+  ['cash',          'Cash'],
+  ['bank_transfer', 'Bank Transfer'],
+  ['mpesa',         'M-Pesa'],
+  ['cheque',        'Cheque'],
+  ['card',          'Card'],
+  ['coop_paybill',  'Co-op Paybill'],
+];
+const _RECEIPT_METHOD_LABELS = Object.fromEntries(RECEIPT_PAYMENT_METHODS);
+
+function receiptMethodLabel(v) {
+  if (!v) return '—';
+  return _RECEIPT_METHOD_LABELS[v]
+    || String(v).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
 // ── Inventory quantity/cost formatting (BE/FE Contract Addendum 2026-07-29) ──
 // Quantities are 3 DP, unit costs 4 DP — distinct from money's 2 DP, so never
 // reuse formatKES() for either; raw .toFixed() also rounds inconsistently for

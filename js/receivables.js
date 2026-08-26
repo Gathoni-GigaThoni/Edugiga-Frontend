@@ -1369,11 +1369,7 @@ async function openRecordPaymentModal(invoiceId, balanceDue) {
         <label class="fin-form-label">Payment Method <span class="fin-required">*</span></label>
         <select id="rcv-pay-method" class="fin-form-select">
           <option value="">Please Select</option>
-          <option value="cash">Cash</option>
-          <option value="bank_transfer">Bank Transfer</option>
-          <option value="coop_paybill">Co-op Paybill</option>
-          <option value="cheque">Cheque</option>
-          <option value="card">Card</option>
+          ${RECEIPT_PAYMENT_METHODS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}
         </select>
       </div>
       <div class="fin-form-group">
