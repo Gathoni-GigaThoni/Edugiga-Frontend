@@ -134,7 +134,6 @@ const REPORT_DEFS = {
     columns: [['account','ACCOUNT'],['opening_balance','OPENING BALANCE'],['inflows','INFLOWS'],['outflows','OUTFLOWS'],['closing_balance','CLOSING BALANCE']] },
 
   // Statement-layout reports — handled by dedicated renderers, see _repRenderStatement()
-  'reports-balance-sheet': { title: 'Balance Sheet', api: 'balance-sheet', dateMode: 'asof', layout: 'statement', statementType: 'bs' },
   'reports-statement-of-financial-performance': { title: 'Statement of Financial Performance', api: 'statement-of-financial-performance', dateMode: 'range', layout: 'statement', statementType: 'sfp' },
   'reports-statement-of-financial-position': { title: 'Statement of Financial Position', api: 'statement-of-financial-position', dateMode: 'asof', compareDate: true, layout: 'statement', statementType: 'bs' },
   'reports-notes-of-financial-statement': { title: 'Notes of Financial Statement', api: 'notes-of-financial-statement', dateMode: 'range', layout: 'notes' },
@@ -162,7 +161,7 @@ const REPORT_DEFS = {
 };
 
 // School-shaped SoFP/SoCI views (2026-07-21 addendum §3, §4) — now the only
-// render for Balance Sheet/SoFP/SoFI; the Classic flat statement toggle was
+// render for SoFP/SoFI; the Classic flat statement toggle was
 // removed 2026-07-23 (user request) in favour of always showing this view.
 const _REP_SCHOOL_VIEW_TYPES = new Set(['bs', 'sfp']);
 
@@ -338,7 +337,7 @@ function _repRenderTable(def, data) {
 }
 
 // ── null_subtype_accounts — data-quality banner (2026-08-17 addendum,
-// shipped live on TrialBalanceReport/BalanceSheetReport/IncomeExpenseReport
+// shipped live on TrialBalanceReport/StatementOfFinancialPositionReport/IncomeExpenseReport
 // as of 2026-08-18). NullSubtypeAccountRow: {account_id, number,
 // account_name, account_type}. These accounts still appear inline under
 // their normal "Unclassified" subtype group (see _repGroups) — this banner
@@ -671,28 +670,69 @@ function _repRenderStatement(def, data) {
 // stay untouched — this only runs when the operator has the Schools View
 // toggle selected. Groups arrive pre-sorted and pre-subtotaled server-side;
 // rendered in server order, never resorted or re-summed client-side.
-function _repGroupLine(a) {
-  return `<div style="display:flex;justify-content:space-between;padding:2px 0 2px 32px;border-bottom:1px solid #f5f5f5;">
-    <span>${_finEsc(a.name || a.account_name || a.label || '')}</span><span>${_pvMoney(a.amount ?? a.balance ?? a.value)}</span>
+// Two-column comparison support (2026-08-26 addendum §C): the SoFP endpoint
+// returns a FLAT report with an optional `prior_period` sub-object — the old
+// {current, prior} comparison wrapper is gone, along with
+// GET /api/reports/balance-sheet. `prior_period` is recursively typed but
+// always terminates after one level, so nothing here ever walks it twice.
+function _repSoFPPriorIndex(prior) {
+  const byAccount = new Map();
+  const bySubtype = new Map();
+  if (!prior) return { byAccount, bySubtype };
+  ['non_current_asset_groups','current_asset_groups','non_current_liability_groups',
+   'current_liability_groups','equity_groups'].forEach(key => {
+    (prior[key] || []).forEach(g => {
+      bySubtype.set(`${key}::${g.subtype}`, g.subtotal);
+      (g.accounts || []).forEach(a => {
+        if (a.account_id != null) byAccount.set(String(a.account_id), a.balance);
+      });
+    });
+  });
+  return { byAccount, bySubtype };
+}
+
+// One statement row. `prior` is undefined for the single-column reports
+// (SoCI and an un-compared SoFP); pass null explicitly to render an empty
+// prior cell so the columns stay aligned when a line has no prior match.
+function _repStatementRow(label, value, opts = {}) {
+  const { prior, cmp = false, indent = 0, weight = '', border = '', color = '', size = '' } = opts;
+  const cells = cmp
+    ? `<span style="text-align:right;">${_pvMoney(value)}</span><span style="text-align:right;color:#666;">${prior == null ? '—' : _pvMoney(prior)}</span>`
+    : `<span style="text-align:right;">${_pvMoney(value)}</span>`;
+  return `<div style="display:grid;grid-template-columns:1fr ${cmp ? '140px 140px' : '140px'};gap:12px;padding:${weight ? '4px' : '2px'} 0 ${weight ? '4px' : '2px'} ${indent}px;${border}${weight ? `font-weight:${weight};` : ''}${color ? `color:${color};` : ''}${size ? `font-size:${size};` : ''}">
+    <span>${_finEsc(label)}</span>${cells}
   </div>`;
 }
-function _repGroups(groups) {
+
+function _repGroupLine(a, prior, cmp) {
+  return _repStatementRow(a.name || a.account_name || a.label || '',
+    a.amount ?? a.balance ?? a.value,
+    { prior, cmp, indent: 32, border: 'border-bottom:1px solid #f5f5f5;' });
+}
+
+// priorIdx/groupKey are only supplied by the SoFP caller; SoCI calls
+// _repGroups(groups) unchanged and gets the original single-column render.
+function _repGroups(groups, priorIdx, groupKey) {
+  const cmp = !!priorIdx;
   return (groups || []).map(g => `
     <div style="margin-bottom:6px;">
       <div style="font-weight:600;color:#2c3e50;padding:4px 0 4px 16px;">
         ${_finEsc(g.subtype)}
         ${g.subtype === 'Unclassified' ? '<span style="font-size:0.75rem;font-weight:400;color:#8a6d00;"> — Awaiting classification, ask ops to run the backfill.</span>' : ''}
       </div>
-      ${(g.accounts || []).map(_repGroupLine).join('')}
-      <div style="display:flex;justify-content:space-between;padding:4px 0 4px 16px;font-weight:600;border-top:1px solid #eee;">
-        <span>Subtotal</span><span>${_pvMoney(g.subtotal)}</span>
-      </div>
+      ${(g.accounts || []).map(a => _repGroupLine(a, cmp ? (priorIdx.byAccount.has(String(a.account_id)) ? priorIdx.byAccount.get(String(a.account_id)) : null) : undefined, cmp)).join('')}
+      ${_repStatementRow('Subtotal', g.subtotal, {
+        cmp,
+        prior: cmp ? (priorIdx.bySubtype.has(`${groupKey}::${g.subtype}`) ? priorIdx.bySubtype.get(`${groupKey}::${g.subtype}`) : null) : undefined,
+        indent: 16, weight: '600', border: 'border-top:1px solid #eee;' })}
     </div>`).join('');
 }
-function _repSchoolSectionTotal(label, value, navy) {
-  return `<div style="display:flex;justify-content:space-between;padding:6px 0;font-weight:700;${navy?'font-size:1.02rem;color:#2c3e50;border-top:2px solid #2c3e50;':'border-top:1px solid #ddd;'}margin-top:2px;">
-    <span>${_finEsc(label)}</span><span>${_pvMoney(value)}</span>
-  </div>`;
+function _repSchoolSectionTotal(label, value, navy, prior, cmp) {
+  return _repStatementRow(label, value, {
+    cmp, prior, weight: '700',
+    border: navy ? 'border-top:2px solid #2c3e50;margin-top:2px;' : 'border-top:1px solid #ddd;margin-top:2px;',
+    color: navy ? '#2c3e50' : '', size: navy ? '1.02rem' : '',
+  });
 }
 
 function _repRenderSchoolSoFP(data) {
@@ -702,39 +742,49 @@ function _repRenderSchoolSoFP(data) {
   const totalLiabEq = parseFloat(data.total_liabilities_equity || 0);
   const diff = totalAssets - totalLiabEq;
   const balanced = data.is_balanced === true;
-  // reports-statement-of-financial-position nests the BalanceSheetReport
-  // under .current (vs. reports-balance-sheet, which returns it at root) —
-  // null_subtype_accounts lives wherever the actual report body does.
-  const nullSubtypeAccounts = data.null_subtype_accounts || data.current?.null_subtype_accounts;
+  // Flat report: every current-period field is at the root. Only one level of
+  // prior_period is ever read — the inner instance's own prior_period is
+  // always null and is deliberately ignored.
+  const prior = data.prior_period || null;
+  const cmp = !!prior;
+  const idx = cmp ? _repSoFPPriorIndex(prior) : null;
+  const G = (key) => _repGroups(data[key], idx, key);
+  const T = (label, key, navy) => _repSchoolSectionTotal(label, data[key], navy, cmp ? prior[key] : undefined, cmp);
 
-  out.innerHTML = _repNullSubtypeBanner(nullSubtypeAccounts) + `
-    <div class="fin-form-wrap" style="max-width:720px;">
+  const header = cmp ? `
+    <div style="display:grid;grid-template-columns:1fr 140px 140px;gap:12px;padding:0 0 8px;border-bottom:2px solid #2c3e50;font-weight:700;color:#2c3e50;font-size:0.85rem;text-transform:uppercase;">
+      <span></span>
+      <span style="text-align:right;">${_finEsc(_pvDate(data.as_of_date))}</span>
+      <span style="text-align:right;">${_finEsc(_pvDate(prior.as_of_date || data.compare_to_date))}</span>
+    </div>` : '';
+
+  out.innerHTML = _repNullSubtypeBanner(data.null_subtype_accounts) + `
+    <div class="fin-form-wrap" style="max-width:${cmp ? '860px' : '720px'};">
+      ${header}
       <div style="font-weight:700;color:#2c3e50;margin:4px 0 6px;">Non-current assets</div>
-      ${_repGroups(data.non_current_asset_groups)}
-      ${_repSchoolSectionTotal('Total non-current assets', data.total_non_current_assets)}
+      ${G('non_current_asset_groups')}
+      ${T('Total non-current assets', 'total_non_current_assets')}
 
       <div style="font-weight:700;color:#2c3e50;margin:14px 0 6px;">Current assets</div>
-      ${_repGroups(data.current_asset_groups)}
-      ${_repSchoolSectionTotal('Total current assets', data.total_current_assets)}
+      ${G('current_asset_groups')}
+      ${T('Total current assets', 'total_current_assets')}
 
       <div style="font-weight:700;color:#2c3e50;margin:14px 0 6px;">Current liabilities</div>
-      ${_repGroups(data.current_liability_groups)}
-      ${_repSchoolSectionTotal('Total current liabilities', data.total_current_liabilities)}
+      ${G('current_liability_groups')}
+      ${T('Total current liabilities', 'total_current_liabilities')}
 
-      ${_repSchoolSectionTotal('Net working capital', data.net_working_capital, true)}
+      ${T('Net working capital', 'net_working_capital', true)}
 
       <div style="font-weight:700;color:#2c3e50;margin:14px 0 6px;">Non-current liabilities</div>
-      ${_repGroups(data.non_current_liability_groups)}
-      ${_repSchoolSectionTotal('Total non-current liabilities', data.total_non_current_liabilities)}
+      ${G('non_current_liability_groups')}
+      ${T('Total non-current liabilities', 'total_non_current_liabilities')}
 
-      ${_repSchoolSectionTotal('Net assets', data.total_net_assets, true)}
+      ${T('Net assets', 'total_net_assets', true)}
 
       <div style="font-weight:700;color:#2c3e50;margin:14px 0 6px;">Financed by</div>
-      ${_repGroups(data.equity_groups)}
-      <div style="display:flex;justify-content:space-between;padding:4px 0 4px 16px;">
-        <span>Retained Surplus</span><span>${_pvMoney(data.retained_surplus)}</span>
-      </div>
-      ${_repSchoolSectionTotal('Total Liabilities + Equity', data.total_liabilities_equity)}
+      ${G('equity_groups')}
+      ${_repStatementRow('Retained Surplus', data.retained_surplus, { cmp, prior: cmp ? prior.retained_surplus : undefined, indent: 16 })}
+      ${T('Total Liabilities + Equity', 'total_liabilities_equity')}
 
       <div class="balance-check" style="display:flex;justify-content:space-between;padding:10px 0;font-weight:700;margin-top:6px;color:${balanced ? '#1e7e34' : 'var(--coral-600)'};">
         <span>${balanced ? 'Balances' : `Out of balance by ${_pvMoney(Math.abs(diff))}`}</span>

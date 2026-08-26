@@ -2508,7 +2508,7 @@ function _coaOpenReclassifyModal(id) {
     <div style="background:var(--white);border-radius:8px;padding:24px;width:480px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
       <h3 style="margin:0 0 8px;font-size:1.05rem;color:var(--navy-700,#2c3e50);">Reclassify ${_finEsc(acct.account_name||'')}</h3>
       <div style="padding:10px 12px;border-radius:6px;background:var(--gold-100,#FAF2D3);color:#6b5400;font-size:0.82rem;margin-bottom:14px;">
-        Reclassifying will re-render historical Balance Sheet and P&amp;L reports under the new classification. Prior classifications remain visible in the history panel below.
+        Reclassifying will re-render historical Statement of Financial Position and P&amp;L reports under the new classification. Prior classifications remain visible in the history panel below.
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Type <span class="fin-required">*</span></label>

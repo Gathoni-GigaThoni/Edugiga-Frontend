@@ -260,7 +260,6 @@ function showDashboard() {
                 <ul id="fin-reports-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('fin-reports-dropdown')}">
                   <li class="sidebar-sub-sub" onclick="loadView('reports-aged-payables')">Aged Payables</li>
                   <li class="sidebar-sub-sub" onclick="loadView('reports-ap-reconciliation')">AP Reconciliation</li>
-                  <li class="sidebar-sub-sub" onclick="loadView('reports-balance-sheet')">Balance Sheet</li>
                   <li class="sidebar-sub-sub" onclick="loadView('reports-balances-report')">Balances Report</li>
                   <li class="sidebar-sub-sub" onclick="loadView('reports-bank-reconciliation')">Bank Reconciliation Report</li>
                   <li class="sidebar-sub-sub" onclick="loadView('reports-cash-book')">Cash Book</li>
@@ -1260,7 +1259,6 @@ async function loadView(view) {
     // Finance Reports
     case 'reports-general-ledger':
     case 'reports-trial-balance':
-    case 'reports-balance-sheet':
     case 'reports-statement-of-financial-performance':
     case 'reports-statement-of-financial-position':
     case 'reports-notes-of-financial-statement':
