@@ -626,6 +626,10 @@ function openFinSetupDropdown() {
   const dd = document.getElementById('fin-setup-dropdown');
   if (dd) dd.style.display = 'block';
 }
+function openFinBudgetingDropdown() {
+  const dd = document.getElementById('fin-budgeting-dropdown');
+  if (dd) dd.style.display = 'block';
+}
 
 // ==================== DISCOUNT SETUP ====================
 // Singleton settings record: GET fetches the current config (404/null = not

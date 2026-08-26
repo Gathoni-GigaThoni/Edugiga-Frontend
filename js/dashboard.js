@@ -248,6 +248,13 @@ function showDashboard() {
                 </ul>
               </li>
               <li class="dropdown">
+                ${flyoutGroupHeader('Budgeting', 'fin-budgeting-dropdown')}
+                <ul id="fin-budgeting-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('fin-budgeting-dropdown')}">
+                  <li id="sidebar-fin-departments" class="sidebar-sub-sub" onclick="loadView('finance-budgeting-departments')">Departments</li>
+                  <li id="sidebar-fin-budgets"     class="sidebar-sub-sub" onclick="loadView('finance-budgeting-budgets')">Budgets</li>
+                </ul>
+              </li>
+              <li class="dropdown">
                 ${flyoutGroupHeader('Set-up', 'fin-setup-dropdown')}
                 <ul id="fin-setup-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('fin-setup-dropdown')}">
                   <li id="sidebar-fin-setup-main"     class="sidebar-sub-sub" onclick="loadView('finance-setup')">Main Settings</li>
@@ -376,7 +383,6 @@ function showDashboard() {
             <ul id="admin-dropdown" class="dropdown-menu">
               <li onclick="loadView('user-management')">User Management</li>
               <li onclick="loadView('admin-roles')">Roles</li>
-              <li onclick="loadView('admin-departments')">Departments</li>
             </ul>
           </div>
           ` : ''}
@@ -753,6 +759,7 @@ async function renderSplitView(cfg) {
           <span>${col1Label}</span>
           <span>${col2Label}</span>
         </div>
+        ${cfg.listFilters || ''}
         ${hasSearch ? `<div class="split-left-search"><input type="text" placeholder="Search…" oninput="window._splitSearch(this.value)"></div>` : ''}
         ${cfg.bulkUpload ? renderBulkUploadBar(cfg.bulkUpload.module, '_splitReload') : ''}
         <div class="split-list" id="split-list-items"></div>
@@ -1342,7 +1349,12 @@ async function loadView(view) {
     case 'admin-roles': await loadRolesListingView(main); break;
     case 'admin-role-permissions':
     case 'admin-role-edit': await renderRoleEditPage(main); break;
-    case 'admin-departments': await loadDepartmentsView(main); break;
+    case 'finance-budgeting-departments':
+      setActiveSidebarItem('sidebar-fin-departments'); openFinBudgetingDropdown();
+      await loadDepartmentsView(main); break;
+    case 'finance-budgeting-budgets':
+      setActiveSidebarItem('sidebar-fin-budgets'); openFinBudgetingDropdown();
+      await loadBudgetsView(main); break;
     // Empty modules
     // Procurement
     case 'procurement':

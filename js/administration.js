@@ -51,11 +51,18 @@ function _deptBadge(isActive) {
 async function loadDepartmentsView(container) {
   await renderSplitView({
     container,
-    moduleKey: 'finance.setup',
+    // Moved out of Administration into Finance > Budgeting (BE addendum
+    // 2026-08-26 §D.5). The router now asks for finance.budgeting.departments
+    // instead of finance.setup — finance.setup still governs the rest of
+    // Finance > Set-up, so it is deliberately NOT blanket-replaced. Ops must
+    // mirror every role's finance.setup grants onto the new key at deploy or
+    // Departments goes silently 403 for non-super-admins (§D.4).
+    moduleKey: 'finance.budgeting.departments',
     title: 'Departments',
     breadcrumb: [
       {label:'Dashboard',view:null},
-      {label:'Administration',view:'user-management'},
+      {label:'Finance',view:'finance-budgeting-departments'},
+      {label:'Budgeting',view:'finance-budgeting-departments'},
       {label:'Departments'}
     ],
     apiUrl: `${API_BASE}/departments/`,
@@ -111,7 +118,7 @@ async function _deptSaveSplit(id) {
   );
   if (res && res.ok) {
     showToast(id ? 'Department updated.' : 'Department created.', 'success');
-    loadView('admin-departments');
+    loadView('finance-budgeting-departments');
   } else if (res && res.status === 409) {
     if (statusEl) statusEl.textContent = 'A department with this name already exists.';
   } else {
@@ -124,7 +131,7 @@ async function _deptArchive(id) {
   const res = await apiFetch(`${API_BASE}/departments/${id}`, { method: 'DELETE' });
   if (res && res.ok) {
     showToast('Department archived.', 'success');
-    loadView('admin-departments');
+    loadView('finance-budgeting-departments');
   } else if (res) {
     showToast(await parseApiError(res), 'error');
   }
