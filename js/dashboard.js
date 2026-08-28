@@ -694,8 +694,15 @@ async function renderSplitView(cfg) {
     let items = typeof cfg.listFilterFn === 'function' ? allItems.filter(cfg.listFilterFn) : allItems;
     if (!searchTerm) return items;
     const q = searchTerm.toLowerCase();
+    // A searchFields entry is normally a field name, but may also be a
+    // resolver function for values that aren't on the row — e.g. a supplier
+    // name behind a bare supplier_id FK. Purely additive: string entries
+    // behave exactly as before.
     return items.filter(item =>
-      (cfg.searchFields || []).some(f => (item[f] || '').toString().toLowerCase().includes(q))
+      (cfg.searchFields || []).some(f => {
+        const v = typeof f === 'function' ? f(item) : item[f];
+        return (v ?? '').toString().toLowerCase().includes(q);
+      })
     );
   }
 

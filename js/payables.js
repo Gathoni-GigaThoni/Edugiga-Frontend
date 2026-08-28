@@ -1851,8 +1851,28 @@ async function _pvSiSubmitEdit(id) {
 }
 
 // ==================== A.8 SUPPLIER WHT VAT CERTIFICATE ====================
-let _pvWhtData = [];
+// A WHT certificate is a statutory document the school issues to a supplier
+// and the supplier files with KRA, so the two things this screen has to get
+// right are (a) showing the full gross / rate / withheld / net arithmetic,
+// which is what both parties reconcile against, and (b) actually handing over
+// the PDF. Neither worked before: the detail pane showed only the certificate
+// number, supplier, WHT amount and date, and the Download / Regenerate
+// actions lived exclusively inside _pvRenderWhtTable() — a leftover from the
+// pre-split-view layout that nothing has called since the migration, leaving
+// the module with no way to produce the certificate at all.
 const _PV_WHT_API = `${API_BASE}/payables/wht-vat-certificates`;
+
+// gross - wht should equal net. Anything else means the certificate the
+// supplier receives contradicts the payment they were actually made, so it
+// is surfaced instead of being rounded away in the display formatter.
+function _pvWhtArithmeticError(c) {
+  const gross = parseFloat(c.gross_amount), wht = parseFloat(c.wht_amount), net = parseFloat(c.net_amount);
+  if ([gross, wht, net].some(n => !isFinite(n))) return '';
+  const diff = gross - wht - net;
+  return Math.abs(diff) > 0.01
+    ? `Gross ${_pvMoney(gross)} less WHT ${_pvMoney(wht)} is ${_pvMoney(gross - wht)}, but this certificate states a net of ${_pvMoney(net)} — a difference of ${_pvMoney(Math.abs(diff))}.`
+    : '';
+}
 
 async function loadPayablesWhtVatCertificatesView(container) {
   await _pvLoadLookups();
@@ -1866,47 +1886,63 @@ async function loadPayablesWhtVatCertificatesView(container) {
       {label:'WHT VAT Certificates'}
     ],
     apiUrl: _PV_WHT_API,
-    searchFields: ['certificate_number'],
+    // supplier_id is a bare FK on the row, so searching by supplier only works
+    // through a resolver — hence the function form of searchFields.
+    searchFields: ['certificate_number', c => _pvSupplierName(c.supplier_id)],
     col1Label: 'Certificate No', col2Label: 'Supplier',
-    col1: c => c.certificate_number || '—',
-    col2: c => _pvSupplierName(c.supplier_id) || '—',
-    rowLabel: c => c.certificate_number || '—',
-    rowSub:   c => _pvSupplierName(c.supplier_id) || '',
+    col1: c => _finEsc(c.certificate_number || '—'),
+    col2: c => _finEsc(_pvSupplierName(c.supplier_id)),
+    rowLabel: c => _finEsc(c.certificate_number || '—'),
+    rowSub:   c => _finEsc(_pvSupplierName(c.supplier_id)),
     idKey: 'id',
     detailFields: [
-      {label:'Certificate No', key:'certificate_number', fmt:v=>v||'—'},
-      {label:'Supplier',       key:'supplier_id', fmt:v=>_pvSupplierName(v)},
-      {label:'WHT Amount',     key:'wht_amount', fmt:v=>_pvMoney(v)},
-      {label:'Issue Date',     key:'issue_date', fmt:v=>_pvDate(v)},
+      {label:'Certificate No',   key:'certificate_number', fmt:v=>_finEsc(v||'—')},
+      {label:'Supplier',         key:'supplier_id', fmt:v=>_finEsc(_pvSupplierName(v))},
+      {label:'Issue Date',       key:'issue_date', fmt:v=>_pvDate(v)},
+      {label:'Payment Voucher',  key:'payment_voucher_id',
+        fmt:v=>v ? `<a href="#" class="fin-bc-link" onclick="_pvWhtOpenVoucher(${v});return false;">Voucher #${v}</a>` : '—'},
+      {label:'Gross Amount',     key:'gross_amount', fmt:v=>_pvMoney(v)},
+      {label:'WHT Rate',         key:'wht_rate', fmt:v=>_pvWhtRate(v)},
+      {label:'WHT Withheld',     key:'wht_amount', fmt:v=>_pvMoney(v)},
+      {label:'Net Paid',         key:'net_amount', fmt:v=>`<strong>${_pvMoney(v)}</strong>`},
+      {label:'Certificate PDF',  key:'pdf_path',
+        fmt:v=>v ? 'Generated' : '<span style="color:var(--gold-500,#C9A227);font-weight:600;">Not generated yet</span>'},
     ],
+    detailActions: _pvWhtDetailActions,
   });
 }
-function _pvRenderWhtTable() {
-  const rows = _pvWhtData.length === 0
-    ? `<tr><td colspan="6" class="fin-empty">No records found.</td></tr>`
-    : _pvWhtData.map(c => `<tr>
-        <td>${_finEsc(c.certificate_number)}</td>
-        <td>${_finEsc(_pvSupplierName(c.supplier_id))}</td>
-        <td>${_pvDate(c.issue_date)}</td>
-        <td>${_pvMoney(c.wht_amount)}</td>
-        <td>${_pvDate(c.issue_date)}</td>
-        <td class="fin-action-cell">
-          <div class="fin-action-wrap">
-            <button class="fin-action-btn" onclick="_pvToggleDropdown(event,'pv-wht','${c.id}')">&#8230;</button>
-            <div id="pv-wht-dd-${c.id}" class="fin-action-dropdown" style="display:none;">
-              <a href="#" onclick="_pvWhtDownload(${c.id});return false;">&#11015; Download</a>
-              <a href="#" onclick="_pvWhtRegenerate(${c.id});return false;">&#8635; Regenerate PDF</a>
-            </div>
-          </div>
-        </td>
-      </tr>`).join('');
-  const el = document.getElementById('pv-wht-table-container');
-  if (el) el.innerHTML = `
-    <div class="fin-table-wrap"><table class="fin-table">
-      <thead><tr><th>CERTIFICATE NO.</th><th>SUPPLIER</th><th>PERIOD</th><th>AMOUNT</th><th>GENERATED AT</th><th>ACTION</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table></div>`;
+
+// The rate arrives as a decimal string; 0.05 and 5 both occur in the wild
+// depending on how the tax schedule was captured, so normalise to a percent
+// rather than printing a bare "0.05" next to money figures.
+function _pvWhtRate(v) {
+  const n = parseFloat(v);
+  if (!isFinite(n)) return '—';
+  return `${(n <= 1 ? n * 100 : n).toFixed(2).replace(/\.00$/, '')}%`;
 }
+
+// Same preselect handshake the rest of Payables uses (_pvPvOpenId is read and
+// cleared by loadPayablesPaymentVouchersView) — a certificate is only ever
+// evidence for one voucher, and an auditor tracing it should not have to
+// search the voucher list by hand.
+function _pvWhtOpenVoucher(voucherId) {
+  window._pvPvOpenId = voucherId;
+  loadView('payables-payment-vouchers');
+}
+
+function _pvWhtDetailActions(c) {
+  const arithmetic = _pvWhtArithmeticError(c);
+  return `
+    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">
+      <button class="fin-btn-teal" onclick="_pvWhtDownload(${c.id})" ${c.pdf_path ? '' : 'disabled title="Regenerate the PDF first."'}>&#11015; Download Certificate</button>
+      <button class="fin-btn-outline" onclick="_pvWhtRegenerate(${c.id})">&#8635; Regenerate PDF</button>
+    </div>
+    ${arithmetic ? `<div style="margin-top:12px;padding:10px 14px;border-radius:6px;border-left:3px solid var(--coral-500);background:var(--coral-100);color:var(--coral-600);font-size:0.85rem;width:100%;">
+      <strong>Certificate does not foot.</strong><br>${_finEsc(arithmetic)}
+    </div>` : ''}
+    <div id="pv-wht-detail-msg" style="width:100%;"></div>`;
+}
+
 async function _pvWhtDownload(id) {
   await authBlobDownload(`${_PV_WHT_API}/${id}/download`, `wht-certificate-${id}.pdf`, {
     errorPrefix: 'Could not download certificate: ',
@@ -1914,98 +1950,166 @@ async function _pvWhtDownload(id) {
 }
 async function _pvWhtRegenerate(id) {
   const res = await apiFetch(`${_PV_WHT_API}/${id}/regenerate-pdf`, { method: 'POST' });
-  if (res && res.ok) showToast('Certificate PDF regenerated.', 'success');
-  else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+  if (res && res.ok) {
+    showToast('Certificate PDF regenerated.', 'success');
+    // pdf_path flips from null to a path — re-read so the Download button
+    // stops being disabled without the user navigating away and back.
+    await window._splitRefreshSelected?.();
+    return;
+  }
+  if (!res) { showToast('Network error.', 'error'); return; }
+  const msg = await parseApiError(res);
+  const el = document.getElementById('pv-wht-detail-msg');
+  if (isPeriodLockError(res.status, msg)) showPeriodLockError(el, msg);
+  else showToast('Error: ' + msg, 'error');
 }
 
 // ==================== A.9.1 EXPENSE CLAIMS ====================
-let _pvEcData = [];
+// An expense claim is a reimbursement request an approver has to be able to
+// judge on the evidence in front of them. Before this pass the approve/reject
+// pane showed the claimant as "Employee #14" (despite _pvEmployees being
+// loaded on every Payables screen), omitted the claim's own description, and
+// showed neither the supporting document nor the approval trail — so the
+// approver was asked to authorise an expense without being told what it was
+// for, who incurred it, or whether a receipt exists.
 const _PV_EC_API = `${API_BASE}/payables/expense-claims`;
+// Backend enum (ExpenseClaimStatus): submitted -> approved | rejected,
+// approved -> disbursed. Rejection and disbursement are both terminal.
+const _PV_EC_STATUSES = [['', 'All'], ['submitted', 'Submitted'], ['approved', 'Approved'], ['disbursed', 'Disbursed'], ['rejected', 'Rejected']];
+let _pvEcStatusFilter = 'submitted'; // clerks open this screen to work the queue
+
+function _pvEcStatusChipsHtml() {
+  const chip = ([val, label]) => {
+    const on = _pvEcStatusFilter === val;
+    return `<button type="button" class="fin-btn-outline" onclick="_pvEcSetStatusFilter('${val}')"
+      style="padding:4px 11px;font-size:0.78rem;${on ? 'background:var(--navy-700,#1B3057);color:#fff;border-color:var(--navy-700,#1B3057);' : ''}">${label}</button>`;
+  };
+  return `<div style="display:flex;gap:6px;padding:8px 12px;flex-wrap:wrap;">${_PV_EC_STATUSES.map(chip).join('')}</div>`;
+}
+function _pvEcSetStatusFilter(v) { _pvEcStatusFilter = v; loadView('payables-expense-claims'); }
+
+// Claims must be coded to an Expense account. The picker used to offer the
+// whole active chart of accounts, which let a claim be booked against a bank,
+// a receivable or a revenue account and land in the ledger that way.
+function _pvExpenseAccountOptions(sel) {
+  return _pvOptions(_pvAccounts.filter(a => a.account_type === 'Expense'), 'id',
+    a => `${a.number ? a.number + ' - ' : ''}${a.account_name}`, sel);
+}
+
+function _pvDateTime(v) {
+  if (!v) return '—';
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return _finEsc(String(v));
+  return d.toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
 
 async function loadPayablesExpenseClaimsView(container) {
   await _pvLoadLookups();
+  const preselectId = window._pvEcOpenId ?? null;
+  window._pvEcOpenId = null;
   await renderSplitView({
     container,
+    preselectId,
     moduleKey: 'finance.payables',
+    // Filtered server-side (GET /payables/expense-claims?status=) rather than
+    // client-side, so the queue stays correct as the claim history grows.
+    apiUrl: _pvEcStatusFilter ? `${_PV_EC_API}?status=${encodeURIComponent(_pvEcStatusFilter)}` : _PV_EC_API,
     title: 'Expense Claims',
     breadcrumb: [
       {label:'Dashboard',view:null},
       {label:'Finance',view:'payables-expense-claims'},
       {label:'Expense Claims'}
     ],
-    apiUrl: _PV_EC_API,
-    searchFields: ['status'],
-    col1Label: 'Claimant', col2Label: 'Status',
-    col1: c => c.claimant_id ? `Employee #${c.claimant_id}` : '—',
-    col2: c => c.status || '—',
-    rowLabel: c => `Employee #${c.claimant_id}`,
-    rowSub:   c => c.status || '',
+    listFilters: _pvEcStatusChipsHtml(),
+    searchFields: ['description', 'status', c => _pvEmployeeName(c.claimant_id)],
+    col1Label: 'Claimant', col2Label: 'Amount',
+    col1: c => `${_finEsc(_pvEcClaimant(c))}<br><span style="font-size:0.78rem;color:#888;">${_finEsc(c.description || '')}</span>`,
+    col2: c => `${_pvMoney(c.amount)}<br>${_pvBadge(c.status)}`,
+    rowLabel: c => _finEsc(_pvEcClaimant(c)),
+    rowSub:   c => `${_pvMoney(c.amount)} &middot; ${_finEsc(c.description || '')}`,
     idKey: 'id',
     detailFields: [
-      {label:'Claimant',     key:'claimant_id', fmt:v=>`Employee #${v}`},
+      {label:'Description',  key:'description', fmt:v=>_finEsc(v||'—'), fullWidth:true},
+      {label:'Claimant',     key:'claimant_id', fmt:(v,c)=>_finEsc(_pvEcClaimant(c))},
       {label:'Expense Date', key:'expense_date', fmt:v=>_pvDate(v)},
-      {label:'Account',      key:'category_id', fmt:v=>_pvAccountName(v)},
-      {label:'Amount',       key:'amount', fmt:v=>_pvMoney(v)},
-      {label:'Status',       key:'status', fmt:v=>v||'—'},
+      {label:'Expense Account', key:'category_id', fmt:v=>_finEsc(_pvAccountName(v))},
+      {label:'Amount',       key:'amount', fmt:v=>`<strong>${_pvMoney(v)}</strong>`},
+      {label:'Status',       key:'status', fmt:v=>_pvBadge(v)},
+      {label:'Submitted',    key:'created_at', fmt:v=>_pvDateTime(v)},
+      {label:'Supporting Document', key:'supporting_document_path',
+        fmt:v=>v ? _finEsc(String(v).split('/').pop())
+                 : '<span style="color:var(--gold-500,#C9A227);font-weight:600;">None attached</span>'},
+      {label:'Approved By',  key:'approved_by', fmt:v=>_finEsc(_pvEmployeeRef(v)),
+        hideWhen:c=>!c.approved_by},
+      {label:'Approved At',  key:'approved_at', fmt:v=>_pvDateTime(v), hideWhen:c=>!c.approved_at},
+      {label:'Rejection Reason', key:'rejection_reason', fmt:v=>_finEsc(v||'—'),
+        hideWhen:c=>c.status !== 'rejected', fullWidth:true},
     ],
     renderAdd: _pvAddPlaceholder('Expense Claim', 'payables-expense-claims-add', 'Submit a new staff expense claim.'),
     onAdd: () => loadView('payables-expense-claims-add'),
     detailActions: _pvEcDetailActions,
   });
 }
+
+// claimant_id is a person id; currentUser.id is a user id, so the two are not
+// interchangeable — resolve through the employee cache and fall back to the
+// raw id rather than mislabelling somebody else's claim as "You". approved_by
+// is resolved the same way: an unresolvable id still has to identify *someone*
+// on an approval trail, so it degrades to "#14", never to a bare dash.
+function _pvEmployeeRef(id) {
+  if (id === null || id === undefined) return '—';
+  const name = _pvEmployeeName(id);
+  return name !== '-' ? name : `#${id}`;
+}
+function _pvEcClaimant(c) { return _pvEmployeeRef(c.claimant_id); }
+
 function _pvEcDetailActions(c) {
+  let banner = '';
+  if (c.status === 'submitted' && !c.supporting_document_path) {
+    banner = `<div style="width:100%;margin-bottom:12px;padding:10px 14px;border-radius:6px;border-left:3px solid var(--gold-500,#C9A227);background:var(--gold-100,#fdf3d6);color:#7a6110;font-size:0.85rem;">
+      No supporting document is attached to this claim. Confirm you have seen the receipt before approving.
+    </div>`;
+  } else if (c.status === 'approved') {
+    banner = `<div style="width:100%;margin-bottom:12px;padding:10px 14px;border-radius:6px;border-left:3px solid var(--navy-700,#1B3057);background:var(--navy-50,#EEF3FA);color:var(--navy-700,#1B3057);font-size:0.85rem;">
+      Approved and awaiting payment. Record the payout under
+      <a href="#" onclick="loadView('payables-expense-claim-disbursements-add');return false;" style="color:inherit;font-weight:600;text-decoration:underline;">Expense Claim Disbursements</a>.
+    </div>`;
+  }
   const buttons = c.status === 'submitted'
     ? `<button class="fin-btn-teal" onclick="_pvEcApprove(${c.id})">Approve</button>
        <button class="fin-btn-cancel" onclick="_pvEcReject(${c.id})">Reject</button>`
     : '';
-  return `<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">${buttons}</div>
+  return `${banner}<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">${buttons}</div>
     <div id="pv-ec-detail-msg" style="width:100%;"></div>`;
 }
-function _pvRenderEcTable() {
-  document.getElementById('pv-ec-total').textContent = _pvEcData.length;
-  const rows = _pvEcData.length === 0
-    ? `<tr><td colspan="6" class="fin-empty">No records found.</td></tr>`
-    : _pvEcData.map(c => `<tr>
-        <td>${_finEsc(currentUser && String(currentUser.id) === String(c.claimant_id) ? (currentUser.full_name || currentUser.name || 'You') : ('Employee #' + c.claimant_id))}</td>
-        <td>${_pvDate(c.expense_date)}</td>
-        <td>${_finEsc(_pvAccountName(c.category_id))}</td>
-        <td>${_pvMoney(c.amount)}</td>
-        <td>${_pvBadge(c.status)}</td>
-        <td class="fin-action-cell">
-          <div class="fin-action-wrap">
-            <button class="fin-action-btn" onclick="_pvToggleDropdown(event,'pv-ec','${c.id}')">&#8230;</button>
-            <div id="pv-ec-dd-${c.id}" class="fin-action-dropdown" style="display:none;">
-              ${c.status === 'submitted' ? `
-                <a href="#" onclick="_pvEcApprove(${c.id});return false;">&#10003; Approve</a>
-                <a href="#" onclick="_pvEcReject(${c.id});return false;">&#10005; Reject</a>` : ''}
-            </div>
-          </div>
-        </td>
-      </tr>`).join('');
-  document.getElementById('pv-ec-table-container').innerHTML = `
-    <div class="fin-table-wrap"><table class="fin-table">
-      <thead><tr><th>CLAIMANT</th><th>EXPENSE DATE</th><th>ACCOUNT</th><th>AMOUNT</th><th>STATUS</th><th>ACTION</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table></div>`;
+
+// Shared error handling for both lifecycle actions — approving or rejecting a
+// claim writes to the ledger period, so a period-lock 409 has to render as the
+// inline "closed period" explainer rather than a generic red toast.
+async function _pvEcHandleActionError(res, fallback) {
+  if (!res) { showToast('Network error.', 'error'); return; }
+  const msg = await parseApiError(res);
+  const el = document.getElementById('pv-ec-detail-msg');
+  if (isPeriodLockError(res.status, msg)) showPeriodLockError(el, msg);
+  else showToast((fallback || 'Error: ') + msg, 'error');
 }
+
 async function _pvEcApprove(id) {
   const res = await apiFetch(`${_PV_EC_API}/${id}/approve`, { method: 'POST' });
   if (res && res.ok) { showToast('Expense claim approved.', 'success'); await window._splitRefreshSelected?.(); return; }
-  if (!res) return;
-  const msg = await parseApiError(res);
-  const msgEl = document.getElementById('pv-ec-detail-msg');
-  if (isPeriodLockError(res.status, msg)) showPeriodLockError(msgEl, msg);
-  else showToast('Error: ' + msg, 'error');
+  await _pvEcHandleActionError(res);
 }
 function _pvEcReject(id) {
   _pvShowReasonModal('Reject Expense Claim', async (reason) => {
     const res = await apiFetch(`${_PV_EC_API}/${id}/reject`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }) });
-    if (res && res.ok) { showToast('Expense claim rejected.', 'success'); await window._splitRefreshSelected?.(); }
-    else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+    if (res && res.ok) { showToast('Expense claim rejected.', 'success'); await window._splitRefreshSelected?.(); return; }
+    await _pvEcHandleActionError(res);
   });
 }
+
 async function loadPayablesExpenseClaimsAddView(container) {
   await _pvLoadLookups();
+  const today = new Date().toISOString().slice(0, 10);
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -2018,16 +2122,18 @@ async function loadPayablesExpenseClaimsAddView(container) {
         <div class="fin-form-group">
           <label class="fin-form-label">Claimant</label>
           <input type="text" class="fin-form-input" value="${_finEsc(currentUser ? (currentUser.full_name || currentUser.name || currentUser.email || '') : '')}" disabled>
+          <span class="fin-field-hint">The claim is filed against your own staff record — the backend takes the claimant from your session, not from this form.</span>
         </div>
         <div class="fin-form-grid-2">
           <div class="fin-form-group">
             <label class="fin-form-label">Expense Date <span class="fin-required">*</span></label>
-            <input type="date" id="ec-f-date" class="fin-form-input">
+            <input type="date" id="ec-f-date" class="fin-form-input" max="${today}">
             <span class="fin-field-error" id="ec-f-date-err"></span>
           </div>
           <div class="fin-form-group">
-            <label class="fin-form-label">Account/Category <span class="fin-required">*</span></label>
-            <select id="ec-f-category" class="fin-form-select"><option value="">Please Select</option>${_pvAccountOptions()}</select>
+            <label class="fin-form-label">Expense Account <span class="fin-required">*</span></label>
+            <select id="ec-f-category" class="fin-form-select"><option value="">Please Select</option>${_pvExpenseAccountOptions()}</select>
+            <span class="fin-field-hint">Only Expense accounts are listed — a reimbursement is an expense, never a balance-sheet line.</span>
             <span class="fin-field-error" id="ec-f-category-err"></span>
           </div>
         </div>
@@ -2038,8 +2144,13 @@ async function loadPayablesExpenseClaimsAddView(container) {
         </div>
         <div class="fin-form-group">
           <label class="fin-form-label">Description <span class="fin-required">*</span></label>
-          <textarea id="ec-f-description" class="fin-form-textarea" rows="4"></textarea>
+          <textarea id="ec-f-description" class="fin-form-textarea" rows="3" placeholder="What the money was spent on — this is what the approver sees."></textarea>
           <span class="fin-field-error" id="ec-f-description-err"></span>
+        </div>
+        <div class="fin-form-group">
+          <label class="fin-form-label">Notes</label>
+          <textarea id="ec-f-notes" class="fin-form-textarea" rows="2" placeholder="Optional — receipt reference, cost centre, anything the approver should know."></textarea>
+          <span class="fin-field-hint">The backend stores a supporting-document path on the claim but exposes no upload route yet, so attach the receipt through the usual document channel and reference it here.</span>
         </div>
         <div class="fin-form-actions">
           <button class="fin-btn-teal" onclick="_pvEcSubmitAdd()">Submit</button>
@@ -2048,6 +2159,7 @@ async function loadPayablesExpenseClaimsAddView(container) {
       </div>
     </div>`;
 }
+
 async function _pvEcSubmitAdd() {
   let valid = true;
   [['ec-f-date','ec-f-date-err'],['ec-f-category','ec-f-category-err'],['ec-f-description','ec-f-description-err']].forEach(([fid,eid]) => {
@@ -2055,25 +2167,81 @@ async function _pvEcSubmitAdd() {
     document.getElementById(eid).textContent = v ? '' : 'This field is required.';
     if (!v) valid = false;
   });
+  // A future-dated expense hasn't been incurred yet, so it can't be claimed —
+  // the max attribute is advisory only (typed dates bypass it in some browsers).
+  const dateEl = document.getElementById('ec-f-date');
+  if (dateEl.value && dateEl.value > new Date().toISOString().slice(0, 10)) {
+    document.getElementById('ec-f-date-err').textContent = 'An expense cannot be dated in the future.';
+    valid = false;
+  }
   const amount = parseFloat(document.getElementById('ec-f-amount').value);
   document.getElementById('ec-f-amount-err').textContent = (amount > 0) ? '' : 'Amount must be greater than 0.';
   if (!(amount > 0)) valid = false;
   if (!valid) return;
+  const notes = document.getElementById('ec-f-notes').value.trim();
   const payload = {
     description: document.getElementById('ec-f-description').value.trim(),
-    amount, expense_date: document.getElementById('ec-f-date').value,
+    amount, expense_date: dateEl.value,
     category_id: parseInt(document.getElementById('ec-f-category').value, 10),
+    ...(notes ? { notes } : {}),
   };
   try {
     const res = await apiFetch(_PV_EC_API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    if (res && res.ok) { showToast('Expense claim submitted.', 'success'); loadView('payables-expense-claims'); }
+    if (res && res.ok) {
+      showToast('Expense claim submitted.', 'success');
+      _pvEcStatusFilter = 'submitted'; // land back on the queue the new claim is in
+      loadView('payables-expense-claims');
+    }
     else if (res) showToast('Error: ' + await parseApiError(res), 'error');
   } catch (e) { showToast('Network error.', 'error'); }
 }
 
 // ==================== A.9.2 EXPENSE CLAIM DISBURSEMENTS ====================
-let _pvEcdData = [], _pvEcdApprovedClaims = [];
+// The disbursement is the entry that actually moves money, and the form posts
+// debit_account_id / credit_bank_account_id straight into a journal entry. Both
+// pickers used to offer the entire active chart of accounts, so a disbursement
+// could be credited to Retained Surplus or a student receivable and still post
+// cleanly. They are now constrained to accounts that can legitimately take each
+// side: the credit side to money-holding accounts (bank / petty cash / wallet,
+// from the same /lookups/money-holding-accounts registry the Cash Book and
+// Cashflow Statement pickers use), and the debit side to the liability the
+// approved claim created, or the expense account if the school recognises the
+// cost on payment rather than on approval.
+let _pvEcdApprovedClaims = [];
 const _PV_ECD_API = `${API_BASE}/payables/expense-claim-disbursements`;
+const _PV_DISBURSEMENT_METHOD_LABEL = Object.fromEntries(_PV_DISBURSEMENT_METHODS);
+
+// Lazily loaded here rather than added to _pvLoadLookups: only the two
+// disbursement forms need it, and _pvLoadLookups runs on every Payables screen.
+let _pvMoneyHoldingAccounts = null;
+async function _pvLoadMoneyHoldingAccounts() {
+  if (_pvMoneyHoldingAccounts !== null) return;
+  const res = await apiFetch(`${API_BASE}/lookups/money-holding-accounts`);
+  _pvMoneyHoldingAccounts = (res && res.ok) ? _toArray(await res.json()) : [];
+}
+const _PV_MH_KIND_ORDER = { bank: 0, petty_cash: 1, wallet: 2 };
+const _PV_MH_KIND_LABEL = { bank: 'Banks', petty_cash: 'Petty Cash', wallet: 'Wallets' };
+function _pvMoneyHoldingOptions(sel) {
+  const groups = { bank: [], petty_cash: [], wallet: [] };
+  (_pvMoneyHoldingAccounts || []).forEach(a => { groups[groups[a.kind] ? a.kind : 'wallet'].push(a); });
+  return Object.keys(groups)
+    .sort((a, b) => (_PV_MH_KIND_ORDER[a] ?? 99) - (_PV_MH_KIND_ORDER[b] ?? 99))
+    .filter(k => groups[k].length)
+    .map(k => `<optgroup label="${_PV_MH_KIND_LABEL[k]}">${groups[k].map(a => {
+      const label = `${a.number ? a.number + ' - ' : ''}${a.account_name}${k === 'bank' && a.bank_name ? ` (${a.bank_name})` : ''}`;
+      return `<option value="${a.gl_account_id}" ${String(sel) === String(a.gl_account_id) ? 'selected' : ''}>${_finEsc(label)}</option>`;
+    }).join('')}</optgroup>`).join('');
+}
+// Settling an approved claim clears the payable it created (Liability); a
+// school that only recognises the cost on payment debits the Expense account
+// instead. Nothing else belongs on the debit side of a reimbursement.
+function _pvClaimSettlementAccountOptions(sel) {
+  const pick = t => _pvAccounts.filter(a => a.account_type === t);
+  return [['Liability', 'Liabilities (clear the payable)'], ['Expense', 'Expenses (recognise on payment)']]
+    .filter(([t]) => pick(t).length)
+    .map(([t, label]) => `<optgroup label="${label}">${_pvOptions(pick(t), 'id', a => `${a.number ? a.number + ' - ' : ''}${a.account_name}`, sel)}</optgroup>`)
+    .join('');
+}
 
 async function loadPayablesExpenseClaimDisbursementsView(container) {
   await _pvLoadLookups();
@@ -2087,26 +2255,44 @@ async function loadPayablesExpenseClaimDisbursementsView(container) {
       {label:'Expense Claim Disbursements'}
     ],
     apiUrl: _PV_ECD_API,
+    searchFields: [d => `Claim #${d.expense_claim_id}`, 'disbursement_method'],
     col1Label: 'Claim', col2Label: 'Amount',
-    col1: d => `Claim #${d.expense_claim_id}`,
-    col2: d => _pvMoney(d.disbursed_amount),
+    col1: d => `Claim #${_finEsc(String(d.expense_claim_id))}<br><span style="font-size:0.78rem;color:#888;">${_pvDate(d.disbursement_date)}</span>`,
+    col2: d => `${_pvMoney(d.disbursed_amount)}<br><span style="font-size:0.78rem;color:#888;">${_finEsc(_PV_DISBURSEMENT_METHOD_LABEL[d.disbursement_method] || d.disbursement_method || '')}</span>`,
     rowLabel: d => `Claim #${d.expense_claim_id}`,
-    rowSub:   d => _pvDate(d.disbursement_date) || '',
+    rowSub:   d => `${_pvMoney(d.disbursed_amount)} &middot; ${_pvDate(d.disbursement_date)}`,
     idKey: 'id',
     detailFields: [
-      {label:'Claim Ref',         key:'expense_claim_id', fmt:v=>`Claim #${v}`},
-      {label:'Amount Disbursed',  key:'disbursed_amount', fmt:v=>_pvMoney(v)},
+      {label:'Claim Ref',         key:'expense_claim_id',
+        fmt:v=>`<a href="#" class="fin-bc-link" onclick="_pvEcdOpenClaim(${v});return false;">Claim #${v}</a>`},
+      {label:'Amount Disbursed',  key:'disbursed_amount', fmt:v=>`<strong>${_pvMoney(v)}</strong>`},
       {label:'Disbursement Date', key:'disbursement_date', fmt:v=>_pvDate(v)},
-      {label:'Journal Entry',     key:'journal_entry_id', fmt:v=>v?`JV #${v}`:'—'},
+      {label:'Method',            key:'disbursement_method',
+        fmt:v=>_finEsc(_PV_DISBURSEMENT_METHOD_LABEL[v] || v || '—')},
+      {label:'Disbursed By',      key:'disbursed_by', fmt:v=>_finEsc(_pvEmployeeRef(v))},
+      // The JE id is the audit link from the payout back to the ledger — a
+      // disbursement without one has moved money that the books don't show.
+      {label:'Journal Entry',     key:'journal_entry_id',
+        fmt:v=>v ? `JV #${v}` : '<span style="color:var(--coral-600);font-weight:600;">Not posted</span>'},
     ],
     renderAdd: _pvAddPlaceholder('Expense Claim Disbursement', 'payables-expense-claim-disbursements-add', 'Disburse an approved expense claim.'),
     onAdd: () => loadView('payables-expense-claim-disbursements-add'),
   });
 }
+
+function _pvEcdOpenClaim(claimId) {
+  _pvEcStatusFilter = '';        // a disbursed claim is no longer in the submitted queue
+  window._pvEcOpenId = claimId;  // read and cleared by loadPayablesExpenseClaimsView
+  loadView('payables-expense-claims');
+}
+
 async function loadPayablesExpenseClaimDisbursementsAddView(container) {
   await _pvLoadLookups();
+  await _pvLoadMoneyHoldingAccounts();
   const res = await apiFetch(`${_PV_EC_API}?status=approved`);
   _pvEcdApprovedClaims = (res && res.ok) ? _toArray(await res.json()) : [];
+  const today = new Date().toISOString().slice(0, 10);
+  const noClaims = _pvEcdApprovedClaims.length === 0;
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -2116,18 +2302,22 @@ async function loadPayablesExpenseClaimDisbursementsAddView(container) {
         </div>
       </div>
       <div class="fin-form-wrap">
+        ${noClaims ? `<div style="padding:10px 14px;border-radius:6px;border-left:3px solid var(--gold-500,#C9A227);background:var(--gold-100,#fdf3d6);color:#7a6110;font-size:0.85rem;margin-bottom:16px;">
+          No approved claims are waiting to be paid. A claim must be approved before it can be disbursed.
+        </div>` : ''}
         <div class="fin-form-group">
           <label class="fin-form-label">Expense Claim <span class="fin-required">*</span></label>
-          <select id="ecd-f-claim" class="fin-form-select">
+          <select id="ecd-f-claim" class="fin-form-select" onchange="_pvEcdOnClaimChange()">
             <option value="">Please Select</option>
-            ${_pvEcdApprovedClaims.map(c => `<option value="${c.id}">Claim #${c.id} &ndash; ${_pvMoney(c.amount)}</option>`).join('')}
+            ${_pvEcdApprovedClaims.map(c => `<option value="${c.id}">Claim #${c.id} &ndash; ${_finEsc(_pvEcClaimant(c))} &ndash; ${_finEsc(c.description || '')} &ndash; ${_finEsc(formatKES(c.amount))}</option>`).join('')}
           </select>
           <span class="fin-field-error" id="ecd-f-claim-err"></span>
+          <div id="ecd-claim-summary"></div>
         </div>
         <div class="fin-form-grid-2">
           <div class="fin-form-group">
             <label class="fin-form-label">Disbursement Date <span class="fin-required">*</span></label>
-            <input type="date" id="ecd-f-date" class="fin-form-input">
+            <input type="date" id="ecd-f-date" class="fin-form-input" max="${today}" value="${today}">
             <span class="fin-field-error" id="ecd-f-date-err"></span>
           </div>
           <div class="fin-form-group">
@@ -2139,22 +2329,43 @@ async function loadPayablesExpenseClaimDisbursementsAddView(container) {
           </div>
           <div class="fin-form-group">
             <label class="fin-form-label">Debit Account <span class="fin-required">*</span></label>
-            <select id="ecd-f-debit" class="fin-form-select"><option value="">Please Select</option>${_pvAccountOptions()}</select>
+            <select id="ecd-f-debit" class="fin-form-select"><option value="">Please Select</option>${_pvClaimSettlementAccountOptions()}</select>
+            <span class="fin-field-hint">The staff-reimbursement payable the approved claim created, or the expense account if the cost is recognised on payment.</span>
             <span class="fin-field-error" id="ecd-f-debit-err"></span>
           </div>
           <div class="fin-form-group">
             <label class="fin-form-label">Credit Bank Account <span class="fin-required">*</span></label>
-            <select id="ecd-f-credit" class="fin-form-select"><option value="">Please Select</option>${_pvAccountOptions()}</select>
+            <select id="ecd-f-credit" class="fin-form-select"><option value="">Please Select</option>${_pvMoneyHoldingOptions()}</select>
+            <span class="fin-field-hint">Only bank, petty cash and wallet accounts can be credited — this is the account the money physically leaves.</span>
             <span class="fin-field-error" id="ecd-f-credit-err"></span>
           </div>
         </div>
         <div class="fin-form-actions">
-          <button class="fin-btn-teal" onclick="_pvEcdSubmitAdd()">Submit</button>
+          <button class="fin-btn-teal" onclick="_pvEcdSubmitAdd()" ${noClaims ? 'disabled' : ''}>Submit</button>
           <button class="fin-btn-cancel" onclick="loadView('payables-expense-claim-disbursements')">Cancel</button>
         </div>
       </div>
     </div>`;
 }
+
+// The posted amount is always the approved claim amount (the endpoint takes no
+// partial-settlement concept), so show the figure being committed instead of
+// leaving the user to submit a number they were never shown.
+function _pvEcdOnClaimChange() {
+  const el = document.getElementById('ecd-claim-summary');
+  if (!el) return;
+  const claim = _pvEcdFindSelectedClaim();
+  if (!claim) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div style="margin-top:8px;padding:10px 14px;border-radius:6px;background:var(--navy-50,#EEF3FA);color:var(--navy-700,#1B3057);font-size:0.85rem;">
+    Paying <strong>${_pvMoney(claim.amount)}</strong> to ${_finEsc(_pvEcClaimant(claim))} for ${_finEsc(claim.description || 'this claim')},
+    incurred ${_pvDate(claim.expense_date)} and coded to ${_finEsc(_pvAccountName(claim.category_id))}.
+  </div>`;
+}
+function _pvEcdFindSelectedClaim() {
+  const v = (document.getElementById('ecd-f-claim') || {}).value;
+  return v ? _pvEcdApprovedClaims.find(c => String(c.id) === String(v)) || null : null;
+}
+
 async function _pvEcdSubmitAdd() {
   let valid = true;
   [['ecd-f-claim','ecd-f-claim-err'],['ecd-f-date','ecd-f-date-err'],['ecd-f-method','ecd-f-method-err'],
@@ -2163,20 +2374,41 @@ async function _pvEcdSubmitAdd() {
     document.getElementById(eid).textContent = v ? '' : 'This field is required.';
     if (!v) valid = false;
   });
+  const claim = _pvEcdFindSelectedClaim();
+  // The dropdown is built from a fetch that could be stale by the time this
+  // runs; reading claim.amount off an undefined used to throw and silently
+  // abandon the submit with no message at all.
+  if (document.getElementById('ecd-f-claim').value && !claim) {
+    document.getElementById('ecd-f-claim-err').textContent = 'That claim is no longer approved and pending payment. Reload the page.';
+    valid = false;
+  }
+  const dateEl = document.getElementById('ecd-f-date');
+  if (dateEl.value) {
+    if (dateEl.value > new Date().toISOString().slice(0, 10)) {
+      document.getElementById('ecd-f-date-err').textContent = 'A disbursement cannot be dated in the future.';
+      valid = false;
+    } else if (claim && claim.expense_date && dateEl.value < claim.expense_date) {
+      document.getElementById('ecd-f-date-err').textContent = `The claim was incurred on ${_pvDate(claim.expense_date)} — it cannot be paid before that date.`;
+      valid = false;
+    }
+  }
   if (!valid) return;
-  const claim = _pvEcdApprovedClaims.find(c => String(c.id) === document.getElementById('ecd-f-claim').value);
   const payload = {
     expense_claim_id: parseInt(document.getElementById('ecd-f-claim').value, 10),
     disbursed_amount: parseFloat(claim.amount),
-    disbursement_date: document.getElementById('ecd-f-date').value,
+    disbursement_date: dateEl.value,
     disbursement_method: document.getElementById('ecd-f-method').value,
     debit_account_id: parseInt(document.getElementById('ecd-f-debit').value, 10),
     credit_bank_account_id: parseInt(document.getElementById('ecd-f-credit').value, 10),
   };
   try {
     const res = await apiFetch(_PV_ECD_API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    if (res && res.ok) { showToast('Disbursement recorded. A journal entry has been created.', 'success'); loadView('payables-expense-claim-disbursements'); }
-    else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+    if (res && res.ok) { showToast('Disbursement recorded. A journal entry has been created.', 'success'); loadView('payables-expense-claim-disbursements'); return; }
+    if (!res) { showToast('Network error.', 'error'); return; }
+    const msg = await parseApiError(res);
+    // A period-lock 409 already reads as a full sentence from the backend —
+    // prefixing it with "Error: " just buries the actionable part.
+    showToast(isPeriodLockError(res.status, msg) ? msg : 'Error: ' + msg, 'error');
   } catch (e) { showToast('Network error.', 'error'); }
 }
 

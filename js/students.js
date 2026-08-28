@@ -1606,6 +1606,7 @@ function _stuTabGuardian(d) {
       <div class="stu-form-group">
         <label>First Parent Name <span style="color:#e74c3c">*</span></label>
         <input id="se-p1-name" class="fin-search-input" style="width:100%!important" value="${_esc(p1.full_name||'')}">
+        <span class="stu-field-error" id="err-se-p1-name"></span>
       </div>
       <div class="stu-form-group">
         <label>First Parent Relationship <span style="color:#e74c3c">*</span></label>
@@ -1900,6 +1901,17 @@ function _harvestStuPrevEduTab() {
 function _stuValidateGuardian() {
   if (!document.getElementById('se-p1-name')) return true;
   let valid = true;
+
+  // The register endpoint rejects a record with no contacts at all
+  // ("At least one parent or guardian is required"), so require one here —
+  // otherwise that comes back as a generic 422 after the user has already
+  // filled every other tab.
+  const anyContact = !!(_fv('se-p1-name').trim() || _fv('se-p2-name').trim() || _fv('se-guardian-name').trim());
+  const p1NameEl  = document.getElementById('se-p1-name');
+  const p1NameErr = document.getElementById('err-se-p1-name');
+  if (p1NameEl)  p1NameEl.classList.toggle('error', !anyContact);
+  if (p1NameErr) p1NameErr.textContent = anyContact ? '' : 'At least one parent or guardian is required.';
+  if (!anyContact) valid = false;
   [['se-p1-name', 'se-p1-relationship', 'err-se-p1-relationship'],
    ['se-p2-name', 'se-p2-relationship', 'err-se-p2-relationship']].forEach(([nameId, relId, errId]) => {
     const name = _fv(nameId).trim();
@@ -2202,17 +2214,49 @@ async function _stuUploadCachedFiles(studentId) {
   window._stuFormFiles = {};
 }
 
+// In Add mode the record cannot be created until the Guardian/Family tab has at
+// least one contact — POST /students/ rejects an empty `parents` with
+// "At least one parent or guardian is required". The create used to fire from
+// the Personal tab's Save & Continue (tab 1 of 5), i.e. always before that tab
+// was ever shown, so every add failed with that 422. The earlier tabs now only
+// advance locally (their values are already autosaved to the sessionStorage
+// draft and held in _stuFormData) and the POST fires from the Guardian tab on.
+function _stuNamedParents(d) {
+  return (d.parents || []).filter(p => (p.full_name || '').trim());
+}
+// ParentInfoCreate (the register schema's `parents` item) declares only these
+// fields — the local `id` and `is_primary` keys the guardian tab carries belong
+// to ParentInfoUpdate/the /guardians endpoints, so they're stripped here rather
+// than gambling on the backend ignoring extras.
+function _stuParentCreatePayload(p) {
+  return {
+    full_name:    (p.full_name || '').trim(),
+    relationship: p.relationship || null,
+    email:        p.email || null,
+    phone:        p.phone || null,
+    id_document:  p.id_document || null,
+    address:      p.address || null,
+  };
+}
+function _stuCreateDeferred() {
+  return !_currentEditStudentId && !_stuNamedParents(window._stuFormData || {}).length;
+}
+
 async function _persistStudentRecord(showSuccessToast, allTabs) {
   const d = window._stuFormData || {};
   const isEdit = !!_currentEditStudentId;
 
   if (!isEdit) {
+    if (!_stuNamedParents(d).length) {
+      showToast('At least one parent or guardian is required before the student can be created.', 'error');
+      return false;
+    }
     const payload = {
       ..._stuFlatPayload(d),
       transport_pricing_id: await _stuResolveTransportPricingId(d),
       previous_education: d.previous_education || null,
       medical_info:        d.medical_info || null,
-      parents:              d.parents || [],
+      parents:              _stuNamedParents(d).map(_stuParentCreatePayload),
     };
 
     // POST /students/ only accepts application/json (no multipart) — files are
@@ -2225,7 +2269,12 @@ async function _persistStudentRecord(showSuccessToast, allTabs) {
     }
     const saved = await res.json();
     _currentEditStudentId = saved.id;
+    // POST /students/ answers with StudentReadFull, whose `parents` carry the ids
+    // the guardian tab needs to PATCH (rather than re-POST, creating duplicates)
+    // if the user goes back to that tab. Keep the harvested list if the response
+    // came back without them.
     window._stuFormData = { ...d, ...saved };
+    if (!(saved.parents || []).length) window._stuFormData.parents = d.parents || [];
     _stuEditDirty = false;
     clearStudentDraft();
     await _stuSyncTransport(saved.id, d);
@@ -2317,7 +2366,7 @@ async function saveAndContinueStuTab() {
     }
   }
   if (_stuEditActiveTab === 'guardian' && !_stuValidateGuardian()) {
-    showToast('Please complete the required primary parent fields (Relationship, Phone, Email, ID Document).', 'error');
+    showToast('Please complete the required parent fields (Name, Relationship, Phone, Email, ID Document).', 'error');
     return;
   }
   if (_stuEditActiveTab === 'medical' && !_stuValidateMedical()) {
@@ -2326,6 +2375,26 @@ async function saveAndContinueStuTab() {
   }
   _harvestStuActiveTab();
 
+  const idx      = _STU_TABS.findIndex(t => t.id === _stuEditActiveTab);
+  const next     = _STU_TABS[idx + 1];
+  const guardIdx = _STU_TABS.findIndex(t => t.id === 'guardian');
+
+  // Add mode, no contact captured yet: nothing can be POSTed (see
+  // _stuCreateDeferred). Before the Guardian tab that's expected — carry on to
+  // the next tab; at or past it, send the user back to supply one.
+  if (_stuCreateDeferred()) {
+    if (idx >= guardIdx) {
+      switchStuEditTab('guardian');
+      showToast('At least one parent or guardian is required before the student can be created.', 'error');
+      return;
+    }
+    _stuEditDirty = true;
+    showToast('Details kept on the form — the student is created once a parent or guardian is added.', 'info');
+    if (next) switchStuEditTab(next.id);
+    else _updateStuFormFooter();
+    return;
+  }
+
   const btn = document.getElementById('stu-form-submit-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   const ok = await _persistStudentRecord(true);
@@ -2333,8 +2402,6 @@ async function saveAndContinueStuTab() {
 
   if (!ok) { _updateStuFormFooter(); return; }
 
-  const idx  = _STU_TABS.findIndex(t => t.id === _stuEditActiveTab);
-  const next = _STU_TABS[idx + 1];
   if (next) switchStuEditTab(next.id);
   else _updateStuFormFooter();
 }
@@ -2357,6 +2424,12 @@ async function submitStudentForm() {
   if (!_stuValidateMedical()) {
     if (_stuEditActiveTab !== 'medical') switchStuEditTab('medical');
     showToast('Emergency contact name and phone are required before saving.', 'error');
+    return;
+  }
+  if (_stuCreateDeferred()) {
+    if (_stuEditActiveTab !== 'guardian') switchStuEditTab('guardian');
+    _stuValidateGuardian();
+    showToast('At least one parent or guardian is required before the student can be created.', 'error');
     return;
   }
   if (_stuEditActiveTab !== 'personal') {

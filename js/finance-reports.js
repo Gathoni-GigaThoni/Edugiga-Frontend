@@ -81,10 +81,24 @@ const REPORT_DEFS = {
   'reports-tax-schedules': { title: 'Tax Schedules', api: 'tax-schedules', dateMode: 'range',
     extra: [{ key: 'tax_type', label: 'Tax Type', type: 'taxtype' }],
     columns: [['tax_type','TAX TYPE'],['period','PERIOD'],['amount_deducted','AMOUNT DEDUCTED'],['amount_remitted','AMOUNT REMITTED'],['variance','VARIANCE']] },
+  // Live shape (openapi.json — FeesInvoicedPerGLAccountReport /
+  // FeesPaidPerGLAccountReport) is an object
+  // { start_date, end_date, by_gl_account: [...], grand_total }, not the flat
+  // array the old `columns` guess assumed, and each row is
+  // { account_id, account_number, account_name, invoices|receipts: [...],
+  //   total_amount_due|total_paid } — never `gl_account`/`total_invoiced`.
+  // _repRenderTable's generic data.data/items/results/rows/lines extraction
+  // doesn't reach `by_gl_account`, so BOTH reports rendered
+  // "No data for the selected criteria." on every run, for every period,
+  // whether or not fees had been invoiced or received. The dedicated renderer
+  // below also keeps the nested invoices[]/receipts[] the backend already
+  // sends: that list is the audit trail from a GL fee-income figure back to
+  // the source documents behind it, which is the whole point of running a
+  // per-GL-account fee report.
   'reports-fees-invoiced-per-gl-account': { title: 'Fees invoiced per GL Account', api: 'fees-invoiced-per-gl-account', dateMode: 'range',
-    columns: [['gl_account','GL ACCOUNT'],['total_invoiced','TOTAL INVOICED']] },
+    layout: 'fees-per-gl-account', glVariant: 'invoiced' },
   'reports-fees-paid-per-gl-account': { title: 'Fees Paid per GL Account', api: 'fees-paid-per-gl-account', dateMode: 'range',
-    columns: [['gl_account','GL ACCOUNT'],['total_paid','TOTAL PAID']] },
+    layout: 'fees-per-gl-account', glVariant: 'paid' },
   'reports-budget-vs-actual': { title: 'Statement of Budget vs Actual Comparison', api: 'budget-vs-actual', dateMode: 'range',
     columns: [['account','ACCOUNT'],['budgeted','BUDGETED'],['actual','ACTUAL'],['variance','VARIANCE'],['variance_pct','VARIANCE %']] },
   'reports-journal-entry': { title: 'Journal Entry Report', api: 'journal-entry-report', dateMode: 'range',
@@ -93,9 +107,16 @@ const REPORT_DEFS = {
 
   'reports-balances-report': { title: 'Balances Report', api: 'balances-report', dateMode: 'asof',
     columns: [['account_name','ACCOUNT NAME'],['account_type','ACCOUNT TYPE'],['balance','BALANCE']] },
-  'reports-fee-reminder': { title: 'Fee Reminder', api: 'fee-reminder', dateMode: 'asof',
-    extra: [{ key: 'days_overdue_threshold', label: 'Days Overdue Threshold', type: 'number', default: 30 }],
-    columns: [['student_name','STUDENT NAME'],['student_id','STUDENT ID'],['invoice_ref','INVOICE REF'],['amount_due','AMOUNT DUE'],['days_overdue','DAYS OVERDUE']] },
+  // Same wrapper-object trap as the two per-GL-account reports above:
+  // FeeReminderReport is { as_of_date, days_overdue_threshold, reminders: [...],
+  // total_outstanding } and the rows are FeeReminderRow
+  // { invoice_id, invoice_number, student_id, amount_due, amount_paid,
+  //   balance, due_date, days_overdue, status } — there is no `student_name`
+  // or `invoice_ref` field anywhere in the payload. _repRenderTable never
+  // found `reminders`, so this report was permanently empty too. Student
+  // names are resolved client-side through the receivables student cache.
+  'reports-fee-reminder': { title: 'Fee Reminder', api: 'fee-reminder', dateMode: 'asof', layout: 'fee-reminder',
+    extra: [{ key: 'days_overdue_threshold', label: 'Days Overdue Threshold', type: 'number', default: 30 }] },
   // Both endpoints return the identical AgedStudentDebtorsReport shape
   // (confirmed via openapi.json: customer-aging-analysis's 200 response
   // literally $refs AgedStudentDebtorsReport, the same schema as
@@ -171,7 +192,9 @@ async function loadFinanceReportView(container, routeKey) {
   await _pvLoadLookups();
   if ((def.extra || []).some(f => f.type === 'class')) await _rcvLoadLookups({ classes: true });
   if ((def.extra || []).some(f => f.type === 'money_holding')) await _repLoadMoneyHoldingAccounts();
-  if (def.layout === 'aged-student-debtors') await _rcvLoadLookups({ students: true });
+  // Reports whose rows key students by id only — the name comes from the
+  // shared receivables student cache, not the payload.
+  if (['aged-student-debtors', 'fee-reminder', 'fees-per-gl-account'].includes(def.layout)) await _rcvLoadLookups({ students: true });
 
   let dateInputsHtml = '';
   if (def.dateMode === 'range') {
@@ -216,6 +239,29 @@ async function loadFinanceReportView(container, routeKey) {
     </div>`;
 }
 
+// Every dated report endpoint declares its date param as REQUIRED with no
+// server-side default (verified across all 30 /api/reports/* routes), so a
+// blank date box produced a raw 422 validation dump in a toast. Validate up
+// front instead, and reject an inverted range before it reaches the wire —
+// a report run over end < start silently returns nothing, which reads as
+// "we invoiced nothing this term" rather than "you typed the dates backwards".
+function _repDateError(def) {
+  const val = id => (document.getElementById(id) || {}).value || '';
+  if (def.dateMode === 'range') {
+    const start = val('rep-start-date'), end = val('rep-end-date');
+    if (!start) return 'Start Date is required.';
+    if (!end) return 'End Date is required.';
+    if (end < start) return 'End Date cannot be earlier than Start Date.';
+  } else if (def.dateMode === 'asof') {
+    if (!val('rep-asof-date')) return 'As of Date is required.';
+    const cmp = def.compareDate ? val('rep-compare-date') : '';
+    if (cmp && cmp >= val('rep-asof-date')) return 'Compare to Date must be earlier than the As of Date.';
+  } else if (def.dateMode === 'single') {
+    if (!val('rep-single-date')) return 'Date is required.';
+  }
+  return '';
+}
+
 function _repBuildParams(def, extraFormat) {
   const params = new URLSearchParams();
   if (def.dateMode === 'range') {
@@ -249,18 +295,22 @@ function _repUrl(def, params) {
 
 async function _repGenerate(routeKey) {
   const def = REPORT_DEFS[routeKey];
+  const dateErr = _repDateError(def);
+  if (dateErr) { showToast(dateErr, 'error'); return; }
   if (def.pathParam) {
     const f = (def.extra || []).find(x => x.key === def.pathParam);
     if (f && f.required && !document.getElementById(`rep-x-${f.key}`).value) {
       showToast(`${f.label} is required.`, 'error'); return;
     }
   }
-  (def.extra || []).forEach(f => {
-    if (f.required && f.key !== def.pathParam) {
-      const el = document.getElementById(`rep-x-${f.key}`);
-      if (el && !el.value) showToast(`${f.label} is required.`, 'error');
-    }
+  // A missing required filter used to fire a toast and then run the request
+  // anyway, which 422'd and buried the real message under a second toast.
+  const missing = (def.extra || []).find(f => {
+    if (!f.required || f.key === def.pathParam) return false;
+    const el = document.getElementById(`rep-x-${f.key}`);
+    return el && !el.value;
   });
+  if (missing) { showToast(`${missing.label} is required.`, 'error'); return; }
   renderSkeletonRows('rep-output', 6);
   const params = _repBuildParams(def, null);
   try {
@@ -279,6 +329,8 @@ async function _repGenerate(routeKey) {
     else if (def.layout === 'aged-payables') _repRenderAgedPayables(data);
     else if (def.layout === 'student-fee-analysis') _repRenderStudentFeeAnalysis(data);
     else if (def.layout === 'ap-reconciliation') _repRenderApReconciliation(def, data);
+    else if (def.layout === 'fees-per-gl-account') _repRenderFeesPerGlAccount(def, data);
+    else if (def.layout === 'fee-reminder') _repRenderFeeReminder(data);
     else if (routeKey === 'reports-supplier-statements') _repRenderSupplierStatement(def, data);
     else if (routeKey === 'reports-trial-balance') _repRenderTrialBalance(def, data);
     else if (routeKey === 'reports-cash-book' || routeKey === 'reports-general-ledger') _repRenderLedgerLines(def, data);
@@ -288,6 +340,14 @@ async function _repGenerate(routeKey) {
 
 async function _repExport(routeKey, format) {
   const def = REPORT_DEFS[routeKey];
+  const dateErr = _repDateError(def);
+  if (dateErr) { showToast(dateErr, 'error'); return; }
+  if (def.pathParam) {
+    const f = (def.extra || []).find(x => x.key === def.pathParam);
+    if (f && f.required && !document.getElementById(`rep-x-${f.key}`).value) {
+      showToast(`${f.label} is required.`, 'error'); return;
+    }
+  }
   const params = _repBuildParams(def, format);
   try {
     await authBlobDownload(_repUrl(def, params), `${def.api}.${format === 'excel' ? 'xlsx' : 'csv'}`, {
@@ -1142,6 +1202,182 @@ function _repRenderStudentFeeAnalysis(data) {
         <td><strong>${_pvMoney(data.total_balance)}</strong></td>
       </tr></tfoot>
     </table></div>`;
+}
+
+// ── Fees Invoiced / Fees Paid per GL Account ────────────────────────────────
+// One section per fee-income GL account, with the source documents the
+// backend already nests under it available as a drill-down. Reading the
+// header total from the account row (and the footer from data.grand_total)
+// rather than re-summing the children keeps the report agreeing with the
+// ledger even when the child list is capped or filtered server-side; the
+// integrity strip below compares the two so a divergence is visible instead
+// of silently reconciled away by the UI.
+const _REP_FEES_PER_GL = {
+  invoiced: {
+    childKey: 'invoices', totalKey: 'total_amount_due',
+    countLabel: 'INVOICES', amountLabel: 'TOTAL INVOICED', childNoun: 'invoice',
+    childHead: ['INVOICE NO.', 'STUDENT', 'ISSUE DATE', 'STATUS', 'AMOUNT DUE'],
+    childCells: r => [
+      _finEsc(r.invoice_number || '—'),
+      _finEsc(_rcvStudentName(r.student_id)),
+      _pvDate(r.issue_date),
+      _pvBadge(r.status),
+      _pvMoney(r.amount_due),
+    ],
+    childAmount: r => parseFloat(r.amount_due) || 0,
+  },
+  paid: {
+    childKey: 'receipts', totalKey: 'total_paid',
+    countLabel: 'RECEIPTS', amountLabel: 'TOTAL PAID', childNoun: 'receipt',
+    childHead: ['RECEIPT NO.', 'STUDENT', 'PAYMENT DATE', 'METHOD', 'AMOUNT'],
+    childCells: r => [
+      _finEsc(r.receipt_number || '—'),
+      _finEsc(_rcvStudentName(r.student_id)),
+      _pvDate(r.payment_date),
+      _finEsc(String(r.payment_method || '—').replace(/_/g, ' ')),
+      _pvMoney(r.amount),
+    ],
+    childAmount: r => parseFloat(r.amount) || 0,
+  },
+};
+
+function _repToggleGlAccount(accountId) {
+  const rows = document.querySelectorAll(`tr[data-gl-child="${accountId}"]`);
+  const caret = document.getElementById(`rep-gl-caret-${accountId}`);
+  if (!rows.length) return;
+  const nowHidden = !rows[0].hasAttribute('hidden');
+  rows.forEach(r => nowHidden ? r.setAttribute('hidden', '') : r.removeAttribute('hidden'));
+  if (caret) caret.innerHTML = nowHidden ? '&#9656;' : '&#9662;';
+}
+
+function _repRenderFeesPerGlAccount(def, data) {
+  const out = document.getElementById('rep-output');
+  const cfg = _REP_FEES_PER_GL[def.glVariant];
+  const rows = (data && Array.isArray(data.by_gl_account)) ? data.by_gl_account : [];
+  if (!rows.length) {
+    out.innerHTML = '<div class="fin-table-wrap"><table class="fin-table"><tbody><tr><td class="fin-empty">No fee activity posted to any GL account in the selected period.</td></tr></tbody></table></div>';
+    return;
+  }
+
+  const bodyRows = rows.map(a => {
+    const children = a[cfg.childKey] || [];
+    const acctTotal = parseFloat(a[cfg.totalKey]) || 0;
+    const childSum  = children.reduce((s, r) => s + cfg.childAmount(r), 0);
+    // A per-account header that disagrees with its own document list means the
+    // GL aggregate and the sub-ledger detail have drifted apart — flag it on
+    // the row rather than quietly showing one of the two numbers.
+    const drift = Math.abs(childSum - acctTotal) > 0.01;
+    const header = `
+      <tr style="cursor:pointer;background:#f5fafa;" onclick="_repToggleGlAccount(${a.account_id})">
+        <td><span id="rep-gl-caret-${a.account_id}" style="color:#888;">&#9656;</span> <strong>${_finEsc(a.account_number || '')}</strong></td>
+        <td><strong>${_finEsc(a.account_name || '—')}</strong></td>
+        <td>${children.length}</td>
+        <td><strong>${_pvMoney(acctTotal)}</strong>${drift ? `<br><span style="font-size:0.72rem;color:var(--coral-600);">detail sums to ${_pvMoney(childSum)}</span>` : ''}</td>
+      </tr>`;
+    if (!children.length) {
+      return header + `<tr data-gl-child="${a.account_id}" hidden><td colspan="4" style="padding-left:28px;color:#888;font-style:italic;font-size:0.85rem;">No ${cfg.childNoun}s behind this balance.</td></tr>`;
+    }
+    const childHead = `
+      <tr data-gl-child="${a.account_id}" hidden style="background:#fafafa;">
+        <td colspan="4" style="padding:0;">
+          <table class="fin-table" style="margin:0;box-shadow:none;">
+            <thead><tr>${cfg.childHead.map(h => `<th style="font-size:0.72rem;">${h}</th>`).join('')}</tr></thead>
+            <tbody>${children.map(r => `<tr>${cfg.childCells(r).map(c => `<td style="font-size:0.85rem;">${c}</td>`).join('')}</tr>`).join('')}</tbody>
+          </table>
+        </td>
+      </tr>`;
+    return header + childHead;
+  }).join('');
+
+  const grandTotal = parseFloat(data.grand_total) || 0;
+  const rowSum = rows.reduce((s, a) => s + (parseFloat(a[cfg.totalKey]) || 0), 0);
+  const balanced = Math.abs(rowSum - grandTotal) <= 0.01;
+
+  out.innerHTML = `
+    <div style="display:flex;flex-wrap:wrap;gap:14px;margin:0 0 16px;">
+      ${_repStatCard('Period', `${_pvDate(data.start_date)} &ndash; ${_pvDate(data.end_date)}`)}
+      ${_repStatCard('GL Accounts', String(rows.length))}
+      ${_repStatCard(_repHumanize(cfg.amountLabel.toLowerCase()), _pvMoney(grandTotal))}
+    </div>
+    <div class="fin-table-wrap"><table class="fin-table">
+      <thead><tr><th>ACCOUNT NO.</th><th>GL ACCOUNT</th><th>${cfg.countLabel}</th><th>${cfg.amountLabel}</th></tr></thead>
+      <tbody>${bodyRows}</tbody>
+      <tfoot><tr class="fin-tfoot-total">
+        <td colspan="3"><strong>GRAND TOTAL</strong></td>
+        <td><strong>${_pvMoney(grandTotal)}</strong></td>
+      </tr></tfoot>
+    </table></div>
+    ${balanced ? '' : `<div style="margin-top:10px;padding:10px 14px;border-radius:6px;border-left:3px solid var(--coral-500);background:var(--coral-100);color:var(--coral-600);font-size:0.85rem;">
+      The per-account totals add up to ${_pvMoney(rowSum)} but the report's grand total is ${_pvMoney(grandTotal)}. Do not use this run for reporting until the difference of ${_pvMoney(Math.abs(rowSum - grandTotal))} is explained.
+    </div>`}`;
+}
+
+// ── Fee Reminder ────────────────────────────────────────────────────────────
+// A dunning list, so it is ordered oldest-debt-first and banded by age: the
+// point of the report is to work the top of the list, not to browse it.
+// total_outstanding comes from the backend so the figure a bursar quotes
+// matches the receivables ledger even if the row list is ever paged.
+function _repFeeReminderBand(days) {
+  if (days >= 90) return { label: '90+ days', color: 'var(--coral-600)', weight: '700' };
+  if (days >= 60) return { label: '60-89 days', color: '#c0392b', weight: '700' };
+  if (days >= 30) return { label: '30-59 days', color: 'var(--gold-500,#C9A227)', weight: '600' };
+  if (days > 0)   return { label: 'Under 30 days', color: '#8a6d00', weight: '600' };
+  return { label: 'Not yet due', color: '#888', weight: '400' };
+}
+
+function _repRenderFeeReminder(data) {
+  const out = document.getElementById('rep-output');
+  const rows = (data && Array.isArray(data.reminders)) ? data.reminders : [];
+  const threshold = data && data.days_overdue_threshold != null ? data.days_overdue_threshold : 0;
+  if (!rows.length) {
+    out.innerHTML = `<div class="fin-table-wrap"><table class="fin-table"><tbody><tr><td class="fin-empty">No invoices are overdue by more than ${_finEsc(String(threshold))} day(s) as at ${_pvDate(data && data.as_of_date)}.</td></tr></tbody></table></div>`;
+    return;
+  }
+
+  const sorted = [...rows].sort((a, b) =>
+    (b.days_overdue - a.days_overdue) || (parseFloat(b.balance) - parseFloat(a.balance)));
+  const worst = sorted.filter(r => r.days_overdue >= 90);
+
+  const bodyRows = sorted.map(r => {
+    const band = _repFeeReminderBand(r.days_overdue);
+    return `<tr>
+      <td>${_finEsc(_rcvStudentName(r.student_id))}<br><span style="font-size:0.78rem;color:#888;">#${_finEsc(String(r.student_id))}</span></td>
+      <td>${_finEsc(r.invoice_number || '—')}</td>
+      <td>${_pvDate(r.due_date)}</td>
+      <td style="color:${band.color};font-weight:${band.weight};">${_finEsc(String(r.days_overdue))}<br><span style="font-size:0.72rem;font-weight:400;">${band.label}</span></td>
+      <td>${_pvMoney(r.amount_due)}</td>
+      <td>${_pvMoney(r.amount_paid)}</td>
+      <td style="font-weight:600;">${_pvMoney(r.balance)}</td>
+      <td>${_pvBadge(r.status)}</td>
+    </tr>`;
+  }).join('');
+
+  const totalOutstanding = parseFloat(data.total_outstanding) || 0;
+  const rowSum = rows.reduce((s, r) => s + (parseFloat(r.balance) || 0), 0);
+  const balanced = Math.abs(rowSum - totalOutstanding) <= 0.01;
+
+  out.innerHTML = `
+    <div style="display:flex;flex-wrap:wrap;gap:14px;margin:0 0 16px;">
+      ${_repStatCard('As At', _pvDate(data.as_of_date))}
+      ${_repStatCard('Invoices to Chase', String(rows.length))}
+      ${_repStatCard('90+ Days', String(worst.length), worst.length ? 'var(--coral-600)' : undefined)}
+      ${_repStatCard('Total Outstanding', _pvMoney(totalOutstanding))}
+    </div>
+    <div class="fin-table-wrap"><table class="fin-table">
+      <thead><tr>
+        <th>STUDENT</th><th>INVOICE NO.</th><th>DUE DATE</th><th>DAYS OVERDUE</th>
+        <th>AMOUNT DUE</th><th>PAID</th><th>BALANCE</th><th>STATUS</th>
+      </tr></thead>
+      <tbody>${bodyRows}</tbody>
+      <tfoot><tr class="fin-tfoot-total">
+        <td colspan="6"><strong>TOTAL OUTSTANDING</strong></td>
+        <td><strong>${_pvMoney(totalOutstanding)}</strong></td>
+        <td></td>
+      </tr></tfoot>
+    </table></div>
+    ${balanced ? '' : `<div style="margin-top:10px;padding:10px 14px;border-radius:6px;border-left:3px solid var(--coral-500);background:var(--coral-100);color:var(--coral-600);font-size:0.85rem;">
+      The listed balances add up to ${_pvMoney(rowSum)} but the report's total outstanding is ${_pvMoney(totalOutstanding)}. Reconcile before issuing reminders.
+    </div>`}`;
 }
 
 // ── AP Reconciliation (§2 of the 2026-07-16 addendum) ──────────────────────
