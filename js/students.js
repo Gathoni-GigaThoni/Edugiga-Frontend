@@ -2242,6 +2242,18 @@ function _stuCreateDeferred() {
   return !_currentEditStudentId && !_stuNamedParents(window._stuFormData || {}).length;
 }
 
+// "A database integrity error occurred." is the backend's catch-all for a unique
+// or foreign-key violation: it names neither the column nor the row, and every
+// sub-resource this form touches funnels into the same sentence. Point at the
+// handful of things that actually collide on a registration so the operator has
+// somewhere to look instead of an anonymous 500.
+async function _stuExplainSaveError(res) {
+  const msg = await parseApiError(res);
+  if (!/integrity/i.test(msg)) return msg;
+  return msg + ' This is usually a duplicate: the same parent email or ID document already on file, '
+             + 'the same contact entered twice on the Guardian/Family tab, or this student already registered.';
+}
+
 async function _persistStudentRecord(showSuccessToast, allTabs) {
   const d = window._stuFormData || {};
   const isEdit = !!_currentEditStudentId;
@@ -2264,7 +2276,7 @@ async function _persistStudentRecord(showSuccessToast, allTabs) {
     // pattern as the edit-mode 'documents' tab below.
     const res = await apiFetch(`${API_BASE}/students/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     if (!(res && res.ok)) {
-      showToast('Error: ' + (res ? await parseApiError(res) : 'An error occurred.'), 'error');
+      showToast('Creating the student record failed: ' + (res ? await _stuExplainSaveError(res) : 'An error occurred.'), 'error');
       return false;
     }
     const saved = await res.json();
