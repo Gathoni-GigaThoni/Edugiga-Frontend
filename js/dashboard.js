@@ -241,8 +241,7 @@ function showDashboard() {
                   <li id="sidebar-fin-fee-accts"  class="sidebar-sub-sub" onclick="loadView('fin-fee-accounts')">Fee Accounts</li>
                   <li id="sidebar-fin-fee-items"    class="sidebar-sub-sub" onclick="loadView('fin-fee-items')">Fee Items</li>
                   <li id="sidebar-fin-gen-items"    class="sidebar-sub-sub" onclick="loadView('fin-general-items')">General Items</li>
-                  <li id="sidebar-fin-groups"     class="sidebar-sub-sub" onclick="loadView('fin-groups')">Groups</li>
-                  <li id="sidebar-fin-subgroups"  class="sidebar-sub-sub" onclick="loadView('fin-sub-groups')">Sub Groups</li>
+                  <li id="sidebar-fin-subtypes"   class="sidebar-sub-sub" onclick="loadView('fin-sub-types')">Sub-Types</li>
                   <li id="sidebar-fin-fiscal"     class="sidebar-sub-sub" onclick="loadView('fin-fiscal-years')">Fiscal Years</li>
                   <li id="sidebar-fin-pay-modes"  class="sidebar-sub-sub" onclick="loadView('fin-payment-modes')">Payment Modes</li>
                 </ul>
@@ -706,20 +705,51 @@ async function renderSplitView(cfg) {
     );
   }
 
+  // cfg.groupBy is an optional item -> section-label resolver. When supplied the
+  // list is broken into collapsible sections in the order the rows already
+  // arrive (callers pass a server-sorted list, so no client sort happens here).
+  // Omitted everywhere else, so the flat list renders exactly as before.
+  const collapsedGroups = new Set();
+
+  function rowHtml(item) {
+    const isSel = selectedItem && String(selectedItem[idKey]) === String(item[idKey]);
+    return `
+        <div class="split-list-row${isSel ? ' active' : ''}" data-id="${item[idKey]}">
+          <div class="split-col1">${col1Fn(item)}</div>
+          <div class="split-col2">${col2Fn(item)}</div>
+        </div>`;
+  }
+
+  function groupedHtml(filtered) {
+    const groups = [];
+    filtered.forEach(item => {
+      const key = String(cfg.groupBy(item) ?? '');
+      const last = groups[groups.length - 1];
+      if (last && last.key === key) last.items.push(item);
+      else groups.push({ key, items: [item] });
+    });
+    return groups.map(g => {
+      const open = !collapsedGroups.has(g.key);
+      return `
+        <div class="split-group-header" data-group="${_dashEsc(g.key)}">
+          <span class="split-group-caret">${open ? '&#9662;' : '&#9656;'}</span>
+          <span class="split-group-label">${_dashEsc(g.key)}</span>
+          <span class="split-group-count">${g.items.length}</span>
+        </div>
+        ${open ? g.items.map(rowHtml).join('') : ''}`;
+    }).join('');
+  }
+
   function renderList() {
     const listEl  = document.getElementById('split-list-items');
     const countEl = document.getElementById('split-list-count');
     if (!listEl) return;
     const filtered = getFiltered();
     if (countEl) countEl.textContent = filtered.length;
-    listEl.innerHTML = filtered.map(item => {
-      const isSel = selectedItem && String(selectedItem[idKey]) === String(item[idKey]);
-      return `
-        <div class="split-list-row${isSel ? ' active' : ''}" data-id="${item[idKey]}">
-          <div class="split-col1">${col1Fn(item)}</div>
-          <div class="split-col2">${col2Fn(item)}</div>
-        </div>`;
-    }).join('') || `<p style="padding:24px;text-align:center;color:var(--grey-400);font-style:italic;font-size:13px">No records found</p>`;
+    const body = typeof cfg.groupBy === 'function'
+      ? groupedHtml(filtered)
+      : filtered.map(rowHtml).join('');
+    listEl.innerHTML = body || `<p style="padding:24px;text-align:center;color:var(--grey-400);font-style:italic;font-size:13px">No records found</p>`;
   }
 
   function renderRight() {
@@ -794,6 +824,13 @@ async function renderSplitView(cfg) {
   // The listener is bound once to this container node, which renderList() only
   // ever refills via innerHTML (never replaces), so it survives re-renders.
   document.getElementById('split-list-items')?.addEventListener('click', e => {
+    const header = e.target.closest('.split-group-header');
+    if (header) {
+      const key = header.dataset.group;
+      if (collapsedGroups.has(key)) collapsedGroups.delete(key); else collapsedGroups.add(key);
+      renderList();
+      return;
+    }
     const row = e.target.closest('.split-list-row');
     if (row) window._splitSelectItem(row.dataset.id);
   });
@@ -1128,12 +1165,9 @@ async function loadView(view) {
     case 'fin-general-items':
       setActiveSidebarItem('sidebar-fin-gen-items'); openFinUtilitiesDropdown();
       loadGeneralItemsView(main); break;
-    case 'fin-groups':
-      setActiveSidebarItem('sidebar-fin-groups'); openFinUtilitiesDropdown();
-      loadFinPlaceholderView(main, 'Groups'); break;
-    case 'fin-sub-groups':
-      setActiveSidebarItem('sidebar-fin-subgroups'); openFinUtilitiesDropdown();
-      loadFinPlaceholderView(main, 'Sub Groups'); break;
+    case 'fin-sub-types':
+      setActiveSidebarItem('sidebar-fin-subtypes'); openFinUtilitiesDropdown();
+      await loadAccountSubtypesView(main); break;
     case 'fin-fiscal-years':
       setActiveSidebarItem('sidebar-fin-fiscal'); openFinUtilitiesDropdown();
       await loadFiscalYearsView(main); break;

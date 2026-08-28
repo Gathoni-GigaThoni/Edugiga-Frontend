@@ -614,3 +614,21 @@
   color: var(--navy-900);
   background: var(--grey-50);
 }
+
+/* ── Account Sub-Types (Finance › Utilities) ── */
+.ast-pill {
+  display: inline-block;
+  font-size: 9px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.05em;
+  padding: 1px 6px; border-radius: 9px;
+  vertical-align: middle; margin-left: 5px;
+}
+.ast-pill-system { background: var(--navy-700); color: var(--white); }
+.split-list-row.active .ast-pill-system { background: var(--gold-400); color: var(--navy-900); }
+.ast-toggle {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; cursor: pointer;
+}
+.ast-toggle input { margin: 0; cursor: pointer; }
+.ast-usage { margin-left: 8px; font-size: 10px; color: var(--grey-500); }
+.split-list-row.active .ast-usage { color: rgba(255,255,255,0.6); }

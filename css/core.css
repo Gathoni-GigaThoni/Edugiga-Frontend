@@ -960,6 +960,34 @@ body.flyout-open .rail-logo-crest-wrap {
 .split-list-row.active .split-col1 { color: var(--white); }
 .split-list-row.active .split-col2 { color: rgba(255,255,255,0.72); }
 
+/* Collapsible section headers — opt-in via renderSplitView's cfg.groupBy.
+   Sticky so the section a row belongs to stays named while the list scrolls. */
+.split-group-header {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 12px;
+  background: var(--grey-50);
+  border-top: 1px solid var(--grey-100);
+  border-bottom: 1px solid var(--grey-100);
+  cursor: pointer; user-select: none;
+  position: sticky; top: 0; z-index: 1;
+}
+.split-group-header:hover { background: var(--grey-100); }
+.split-group-caret { font-size: 9px; color: var(--grey-400); width: 10px; }
+.split-group-label {
+  flex: 1;
+  font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--navy-700);
+}
+.split-group-count {
+  font-size: 10px; font-weight: 600;
+  color: var(--grey-500);
+  background: var(--white);
+  border: 1px solid var(--grey-200);
+  border-radius: 9px;
+  padding: 1px 7px;
+}
+
 /* ── Right panel (3/4) — white, rounded all corners ── */
 .split-right {
   flex: 1; min-width: 0;

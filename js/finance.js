@@ -1980,6 +1980,12 @@ async function _coaLoadCache() {
   const res = await apiFetch(`${API_BASE}/accounts/`);
   chartOfAccountsData.length = 0;
   if (res && res.ok) _toArray(await res.json()).forEach(a => chartOfAccountsData.push(a));
+  // Warm the sub-type catalog here rather than in each caller, so every screen
+  // that renders a Subtype picker (Chart of Accounts, Fee Accounts, and the
+  // Reclassify modal they both open) has it before the synchronous
+  // _coaSubtypeOptions() runs. Cached after the first call, so this is one
+  // extra request per session, not per screen.
+  await _astLoad();
 }
 
 async function loadChartOfAccountsView(container) {
@@ -2204,15 +2210,48 @@ const ACCOUNT_SUBTYPES_BY_TYPE = {
 // Non-current asset subtypes only — the eight that can hold Fixed Assets (§5).
 const ACCOUNT_SUBTYPES_NON_CURRENT_ASSET = ACCOUNT_SUBTYPES_BY_TYPE.Asset.slice(0, 8);
 
+// Subtype options come from the live /finance/account-subtypes/ catalog
+// (Addendum 2026-08-28 §C.2, cached once per session in _astSubtypes) so a
+// sub-type added under Finance > Utilities > Sub-Types shows up here without a
+// FE release. Falls back to the seeded ACCOUNT_SUBTYPES_BY_TYPE map whenever
+// that fetch hasn't landed, which leaves this picker behaving exactly as before.
+function _coaSubtypeRows(accountType) {
+  if (_astLoaded && _astSubtypes.length) {
+    return _astSubtypes
+      .filter(s => s.account_type === accountType && s.is_active)
+      .map(s => ({ name: s.name, attachable: s.is_system !== false }));
+  }
+  return (ACCOUNT_SUBTYPES_BY_TYPE[accountType] || []).map(name => ({ name, attachable: true }));
+}
+
+// Admin-created rows (is_system:false) render disabled: AccountCreate still
+// types account_subtype as the AccountSubtype enum, whose members are exactly
+// the 51 system-seeded names, so attaching a custom sub-type answers 422.
+// Listing-but-disabling is what keeps that from becoming a dead end the
+// operator only discovers on save. When the backend widens the field to a
+// plain string, delete the `blocked` branch here and _coaSubtypeBlockedNote —
+// nothing else in this picker has to change.
 function _coaSubtypeOptions(accountType, selected) {
-  const opts = ACCOUNT_SUBTYPES_BY_TYPE[accountType] || [];
+  const rows = _coaSubtypeRows(accountType);
   const placeholder = accountType ? 'Please Select' : 'Select Account Type first';
   return `<option value="">${placeholder}</option>` +
-    opts.map(s => `<option value="${s}" ${selected===s?'selected':''}>${s}</option>`).join('');
+    rows.map(r => {
+      // whatever is already saved on the account stays selectable, so opening
+      // an existing account can never silently drop its classification
+      const blocked = !r.attachable && r.name !== selected;
+      return `<option value="${_finEsc(r.name)}" ${r.name===selected?'selected':''} ${blocked?'disabled':''}>${_finEsc(r.name)}${blocked?' \u2014 not yet attachable':''}</option>`;
+    }).join('');
+}
+function _coaSubtypeBlockedNote(accountType) {
+  const blocked = _coaSubtypeRows(accountType).filter(r => !r.attachable);
+  if (!blocked.length) return '';
+  return `Sub-types you add under Finance &rsaquo; Utilities &rsaquo; Sub-Types are listed but not yet selectable \u2014 accounts can't be classified against them until the backend accepts custom sub-types.`;
 }
 function _coaRepopulateSubtype(accountType) {
   const sel = document.getElementById('coa-f-subtype');
   if (sel) sel.innerHTML = _coaSubtypeOptions(accountType, null);
+  const note = document.getElementById('coa-f-subtype-note');
+  if (note) note.innerHTML = _coaSubtypeBlockedNote(accountType);
 }
 
 function _coaFormHtml(acct, opts = {}) {
@@ -2257,6 +2296,7 @@ function _coaFormHtml(acct, opts = {}) {
           ${_coaSubtypeOptions(acct?.account_type, acct?.account_subtype)}
         </select>
         <span class="fin-field-error" id="coa-f-subtype-err"></span>
+        <span id="coa-f-subtype-note" style="font-size:11px;color:var(--grey-500);display:block;">${acct ? '' : _coaSubtypeBlockedNote(acct?.account_type)}</span>
         ${acct ? `<span style="font-size:12px;color:var(--grey-600)">Type and Subtype move only via Reclassify (Super_Admin) once an account exists.</span>` : ''}
       </div>
       <div class="fin-form-group">
