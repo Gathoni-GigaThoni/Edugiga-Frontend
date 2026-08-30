@@ -2276,6 +2276,7 @@ function _coaFormHtml(acct, opts = {}) {
         <input type="text" id="coa-f-number" class="fin-form-input" value="${_finEsc(acct?.number||'')}" ${acct?'disabled':''}
                placeholder="${acct?'':'Auto-filled from parent — editable'}">
         <span class="fin-field-error" id="coa-f-number-err"></span>
+        ${acct ? `<span style="font-size:12px;color:var(--grey-600)">Number moves only via Change Account Number (Super_Admin) once an account exists.</span>` : ''}
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Account Name <span class="fin-required">*</span></label>
@@ -2515,9 +2516,11 @@ async function submitCoaEdit(id, returnView) {
 function _coaDetailActions(item) {
   const superAdminActions = _isSuperAdmin() ? `
     <button class="fin-btn-outline" onclick="_coaOpenReclassifyModal(${item.id})">Reclassify</button>
-    <button class="fin-btn-outline" onclick="_coaOpenHistoryModal(${item.id})">Classification History</button>` : '';
+    <button class="fin-btn-outline" onclick="_coaOpenHistoryModal(${item.id})">Classification History</button>
+    <button class="fin-btn-outline" onclick="_coaOpenRenumberModal(${item.id})">Change Account Number</button>` : '';
   return `${superAdminActions}
-    <button class="fin-btn-outline" style="color:#c0392b;border-color:#c0392b;" onclick="_coaDeleteAccount(${item.id})">Delete</button>`;
+    <button class="fin-btn-outline" style="color:#c0392b;border-color:#c0392b;" onclick="_coaDeleteAccount(${item.id})">Delete</button>
+    ${_isSuperAdmin() ? _coaNumberHistorySection(item.id) : ''}`;
 }
 
 // No backend "in use" check on DELETE /accounts/{id} (confirmed via openapi.json —
@@ -2663,6 +2666,186 @@ async function _coaOpenHistoryModal(id) {
       <thead><tr><th>WHEN</th><th>OLD</th><th>NEW</th><th>REASON</th><th>BY</th></tr></thead>
       <tbody>${rows.map(_coaHistoryRow).join('')}</tbody>
     </table></div>`;
+}
+
+// ── Renumber + Number History (Task 18, Super_Admin only) ─────────────────
+// Deliberately mirrors the Reclassify pair above: same detailActions hook,
+// same Super_Admin gate, same mandatory 3-500 char reason, same audit-history
+// endpoint shape. Differences are the payload ({new_number, reason}), the
+// client-side check (XX-YY-ZZZ instead of type/subtype coherence), and where
+// history lives — a lazy-loaded collapse in the detail pane rather than its
+// own modal, since a number history is two short columns, not five.
+
+const _COA_NUMBER_RE = /^\d{2}-\d{2}-\d{3}$/;
+
+// Guards double-submits: the Confirm button is disabled while in flight, but
+// this also stops a queued Enter keypress from firing a second PATCH.
+let _coaRenumberInFlight = false;
+
+function _coaRenumberReasonCounter() {
+  const val = document.getElementById('coa-num-reason')?.value || '';
+  const el = document.getElementById('coa-num-reason-count');
+  if (el) el.textContent = `${val.length}/500`;
+  _coaRenumberSyncValid();
+}
+
+// Single source of truth for the Confirm button's enabled state. `showNumErr`
+// is true only on blur/submit — typing a partial number ("15-0") shouldn't
+// paint the field red mid-keystroke.
+function _coaRenumberSyncValid(showNumErr = false) {
+  const numEl    = document.getElementById('coa-num-new');
+  const reasonEl = document.getElementById('coa-num-reason');
+  const errEl    = document.getElementById('coa-num-error');
+  const btn      = document.getElementById('coa-num-confirm');
+  if (!numEl || !reasonEl || !btn) return false;
+  const num    = numEl.value.trim();
+  const reason = reasonEl.value.trim();
+  const numOk    = _COA_NUMBER_RE.test(num);
+  const reasonOk = reason.length >= 3 && reason.length <= 500;
+  if (errEl) {
+    const bad = showNumErr && num !== '' && !numOk;
+    errEl.style.display = bad ? 'block' : 'none';
+    errEl.textContent = bad ? 'Account number must match XX-YY-ZZZ (e.g. 10-01-201).' : '';
+  }
+  numEl.classList.toggle('error', showNumErr && num !== '' && !numOk);
+  const ready = numOk && reasonOk && !_coaRenumberInFlight;
+  btn.disabled = !ready;
+  btn.style.opacity = ready ? '1' : '0.55';
+  btn.style.cursor  = ready ? 'pointer' : 'not-allowed';
+  return ready;
+}
+
+function _coaOpenRenumberModal(id) {
+  const acct = chartOfAccountsData.find(a => String(a.id) === String(id));
+  if (!acct) return;
+  _coaRenumberInFlight = false;
+  const wrap = document.createElement('div');
+  wrap.id = 'coa-renumber-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:var(--white);border-radius:8px;padding:24px;width:480px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 8px;font-size:1.05rem;color:var(--navy-700,#2c3e50);">Change Account Number &mdash; ${_finEsc(acct.account_name||'')}</h3>
+      <div style="padding:12px 14px;border-radius:6px;background:var(--gold-100,#FAF2D3);border:2px solid var(--gold-400,#D4A843);color:#6b5400;font-size:0.82rem;margin-bottom:14px;font-weight:bold;">
+        Renumbering shifts this account's position in every report that groups by number (SoFP, cash book, cash flow). The account id is unchanged so journal entries and env vars still resolve, but historical PDF exports keep the old number. Confirm below.
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Current account number</label>
+        <input class="fin-form-input" type="text" value="${_finEsc(acct.number||'')}" disabled>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">New account number <span class="fin-required">*</span></label>
+        <input id="coa-num-new" class="fin-form-input" type="text" placeholder="XX-YY-ZZZ (e.g. 10-01-201)" maxlength="20"
+               oninput="_coaRenumberSyncValid()" onblur="_coaRenumberSyncValid(true)">
+        <div id="coa-num-error" style="display:none;color:var(--coral-600);font-size:0.78rem;"></div>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Reason for renumber <span class="fin-required">*</span></label>
+        <textarea id="coa-num-reason" class="fin-form-textarea" rows="3" maxlength="500" placeholder="3-500 characters..." oninput="_coaRenumberReasonCounter()"></textarea>
+        <span style="font-size:11px;color:var(--grey-400,#999);float:right;" id="coa-num-reason-count">0/500</span>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="_coaCloseModal('coa-renumber-modal-overlay')">Cancel</button>
+        <button id="coa-num-confirm" class="fin-btn-teal" onclick="_coaSubmitRenumber(${id})">Confirm Renumber</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  _coaRenumberSyncValid();
+  document.getElementById('coa-num-new')?.focus();
+}
+
+async function _coaSubmitRenumber(id) {
+  if (_coaRenumberInFlight) return;
+  // Re-validate on submit as well as blur — a value pasted in and confirmed
+  // by Enter never fires blur.
+  if (!_coaRenumberSyncValid(true)) return;
+  const new_number = document.getElementById('coa-num-new').value.trim();
+  const reason     = document.getElementById('coa-num-reason').value.trim();
+  const btn = document.getElementById('coa-num-confirm');
+  _coaRenumberInFlight = true;
+  _coaRenumberSyncValid();
+  if (btn) btn.textContent = 'Renumbering…';
+
+  const res = await apiFetch(`${API_BASE}/accounts/${id}/number`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ new_number, reason })
+  });
+
+  if (res && res.ok) {
+    _coaCloseModal('coa-renumber-modal-overlay');
+    _coaRenumberInFlight = false;
+    showToast('Account renumbered.', 'success');
+    await _coaLoadCache();
+    await window._splitRefreshSelected?.();
+    return;
+  }
+  _coaRenumberInFlight = false;
+  if (btn) btn.textContent = 'Confirm Renumber';
+  _coaRenumberSyncValid();
+  // The 403/404/409/422 bodies are already written for an end user ("Account
+  // number '10-01-201' already exists…"), so they go out verbatim. Anything
+  // 5xx, or a null res from apiFetch's exhausted retries, is not.
+  if (!res || res.status >= 500) { showToast('Network error — try again.', 'error'); return; }
+  showToast(await parseApiError(res), 'error');
+}
+
+// Rendered by _coaDetailActions, so it is rebuilt on every detail re-render —
+// which is why the expanded/loaded state lives on the node itself rather than
+// in a module-level variable. Collapsed by default; nothing is fetched until
+// the first expand.
+function _coaNumberHistorySection(id) {
+  return `
+    <div style="width:100%;margin-top:14px;">
+      <button class="fin-btn-outline" style="width:100%!important;text-align:left;"
+              onclick="_coaToggleNumberHistory(${id})">
+        <span id="coa-numhist-caret">&#9656;</span> Number History
+      </button>
+      <div id="coa-numhist-body" data-loaded="0" style="display:none;margin-top:10px;"></div>
+    </div>`;
+}
+
+async function _coaToggleNumberHistory(id) {
+  const body  = document.getElementById('coa-numhist-body');
+  const caret = document.getElementById('coa-numhist-caret');
+  if (!body) return;
+  const open = body.style.display !== 'none';
+  if (open) {
+    body.style.display = 'none';
+    if (caret) caret.innerHTML = '&#9656;';
+    return;
+  }
+  body.style.display = 'block';
+  if (caret) caret.innerHTML = '&#9662;';
+  if (body.dataset.loaded === '1') return;
+  body.innerHTML = `<p class="fin-empty" style="padding:16px!important;">Loading&#8230;</p>`;
+  const res = await apiFetch(`${API_BASE}/accounts/${id}/number-history`);
+  // The pane may have been re-rendered (or another account selected) while the
+  // request was in flight — re-read the node instead of closing over the old one.
+  const target = document.getElementById('coa-numhist-body');
+  if (!target) return;
+  if (!res || !res.ok) {
+    target.innerHTML = `<p class="fin-empty" style="padding:16px!important;">Could not load number history.</p>`;
+    return;
+  }
+  const rows = _toArray(await res.json());
+  target.dataset.loaded = '1';
+  if (!rows.length) {
+    target.innerHTML = `<p class="fin-empty" style="padding:16px!important;">No previous renames.</p>`;
+    return;
+  }
+  target.innerHTML = `
+    <div class="fin-table-wrap"><table class="fin-table" style="min-width:0;">
+      <thead><tr><th>OLD &rarr; NEW</th><th>REASON</th><th>BY</th><th>AT</th></tr></thead>
+      <tbody>${rows.map(_coaNumberHistoryRow).join('')}</tbody>
+    </table></div>`;
+}
+
+function _coaNumberHistoryRow(h) {
+  return `<tr>
+    <td style="white-space:nowrap;">${_finEsc(h.old_number||'—')} &rarr; ${_finEsc(h.new_number||'—')}</td>
+    <td>${_finEsc(h.reason||'')}</td>
+    <td>${h.changed_by != null ? `Staff #${_finEsc(String(h.changed_by))}` : '—'}</td>
+    <td style="white-space:nowrap;">${_finEsc(h.changed_at ? new Date(h.changed_at).toLocaleString() : '—')}</td>
+  </tr>`;
 }
 
 // One-time diagnostic (§9.4) — not a runtime check, a manual post-deploy
