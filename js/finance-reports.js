@@ -193,7 +193,10 @@ async function loadFinanceReportView(container, routeKey) {
   if ((def.extra || []).some(f => f.type === 'class')) await _rcvLoadLookups({ classes: true });
   if ((def.extra || []).some(f => f.type === 'money_holding')) await _repLoadMoneyHoldingAccounts();
   // Reports whose rows key students by id only — the name comes from the
-  // shared receivables student cache, not the payload.
+  // shared receivables student cache, not the payload. Fee Reminder now
+  // carries student_name/student_code/class_name on the row itself, but stays
+  // on the list: the three fields are Optional and the cache is the fallback
+  // when they come back null.
   if (['aged-student-debtors', 'fee-reminder', 'fees-per-gl-account'].includes(def.layout)) await _rcvLoadLookups({ students: true });
 
   let dateInputsHtml = '';
@@ -856,7 +859,11 @@ function _repRenderSchoolSoCI(data) {
   const out = document.getElementById('rep-output');
   if (!data || typeof data !== 'object') { out.innerHTML = '<p class="fin-empty">No data for the selected criteria.</p>'; return; }
 
-  const OPEX_SECTION_ORDER = ['Staff Costs', 'Direct Academic Costs', 'Premises Costs', 'Administrative Costs', 'Depreciation', 'Other Operating'];
+  // Print order for the sections we know about. "Program Direct Costs" is new
+  // as of the 2026-08-31 addendum — Extra-Curricular and Insurance Programme
+  // costs used to fall into Other Operating and now group under their own
+  // header, next to the revenue they are matched against.
+  const OPEX_SECTION_ORDER = ['Staff Costs', 'Direct Academic Costs', 'Program Direct Costs', 'Premises Costs', 'Administrative Costs', 'Depreciation', 'Other Operating'];
   const opexGroups = data.operating_expense_groups || [];
   const bySection = new Map();
   opexGroups.forEach(g => {
@@ -864,8 +871,14 @@ function _repRenderSchoolSoCI(data) {
     if (!bySection.has(section)) bySection.set(section, []);
     bySection.get(section).push(g);
   });
-  const opexHtml = OPEX_SECTION_ORDER
-    .filter(section => bySection.has(section))
+  // Known sections print in the order above; anything the backend adds later
+  // prints after them rather than vanishing. The old render filtered the
+  // whitelist against the payload, so a section name it didn't recognise was
+  // dropped from the statement while still counting toward
+  // total_operating_expenses — the sub-totals would not have added up.
+  const known = OPEX_SECTION_ORDER.filter(section => bySection.has(section));
+  const unknown = [...bySection.keys()].filter(section => !OPEX_SECTION_ORDER.includes(section)).sort();
+  const opexHtml = [...known, ...unknown]
     .map(section => `
       <div style="margin:10px 0 6px 16px;font-weight:600;color:#2c3e50;">${_finEsc(section)}</div>
       ${_repGroups(bySection.get(section))}`)
@@ -1241,9 +1254,13 @@ const _REP_FEES_PER_GL = {
   },
 };
 
-function _repToggleGlAccount(accountId) {
-  const rows = document.querySelectorAll(`tr[data-gl-child="${accountId}"]`);
-  const caret = document.getElementById(`rep-gl-caret-${accountId}`);
+// Keyed by row index, not account_id: as of the 2026-08-31 addendum
+// account_id is Optional[int], and the orphan bucket carries null. Two buckets
+// keyed "null" would toggle each other, and `rep-gl-caret-null` is not an id
+// worth relying on either.
+function _repToggleGlAccount(rowIdx) {
+  const rows = document.querySelectorAll(`tr[data-gl-child="${rowIdx}"]`);
+  const caret = document.getElementById(`rep-gl-caret-${rowIdx}`);
   if (!rows.length) return;
   const nowHidden = !rows[0].hasAttribute('hidden');
   rows.forEach(r => nowHidden ? r.setAttribute('hidden', '') : r.removeAttribute('hidden'));
@@ -1259,26 +1276,34 @@ function _repRenderFeesPerGlAccount(def, data) {
     return;
   }
 
-  const bodyRows = rows.map(a => {
+  const bodyRows = rows.map((a, idx) => {
     const children = a[cfg.childKey] || [];
     const acctTotal = parseFloat(a[cfg.totalKey]) || 0;
     const childSum  = children.reduce((s, r) => s + cfg.childAmount(r), 0);
     // A per-account header that disagrees with its own document list means the
     // GL aggregate and the sub-ledger detail have drifted apart — flag it on
-    // the row rather than quietly showing one of the two numbers.
+    // the row rather than quietly showing one of the two numbers. Meaningful
+    // again as of 2026-08-31: the child amounts are per-bucket portions now,
+    // so they genuinely should add up to the bucket total. Before that fix
+    // every child carried the whole document amount and this fired constantly.
     const drift = Math.abs(childSum - acctTotal) > 0.01;
+    // account_id null = the backend could resolve no GL account for these
+    // documents at all (a fee item that lost its mapping). Not a rounding
+    // nuisance — real revenue with nowhere to sit — so it gets the coral
+    // treatment and the server's own leading warning glyph in account_name.
+    const orphan = a.account_id === null || a.account_id === undefined;
     const header = `
-      <tr style="cursor:pointer;background:#f5fafa;" onclick="_repToggleGlAccount(${a.account_id})">
-        <td><span id="rep-gl-caret-${a.account_id}" style="color:#888;">&#9656;</span> <strong>${_finEsc(a.account_number || '')}</strong></td>
-        <td><strong>${_finEsc(a.account_name || '—')}</strong></td>
+      <tr style="cursor:pointer;background:${orphan ? 'var(--coral-100,#fdecea)' : '#f5fafa'};${orphan ? 'border-left:3px solid var(--coral-500);' : ''}" onclick="_repToggleGlAccount(${idx})">
+        <td><span id="rep-gl-caret-${idx}" style="color:#888;">&#9656;</span> <strong>${_finEsc(a.account_number || (orphan ? '—' : ''))}</strong></td>
+        <td><strong style="${orphan ? 'color:var(--coral-600);' : ''}">${_finEsc(a.account_name || '—')}</strong>${orphan ? `<br><span style="font-size:0.72rem;color:var(--coral-600);">These ${cfg.childNoun}s have no GL account behind them. Fix the fee item's account mapping — this money is not landing anywhere in the ledger.</span>` : ''}</td>
         <td>${children.length}</td>
         <td><strong>${_pvMoney(acctTotal)}</strong>${drift ? `<br><span style="font-size:0.72rem;color:var(--coral-600);">detail sums to ${_pvMoney(childSum)}</span>` : ''}</td>
       </tr>`;
     if (!children.length) {
-      return header + `<tr data-gl-child="${a.account_id}" hidden><td colspan="4" style="padding-left:28px;color:#888;font-style:italic;font-size:0.85rem;">No ${cfg.childNoun}s behind this balance.</td></tr>`;
+      return header + `<tr data-gl-child="${idx}" hidden><td colspan="4" style="padding-left:28px;color:#888;font-style:italic;font-size:0.85rem;">No ${cfg.childNoun}s behind this balance.</td></tr>`;
     }
     const childHead = `
-      <tr data-gl-child="${a.account_id}" hidden style="background:#fafafa;">
+      <tr data-gl-child="${idx}" hidden style="background:#fafafa;">
         <td colspan="4" style="padding:0;">
           <table class="fin-table" style="margin:0;box-shadow:none;">
             <thead><tr>${cfg.childHead.map(h => `<th style="font-size:0.72rem;">${h}</th>`).join('')}</tr></thead>
@@ -1293,11 +1318,19 @@ function _repRenderFeesPerGlAccount(def, data) {
   const rowSum = rows.reduce((s, a) => s + (parseFloat(a[cfg.totalKey]) || 0), 0);
   const balanced = Math.abs(rowSum - grandTotal) <= 0.01;
 
+  const orphanRow = rows.find(a => a.account_id === null || a.account_id === undefined);
+  const orphanTotal = orphanRow ? (parseFloat(orphanRow[cfg.totalKey]) || 0) : 0;
+
   out.innerHTML = `
+    ${orphanRow ? `<div style="margin:0 0 14px;padding:10px 14px;border-radius:6px;border-left:3px solid var(--coral-500);background:var(--coral-100);color:var(--coral-600);font-size:0.85rem;">
+      ${_pvMoney(orphanTotal)} across ${orphanRow[cfg.childKey]?.length || 0} ${cfg.childNoun}(s) could not be attributed to any GL account.
+      Expand the highlighted row below to see which, then fix the fee item's account mapping — the figure is in the grand total but sits in no account.
+    </div>` : ''}
     <div style="display:flex;flex-wrap:wrap;gap:14px;margin:0 0 16px;">
       ${_repStatCard('Period', `${_pvDate(data.start_date)} &ndash; ${_pvDate(data.end_date)}`)}
       ${_repStatCard('GL Accounts', String(rows.length))}
       ${_repStatCard(_repHumanize(cfg.amountLabel.toLowerCase()), _pvMoney(grandTotal))}
+      ${orphanRow ? _repStatCard('Unresolved', _pvMoney(orphanTotal), 'var(--coral-600)') : ''}
     </div>
     <div class="fin-table-wrap"><table class="fin-table">
       <thead><tr><th>ACCOUNT NO.</th><th>GL ACCOUNT</th><th>${cfg.countLabel}</th><th>${cfg.amountLabel}</th></tr></thead>
@@ -1340,8 +1373,17 @@ function _repRenderFeeReminder(data) {
 
   const bodyRows = sorted.map(r => {
     const band = _repFeeReminderBand(r.days_overdue);
+    // student_name / student_code / class_name come back on the row as of the
+    // 2026-08-31 addendum, so no lookup against the receivables student cache.
+    // All three are Optional[str] — an invoice whose student row is gone used
+    // to crash this report and now just renders blank, so fall back to the id
+    // rather than to nothing: a reminder still has to identify somebody.
+    const name = r.student_name || _rcvStudentName(r.student_id) || '—';
+    const code = r.student_code || (r.student_id != null ? `#${r.student_id}` : '');
     return `<tr>
-      <td>${_finEsc(_rcvStudentName(r.student_id))}<br><span style="font-size:0.78rem;color:#888;">#${_finEsc(String(r.student_id))}</span></td>
+      <td>${_finEsc(code || '—')}</td>
+      <td>${_finEsc(name)}</td>
+      <td>${_finEsc(r.class_name || '—')}</td>
       <td>${_finEsc(r.invoice_number || '—')}</td>
       <td>${_pvDate(r.due_date)}</td>
       <td style="color:${band.color};font-weight:${band.weight};">${_finEsc(String(r.days_overdue))}<br><span style="font-size:0.72rem;font-weight:400;">${band.label}</span></td>
@@ -1365,12 +1407,12 @@ function _repRenderFeeReminder(data) {
     </div>
     <div class="fin-table-wrap"><table class="fin-table">
       <thead><tr>
-        <th>STUDENT</th><th>INVOICE NO.</th><th>DUE DATE</th><th>DAYS OVERDUE</th>
+        <th>STUDENT CODE</th><th>STUDENT</th><th>CLASS</th><th>INVOICE NO.</th><th>DUE DATE</th><th>DAYS OVERDUE</th>
         <th>AMOUNT DUE</th><th>PAID</th><th>BALANCE</th><th>STATUS</th>
       </tr></thead>
       <tbody>${bodyRows}</tbody>
       <tfoot><tr class="fin-tfoot-total">
-        <td colspan="6"><strong>TOTAL OUTSTANDING</strong></td>
+        <td colspan="8"><strong>TOTAL OUTSTANDING</strong></td>
         <td><strong>${_pvMoney(totalOutstanding)}</strong></td>
         <td></td>
       </tr></tfoot>
