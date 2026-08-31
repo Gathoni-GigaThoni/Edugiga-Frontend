@@ -75,7 +75,136 @@ async function loadSessionsView(container) {
     },
     onAdd:  () => renderSessAddPage(document.getElementById('main-content')),
     onEdit: item => openSessEdit(item.id),
+    detailActions: _sessDetailActions,
   });
+}
+
+// ── Open Term (BE addendum 2026-08-31 §I) ─────────────────────────────────
+// POST /terms/{id}/open stamps the per-term StudentFeeAssignment rows for
+// every active enrollment — tuition, transport, meal plan and ECA. Without it
+// invoice generation for Term 2/3 fails outright ("No StudentFeeAssignment
+// rows found"), because the enrollment hooks only ever fire for a student's
+// first term. Gated on finance.receivables, the same scope the endpoint uses.
+//
+// Two-step dry-run -> confirm, matching year-end promotion (2026-08-10) and
+// fiscal-year close (2026-08-17). The endpoint is idempotent — every upsert
+// honours a (student, term, schedule) unique constraint — so the button is
+// deliberately not disabled after a successful run: the normal recovery from
+// a warning is to fix the student and open the term again.
+// The term's name is stashed rather than passed through the onclick: an
+// apostrophe or a quote in a term title would otherwise break out of the
+// attribute.
+let _sessOpenTermName = '';
+function _sessDetailActions(item) {
+  if (!canAdd('finance.receivables')) return '';
+  _sessOpenTermName = item.title || item.name || `Term #${item.id}`;
+  return `<button class="fin-btn-teal" onclick="_sessOpenTermModal(${item.id})">Open Term</button>`;
+}
+
+function _sessOpenTermModal(termId) {
+  const termName = _sessOpenTermName;
+  const wrap = document.createElement('div');
+  wrap.id = 'sess-openterm-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:var(--white,#fff);border-radius:8px;padding:24px;width:640px;max-width:95vw;max-height:85vh;overflow:auto;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 10px;font-size:1.05rem;color:var(--navy-700,#2c3e50);">Open Term ${_sEsc(termName)} for invoicing</h3>
+      <div id="sess-openterm-body">
+        <p style="font-size:0.86rem;color:#666;margin:0 0 4px;">
+          This stamps tuition, transport, meal-plan and ECA fee assignments for every active student enrolled in this term.
+          Until it runs, invoices for the term cannot be generated.
+        </p>
+        <p style="font-size:0.86rem;color:#666;margin:0;">Run a dry-run preview first? Nothing will be written.</p>
+      </div>
+      <div id="sess-openterm-err" style="display:none;padding:10px 12px;border-radius:6px;background:var(--coral-100,#fdecea);color:var(--coral-600,#c0392b);font-size:0.82rem;margin-top:12px;"></div>
+      <div id="sess-openterm-actions" style="display:flex;gap:10px;margin-top:18px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="_coaCloseModal('sess-openterm-overlay')">Cancel</button>
+        <button class="fin-btn-teal" id="sess-openterm-preview-btn" onclick="_sessOpenTermPreview(${termId})">Preview</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+
+function _sessOpenTermStat(label, value, color) {
+  return `<div style="flex:1;min-width:130px;background:var(--white,#fff);border:1px solid var(--card-border,#e5e5e5);border-radius:8px;padding:12px 14px;">
+    <div style="font-size:11px;font-weight:600;color:var(--grey-400,#999);text-transform:uppercase;letter-spacing:0.06em;">${_sEsc(label)}</div>
+    <div style="font-size:1.15rem;font-weight:700;margin-top:4px;color:${color || 'var(--navy-700,#1B3057)'};">${_sEsc(String(value))}</div>
+  </div>`;
+}
+
+// Warnings name students the run could not fully handle (no academic level, no
+// matching fee schedule). They are informational and must not block the
+// confirm: the counts they belong to are still real, and the operator can fix
+// the named students and re-run.
+function _sessOpenTermSummary(d, isDryRun) {
+  const otherCreated = (d.transport_created || 0) + (d.meal_created || 0) + (d.eca_created || 0);
+  const warnings = Array.isArray(d.warnings) ? d.warnings : [];
+  return `
+    ${isDryRun ? `<p style="font-size:0.85rem;color:#666;margin:0 0 12px;">Dry run &mdash; nothing has been written yet.</p>` : ''}
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+      ${_sessOpenTermStat('Students Scanned', d.students_scanned ?? 0)}
+      ${_sessOpenTermStat('Tuition Created', d.tuition_created ?? 0)}
+      ${_sessOpenTermStat('Meal + Transport + ECA', otherCreated)}
+      ${_sessOpenTermStat('Warnings', warnings.length, warnings.length ? 'var(--coral-600,#c0392b)' : 'var(--grey-400,#999)')}
+    </div>
+    <div style="font-size:0.8rem;color:#666;margin-bottom:12px;">
+      Already assigned (skipped as duplicates): tuition ${d.tuition_existing ?? 0} &middot; transport ${d.transport_existing ?? 0} &middot; meals ${d.meal_existing ?? 0} &middot; ECA ${d.eca_existing ?? 0}.
+      Tuition skipped: ${d.tuition_skipped ?? 0}.
+    </div>
+    ${warnings.length ? `
+      <div style="padding:10px 14px;border-radius:6px;border-left:3px solid var(--gold-500,#C9A227);background:var(--gold-100,#fdf3d6);color:#7a6110;font-size:0.84rem;">
+        <div style="font-weight:600;margin-bottom:6px;">${warnings.length} warning(s) &mdash; students that may need attention:</div>
+        <ul style="margin:0;padding-left:18px;">${warnings.map(w => `<li style="margin-bottom:3px;">${_sEsc(String(w))}</li>`).join('')}</ul>
+        <div style="margin-top:8px;">These do not block opening the term. Opening is idempotent, so you can fix these students and run it again.</div>
+      </div>` : ''}`;
+}
+
+async function _sessOpenTermPreview(termId) {
+  const errEl = document.getElementById('sess-openterm-err');
+  const btn   = document.getElementById('sess-openterm-preview-btn');
+  errEl.style.display = 'none';
+  btn.disabled = true; btn.textContent = 'Running preview\u2026';
+
+  const res = await apiFetch(`${API_BASE}/terms/${termId}/open?dry_run=true`, { method: 'POST' });
+  if (!res || !res.ok) {
+    btn.disabled = false; btn.textContent = 'Preview';
+    errEl.textContent = res ? await parseApiError(res) : 'Network error — try again.';
+    errEl.style.display = 'block';
+    return;
+  }
+  const data = await res.json();
+  document.getElementById('sess-openterm-body').innerHTML = _sessOpenTermSummary(data, true);
+  document.getElementById('sess-openterm-actions').innerHTML = `
+    <button class="fin-btn-cancel" onclick="_coaCloseModal('sess-openterm-overlay')">Back</button>
+    <button class="fin-btn-teal" id="sess-openterm-confirm-btn" onclick="_sessOpenTermConfirm(${termId})">Confirm Open Term</button>`;
+}
+
+async function _sessOpenTermConfirm(termId) {
+  const errEl     = document.getElementById('sess-openterm-err');
+  const actionsEl = document.getElementById('sess-openterm-actions');
+  errEl.style.display = 'none';
+  actionsEl.innerHTML = '<button class="fin-btn-teal" disabled>Opening term\u2026</button>';
+
+  const res = await apiFetch(`${API_BASE}/terms/${termId}/open`, { method: 'POST' });
+  if (!res || !res.ok) {
+    errEl.textContent = res ? await parseApiError(res) : 'Network error — try again.';
+    errEl.style.display = 'block';
+    actionsEl.innerHTML = `
+      <button class="fin-btn-cancel" onclick="_coaCloseModal('sess-openterm-overlay')">Cancel</button>
+      <button class="fin-btn-teal" onclick="_sessOpenTermConfirm(${termId})">Retry</button>`;
+    return;
+  }
+  const d = await res.json();
+  const warnings = Array.isArray(d.warnings) ? d.warnings : [];
+  // The result stays on screen rather than closing the modal: the warnings are
+  // the whole point of reading it, and a toast is not somewhere you can read a
+  // list of student codes.
+  document.getElementById('sess-openterm-body').innerHTML = _sessOpenTermSummary(d, false);
+  actionsEl.innerHTML = `<button class="fin-btn-teal" onclick="_coaCloseModal('sess-openterm-overlay')">Done</button>`;
+  showToast(`Term opened. Tuition: ${d.tuition_created ?? 0}, Meal: ${d.meal_created ?? 0}, Transport: ${d.transport_created ?? 0}, ECA: ${d.eca_created ?? 0} assignments created.`, 'success');
+  if (warnings.length) {
+    showToast(`${warnings.length} student(s) need attention — see Warnings for details.`, 'error');
+  }
 }
 
 async function _fetchSessAYCache() {
