@@ -4971,6 +4971,7 @@ async function loadStudentClassesView(container) {
       {label:'Stream',        key:'stream'},
       {label:'Capacity',      key:'capacity'},
       {label:'Status',        key:'is_active', fmt:v=>v!==false?'Active':'Inactive'},
+      {label:'Auto Meal Plan',key:'auto_enroll_meal_plan', fmt:v=>v?'Yes — enrolled students are opted in':'No'},
     ],
     renderAdd:  el => _clsSplitForm(null, el),
     renderEdit: (item, el) => _clsSplitForm(item, el),
@@ -5024,6 +5025,16 @@ function _clsSplitForm(item, el) {
             <option value="true"${item?.is_active!==false?' selected':''}>Active</option>
             <option value="false"${item?.is_active===false?' selected':''}>Inactive</option>
           </select>
+        </div>
+        <div class="stu-form-group" style="grid-column:span 2">
+          <label style="display:flex;align-items:center;gap:8px;font-weight:400;cursor:pointer;">
+            <input type="checkbox" id="cls-f-auto-meal" ${item?.auto_enroll_meal_plan ? 'checked' : ''}>
+            Auto-enroll students in meal plan on enrollment
+          </label>
+          <span style="font-size:0.8rem;color:#666;">
+            When enabled, students enrolled in this class are automatically opted into the meal plan.
+            Uncheck for classes where meals are optional or opt-in.
+          </span>
         </div>
       </div>
       <div style="display:flex;gap:12px;margin-top:20px">
@@ -5177,6 +5188,16 @@ async function showClassForm(id) {
               <option value="false"${item?.is_active === false ? ' selected' : ''}>Inactive</option>
             </select>
           </div>
+          <div class="stu-form-group" style="grid-column:span 2;">
+            <label style="display:flex;align-items:center;gap:8px;font-weight:400;cursor:pointer;">
+              <input type="checkbox" id="cls-f-auto-meal" ${item?.auto_enroll_meal_plan ? 'checked' : ''}>
+              Auto-enroll students in meal plan on enrollment
+            </label>
+            <span class="stu-field-hint" style="font-size:0.8rem;color:#666;">
+              When enabled, students enrolled in this class are automatically opted into the meal plan.
+              Uncheck for classes where meals are optional or opt-in.
+            </span>
+          </div>
         </div>
         <div style="display:flex;gap:12px;margin-top:20px;">
           <button class="fin-btn-teal" onclick="saveClass('${id || ''}')">${isEdit ? 'Update' : 'Save'}</button>
@@ -5237,6 +5258,9 @@ async function saveClass(id) {
     stream:           document.getElementById('cls-f-stream')?.value || '',
     capacity:         parseInt(document.getElementById('cls-f-capacity')?.value) || null,
     is_active:        document.getElementById('cls-f-status')?.value !== 'false',
+    // Sets Student.mapped_to_meal_program at enrollment, which is what makes
+    // the meal-plan leg of POST /terms/{id}/open pick the student up.
+    auto_enroll_meal_plan: !!document.getElementById('cls-f-auto-meal')?.checked,
   };
 
   const url    = id ? `${API_BASE}/classes/${id}` : `${API_BASE}/classes/`;
