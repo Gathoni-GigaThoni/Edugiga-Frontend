@@ -380,7 +380,9 @@ async function _loadAySessions(yearId) {
     }
 
     const rows = sessions.map(s => {
-      const statusBadge = s.is_inactive
+      // TermRead is is_active. is_inactive exists on AcademicYear only, so
+      // reading it here made every term report Active.
+      const statusBadge = s.is_active === false
         ? '<span style="color:#e74c3c;font-weight:600;">Inactive</span>'
         : '<span style="color:#27ae60;font-weight:600;">Active</span>';
       return `<tr>
@@ -410,10 +412,8 @@ async function _loadAyClasses(yearId) {
   if (!container) return;
 
   try {
-    const res = await fetch(`${API_BASE}/classes/?academic_year_id=${yearId}`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    const classes = (res && res.ok) ? await res.json() : [];
+    const res = await apiFetch(`${API_BASE}/classes/?academic_year_id=${yearId}`);
+    const classes = (res && res.ok) ? _toArray(await res.json()) : [];
 
     if (!classes.length) {
       container.innerHTML = '<p style="color:#888;font-size:0.88rem;padding:8px 0;">No classes configured for this academic year.</p>';
@@ -475,8 +475,8 @@ async function _ayOpenPromoteModal(toYearId) {
 
   const sel = document.getElementById('ay-promote-from-select');
   try {
-    const res = await fetch(`${API_BASE}/academic-years/`, { headers: { Authorization: `Bearer ${token}` } });
-    const years = res.ok ? await res.json() : [];
+    const res = await apiFetch(`${API_BASE}/academic-years/`);
+    const years = (res && res.ok) ? _toArray(await res.json()) : [];
     const others = years.filter(y => y.id !== toYearId);
     sel.innerHTML = others.length
       ? others.map(y => `<option value="${y.id}">${_ayEsc(y.title)} (${_fmtDDMmmYYYY(y.start_date)} – ${_fmtDDMmmYYYY(y.end_date)})</option>`).join('')

@@ -2017,6 +2017,12 @@ function _pvExpenseAccountOptions(sel) {
     a => `${a.number ? a.number + ' - ' : ''}${a.account_name}`, sel);
 }
 
+function _pvDocHref(path) {
+  const p = String(path || '');
+  if (/^https?:\/\//i.test(p)) return p;
+  return API_BASE.replace(/\/api\/?$/, '') + (p.startsWith('/') ? p : '/' + p);
+}
+
 function _pvDateTime(v) {
   if (!v) return '—';
   const d = new Date(v);
@@ -2057,8 +2063,11 @@ async function loadPayablesExpenseClaimsView(container) {
       {label:'Amount',       key:'amount', fmt:v=>`<strong>${_pvMoney(v)}</strong>`},
       {label:'Status',       key:'status', fmt:v=>_pvBadge(v)},
       {label:'Submitted',    key:'created_at', fmt:v=>_pvDateTime(v)},
+      // The stored value is whatever POST /upload/ returned — an absolute URL
+      // in practice, but a bare path is possible, so relative values are
+      // resolved against the API origin rather than the SPA's.
       {label:'Supporting Document', key:'supporting_document_path',
-        fmt:v=>v ? _finEsc(String(v).split('/').pop())
+        fmt:v=>v ? `<a href="${_finEsc(_pvDocHref(v))}" target="_blank" rel="noopener">${_finEsc(String(v).split('/').pop() || 'View document')}</a>`
                  : '<span style="color:var(--gold-500,#C9A227);font-weight:600;">None attached</span>'},
       {label:'Approved By',  key:'approved_by', fmt:v=>_finEsc(_pvEmployeeRef(v)),
         hideWhen:c=>!c.approved_by},

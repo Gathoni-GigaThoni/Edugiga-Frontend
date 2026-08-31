@@ -25,14 +25,14 @@ async function loadSessionTypesView(container) {
     searchFields: ['title','name'],
     col1Label: 'Title', col2Label: 'Status',
     col1: t => t.title || t.name || '—',
-    col2: t => t.is_inactive ? 'Inactive' : 'Active',
+    col2: t => t.is_active === false ? 'Inactive' : 'Active',
     rowLabel: t => t.title || t.name || '—',
     rowSub:   t => '',
     idKey: 'id',
     detailFields: [
       {label:'Title',  key:'title'},
       {label:'Notes',  key:'notes', fmt:v=>v||'—'},
-      {label:'Status', key:'is_inactive', fmt:v=>v?'Inactive':'Active'},
+      {label:'Status', key:'is_active', fmt:v=>v===false?'Inactive':'Active'},
     ],
     renderAdd: el => {
       el.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--grey-600)">
@@ -94,8 +94,9 @@ function _renderStTable() {
     rows = `<tr><td colspan="3" class="sa-empty">No record found.</td></tr>`;
   } else {
     page.forEach(t => {
-      const btnCls = t.is_inactive ? 'sa-status-btn-deactive' : 'sa-status-btn-active';
-      const label  = t.is_inactive ? 'Deactive' : 'Active';
+      const inactive = t.is_active === false;
+      const btnCls = inactive ? 'sa-status-btn-deactive' : 'sa-status-btn-active';
+      const label  = inactive ? 'Deactive' : 'Active';
       rows += `<tr id="st-row-${t.id}">
         <td>${_stEsc(t.title || '')}</td>
         <td>
@@ -139,26 +140,40 @@ function toggleStDropdown(event, id) {
   if (dd) dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
 }
 
+function _stPaintStatusBtn(id, inactive) {
+  const btn = document.getElementById(`st-row-${id}`)?.querySelector('.sa-status-btn');
+  if (!btn) return;
+  btn.className = `sa-status-btn ${inactive ? 'sa-status-btn-deactive' : 'sa-status-btn-active'}`;
+  btn.innerHTML = `${inactive ? 'Deactive' : 'Active'} &#9660;`;
+}
+
 async function toggleStStatus(id) {
   const idx = sessionTypesData.findIndex(t => String(t.id) === String(id));
   if (idx === -1) return;
-  const newInactive = !sessionTypesData[idx].is_inactive;
-  // Optimistic UI update
-  sessionTypesData[idx].is_inactive = newInactive;
-  const row = document.getElementById(`st-row-${id}`);
-  if (row) {
-    const btnCls = newInactive ? 'sa-status-btn-deactive' : 'sa-status-btn-active';
-    const label  = newInactive ? 'Deactive' : 'Active';
-    const btn    = row.querySelector('.sa-status-btn');
-    if (btn) { btn.className = `sa-status-btn ${btnCls}`; btn.innerHTML = `${label} &#9660;`; }
+  const wasActive = sessionTypesData[idx].is_active !== false;
+  const nowActive = !wasActive;
+  // Optimistic paint, rolled back below if the write does not land.
+  sessionTypesData[idx].is_active = nowActive;
+  _stPaintStatusBtn(id, !nowActive);
+  // SessionTypeUpdate takes title/notes/is_active only. The old call spread the
+  // whole record and sent is_inactive, a field the schema has never had, then
+  // swallowed the result — so the button flipped and nothing was ever saved.
+  const res = await apiFetch(`${API_BASE}/session-types/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      title: sessionTypesData[idx].title || '',
+      notes: sessionTypesData[idx].notes || '',
+      is_active: nowActive,
+    })
+  });
+  if (res && res.ok) {
+    showToast(`Term type ${nowActive ? 'activated' : 'deactivated'}.`, 'success');
+    return;
   }
-  try {
-    await fetch(`${API_BASE}/session-types/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ ...sessionTypesData[idx], is_inactive: newInactive })
-    });
-  } catch (_) {}
+  sessionTypesData[idx].is_active = wasActive;
+  _stPaintStatusBtn(id, !wasActive);
+  showToast(res ? `Could not update status: ${await parseApiError(res)}` : 'Network error — status not changed.', 'error');
 }
 
 // ==================== ADD ====================
@@ -254,7 +269,7 @@ function _renderStEditPage(container, type) {
         </div>
         <div class="sa-form-check-group">
           <label class="sa-form-check-label">
-            <input type="checkbox" id="st-edit-inactive" class="sa-form-cb" ${type.is_inactive ? 'checked' : ''}> Inactive?
+            <input type="checkbox" id="st-edit-inactive" class="sa-form-cb" ${type.is_active === false ? 'checked' : ''}> Inactive?
           </label>
         </div>
         <div class="sa-form-actions">

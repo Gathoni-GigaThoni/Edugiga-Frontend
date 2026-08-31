@@ -31,6 +31,23 @@ function _getSessTypeName(typeId) {
   const t = sessionTypesData.find(x => String(x.id) === String(typeId));
   return t ? (t.title || t.name || '-') : '-';
 }
+// TermRead carries term_type_id (not session_type_id — the FE read path had
+// kept the pre-rename name, so this column rendered "-" for every term) and
+// also resolves term_type_name server-side. Prefer the wire's own label and
+// fall back to the type cache only when it is absent.
+function _sessTypeLabel(s) {
+  return s.term_type_name || _getSessTypeName(s.term_type_id);
+}
+// Term and SessionType are is_active on the wire. Only AcademicYear carries
+// is_inactive; reading it here meant every term and every term type reported
+// "Active" regardless of its real state.
+function _sessIsInactive(rec) { return rec?.is_active === false; }
+// Term types offered in a picker: active ones only. The old `!t.is_inactive`
+// test read an absent field, so `!undefined` passed every type through.
+function _sessActiveTypes() {
+  return (typeof sessionTypesData !== 'undefined' ? sessionTypesData : [])
+    .filter(t => t.is_active !== false);
+}
 function _getSessAYName(ayId) {
   const y = _sessAYCache.find(x => String(x.id) === String(ayId));
   return y ? y.name : '-';
@@ -60,10 +77,10 @@ async function loadSessionsView(container) {
     detailFields: [
       {label:'Title',         key:'title'},
       {label:'Academic Year', key:'academic_year_id', fmt:v=>_getSessAYName(v)},
-      {label:'Term Type',     key:'session_type_id', fmt:v=>_getSessTypeName(v)},
+      {label:'Term Type',     key:'term_type_id', fmt:(_,s)=>_sessTypeLabel(s)},
       {label:'Start Date',    key:'start_date', fmt:v=>_toDDMMYYYY(v)},
       {label:'End Date',      key:'end_date', fmt:v=>_toDDMMYYYY(v)},
-      {label:'Status',        key:'is_inactive', fmt:v=>v?'Inactive':'Active'},
+      {label:'Status',        key:'is_active', fmt:v=>v===false?'Inactive':'Active'},
     ],
     renderAdd: el => {
       el.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--grey-600)">
@@ -238,8 +255,7 @@ function _renderSessListPage(container) {
   const ayOptions = _sessAYCache.map(y =>
     `<option value="${y.id}"${_sessFilterAY == y.id ? ' selected' : ''}>${_sEsc(_formatAYLabel(y))}</option>`
   ).join('');
-  const typeOptions = (typeof sessionTypesData !== 'undefined' ? sessionTypesData : [])
-    .filter(t => !t.is_inactive)
+  const typeOptions = _sessActiveTypes()
     .map(t => `<option value="${t.id}"${_sessFilterType === String(t.id) ? ' selected' : ''}>${_sEsc(t.title || t.name || '')}</option>`)
     .join('');
 
@@ -332,9 +348,9 @@ function _sessFiltered() {
   return sessionsData.filter(s => {
     if (_sessSearch && !(s.title || s.name || '').toLowerCase().includes(_sessSearch)) return false;
     if (_sessFilterAY   && String(s.academic_year_id) !== String(_sessFilterAY))   return false;
-    if (_sessFilterType && String(s.session_type_id)  !== String(_sessFilterType)) return false;
-    if (_sessFilterStat === 'active'   && s.is_inactive)  return false;
-    if (_sessFilterStat === 'inactive' && !s.is_inactive) return false;
+    if (_sessFilterType && String(s.term_type_id)  !== String(_sessFilterType)) return false;
+    if (_sessFilterStat === 'active'   && _sessIsInactive(s))  return false;
+    if (_sessFilterStat === 'inactive' && !_sessIsInactive(s)) return false;
     return true;
   });
 }
@@ -354,9 +370,9 @@ function _renderSessTable() {
     rows = `<tr><td colspan="${COLS}" class="fin-empty">No terms found.</td></tr>`;
   } else {
     paged.forEach(s => {
-      const typeName   = _getSessTypeName(s.session_type_id);
+      const typeName   = _sessTypeLabel(s);
       const ayName     = _getSessAYName(s.academic_year_id);
-      const statusBadge = s.is_inactive
+      const statusBadge = _sessIsInactive(s)
         ? '<span style="color:#e74c3c;font-weight:600;">Inactive</span>'
         : '<span style="color:#27ae60;font-weight:600;">Active</span>';
       rows += `<tr>
@@ -436,8 +452,7 @@ async function renderSessAddPage(container) {
             <label>Term Type <span style="color:#e74c3c">*</span></label>
             <select id="sess-add-type" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
               <option value="">— Select Type —</option>
-              ${(typeof sessionTypesData !== 'undefined' ? sessionTypesData : [])
-                .filter(t => !t.is_inactive)
+              ${_sessActiveTypes()
                 .map(t => `<option value="${t.id}">${_sEsc(t.title || t.name || '')}</option>`)
                 .join('')}
             </select>
@@ -498,7 +513,7 @@ async function submitSessAdd() {
     start_date:  document.getElementById('sess-add-start')?.value || '',
     end_date:    document.getElementById('sess-add-end')?.value   || '',
     notes:       document.getElementById('sess-add-notes')?.value || '',
-    is_inactive: !!document.getElementById('sess-add-inactive')?.checked
+    is_active:   !document.getElementById('sess-add-inactive')?.checked
   };
 
   const res = await apiFetch(`${API_BASE}/terms/`, {
@@ -532,8 +547,8 @@ async function openSessEdit(id) {
   let sess = sessionsData.find(s => String(s.id) === String(id));
   try {
     // TODO: convert to apiFetch (raw fetch bypasses auth retry logic — out of scope for this patch)
-    const res = await fetch(`${API_BASE}/terms/${id}`, { headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok) sess = await res.json();
+    const res = await apiFetch(`${API_BASE}/terms/${id}`);
+    if (res && res.ok) sess = await res.json();
   } catch (_) {}
 
   if (!sess) { showToast('Term not found.', 'error'); loadView('sa-sessions'); return; }
@@ -541,9 +556,8 @@ async function openSessEdit(id) {
 }
 
 function _renderSessEditPage(container, sess) {
-  const typeOptions = (typeof sessionTypesData !== 'undefined' ? sessionTypesData : [])
-    .filter(t => !t.is_inactive)
-    .map(t => `<option value="${t.id}"${String(t.id) === String(sess.session_type_id) ? ' selected' : ''}>${_sEsc(t.title || t.name || '')}</option>`)
+  const typeOptions = _sessActiveTypes()
+    .map(t => `<option value="${t.id}"${String(t.id) === String(sess.term_type_id) ? ' selected' : ''}>${_sEsc(t.title || t.name || '')}</option>`)
     .join('');
   const ayOptions = _sessAYCache.map(y =>
     `<option value="${y.id}"${String(y.id) === String(sess.academic_year_id) ? ' selected' : ''}>${_sEsc(_formatAYLabel(y))}</option>`
@@ -575,10 +589,11 @@ function _renderSessEditPage(container, sess) {
             <span class="stu-field-error" id="sess-edit-type-err"></span>
           </div>
           <div class="stu-form-group">
-            <label>Academic Year <span style="color:#e74c3c">*</span></label>
-            <select id="sess-edit-ay" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;">
+            <label>Academic Year</label>
+            <select id="sess-edit-ay" class="fin-search-input" style="width:100%!important;padding:7px 10px!important;" disabled>
               <option value="">— Select Academic Year —</option>${ayOptions}
             </select>
+            <span class="fin-field-hint" style="font-size:0.8rem;color:#666;">A term cannot be moved between academic years — the update endpoint does not accept the field. Delete and re-create the term under the right year.</span>
             <span class="stu-field-error" id="sess-edit-ay-err"></span>
           </div>
           <div class="stu-form-group">
@@ -596,7 +611,7 @@ function _renderSessEditPage(container, sess) {
             <textarea id="sess-edit-notes" style="width:100%;min-height:80px;padding:8px;border:1px solid #ccc;border-radius:4px;font-size:0.9rem;">${_sEsc(sess.notes || '')}</textarea>
           </div>
           <div class="stu-form-group" style="grid-column:span 2;">
-            <label><input type="checkbox" id="sess-edit-inactive"${sess.is_inactive ? ' checked' : ''}> Mark as Inactive</label>
+            <label><input type="checkbox" id="sess-edit-inactive"${_sessIsInactive(sess) ? ' checked' : ''}> Mark as Inactive</label>
           </div>
         </div>
         <div style="display:flex;gap:12px;margin-top:20px;">
@@ -612,25 +627,25 @@ function _renderSessEditPage(container, sess) {
 async function submitSessEdit(id) {
   const title  = (document.getElementById('sess-edit-title')?.value || '').trim();
   const typeId =  document.getElementById('sess-edit-type')?.value  || '';
-  const ayId   =  document.getElementById('sess-edit-ay')?.value    || '';
 
   document.getElementById('sess-edit-title-err').textContent = title  ? '' : 'This field is required.';
   document.getElementById('sess-edit-type-err').textContent  = typeId ? '' : 'This field is required.';
-  document.getElementById('sess-edit-ay-err').textContent    = ayId   ? '' : 'This field is required.';
-  if (!title || !typeId || !ayId) return;
+  if (!title || !typeId) return;
 
   const btn      = document.getElementById('sess-edit-btn');
   const statusEl = document.getElementById('sess-edit-status');
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
 
+  // TermUpdate has no academic_year_id — a term cannot be moved between
+  // academic years through this endpoint, so it is not sent. The picker is
+  // disabled on the edit form to match (see _renderSessEditPage).
   const payload = {
     title,
-    term_type_id:     typeId,
-    academic_year_id: parseInt(ayId),
+    term_type_id: typeId,
     start_date:  document.getElementById('sess-edit-start')?.value || '',
     end_date:    document.getElementById('sess-edit-end')?.value   || '',
     notes:       document.getElementById('sess-edit-notes')?.value || '',
-    is_inactive: !!document.getElementById('sess-edit-inactive')?.checked
+    is_active:   !document.getElementById('sess-edit-inactive')?.checked
   };
 
   const res = await apiFetch(`${API_BASE}/terms/${id}`, {
