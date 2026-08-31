@@ -2216,36 +2216,30 @@ const ACCOUNT_SUBTYPES_NON_CURRENT_ASSET = ACCOUNT_SUBTYPES_BY_TYPE.Asset.slice(
 // FE release. Falls back to the seeded ACCOUNT_SUBTYPES_BY_TYPE map whenever
 // that fetch hasn't landed, which leaves this picker behaving exactly as before.
 function _coaSubtypeRows(accountType) {
+  // Every active subtype is attachable — BE accepts any str matching an
+  // active row in account_subtypes (system-seeded OR admin-created). The
+  // old `attachable: s.is_system !== false` gate is gone as of the
+  // 2026-08-31 AccountCreate loosening; nothing renders greyed anymore.
   if (_astLoaded && _astSubtypes.length) {
     return _astSubtypes
       .filter(s => s.account_type === accountType && s.is_active)
-      .map(s => ({ name: s.name, attachable: s.is_system !== false }));
+      .map(s => ({ name: s.name }));
   }
-  return (ACCOUNT_SUBTYPES_BY_TYPE[accountType] || []).map(name => ({ name, attachable: true }));
+  return (ACCOUNT_SUBTYPES_BY_TYPE[accountType] || []).map(name => ({ name }));
 }
 
-// Admin-created rows (is_system:false) render disabled: AccountCreate still
-// types account_subtype as the AccountSubtype enum, whose members are exactly
-// the 51 system-seeded names, so attaching a custom sub-type answers 422.
-// Listing-but-disabling is what keeps that from becoming a dead end the
-// operator only discovers on save. When the backend widens the field to a
-// plain string, delete the `blocked` branch here and _coaSubtypeBlockedNote —
-// nothing else in this picker has to change.
+// Every active subtype is attachable (BE accepts admin-created ones as
+// of the 2026-08-31 AccountCreate loosening). No `blocked` branch needed.
 function _coaSubtypeOptions(accountType, selected) {
   const rows = _coaSubtypeRows(accountType);
-  const placeholder = accountType ? 'Please Select' : 'Select Account Type first';
+  const placeholder = accountType ? "Please Select" : "Select Account Type first";
   return `<option value="">${placeholder}</option>` +
-    rows.map(r => {
-      // whatever is already saved on the account stays selectable, so opening
-      // an existing account can never silently drop its classification
-      const blocked = !r.attachable && r.name !== selected;
-      return `<option value="${_finEsc(r.name)}" ${r.name===selected?'selected':''} ${blocked?'disabled':''}>${_finEsc(r.name)}${blocked?' \u2014 not yet attachable':''}</option>`;
-    }).join('');
+    rows.map(r => `<option value="${_finEsc(r.name)}" ${r.name===selected?"selected":""}>${_finEsc(r.name)}</option>`).join("");
 }
-function _coaSubtypeBlockedNote(accountType) {
-  const blocked = _coaSubtypeRows(accountType).filter(r => !r.attachable);
-  if (!blocked.length) return '';
-  return `Sub-types you add under Finance &rsaquo; Utilities &rsaquo; Sub-Types are listed but not yet selectable \u2014 accounts can't be classified against them until the backend accepts custom sub-types.`;
+function _coaSubtypeBlockedNote(_accountType) {
+  // Retained for call-site compatibility with existing _coaRepopulateSubtype
+  // wiring; now always empty since nothing is blocked.
+  return "";
 }
 function _coaRepopulateSubtype(accountType) {
   const sel = document.getElementById('coa-f-subtype');

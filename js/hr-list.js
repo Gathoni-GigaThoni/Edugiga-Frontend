@@ -40,6 +40,13 @@ async function loadHrEmployeeDirectoryView(container) {
           <label class="fin-filter-label">Department</label>
           <select id="hr-f-department-id" class="fin-filter-input"></select>
         </div>
+        <div class="fin-filter-field">
+          <label class="fin-filter-label">Exclude Directors</label>
+          <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;">
+            <input type="checkbox" id="hr-f-exclude-director" onchange="_hrDirReload()">
+            <span>Hide Director profiles</span>
+          </label>
+        </div>
       </div>
       <div class="fin-filter-actions">
         <button class="fin-btn-teal" onclick="_hrDirReload()">Filter</button>
@@ -67,8 +74,10 @@ async function loadHrEmployeeDirectoryView(container) {
 
 async function _hrDirReload() {
   const deptId = document.getElementById('hr-f-department-id')?.value || '';
+  const excludeDir = document.getElementById('hr-f-exclude-director')?.checked || false;
   const params = new URLSearchParams();
   if (deptId) params.set('department_id', deptId);
+  if (excludeDir) params.set('exclude_director', 'true');
 
   await renderSplitView({
     container: document.getElementById('hr-dir-split'),

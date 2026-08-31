@@ -2115,7 +2115,8 @@ function _pvEcDetailActions(c) {
   }
   const buttons = c.status === 'submitted'
     ? `<button class="fin-btn-teal" onclick="_pvEcApprove(${c.id})">Approve</button>
-       <button class="fin-btn-cancel" onclick="_pvEcReject(${c.id})">Reject</button>`
+       <button class="fin-btn-cancel" onclick="_pvEcReject(${c.id})">Reject</button>
+       <button class="btn" onclick="_pvEcAttachReceipt(${c.id})" title="Attach or swap the supporting document without rejecting the claim.">${c.supporting_document_path ? 'Swap Receipt' : 'Attach Receipt'}</button>`
     : '';
   return `${banner}<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">${buttons}</div>
     <div id="pv-ec-detail-msg" style="width:100%;"></div>`;
@@ -2141,6 +2142,35 @@ async function _pvEcApprove(id) {
 // addendum — it used to take `body: dict`, so any shape got through. `reason`
 // is now validated non-blank server-side, hence the client-side gate and the
 // warning: rejection is terminal, the claimant has to file a fresh claim.
+// PATCH /payables/expense-claims/{id} — 2026-08-31 addition. Lets a
+// claimant attach (or swap) a receipt on a still-SUBMITTED claim without
+// the reject-and-resubmit dance. Only meaningful for SUBMITTED status;
+// the backend refuses 409 on anything else, so we hide the button too.
+async function _pvEcAttachReceipt(id) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.jpg,.jpeg,.png,.webp,.pdf,.docx';
+  input.onchange = async () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    const docPath = await uploadFile(file);
+    if (!docPath) return;  // uploadFile already toasted
+    const res = await apiFetch(`${_PV_EC_API}/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ supporting_document_path: docPath }),
+    });
+    if (res && res.ok) {
+      showToast('Receipt attached.', 'success');
+      await window._splitRefreshSelected?.();
+      return;
+    }
+    if (!res) { showToast('Network error.', 'error'); return; }
+    showToast(await parseApiError(res), 'error');
+  };
+  input.click();
+}
+
 function _pvEcReject(id) {
   _pvShowReasonModal('Reject Expense Claim', async (reason) => {
     const res = await apiFetch(`${_PV_EC_API}/${id}/reject`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }) });
