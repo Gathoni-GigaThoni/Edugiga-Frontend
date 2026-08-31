@@ -126,22 +126,43 @@ async function _pvPreviewNextNumber(listUrl, fieldName, prefix, digits) {
 }
 
 // ── Reason modal (Reject actions) ───────────────────────────────────────────
-function _pvShowReasonModal(title, onConfirm) {
+// opts.warning renders a coral consequence line above the box; opts.maxLength
+// adds a live counter. Both are opt-in so the existing callers that just need
+// "type a reason" keep the modal they had.
+function _pvShowReasonModal(title, onConfirm, opts = {}) {
   const wrap = document.createElement('div');
   wrap.id = 'pv-reason-modal-overlay';
   wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
   wrap.innerHTML = `
     <div style="background:white;border-radius:8px;padding:24px;width:420px;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
       <h3 style="margin:0 0 14px;font-size:1.05rem;color:#2c3e50;">${_finEsc(title)}</h3>
-      <textarea id="pv-reason-text" class="fin-form-textarea" rows="4" placeholder="Enter reason..."></textarea>
+      ${opts.warning ? `<div style="margin-bottom:12px;padding:9px 13px;border-radius:6px;border-left:3px solid var(--coral-500);background:var(--coral-100);color:var(--coral-600);font-size:0.82rem;">${_finEsc(opts.warning)}</div>` : ''}
+      <textarea id="pv-reason-text" class="fin-form-textarea" rows="4" placeholder="Enter reason..."
+                ${opts.maxLength ? `maxlength="${opts.maxLength}"` : ''}></textarea>
+      ${opts.maxLength ? `<span style="font-size:11px;color:var(--grey-400,#999);float:right;" id="pv-reason-count">0/${opts.maxLength}</span>` : ''}
       <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
         <button class="fin-btn-cancel" onclick="document.getElementById('pv-reason-modal-overlay').remove()">Cancel</button>
         <button class="fin-btn-teal" id="pv-reason-confirm-btn">Confirm</button>
       </div>
     </div>`;
   document.body.appendChild(wrap);
-  document.getElementById('pv-reason-confirm-btn').onclick = () => {
-    const reason = document.getElementById('pv-reason-text').value.trim();
+  const textEl = document.getElementById('pv-reason-text');
+  const btn    = document.getElementById('pv-reason-confirm-btn');
+  const countEl = document.getElementById('pv-reason-count');
+  // The server validates `reason` is non-blank and answers 422 on whitespace,
+  // so the gate is on the trimmed length, not the raw one.
+  const sync = () => {
+    const ready = textEl.value.trim().length > 0;
+    if (countEl) countEl.textContent = `${textEl.value.length}/${opts.maxLength}`;
+    btn.disabled = !ready;
+    btn.style.opacity = ready ? '1' : '0.55';
+    btn.style.cursor  = ready ? 'pointer' : 'not-allowed';
+  };
+  textEl.addEventListener('input', sync);
+  sync();
+  textEl.focus();
+  btn.onclick = () => {
+    const reason = textEl.value.trim();
     if (!reason) { showToast('Reason is required.', 'error'); return; }
     wrap.remove();
     onConfirm(reason);
@@ -2099,16 +2120,24 @@ async function _pvEcApprove(id) {
   if (res && res.ok) { showToast('Expense claim approved.', 'success'); await window._splitRefreshSelected?.(); return; }
   await _pvEcHandleActionError(res);
 }
+// The reject body is typed (ExpenseClaimRejectBody) as of the 2026-08-31
+// addendum — it used to take `body: dict`, so any shape got through. `reason`
+// is now validated non-blank server-side, hence the client-side gate and the
+// warning: rejection is terminal, the claimant has to file a fresh claim.
 function _pvEcReject(id) {
   _pvShowReasonModal('Reject Expense Claim', async (reason) => {
     const res = await apiFetch(`${_PV_EC_API}/${id}/reject`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }) });
     if (res && res.ok) { showToast('Expense claim rejected.', 'success'); await window._splitRefreshSelected?.(); return; }
     await _pvEcHandleActionError(res);
+  }, {
+    warning: 'Rejection is permanent — the claim cannot be reopened, and the claimant has to submit a new one. The reason you give is what they see.',
+    maxLength: 500,
   });
 }
 
 async function loadPayablesExpenseClaimsAddView(container) {
   await _pvLoadLookups();
+  _pvEcUploadedDocPath = null;
   const today = new Date().toISOString().slice(0, 10);
   container.innerHTML = `
     <div class="fin-page">
@@ -2133,7 +2162,7 @@ async function loadPayablesExpenseClaimsAddView(container) {
           <div class="fin-form-group">
             <label class="fin-form-label">Expense Account <span class="fin-required">*</span></label>
             <select id="ec-f-category" class="fin-form-select"><option value="">Please Select</option>${_pvExpenseAccountOptions()}</select>
-            <span class="fin-field-hint">Only Expense accounts are listed — a reimbursement is an expense, never a balance-sheet line.</span>
+            <span class="fin-field-hint">Only Expense accounts are listed — a reimbursement is an expense, never a balance-sheet line. Pick a postable leaf, not a header.</span>
             <span class="fin-field-error" id="ec-f-category-err"></span>
           </div>
         </div>
@@ -2148,9 +2177,11 @@ async function loadPayablesExpenseClaimsAddView(container) {
           <span class="fin-field-error" id="ec-f-description-err"></span>
         </div>
         <div class="fin-form-group">
-          <label class="fin-form-label">Notes</label>
-          <textarea id="ec-f-notes" class="fin-form-textarea" rows="2" placeholder="Optional — receipt reference, cost centre, anything the approver should know."></textarea>
-          <span class="fin-field-hint">The backend stores a supporting-document path on the claim but exposes no upload route yet, so attach the receipt through the usual document channel and reference it here.</span>
+          <label class="fin-form-label">Supporting Document</label>
+          <input type="file" id="ec-f-doc" class="fin-form-input" accept="image/*,application/pdf" onchange="_pvEcOnDocPicked()">
+          <span class="fin-field-hint">Upload a receipt or invoice image (optional).</span>
+          <div id="ec-f-doc-status" style="font-size:0.82rem;margin-top:4px;"></div>
+          <span class="fin-field-error" id="ec-f-doc-err"></span>
         </div>
         <div class="fin-form-actions">
           <button class="fin-btn-teal" onclick="_pvEcSubmitAdd()">Submit</button>
@@ -2178,35 +2209,88 @@ async function _pvEcSubmitAdd() {
   document.getElementById('ec-f-amount-err').textContent = (amount > 0) ? '' : 'Amount must be greater than 0.';
   if (!(amount > 0)) valid = false;
   if (!valid) return;
-  const notes = document.getElementById('ec-f-notes').value.trim();
+
+  // The receipt goes up first: POST /upload/ returns the path the claim then
+  // carries as supporting_document_path. Uploading before the claim exists
+  // means a failed upload costs nothing — there is no half-created claim to
+  // clean up. Held here (rather than uploaded on pick) so a user who swaps the
+  // file three times only ever stores the last one.
+  let docPath = _pvEcUploadedDocPath;
+  const fileEl = document.getElementById('ec-f-doc');
+  const file   = fileEl && fileEl.files && fileEl.files[0];
+  if (file && !docPath) {
+    _pvEcSetDocStatus('Uploading&#8230;', '#666');
+    docPath = await uploadFile(file);
+    if (!docPath) {
+      // uploadFile has already toasted the reason. Stop rather than silently
+      // filing a claim without the receipt the user chose to attach.
+      _pvEcSetDocStatus('Upload failed — the claim was not submitted.', 'var(--coral-600)');
+      return;
+    }
+    _pvEcUploadedDocPath = docPath;
+    _pvEcSetDocStatus('Uploaded.', 'var(--color-success,#1e7e34)');
+  }
+
   const payload = {
     description: document.getElementById('ec-f-description').value.trim(),
     amount, expense_date: dateEl.value,
     category_id: parseInt(document.getElementById('ec-f-category').value, 10),
-    ...(notes ? { notes } : {}),
+    // Optional[str] on the wire — omitted entirely rather than sent as ''.
+    ...(docPath ? { supporting_document_path: docPath } : {}),
   };
   try {
     const res = await apiFetch(_PV_EC_API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     if (res && res.ok) {
       showToast('Expense claim submitted.', 'success');
+      _pvEcUploadedDocPath = null;
       _pvEcStatusFilter = 'submitted'; // land back on the queue the new claim is in
       loadView('payables-expense-claims');
+      return;
     }
-    else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+    if (!res) { showToast('Network error.', 'error'); return; }
+    const msg = await parseApiError(res);
+    // Two of the server's 400s are about the chosen account: a non-Expense
+    // type (unreachable — the picker only lists Expense accounts) and a
+    // non-postable header (not filterable yet, AccountRead still doesn't
+    // carry is_postable, so this is the only guard there is). Both name the
+    // account and say what to pick instead, so they belong on the field
+    // rather than in a toast that scrolls away.
+    if (res.status === 400 && /account/i.test(msg)) {
+      document.getElementById('ec-f-category-err').textContent = msg;
+      document.getElementById('ec-f-category').focus();
+      return;
+    }
+    showToast('Error: ' + msg, 'error');
   } catch (e) { showToast('Network error.', 'error'); }
 }
 
+// Cleared when the picked file changes so a swapped receipt is re-uploaded
+// rather than the first one being filed against the claim.
+let _pvEcUploadedDocPath = null;
+function _pvEcSetDocStatus(html, color) {
+  const el = document.getElementById('ec-f-doc-status');
+  if (el) { el.innerHTML = html; el.style.color = color || '#666'; }
+}
+function _pvEcOnDocPicked() {
+  _pvEcUploadedDocPath = null;
+  document.getElementById('ec-f-doc-err').textContent = '';
+  const file = document.getElementById('ec-f-doc')?.files?.[0];
+  _pvEcSetDocStatus(file ? `${_finEsc(file.name)} — uploaded when you submit.` : '', '#666');
+}
+
 // ==================== A.9.2 EXPENSE CLAIM DISBURSEMENTS ====================
-// The disbursement is the entry that actually moves money, and the form posts
-// debit_account_id / credit_bank_account_id straight into a journal entry. Both
-// pickers used to offer the entire active chart of accounts, so a disbursement
-// could be credited to Retained Surplus or a student receivable and still post
-// cleanly. They are now constrained to accounts that can legitimately take each
-// side: the credit side to money-holding accounts (bank / petty cash / wallet,
-// from the same /lookups/money-holding-accounts registry the Cash Book and
-// Cashflow Statement pickers use), and the debit side to the liability the
-// approved claim created, or the expense account if the school recognises the
-// cost on payment rather than on approval.
+// The disbursement is the entry that actually moves money. Only the credit
+// side is chosen here, and only from money-holding accounts (bank / petty cash
+// / wallet, from the same /lookups/money-holding-accounts registry the Cash
+// Book and Cashflow Statement pickers use) — this is the account the money
+// physically leaves.
+//
+// The debit side is no longer the disburser's to pick. As of the 2026-08-31
+// addendum the server debits claim.category_id — the account the approver
+// signed off on — and ExpenseClaimDisbursementCreate no longer carries
+// debit_account_id at all. Segregation of duties: whoever pays out cannot
+// re-classify the expense away from what was approved. Same shape as the Tax
+// Voucher lock-down (2026-08-18 §D).
 let _pvEcdApprovedClaims = [];
 const _PV_ECD_API = `${API_BASE}/payables/expense-claim-disbursements`;
 const _PV_DISBURSEMENT_METHOD_LABEL = Object.fromEntries(_PV_DISBURSEMENT_METHODS);
@@ -2232,17 +2316,6 @@ function _pvMoneyHoldingOptions(sel) {
       return `<option value="${a.gl_account_id}" ${String(sel) === String(a.gl_account_id) ? 'selected' : ''}>${_finEsc(label)}</option>`;
     }).join('')}</optgroup>`).join('');
 }
-// Settling an approved claim clears the payable it created (Liability); a
-// school that only recognises the cost on payment debits the Expense account
-// instead. Nothing else belongs on the debit side of a reimbursement.
-function _pvClaimSettlementAccountOptions(sel) {
-  const pick = t => _pvAccounts.filter(a => a.account_type === t);
-  return [['Liability', 'Liabilities (clear the payable)'], ['Expense', 'Expenses (recognise on payment)']]
-    .filter(([t]) => pick(t).length)
-    .map(([t, label]) => `<optgroup label="${label}">${_pvOptions(pick(t), 'id', a => `${a.number ? a.number + ' - ' : ''}${a.account_name}`, sel)}</optgroup>`)
-    .join('');
-}
-
 async function loadPayablesExpenseClaimDisbursementsView(container) {
   await _pvLoadLookups();
   await renderSplitView({
@@ -2328,10 +2401,10 @@ async function loadPayablesExpenseClaimDisbursementsAddView(container) {
             <span class="fin-field-error" id="ecd-f-method-err"></span>
           </div>
           <div class="fin-form-group">
-            <label class="fin-form-label">Debit Account <span class="fin-required">*</span></label>
-            <select id="ecd-f-debit" class="fin-form-select"><option value="">Please Select</option>${_pvClaimSettlementAccountOptions()}</select>
-            <span class="fin-field-hint">The staff-reimbursement payable the approved claim created, or the expense account if the cost is recognised on payment.</span>
-            <span class="fin-field-error" id="ecd-f-debit-err"></span>
+            <label class="fin-form-label">Amount to Disburse (KES) <span class="fin-required">*</span></label>
+            <input type="number" id="ecd-f-amount" class="fin-form-input" step="0.01" min="0.01" oninput="_pvEcdSyncAmount()">
+            <span class="fin-field-hint" id="ecd-f-amount-hint">Select a claim to see the approved amount.</span>
+            <span class="fin-field-error" id="ecd-f-amount-err"></span>
           </div>
           <div class="fin-form-group">
             <label class="fin-form-label">Credit Bank Account <span class="fin-required">*</span></label>
@@ -2341,25 +2414,72 @@ async function loadPayablesExpenseClaimDisbursementsAddView(container) {
           </div>
         </div>
         <div class="fin-form-actions">
-          <button class="fin-btn-teal" onclick="_pvEcdSubmitAdd()" ${noClaims ? 'disabled' : ''}>Submit</button>
+          <button class="fin-btn-teal" id="ecd-submit-btn" onclick="_pvEcdSubmitAdd()"
+                  ${noClaims ? 'disabled data-no-claims="1"' : 'disabled'}>Submit</button>
           <button class="fin-btn-cancel" onclick="loadView('payables-expense-claim-disbursements')">Cancel</button>
         </div>
+        <div id="ecd-form-msg" style="margin-top:12px;"></div>
       </div>
     </div>`;
 }
 
-// The posted amount is always the approved claim amount (the endpoint takes no
-// partial-settlement concept), so show the figure being committed instead of
-// leaving the user to submit a number they were never shown.
+// Picking a claim fixes both the ceiling on the amount and the debit account,
+// so both are stated here rather than left implicit — the debit account in
+// particular is no longer a field the disburser can see by looking at a
+// dropdown, and an invisible posting rule is worse than a locked one.
 function _pvEcdOnClaimChange() {
   const el = document.getElementById('ecd-claim-summary');
-  if (!el) return;
   const claim = _pvEcdFindSelectedClaim();
+  const amtEl = document.getElementById('ecd-f-amount');
+  if (amtEl) amtEl.value = claim ? String(parseFloat(claim.amount) || '') : '';
+  _pvEcdSyncAmount();
+  if (!el) return;
   if (!claim) { el.innerHTML = ''; return; }
   el.innerHTML = `<div style="margin-top:8px;padding:10px 14px;border-radius:6px;background:var(--navy-50,#EEF3FA);color:var(--navy-700,#1B3057);font-size:0.85rem;">
-    Paying <strong>${_pvMoney(claim.amount)}</strong> to ${_finEsc(_pvEcClaimant(claim))} for ${_finEsc(claim.description || 'this claim')},
-    incurred ${_pvDate(claim.expense_date)} and coded to ${_finEsc(_pvAccountName(claim.category_id))}.
+    Paying ${_finEsc(_pvEcClaimant(claim))} for ${_finEsc(claim.description || 'this claim')}, incurred ${_pvDate(claim.expense_date)}.
+    Approved amount <strong>${_pvMoney(claim.amount)}</strong>.
+    <div style="margin-top:6px;">Debit account: <strong>${_finEsc(_pvAccountName(claim.category_id))}</strong>
+    <span style="color:#5a6b85;">(from claim approval &mdash; cannot be changed here)</span></div>
   </div>`;
+}
+
+// Client-side mirror of the server's 400 ("Disbursed amount N exceeds approved
+// claim amount M"). The gate is on the field rather than on Submit alone so
+// the ceiling is visible while typing, not only after a failed post.
+function _pvEcdSyncAmount() {
+  const claim = _pvEcdFindSelectedClaim();
+  const amtEl = document.getElementById('ecd-f-amount');
+  const hint  = document.getElementById('ecd-f-amount-hint');
+  const err   = document.getElementById('ecd-f-amount-err');
+  if (!amtEl) return;
+  if (hint) {
+    hint.textContent = claim
+      ? `Claim amount: ${formatKES(claim.amount)}. Cannot disburse more than this — part-payments are allowed.`
+      : 'Select a claim to see the approved amount.';
+  }
+  if (!err) return;
+  const val = parseFloat(amtEl.value);
+  const cap = claim ? (parseFloat(claim.amount) || 0) : null;
+  if (amtEl.value === '') err.textContent = '';
+  else if (!(val > 0))    err.textContent = 'Amount must be greater than 0.';
+  else if (cap !== null && val > cap + 0.001)
+    err.textContent = `Cannot disburse more than the approved claim amount of ${formatKES(cap)}.`;
+  else err.textContent = '';
+  _pvEcdSyncSubmit();
+}
+
+// Submit stays disabled while the amount is blank, non-positive or over the
+// claim ceiling. Everything else on the form is validated on submit as before.
+function _pvEcdSyncSubmit() {
+  const btn = document.getElementById('ecd-submit-btn');
+  if (!btn || btn.dataset.noClaims === '1') return;
+  const claim = _pvEcdFindSelectedClaim();
+  const val = parseFloat(document.getElementById('ecd-f-amount')?.value);
+  const cap = claim ? (parseFloat(claim.amount) || 0) : null;
+  const ok = val > 0 && (cap === null || val <= cap + 0.001);
+  btn.disabled = !ok;
+  btn.style.opacity = ok ? '1' : '0.55';
+  btn.style.cursor  = ok ? 'pointer' : 'not-allowed';
 }
 function _pvEcdFindSelectedClaim() {
   const v = (document.getElementById('ecd-f-claim') || {}).value;
@@ -2369,7 +2489,7 @@ function _pvEcdFindSelectedClaim() {
 async function _pvEcdSubmitAdd() {
   let valid = true;
   [['ecd-f-claim','ecd-f-claim-err'],['ecd-f-date','ecd-f-date-err'],['ecd-f-method','ecd-f-method-err'],
-   ['ecd-f-debit','ecd-f-debit-err'],['ecd-f-credit','ecd-f-credit-err']].forEach(([fid,eid]) => {
+   ['ecd-f-credit','ecd-f-credit-err']].forEach(([fid,eid]) => {
     const v = document.getElementById(fid).value.trim();
     document.getElementById(eid).textContent = v ? '' : 'This field is required.';
     if (!v) valid = false;
@@ -2392,20 +2512,49 @@ async function _pvEcdSubmitAdd() {
       valid = false;
     }
   }
+  // disbursed_amount is > 0 by schema validator and <= claim.amount by the
+  // endpoint's own check; both are mirrored on the field, and re-checked here
+  // because a value can be pasted and submitted without the input event firing.
+  const amount = parseFloat(document.getElementById('ecd-f-amount').value);
+  const cap = claim ? (parseFloat(claim.amount) || 0) : null;
+  const amtErr = document.getElementById('ecd-f-amount-err');
+  if (!(amount > 0)) { amtErr.textContent = 'Amount must be greater than 0.'; valid = false; }
+  else if (cap !== null && amount > cap + 0.001) {
+    amtErr.textContent = `Cannot disburse more than the approved claim amount of ${formatKES(cap)}.`;
+    valid = false;
+  }
   if (!valid) return;
   const payload = {
     expense_claim_id: parseInt(document.getElementById('ecd-f-claim').value, 10),
-    disbursed_amount: parseFloat(claim.amount),
+    disbursed_amount: amount,
     disbursement_date: dateEl.value,
     disbursement_method: document.getElementById('ecd-f-method').value,
-    debit_account_id: parseInt(document.getElementById('ecd-f-debit').value, 10),
+    // No debit_account_id: the server debits the claim's approved category.
     credit_bank_account_id: parseInt(document.getElementById('ecd-f-credit').value, 10),
   };
+  const msgEl = document.getElementById('ecd-form-msg');
+  if (msgEl) msgEl.innerHTML = '';
   try {
     const res = await apiFetch(_PV_ECD_API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     if (res && res.ok) { showToast('Disbursement recorded. A journal entry has been created.', 'success'); loadView('payables-expense-claim-disbursements'); return; }
     if (!res) { showToast('Network error.', 'error'); return; }
     const msg = await parseApiError(res);
+    // A bank account with no gl_account_id wired is data drift, not a mistake
+    // the disburser made and not something they can fix by changing the form —
+    // it needs ops to repopulate the FK. Gold callout, message verbatim.
+    if (res.status === 400 && /gl_account_id/i.test(msg)) {
+      if (msgEl) {
+        msgEl.innerHTML = `<div style="padding:10px 14px;border-radius:6px;border-left:3px solid var(--gold-500,#C9A227);background:var(--gold-100,#fdf3d6);color:#7a6110;font-size:0.85rem;">
+          ${_finEsc(msg)}<br><span style="font-weight:600;">Ask ops to wire this bank account to its GL account — nothing on this form will get past it.</span>
+        </div>`;
+      } else showToast(msg, 'error');
+      return;
+    }
+    // The over-cap 400 belongs on the amount field, not in a toast.
+    if (res.status === 400 && /exceeds approved claim amount/i.test(msg)) {
+      amtErr.textContent = msg;
+      return;
+    }
     // A period-lock 409 already reads as a full sentence from the backend —
     // prefixing it with "Error: " just buries the actionable part.
     showToast(isPeriodLockError(res.status, msg) ? msg : 'Error: ' + msg, 'error');
