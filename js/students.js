@@ -2587,8 +2587,11 @@ async function openStudentFeeStatement(studentId) {
   const total   = invoices.reduce((s,inv)=>s+(parseFloat(inv.amount_due)||0), 0);
   const paid    = invoices.reduce((s,inv)=>s+(parseFloat(inv.amount_paid)||0), 0);
   const balance = total - paid;
-  // Overpayments are now held as a prepayment credit (GL 20-01-000) rather than
-  // assumed impossible — a negative summed balance means credit/prepaid, not arrears.
+  // Overpayments are now held as a prepayment credit on the liability side
+  // rather than assumed impossible — a negative summed balance means
+  // credit/prepaid, not arrears. (No account number cited on purpose: the
+  // 2026-08-31 CoA restructure renumbered every account, and the FE resolves
+  // control accounts by id through the backend's env-var pointers anyway.)
   const arrearsLabel   = balance > 0 ? 'FEES ARREARS' : (balance < 0 ? 'PREPAID / CREDIT BALANCE' : 'FEES ARREARS / PREPAID');
   const arrearsDisplay = Math.abs(balance).toLocaleString();
 

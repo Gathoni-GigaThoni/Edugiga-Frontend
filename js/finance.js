@@ -2513,13 +2513,27 @@ async function submitCoaEdit(id, returnView) {
 // No account detail *page* exists for CoA (split-view's own detail pane is
 // the closest thing) — these hang off cfg.detailActions the same way
 // Payables' Approve/Void buttons hang off its detail pane.
+// The five class roots the backend lists in PROTECTED_ACCOUNT_NUMBERS. PATCH
+// /number answers 403 for these (and for two further parents the router pins
+// but does not publish), so the button is withheld rather than disabled — an
+// affordance that can only ever fail is worse than no affordance. The server
+// 403 stays the backstop for the two we cannot name here.
+const _COA_PROTECTED_NUMBERS = ['10-00-000', '20-00-000', '30-00-000', '40-00-000', '50-00-000'];
+function _coaIsProtectedRoot(acct) {
+  return _COA_PROTECTED_NUMBERS.includes(String(acct?.number || '').trim());
+}
+
 function _coaDetailActions(item) {
+  const protectedRoot = _coaIsProtectedRoot(item);
   const superAdminActions = _isSuperAdmin() ? `
     <button class="fin-btn-outline" onclick="_coaOpenReclassifyModal(${item.id})">Reclassify</button>
     <button class="fin-btn-outline" onclick="_coaOpenHistoryModal(${item.id})">Classification History</button>
-    <button class="fin-btn-outline" onclick="_coaOpenRenumberModal(${item.id})">Change Account Number</button>` : '';
+    ${protectedRoot ? '' : `<button class="fin-btn-outline" onclick="_coaOpenRenumberModal(${item.id})">Change Account Number</button>`}` : '';
   return `${superAdminActions}
     <button class="fin-btn-outline" style="color:#c0392b;border-color:#c0392b;" onclick="_coaDeleteAccount(${item.id})">Delete</button>
+    ${_isSuperAdmin() && protectedRoot ? `<div style="width:100%;margin-top:10px;padding:9px 13px;border-radius:6px;border-left:3px solid var(--navy-700,#1B3057);background:var(--navy-50,#EEF3FA);color:var(--navy-700,#1B3057);font-size:0.82rem;">
+      ${_finEsc(item.number || '')} is a protected class root — its number is fixed and cannot be changed.
+    </div>` : ''}
     ${_isSuperAdmin() ? _coaNumberHistorySection(item.id) : ''}`;
 }
 
@@ -2718,6 +2732,13 @@ function _coaRenumberSyncValid(showNumErr = false) {
 function _coaOpenRenumberModal(id) {
   const acct = chartOfAccountsData.find(a => String(a.id) === String(id));
   if (!acct) return;
+  // Belt and braces: _coaDetailActions already withholds the button on a
+  // protected root, but the modal is reachable from the console and from any
+  // future call site.
+  if (_coaIsProtectedRoot(acct)) {
+    showToast(`${acct.number} is a protected class root — its number cannot be changed.`, 'error');
+    return;
+  }
   _coaRenumberInFlight = false;
   const wrap = document.createElement('div');
   wrap.id = 'coa-renumber-modal-overlay';
@@ -2737,10 +2758,12 @@ function _coaOpenRenumberModal(id) {
         <input id="coa-num-new" class="fin-form-input" type="text" placeholder="XX-YY-ZZZ (e.g. 10-01-201)" maxlength="20"
                oninput="_coaRenumberSyncValid()" onblur="_coaRenumberSyncValid(true)">
         <div id="coa-num-error" style="display:none;color:var(--coral-600);font-size:0.78rem;"></div>
+        <span class="fin-field-hint">Two-digit class, two-digit group, three-digit leaf (e.g. 10-01-201). Class codes are 10 Assets, 20 Liabilities, 30 Equity, 40 Income, 50 Expense. Must be unique.</span>
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Reason for renumber <span class="fin-required">*</span></label>
         <textarea id="coa-num-reason" class="fin-form-textarea" rows="3" maxlength="500" placeholder="3-500 characters..." oninput="_coaRenumberReasonCounter()"></textarea>
+        <span class="fin-field-hint">Recorded in the account's Number History. Give the operational reason, not just "typo".</span>
         <span style="font-size:11px;color:var(--grey-400,#999);float:right;" id="coa-num-reason-count">0/500</span>
       </div>
       <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
