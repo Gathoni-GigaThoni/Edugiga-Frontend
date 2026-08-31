@@ -87,8 +87,15 @@ async function _hrDirReload() {
     rowLabel: e => `${e.first_name||''} ${e.last_name||''}`.trim() || '—',
     rowSub:   e => e.email || '',
     idKey: 'id',
+    // The list endpoint doesn't filter Directors out, so a Manager still sees
+    // the row and its list-level fields — only the single-record GET is
+    // gated. Marking the row is the honest middle: nothing is hidden that the
+    // backend still returns, but Edit not opening is no longer a surprise.
     detailFields: [
       {label:'Name',        key:'first_name', fmt:(_,e)=>`${e.first_name||''} ${e.last_name||''}`.trim()},
+      {label:'Access',      key:'is_director', hideWhen:e=>!e.is_director || _isSuperAdmin(),
+        fmt:()=>'<span style="color:var(--navy-700,#1B3057);font-weight:600;">Director profile — the full record is restricted to Directors and Super Admins.</span>',
+        fullWidth:true},
       {label:'Emp Code',    key:'employee_code', fmt:v=>v||'—'},
       {label:'Email',       key:'email', fmt:v=>v||'—'},
       {label:'Phone',       key:'phone_number', fmt:(v,e)=>v?`${e.phone_country_code||''} ${v}`.trim():'—'},
@@ -186,6 +193,34 @@ function _hrMapEditRecord(full, listRecord) {
   return r;
 }
 
+// Every HR endpoint that returns an Employee with is_director=True now calls
+// _assert_director_visibility(): Super_Admin and Director see the profile,
+// everybody else gets a 403 naming the rule. That is a governance decision,
+// not an error the user can retry out of, so it renders as its own screen
+// rather than as a red toast over a half-drawn edit form.
+function _hrIsDirectorRestriction(status, msg) {
+  return status === 403 && /director profile/i.test(String(msg || ''));
+}
+
+function _hrRenderRestricted(container, msg) {
+  container.innerHTML = `
+    <div class="fin-page">
+      <div style="max-width:560px;margin:40px auto;background:var(--white,#fff);border-radius:8px;padding:28px;box-shadow:0 1px 4px rgba(0,0,0,0.06);">
+        <div style="padding:12px 16px;border-radius:6px;background:var(--navy-50,#EEF3FA);border-left:3px solid var(--navy-700,#1B3057);color:var(--navy-700,#1B3057);font-weight:700;font-size:1rem;">
+          Access Restricted
+        </div>
+        <p style="font-size:0.9rem;color:#555;margin:16px 0 0;">
+          Director profiles are visible only to Directors and Super Admins.
+          Ask a Super Admin if you need access to this profile.
+        </p>
+        ${msg ? `<p style="font-size:0.8rem;color:#888;margin:12px 0 0;">${_finEsc(msg)}</p>` : ''}
+        <div style="margin-top:22px;">
+          <button class="btn-primary" style="padding:9px 20px;" onclick="loadView('hr-employee-directory')">Back to Employees</button>
+        </div>
+      </div>
+    </div>`;
+}
+
 async function hrEditEmployee(empKey) {
   document.querySelectorAll('[id^="hr-dd-"]').forEach(d => d.style.display = 'none');
   const listRecord = employeesData.find(e =>
@@ -193,7 +228,15 @@ async function hrEditEmployee(empKey) {
   );
   if (!listRecord) { showPlaceholder(document.getElementById('main-content'), 'Employee not found'); return; }
   const res = await apiFetch(`${API_BASE}/hr/employees/${listRecord.id}`);
-  if (!res || !res.ok) { showToast('Could not load employee details.', 'error'); return; }
+  if (!res || !res.ok) {
+    const msg = res ? await parseApiError(res) : '';
+    if (res && _hrIsDirectorRestriction(res.status, msg)) {
+      _hrRenderRestricted(document.getElementById('main-content'), msg);
+      return;
+    }
+    showToast('Could not load employee details.', 'error');
+    return;
+  }
   const full = await res.json();
   hrEditRecord = _hrMapEditRecord(full, listRecord);
   hrEditActiveTab = 'basic';
