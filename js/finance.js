@@ -2513,14 +2513,23 @@ async function submitCoaEdit(id, returnView) {
 // No account detail *page* exists for CoA (split-view's own detail pane is
 // the closest thing) — these hang off cfg.detailActions the same way
 // Payables' Approve/Void buttons hang off its detail pane.
-// The five class roots the backend lists in PROTECTED_ACCOUNT_NUMBERS. PATCH
-// /number answers 403 for these (and for two further parents the router pins
-// but does not publish), so the button is withheld rather than disabled — an
-// affordance that can only ever fail is worse than no affordance. The server
-// 403 stays the backstop for the two we cannot name here.
-const _COA_PROTECTED_NUMBERS = ['10-00-000', '20-00-000', '30-00-000', '40-00-000', '50-00-000'];
+// PATCH /accounts/{id}/number answers 403 for accounts the backend holds in
+// PROTECTED_ACCOUNT_NUMBERS. That set is much larger than the five class roots
+// the addendum described: probing staging, every `XX-YY-000` group root is
+// refused (10-00-000, 10-01-000, 30-21-000, 50-35-000 all 403) and so are
+// sub-headers like 10-01-200 "Bank Accounts", while leaves are accepted
+// (10-01-101, 10-01-201, 10-01-301 and 10-01-900 all reach the duplicate check
+// instead). The discriminator is almost certainly Account.is_postable, which
+// AccountRead does not expose — so this cannot be computed exactly on the FE.
+//
+// So: withhold the button on the whole `XX-YY-000` family, which is provably
+// protected and covers 56 of the 120 accounts, and let the 403 handle the
+// handful of sub-headers below that. _coaSubmitRenumber renders that 403 as an
+// inline banner rather than a toast precisely because it stays reachable.
+// If AccountRead ever carries is_postable, replace this with that flag.
+const _COA_GROUP_ROOT_RE = /^\d{2}-\d{2}-000$/;
 function _coaIsProtectedRoot(acct) {
-  return _COA_PROTECTED_NUMBERS.includes(String(acct?.number || '').trim());
+  return _COA_GROUP_ROOT_RE.test(String(acct?.number || '').trim());
 }
 
 function _coaDetailActions(item) {
@@ -2749,6 +2758,7 @@ function _coaOpenRenumberModal(id) {
       <div style="padding:12px 14px;border-radius:6px;background:var(--gold-100,#FAF2D3);border:2px solid var(--gold-400,#D4A843);color:#6b5400;font-size:0.82rem;margin-bottom:14px;font-weight:bold;">
         Renumbering shifts this account's position in every report that groups by number (SoFP, cash book, cash flow). The account id is unchanged so journal entries and env vars still resolve, but historical PDF exports keep the old number. Confirm below.
       </div>
+      <div id="coa-num-banner" style="display:none;padding:10px 13px;border-radius:6px;border-left:3px solid var(--coral-500);background:var(--coral-100,#fdecea);color:var(--coral-600,#c0392b);font-size:0.83rem;margin-bottom:12px;"></div>
       <div class="fin-form-group">
         <label class="fin-form-label">Current account number</label>
         <input class="fin-form-input" type="text" value="${_finEsc(acct.number||'')}" disabled>
@@ -2808,7 +2818,24 @@ async function _coaSubmitRenumber(id) {
   // number '10-01-201' already exists…"), so they go out verbatim. Anything
   // 5xx, or a null res from apiFetch's exhausted retries, is not.
   if (!res || res.status >= 500) { showToast('Network error — try again.', 'error'); return; }
-  showToast(await parseApiError(res), 'error');
+  const msg = await parseApiError(res);
+  // 409 is about the value in the New Number field, so it belongs on that
+  // field. 403/404 are about the account itself and get a banner — 403 in
+  // particular is reachable for non-postable sub-headers the FE cannot
+  // identify from AccountRead, and it explains a rule rather than a typo.
+  if (res.status === 409) {
+    const errEl = document.getElementById('coa-num-error');
+    if (errEl) { errEl.style.display = 'block'; errEl.textContent = msg; }
+    document.getElementById('coa-num-new')?.focus();
+    return;
+  }
+  const banner = document.getElementById('coa-num-banner');
+  if (banner) {
+    banner.style.display = 'block';
+    banner.textContent = msg;
+    return;
+  }
+  showToast(msg, 'error');
 }
 
 // Rendered by _coaDetailActions, so it is rebuilt on every detail re-render —

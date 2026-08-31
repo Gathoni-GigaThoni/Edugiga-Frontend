@@ -2017,10 +2017,17 @@ function _pvExpenseAccountOptions(sel) {
     a => `${a.number ? a.number + ' - ' : ''}${a.account_name}`, sel);
 }
 
+// POST /upload/ returns a root-relative path ({"url": "/uploads/<hash>.png"}),
+// so it resolves against the API origin, not the SPA's.
 function _pvDocHref(path) {
   const p = String(path || '');
   if (/^https?:\/\//i.test(p)) return p;
   return API_BASE.replace(/\/api\/?$/, '') + (p.startsWith('/') ? p : '/' + p);
+}
+
+function _pvOpenClaimDocument(path) {
+  return authBlobDownload(_pvDocHref(path), String(path).split('/').pop() || 'receipt',
+    { errorPrefix: 'Could not open the supporting document: ' });
 }
 
 function _pvDateTime(v) {
@@ -2063,11 +2070,12 @@ async function loadPayablesExpenseClaimsView(container) {
       {label:'Amount',       key:'amount', fmt:v=>`<strong>${_pvMoney(v)}</strong>`},
       {label:'Status',       key:'status', fmt:v=>_pvBadge(v)},
       {label:'Submitted',    key:'created_at', fmt:v=>_pvDateTime(v)},
-      // The stored value is whatever POST /upload/ returned — an absolute URL
-      // in practice, but a bare path is possible, so relative values are
-      // resolved against the API origin rather than the SPA's.
+      // /uploads/* is behind the bearer token (verified: 401 without it, 200
+      // with), so a plain <a href> would open a 401 JSON body instead of the
+      // receipt. It has to be fetched with auth and handed over as a blob.
       {label:'Supporting Document', key:'supporting_document_path',
-        fmt:v=>v ? `<a href="${_finEsc(_pvDocHref(v))}" target="_blank" rel="noopener">${_finEsc(String(v).split('/').pop() || 'View document')}</a>`
+        fmt:v=>v ? `<button class="fin-btn-outline" style="padding:3px 10px!important;font-size:0.8rem;"
+                            onclick="_pvOpenClaimDocument('${_finEsc(String(v).replace(/'/g, "\\'"))}')">${_finEsc(String(v).split('/').pop() || 'Open document')}</button>`
                  : '<span style="color:var(--gold-500,#C9A227);font-weight:600;">None attached</span>'},
       {label:'Approved By',  key:'approved_by', fmt:v=>_finEsc(_pvEmployeeRef(v)),
         hideWhen:c=>!c.approved_by},
@@ -2187,8 +2195,9 @@ async function loadPayablesExpenseClaimsAddView(container) {
         </div>
         <div class="fin-form-group">
           <label class="fin-form-label">Supporting Document</label>
-          <input type="file" id="ec-f-doc" class="fin-form-input" accept="image/*,application/pdf" onchange="_pvEcOnDocPicked()">
-          <span class="fin-field-hint">Upload a receipt or invoice image (optional).</span>
+          <input type="file" id="ec-f-doc" class="fin-form-input"
+                 accept=".jpg,.jpeg,.png,.webp,.pdf,.docx" onchange="_pvEcOnDocPicked()">
+          <span class="fin-field-hint">Upload a receipt or invoice (optional). JPG, PNG, WEBP, PDF or DOCX &mdash; the server rejects anything else.</span>
           <div id="ec-f-doc-status" style="font-size:0.82rem;margin-top:4px;"></div>
           <span class="fin-field-error" id="ec-f-doc-err"></span>
         </div>
