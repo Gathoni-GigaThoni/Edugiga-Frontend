@@ -499,3 +499,64 @@ async function downloadBulkTemplate(module) {
   a.remove();
   URL.revokeObjectURL(url);
 }
+
+// ── Fee-invoice balance: three columns, not two ──────────────────────────────
+// (Credit Note sub-ledger refactor, BE addendum 2026-09-01 §1.) Applying a
+// credit note used to mutate fee_invoices.amount_due in place. It no longer
+// does: amount_due stays at the issue-time figure forever and the reversal is
+// booked into a third column, amount_credited. The live balance is therefore
+//
+//     balance = amount_due − amount_paid − amount_credited
+//
+// and the old two-column subtraction over-reports the balance of every invoice
+// that has ever had a credit note applied.
+//
+// Wherever the server sends `balance` it has already done this arithmetic —
+// use it verbatim. Verified against the live openapi.json on 2026-09-01:
+// ParentPortalInvoice, FeeReminderRow, AgingStudentDebtorRow and
+// StudentFeeStatusRead all carry `balance`, but the staff FeeInvoiceRead does
+// NOT — it carries neither `balance` nor `amount_credited`. Staff invoice
+// screens have to source the credited figure themselves; that is what
+// loadAppliedCreditIndex()/creditedForInvoice() below are for. Pass the result
+// as `creditedOverride` and it wins over both server fields, since the server
+// didn't net it off in the first place.
+function invoiceBalance(inv, creditedOverride) {
+  if (!inv) return 0;
+  const due  = parseFloat(inv.amount_due)  || 0;
+  const paid = parseFloat(inv.amount_paid) || 0;
+  if (creditedOverride != null) return due - paid - (parseFloat(creditedOverride) || 0);
+  if (inv.balance != null && inv.balance !== '') {
+    const b = parseFloat(inv.balance);
+    if (!isNaN(b)) return b;
+  }
+  return due - paid - (parseFloat(inv.amount_credited) || 0);
+}
+
+// GET /receivables/credit-notes?status=applied, indexed by fee_invoice_id.
+// The staff FeeInvoiceRead shape has no amount_credited column, so the credit
+// note list is the only place a staff invoice screen can learn how much of an
+// invoice was settled by credit rather than cash. One fetch per session, and a
+// forced refresh after any apply so a just-applied CN shows immediately.
+// Returns null (rather than an empty index) on a failed fetch — a network
+// blip must not masquerade as "nothing has ever been credited", which would
+// silently reinstate the two-column answer for every invoice on the screen.
+let _finAppliedCreditsByInvoice = null;
+async function loadAppliedCreditIndex(force = false) {
+  if (_finAppliedCreditsByInvoice && !force) return _finAppliedCreditsByInvoice;
+  const res = await apiFetch(`${API_BASE}/receivables/credit-notes?status=applied`);
+  if (!res || !res.ok) return null;
+  const map = {};
+  _toArray(await res.json()).forEach(cn => {
+    if (cn.fee_invoice_id == null) return;
+    map[cn.fee_invoice_id] = (map[cn.fee_invoice_id] || 0) + (parseFloat(cn.amount) || 0);
+  });
+  _finAppliedCreditsByInvoice = map;
+  return map;
+}
+// null means "index unavailable" — callers pass that straight through to
+// invoiceBalance as creditedOverride, which then falls back to whatever the
+// server sent rather than assuming zero.
+function creditedForInvoice(invoiceId) {
+  if (!_finAppliedCreditsByInvoice) return null;
+  return _finAppliedCreditsByInvoice[invoiceId] || 0;
+}

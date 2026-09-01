@@ -1190,28 +1190,37 @@ function _repRenderStudentFeeAnalysis(data) {
   const out = document.getElementById('rep-output');
   const rows = (data && data.rows) || [];
   if (!rows.length) { out.innerHTML = '<div class="fin-table-wrap"><table class="fin-table"><tbody><tr><td class="fin-empty">No data for the selected criteria.</td></tr></tbody></table></div>'; return; }
+  // total_credited landed on both the row and the envelope in the 2026-09-01
+  // credit-note refactor. The column earns its place only when something on
+  // this report was actually credited — otherwise it's a column of dashes.
+  // `balance` is server-computed from all three columns; never re-derive it.
+  const anyCredited = (parseFloat(data.total_credited) || 0) > 0
+    || rows.some(r => (parseFloat(r.total_credited) || 0) > 0);
   const bodyRows = rows.map(r => {
     const paymentsHtml = (r.payments || []).map(p => `
       <tr style="background:#fafafa;">
         <td colspan="2" style="padding-left:24px;color:#666;font-size:0.85rem;">&#8618; ${_finEsc(p.payment_date||'')} &middot; ${p.payment_method ? _finEsc(p.payment_method) : '—'} &middot; ${_finEsc(p.reference||'—')}</td>
-        <td></td><td style="font-size:0.85rem;color:#666;">${_pvMoney(p.amount)}</td><td></td>
+        <td></td><td style="font-size:0.85rem;color:#666;">${_pvMoney(p.amount)}</td>${anyCredited?'<td></td>':''}<td></td>
       </tr>`).join('');
+    const credited = parseFloat(r.total_credited) || 0;
     return `<tr>
         <td>${_finEsc(r.student_display_id||'')}<br><span style="font-size:0.8rem;color:#888;">${_finEsc(r.student_name||'')} &middot; ${_finEsc(r.class_name||'—')}</span></td>
         <td>${_finEsc(r.invoice_number||'')}<br><span style="font-size:0.8rem;color:#888;">${_finEsc(r.invoice_date||'')} &middot; ${r.term_name ? _finEsc(r.term_name) : '—'}</span></td>
         <td>${_pvMoney(r.amount_due)}</td>
         <td>${_pvMoney(r.total_paid)}</td>
+        ${anyCredited?`<td style="color:${credited?'#7a6110':'inherit'};">${credited?_pvMoney(credited):'—'}</td>`:''}
         <td>${_pvMoney(r.balance)}</td>
       </tr>${paymentsHtml}`;
   }).join('');
   out.innerHTML = `
     <div class="fin-table-wrap"><table class="fin-table">
-      <thead><tr><th>STUDENT</th><th>INVOICE</th><th>AMOUNT DUE</th><th>TOTAL PAID</th><th>BALANCE</th></tr></thead>
+      <thead><tr><th>STUDENT</th><th>INVOICE</th><th>AMOUNT DUE</th><th>TOTAL PAID</th>${anyCredited?'<th>CREDITED</th>':''}<th>BALANCE</th></tr></thead>
       <tbody>${bodyRows}</tbody>
       <tfoot><tr class="fin-tfoot-total">
         <td colspan="2"><strong>TOTALS</strong></td>
         <td><strong>${_pvMoney(data.total_invoiced)}</strong></td>
         <td><strong>${_pvMoney(data.total_paid)}</strong></td>
+        ${anyCredited?`<td><strong>${_pvMoney(data.total_credited)}</strong></td>`:''}
         <td><strong>${_pvMoney(data.total_balance)}</strong></td>
       </tr></tfoot>
     </table></div>`;

@@ -2584,9 +2584,15 @@ async function openStudentFeeStatement(studentId) {
 
   // Totals come from the invoice header (amount_due/amount_paid), which the backend
   // computes authoritatively, rather than re-summed from line_items client-side.
-  const total   = invoices.reduce((s,inv)=>s+(parseFloat(inv.amount_due)||0), 0);
-  const paid    = invoices.reduce((s,inv)=>s+(parseFloat(inv.amount_paid)||0), 0);
-  const balance = total - paid;
+  // Credit notes are the third column as of the 2026-09-01 refactor: amount_due
+  // is no longer reduced in place when one is applied, so a statement that
+  // subtracts only cash receipts bills the parent for money already forgiven.
+  // FeeInvoiceRead doesn't carry amount_credited, hence the applied-CN index.
+  await loadAppliedCreditIndex();
+  const total    = invoices.reduce((s,inv)=>s+(parseFloat(inv.amount_due)||0), 0);
+  const paid     = invoices.reduce((s,inv)=>s+(parseFloat(inv.amount_paid)||0), 0);
+  const credited = invoices.reduce((s,inv)=>s+(creditedForInvoice(inv.id)||0), 0);
+  const balance  = total - paid - credited;
   // Overpayments are now held as a prepayment credit on the liability side
   // rather than assumed impossible — a negative summed balance means
   // credit/prepaid, not arrears. (No account number cited on purpose: the
@@ -2660,6 +2666,7 @@ async function openStudentFeeStatement(studentId) {
         <tbody>${rows}</tbody>
         <tfoot>
           <tr class="total-row"><td>TOTAL</td><td>${total.toLocaleString()}</td></tr>
+          ${credited ? `<tr><td style="padding:10px 16px;">Less: credit notes applied</td><td style="padding:10px 16px;text-align:right;">(${credited.toLocaleString()})</td></tr>` : ''}
           <tr class="balance-row"><td>Balance</td><td>${balance.toLocaleString()}</td></tr>
         </tfoot>
       </table>
@@ -2879,10 +2886,31 @@ async function _stuExportSoa(studentId, format) {
   });
 }
 
+// entry_type gained a third value, "credit_note", in the 2026-09-01 refactor
+// (§1.4). The trailing branch renders any future value as a plain label rather
+// than an empty cell, so a fourth type added by a later addendum still shows
+// its row instead of silently looking like a blank line in the ledger.
 function _stuSoaLineTypePill(type) {
   if (type === 'invoice') return '<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.75rem;font-weight:600;color:var(--white);background:var(--navy-700);">Invoice</span>';
-  if (type === 'receipt') return '<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.75rem;font-weight:600;color:#7a6110;background:var(--gold-100);">Receipt</span>';
-  return _esc(type || '');
+  if (type === 'receipt') return '<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.75rem;font-weight:600;color:#1e7e34;background:#d1fae5;">Receipt</span>';
+  if (type === 'credit_note') return '<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.75rem;font-weight:600;color:#7a6110;background:var(--gold-100);">Credit Note</span>';
+  return `<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.75rem;font-weight:600;color:#555;background:#eee;">${_esc(String(type || '—').replace(/_/g, ' '))}</span>`;
+}
+
+// Each line carries the id of whatever it came from — invoice_id, receipt_id
+// or (new) credit_note_id. Only two of the three have somewhere to land: the
+// SPA has an invoice detail view and a Credit Notes module, but no standalone
+// Receipts screen, so a receipt row stays plain text rather than pointing at
+// a route that doesn't exist.
+function _stuSoaLineRef(l) {
+  const ref = _esc(l.reference || '—');
+  if (l.entry_type === 'invoice' && l.invoice_id) {
+    return `<a href="#" onclick="loadInvoiceDetailView(document.getElementById('main-content'),${l.invoice_id});return false;">${ref}</a>`;
+  }
+  if (l.entry_type === 'credit_note' && l.credit_note_id) {
+    return `<a href="#" onclick="loadView('fin-credit-notes');return false;" title="Credit note #${l.credit_note_id}">${ref}</a>`;
+  }
+  return ref;
 }
 
 function _stuRenderSoaResult(data, startDate) {
@@ -2891,10 +2919,20 @@ function _stuRenderSoaResult(data, startDate) {
   if (!data || typeof data !== 'object') { out.innerHTML = '<p class="fin-empty">No data for the selected criteria.</p>'; return; }
   const contact = data.contact || {};
   const lines = data.lines || [];
+  // total_credited is new on the envelope (§1.3). The CREDIT column of the
+  // ledger already sums payments *and* credit notes, so the footer's credit
+  // total has to be paid+credited or it won't tie back to the column above it;
+  // the credited slice is called out underneath rather than given a column of
+  // its own, since the ledger is a debit/credit statement, not a three-column one.
+  const credited  = parseFloat(data.total_credited) || 0;
+  const totalPaid = (parseFloat(data.total_paid) || 0) + credited;
+  // Server sorts lines (entry_date ASC, type_order ASC) — never re-sort here,
+  // or a same-day invoice/receipt/credit-note trio renders out of the order
+  // its running_balance column was computed in (§1.4).
   const lineRows = lines.map(l => `<tr>
     <td>${_esc(l.entry_date || '')}</td>
     <td>${_stuSoaLineTypePill(l.entry_type)}</td>
-    <td>${_esc(l.reference || '—')}</td>
+    <td>${_stuSoaLineRef(l)}</td>
     <td>${_esc(l.description || '')}</td>
     <td>${l.debit ? formatKES(l.debit) : '—'}</td>
     <td>${l.credit ? formatKES(l.credit) : '—'}</td>
@@ -2917,7 +2955,7 @@ function _stuRenderSoaResult(data, startDate) {
         <tr class="fin-tfoot-total">
           <td colspan="4"><strong>Totals</strong></td>
           <td><strong>${formatKES(data.total_invoiced)}</strong></td>
-          <td><strong>${formatKES(data.total_paid)}</strong></td>
+          <td><strong>${formatKES(totalPaid)}</strong>${credited ? `<br><small style="color:#7a6110;">incl. ${formatKES(credited)} credited</small>` : ''}</td>
           <td><strong>${formatKES(data.closing_balance)}</strong></td>
         </tr>
       </tbody>

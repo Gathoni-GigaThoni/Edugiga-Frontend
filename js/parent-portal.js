@@ -483,6 +483,11 @@ async function ppRenderFees(studentId, studentName) {
 
   const totalDue = invoices.reduce((s, i) => s + Number(i.amount_due || 0), 0);
   const totalPaid = invoices.reduce((s, i) => s + Number(i.amount_paid || 0), 0);
+  // ParentPortalInvoice gained amount_credited in the 2026-09-01 refactor, and
+  // its `balance` is now amount_due − amount_paid − amount_credited. The
+  // Credited tile and column are hidden entirely when nothing on this child's
+  // account has ever been credited, which is the common case.
+  const totalCredited = invoices.reduce((s, i) => s + Number(i.amount_credited || 0), 0);
   const totalBalance = invoices.reduce((s, i) => s + Number(i.balance || 0), 0);
 
   contentEl.innerHTML = `
@@ -495,6 +500,10 @@ async function ppRenderFees(studentId, studentName) {
         <p class="pp-summary-label">Total Paid</p>
         <p class="pp-summary-value">${ppMoney(totalPaid)}</p>
       </div>
+      ${totalCredited ? `<div class="pp-summary-tile">
+        <p class="pp-summary-label">Total Credited</p>
+        <p class="pp-summary-value">${ppMoney(totalCredited)}</p>
+      </div>` : ''}
       <div class="pp-summary-tile">
         <p class="pp-summary-label">Outstanding Balance</p>
         <p class="pp-summary-value pp-balance-due">${ppMoney(totalBalance)}</p>
@@ -509,6 +518,7 @@ async function ppRenderFees(studentId, studentName) {
             <th>Due Date</th>
             <th>Amount Due</th>
             <th>Amount Paid</th>
+            ${totalCredited ? '<th>Credited</th>' : ''}
             <th>Balance</th>
             <th>Status</th>
           </tr>
@@ -521,6 +531,7 @@ async function ppRenderFees(studentId, studentName) {
               <td>${ppDate(inv.due_date)}</td>
               <td>${ppMoney(inv.amount_due)}</td>
               <td>${ppMoney(inv.amount_paid)}</td>
+              ${totalCredited ? `<td>${Number(inv.amount_credited || 0) ? ppMoney(inv.amount_credited) : '—'}</td>` : ''}
               <td>${ppMoney(inv.balance)}</td>
               <td><span class="pp-status-badge pp-status-${ppEsc(inv.status || 'draft')}">${ppEsc((inv.status || '—').replace(/_/g, ' '))}</span></td>
             </tr>

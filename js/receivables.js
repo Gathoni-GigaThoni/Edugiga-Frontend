@@ -1009,6 +1009,10 @@ async function rcvInvLoad() {
   if (_rcvInvFilterStudent) url += `student_id=${_rcvInvFilterStudent}&`;
   const res = await apiFetch(url.replace(/&$/, ''));
   _rcvInvData = (res && res.ok) ? _toArray(await res.json()) : [];
+  // FeeInvoiceRead carries no amount_credited (checked live 2026-09-01), so
+  // the credited column comes from the applied-credit-note index instead —
+  // without it every CN'd invoice on this list over-reports its balance.
+  await loadAppliedCreditIndex();
   _rcvRenderInvTable();
 }
 
@@ -1041,23 +1045,29 @@ function _rcvRenderInvTable() {
   if(!_rcvInvData.length){el.innerHTML='<p style="color:#888;padding:20px 0;">No invoices found.</p>';return;}
   const start=(_rcvInvPage-1)*_rcvInvPerPage;
   const paged=_rcvInvData.slice(start,start+_rcvInvPerPage);
+  // The CREDITED column is suppressed entirely when no invoice on this page
+  // has one (§1.3) — most operators never issue credit notes and shouldn't
+  // pay a column of zeroes for it.
+  const anyCredited = paged.some(inv => (creditedForInvoice(inv.id) || 0) > 0);
   const rows=paged.map(inv=>{
     const due=parseFloat(inv.amount_due||0);
     const paid=parseFloat(inv.amount_paid||0);
-    const bal=due-paid;
+    const credited=creditedForInvoice(inv.id);
+    const bal=invoiceBalance(inv, credited);
     return `<tr style="cursor:pointer;" onclick="loadInvoiceDetailView(document.getElementById('main-content'),${inv.id})">
       <td><a href="#" onclick="loadInvoiceDetailView(document.getElementById('main-content'),${inv.id});return false;">${_finEsc(inv.invoice_number||`#${inv.id}`)}</a></td>
       <td>${_finEsc(_rcvStudentName(inv.student_id))}</td>
       <td>${_finEsc(_rcvTermName(inv.term_id))}</td>
       <td>KES ${_finFmt(due)}</td>
       <td>KES ${_finFmt(paid)}</td>
+      ${anyCredited?`<td>${credited?`KES ${_finFmt(credited)}`:'—'}</td>`:''}
       <td>KES ${_finFmt(bal)}</td>
       <td>${_rcvInvStatusBadge(inv.status)}</td>
       <td>${_finEsc((inv.due_date||'').split('T')[0])}</td>
     </tr>`;
   }).join('');
   el.innerHTML=`<div class="fin-table-wrap"><table class="fin-table"><thead><tr>
-    <th>INVOICE NO.</th><th>STUDENT</th><th>TERM</th><th>AMOUNT DUE</th><th>PAID</th><th>BALANCE</th><th>STATUS</th><th>DUE DATE</th>
+    <th>INVOICE NO.</th><th>STUDENT</th><th>TERM</th><th>AMOUNT DUE</th><th>PAID</th>${anyCredited?'<th>CREDITED</th>':''}<th>BALANCE</th><th>STATUS</th><th>DUE DATE</th>
   </tr></thead><tbody>${rows}</tbody></table></div>`;
   const pages=Math.max(1,Math.ceil(_rcvInvData.length/_rcvInvPerPage));
   let pg=''; for(let i=1;i<=pages;i++) pg+=`<button class="${i===_rcvInvPage?'fin-pg-active':''}" onclick="_rcvInvPage=${i};_rcvRenderInvTable()">${i}</button>`;
@@ -1202,9 +1212,16 @@ async function loadInvoiceDetailView(container, invoiceId) {
   const inv = await res.json();
   await _rcvLoadLookups({ terms:true, students:true, accounts:true, items:true });
   const lineItems = _toArray(inv.line_items||inv.lineItems||[]);
+  // Applied credit notes are a third money column as of the 2026-09-01
+  // refactor, but FeeInvoiceRead doesn't carry it — so read it off the
+  // credit-note list. Forced refresh: the operator often arrives here right
+  // after applying a CN, and a stale session-cached index would show the
+  // pre-apply balance on the very screen that proves the CN worked.
+  await loadAppliedCreditIndex(true);
   const due  = parseFloat(inv.amount_due||0);
   const paid = parseFloat(inv.amount_paid||0);
-  const bal  = due - paid;
+  const credited = creditedForInvoice(inv.id);
+  const bal  = invoiceBalance(inv, credited);
   const hasFull = lineItems.some(li => li.base_unit_price!=null);
   const lineRows = lineItems.length ? lineItems.map(li => {
     const acctName = _rcvLineItemAccountName(li);
@@ -1294,6 +1311,9 @@ async function loadInvoiceDetailView(container, invoiceId) {
         <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
           <span>Amount Paid</span><span>KES ${_finFmt(paid)}</span>
         </div>
+        ${credited ? `<div style="display:flex;justify-content:space-between;margin-bottom:6px;color:#7a6110;">
+          <span>Credited <small style="color:#888;">(applied credit notes)</small></span><span>KES ${_finFmt(credited)}</span>
+        </div>` : ''}
         <div style="display:flex;justify-content:space-between;font-weight:700;font-size:1.05rem;border-top:1px solid #e5e7eb;padding-top:8px;">
           <span>Balance</span><span>KES ${_finFmt(bal)}</span>
         </div>

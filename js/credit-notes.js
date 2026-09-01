@@ -27,7 +27,16 @@ async function _cnFetchAllInvoices() {
   if (_cnInvoicesCache) return _cnInvoicesCache;
   const res = await apiFetch(`${API_BASE}/receivables/fee-invoices`);
   _cnInvoicesCache = (res && res.ok) ? _toArray(await res.json()) : [];
+  // Outstanding balance shown next to an invoice in this module's pickers has
+  // to net off credit notes already applied to it, or the operator sizes a new
+  // CN against a balance that was settled by an earlier one. FeeInvoiceRead
+  // carries no amount_credited, so the figure comes from the applied-CN index.
+  await loadAppliedCreditIndex();
   return _cnInvoicesCache;
+}
+// Shared by all three invoice-balance renderings in this module (§1.2).
+function _cnInvoiceBalance(inv) {
+  return invoiceBalance(inv, creditedForInvoice(inv.id));
 }
 function _cnInvoiceById(id) {
   return (_cnInvoicesCache || []).find(inv => String(inv.id) === String(id)) || null;
@@ -133,7 +142,7 @@ async function _cnSubmitReject(id) {
 async function _cnOpenApplyModal(id, cnNumber, amount, feeInvoiceId) {
   await _cnFetchAllInvoices();
   const inv = _cnInvoiceById(feeInvoiceId);
-  const outstanding = inv ? (parseFloat(inv.amount_due)||0) - (parseFloat(inv.amount_paid)||0) : null;
+  const outstanding = inv ? _cnInvoiceBalance(inv) : null;
   const overApplies = outstanding != null && parseFloat(amount) > outstanding + 0.005;
   const wrap = document.createElement('div');
   wrap.id = 'cn-apply-modal-overlay';
@@ -163,6 +172,10 @@ async function _cnApply(id) {
   if (res.ok) {
     document.getElementById('cn-apply-modal-overlay')?.remove();
     showToast('Credit note applied to invoice.', 'success');
+    // The applied-CN index is what every invoice balance on the FE now nets
+    // off — leave it stale and this CN stays invisible to the arithmetic
+    // until the next full reload.
+    await loadAppliedCreditIndex(true);
     await window._splitRefreshSelected?.();
     return;
   }
@@ -241,7 +254,7 @@ function _cnInvoiceSearch(term) {
   resultsEl.style.display = 'block';
   resultsEl.innerHTML = filtered.length
     ? filtered.map(inv => {
-        const bal = (parseFloat(inv.amount_due)||0) - (parseFloat(inv.amount_paid)||0);
+        const bal = _cnInvoiceBalance(inv);
         return `<div style="padding:8px 12px;border-bottom:1px solid #f0f0f0;cursor:pointer;" onclick="_cnPickInvoice(${inv.id})">
           <strong>${_finEsc(inv.invoice_number || ('#'+inv.id))}</strong> — ${_finEsc(_invStudentName(inv.student_id))}
           <span style="float:right;color:#888;">Bal ${_pvMoney(bal)}</span>
@@ -262,7 +275,7 @@ function _cnRenderSelectedInvoice() {
   if (!el) return;
   if (!_cnSelectedInvoice) { el.innerHTML = ''; return; }
   const inv = _cnSelectedInvoice;
-  const bal = (parseFloat(inv.amount_due)||0) - (parseFloat(inv.amount_paid)||0);
+  const bal = _cnInvoiceBalance(inv);
   el.innerHTML = `
     <div style="background:#EEF3FA;border-left:3px solid var(--navy-400,#4A6FA5);border-radius:6px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;">
       <div>
