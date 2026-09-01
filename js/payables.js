@@ -2144,9 +2144,13 @@ function _pvEcDetailActions(c) {
       <a href="#" onclick="loadView('payables-expense-claim-disbursements-add');return false;" style="color:inherit;font-weight:600;text-decoration:underline;">Expense Claim Disbursements</a>.
     </div>`;
   }
+  // Edit is SUBMITTED-only: the server 409s on anything else, and a claim
+  // that's been approved or paid has already been acted on downstream —
+  // changing its amount there would silently desynchronise the disbursement.
   const buttons = c.status === 'submitted'
     ? `<button class="fin-btn-teal" onclick="_pvEcApprove(${c.id})">Approve</button>
        <button class="fin-btn-cancel" onclick="_pvEcReject(${c.id})">Reject</button>
+       <button class="btn" onclick="_pvEcEdit(${c.id})" title="Correct the description, amount, date or account before this claim is approved.">Edit</button>
        <button class="btn" onclick="_pvEcAttachReceipt(${c.id})" title="Attach or swap the supporting document without rejecting the claim.">${c.supporting_document_path ? 'Swap Receipt' : 'Attach Receipt'}</button>`
     : '';
   return `${banner}<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">${buttons}</div>
@@ -2213,57 +2217,91 @@ function _pvEcReject(id) {
   });
 }
 
-async function loadPayablesExpenseClaimsAddView(container) {
+// PATCH /payables/expense-claims/{id} (2026-09-01 §F) widened from the
+// receipt-only patch to a full partial update, so a mistyped amount or a
+// miscoded account no longer needs the reject-and-refile dance. Set by the
+// Edit button and read (then cleared) by the form below.
+let _pvEcEditClaim = null;
+async function _pvEcEdit(id) {
+  const res = await apiFetch(`${_PV_EC_API}/${id}`);
+  if (!res) { showToast('Network error.', 'error'); return; }
+  if (res.status === 404) { showToast('That expense claim no longer exists.', 'error'); return; }
+  if (!res.ok) { showToast('Error: ' + await parseApiError(res), 'error'); return; }
+  const claim = await res.json();
+  // Re-checked against the freshly fetched record, not the row that rendered
+  // the button: somebody else may have approved it while this screen sat open.
+  if (claim.status !== 'submitted') {
+    showToast(`This claim is '${claim.status}' — only submitted claims can be edited.`, 'error');
+    await window._splitRefreshSelected?.();
+    return;
+  }
+  _pvEcEditClaim = claim;
+  loadView('payables-expense-claims-edit');
+}
+
+async function loadPayablesExpenseClaimsEditView(container) {
+  const claim = _pvEcEditClaim;
+  if (!claim) { loadView('payables-expense-claims'); return; }
+  await loadPayablesExpenseClaimsAddView(container, claim);
+}
+
+async function loadPayablesExpenseClaimsAddView(container, claim) {
   await _pvLoadLookups();
   _pvEcUploadedDocPath = null;
+  const isEdit = !!claim;
   const today = new Date().toISOString().slice(0, 10);
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
-        <h2 class="fin-title">Add Expense Claim</h2>
+        <h2 class="fin-title">${isEdit ? 'Edit' : 'Add'} Expense Claim</h2>
         <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo;
-          <a href="#" class="fin-bc-link" onclick="loadView('payables-expense-claims');return false;">Expense Claims</a> &rsaquo; Add
+          <a href="#" class="fin-bc-link" onclick="loadView('payables-expense-claims');return false;">Expense Claims</a> &rsaquo; ${isEdit ? 'Edit' : 'Add'}
         </div>
       </div>
       <div class="fin-form-wrap">
+        ${isEdit ? `<div id="ec-f-banner"></div>` : ''}
         <div class="fin-form-group">
           <label class="fin-form-label">Claimant</label>
-          <input type="text" class="fin-form-input" value="${_finEsc(currentUser ? (currentUser.full_name || currentUser.name || currentUser.email || '') : '')}" disabled>
-          <span class="fin-field-hint">The claim is filed against your own staff record — the backend takes the claimant from your session, not from this form.</span>
+          <input type="text" class="fin-form-input" value="${_finEsc(isEdit ? _pvEcClaimant(claim) : (currentUser ? (currentUser.full_name || currentUser.name || currentUser.email || '') : ''))}" disabled>
+          <span class="fin-field-hint">${isEdit
+            ? 'The claimant is fixed at submission and cannot be reassigned here. Any finance.payables holder may correct a submitted claim — the server does not restrict edits to the original claimant.'
+            : 'The claim is filed against your own staff record — the backend takes the claimant from your session, not from this form.'}</span>
         </div>
         <div class="fin-form-grid-2">
           <div class="fin-form-group">
             <label class="fin-form-label">Expense Date <span class="fin-required">*</span></label>
-            <input type="date" id="ec-f-date" class="fin-form-input" max="${today}">
+            <input type="date" id="ec-f-date" class="fin-form-input" max="${today}" value="${_finEsc(isEdit ? String(claim.expense_date || '').slice(0, 10) : '')}">
             <span class="fin-field-error" id="ec-f-date-err"></span>
           </div>
           <div class="fin-form-group">
             <label class="fin-form-label">Expense Account <span class="fin-required">*</span></label>
-            <select id="ec-f-category" class="fin-form-select"><option value="">Please Select</option>${_pvExpenseAccountOptions()}</select>
+            <select id="ec-f-category" class="fin-form-select"><option value="">Please Select</option>${_pvExpenseAccountOptions(isEdit ? claim.category_id : null)}</select>
             <span class="fin-field-hint">Only postable Expense accounts are listed — a reimbursement is an expense, never a balance-sheet line, and a header account can't carry a ledger posting.</span>
             <span class="fin-field-error" id="ec-f-category-err"></span>
           </div>
         </div>
         <div class="fin-form-group">
           <label class="fin-form-label">Amount (KES) <span class="fin-required">*</span></label>
-          <input type="number" id="ec-f-amount" class="fin-form-input" step="0.01" min="0.01">
+          <input type="number" id="ec-f-amount" class="fin-form-input" step="0.01" min="0.01" value="${_finEsc(isEdit ? String(claim.amount ?? '') : '')}">
           <span class="fin-field-error" id="ec-f-amount-err"></span>
         </div>
         <div class="fin-form-group">
           <label class="fin-form-label">Description <span class="fin-required">*</span></label>
-          <textarea id="ec-f-description" class="fin-form-textarea" rows="3" placeholder="What the money was spent on — this is what the approver sees."></textarea>
+          <textarea id="ec-f-description" class="fin-form-textarea" rows="3" placeholder="What the money was spent on — this is what the approver sees.">${_finEsc(isEdit ? (claim.description || '') : '')}</textarea>
           <span class="fin-field-error" id="ec-f-description-err"></span>
         </div>
         <div class="fin-form-group">
           <label class="fin-form-label">Supporting Document</label>
           <input type="file" id="ec-f-doc" class="fin-form-input"
                  accept=".jpg,.jpeg,.png,.webp,.pdf,.docx" onchange="_pvEcOnDocPicked()">
-          <span class="fin-field-hint">Upload a receipt or invoice (optional). JPG, PNG, WEBP, PDF or DOCX &mdash; the server rejects anything else.</span>
-          <div id="ec-f-doc-status" style="font-size:0.82rem;margin-top:4px;"></div>
+          <span class="fin-field-hint">Upload a receipt or invoice (optional). JPG, PNG, WEBP, PDF or DOCX &mdash; the server rejects anything else.${isEdit && claim.supporting_document_path ? ' Leave this empty to keep the receipt already attached.' : ''}</span>
+          <div id="ec-f-doc-status" style="font-size:0.82rem;margin-top:4px;">${isEdit && claim.supporting_document_path
+            ? `Currently attached: <a href="#" onclick="_pvOpenClaimDocument('${_finEsc(claim.supporting_document_path)}');return false;">${_finEsc(String(claim.supporting_document_path).split('/').pop())}</a>`
+            : ''}</div>
           <span class="fin-field-error" id="ec-f-doc-err"></span>
         </div>
         <div class="fin-form-actions">
-          <button class="fin-btn-teal" onclick="_pvEcSubmitAdd()">Submit</button>
+          <button class="fin-btn-teal" onclick="${isEdit ? `_pvEcSubmitEdit(${claim.id})` : '_pvEcSubmitAdd()'}">${isEdit ? 'Update' : 'Submit'}</button>
           <button class="fin-btn-cancel" onclick="loadView('payables-expense-claims')">Cancel</button>
         </div>
       </div>
@@ -2271,23 +2309,8 @@ async function loadPayablesExpenseClaimsAddView(container) {
 }
 
 async function _pvEcSubmitAdd() {
-  let valid = true;
-  [['ec-f-date','ec-f-date-err'],['ec-f-category','ec-f-category-err'],['ec-f-description','ec-f-description-err']].forEach(([fid,eid]) => {
-    const v = document.getElementById(fid).value.trim();
-    document.getElementById(eid).textContent = v ? '' : 'This field is required.';
-    if (!v) valid = false;
-  });
-  // A future-dated expense hasn't been incurred yet, so it can't be claimed —
-  // the max attribute is advisory only (typed dates bypass it in some browsers).
-  const dateEl = document.getElementById('ec-f-date');
-  if (dateEl.value && dateEl.value > new Date().toISOString().slice(0, 10)) {
-    document.getElementById('ec-f-date-err').textContent = 'An expense cannot be dated in the future.';
-    valid = false;
-  }
-  const amount = parseFloat(document.getElementById('ec-f-amount').value);
-  document.getElementById('ec-f-amount-err').textContent = (amount > 0) ? '' : 'Amount must be greater than 0.';
-  if (!(amount > 0)) valid = false;
-  if (!valid) return;
+  const form = _pvEcReadForm();
+  if (!form) return;
 
   // The receipt goes up first: POST /upload/ returns the path the claim then
   // carries as supporting_document_path. Uploading before the claim exists
@@ -2311,9 +2334,7 @@ async function _pvEcSubmitAdd() {
   }
 
   const payload = {
-    description: document.getElementById('ec-f-description').value.trim(),
-    amount, expense_date: dateEl.value,
-    category_id: parseInt(document.getElementById('ec-f-category').value, 10),
+    ...form,
     // Optional[str] on the wire — omitted entirely rather than sent as ''.
     ...(docPath ? { supporting_document_path: docPath } : {}),
   };
@@ -2328,12 +2349,11 @@ async function _pvEcSubmitAdd() {
     }
     if (!res) { showToast('Network error.', 'error'); return; }
     const msg = await parseApiError(res);
-    // Two of the server's 400s are about the chosen account: a non-Expense
-    // type (unreachable — the picker only lists Expense accounts) and a
-    // non-postable header (not filterable yet, AccountRead still doesn't
-    // carry is_postable, so this is the only guard there is). Both name the
-    // account and say what to pick instead, so they belong on the field
-    // rather than in a toast that scrolls away.
+    // Both of the server's account 400s — a non-Expense type and a
+    // non-postable header — are now unreachable through the picker, which
+    // filters on both. Kept as a backstop against a stale cache or a
+    // reclassified account, and left on the field rather than in a toast:
+    // each message names the account and says what to pick instead.
     if (res.status === 400 && /account/i.test(msg)) {
       document.getElementById('ec-f-category-err').textContent = msg;
       document.getElementById('ec-f-category').focus();
@@ -2341,6 +2361,107 @@ async function _pvEcSubmitAdd() {
     }
     showToast('Error: ' + msg, 'error');
   } catch (e) { showToast('Network error.', 'error'); }
+}
+
+// Shared client-side validation for both the create and the update form —
+// the fields and their rules are identical, only the request differs.
+// Returns the validated values, or null if the form isn't submittable.
+function _pvEcReadForm() {
+  let valid = true;
+  [['ec-f-date','ec-f-date-err'],['ec-f-category','ec-f-category-err'],['ec-f-description','ec-f-description-err']].forEach(([fid,eid]) => {
+    const v = document.getElementById(fid).value.trim();
+    document.getElementById(eid).textContent = v ? '' : 'This field is required.';
+    if (!v) valid = false;
+  });
+  // A future-dated expense hasn't been incurred yet, so it can't be claimed —
+  // the max attribute is advisory only (typed dates bypass it in some browsers).
+  const dateEl = document.getElementById('ec-f-date');
+  if (dateEl.value && dateEl.value > new Date().toISOString().slice(0, 10)) {
+    document.getElementById('ec-f-date-err').textContent = 'An expense cannot be dated in the future.';
+    valid = false;
+  }
+  const amount = parseFloat(document.getElementById('ec-f-amount').value);
+  document.getElementById('ec-f-amount-err').textContent = (amount > 0) ? '' : 'Amount must be greater than 0.';
+  if (!(amount > 0)) valid = false;
+  if (!valid) return null;
+  return {
+    description:  document.getElementById('ec-f-description').value.trim(),
+    amount,
+    expense_date: dateEl.value,
+    category_id:  parseInt(document.getElementById('ec-f-category').value, 10),
+  };
+}
+
+// PATCH /payables/expense-claims/{id} — every field optional, omitted fields
+// untouched. Only what actually changed is sent, so two people correcting
+// different fields of the same claim don't overwrite each other's work.
+async function _pvEcSubmitEdit(id) {
+  const form = _pvEcReadForm();
+  if (!form) return;
+  const before = _pvEcEditClaim || {};
+  const payload = {};
+  if (form.description !== (before.description || '')) payload.description = form.description;
+  if (Math.abs(form.amount - (parseFloat(before.amount) || 0)) > 0.0001) payload.amount = form.amount;
+  if (form.expense_date !== String(before.expense_date || '').slice(0, 10)) payload.expense_date = form.expense_date;
+  if (form.category_id !== before.category_id) payload.category_id = form.category_id;
+
+  // A newly picked file replaces the attached receipt; an empty file input
+  // leaves supporting_document_path out of the payload entirely, which is how
+  // the existing receipt survives the edit.
+  const fileEl = document.getElementById('ec-f-doc');
+  const file   = fileEl && fileEl.files && fileEl.files[0];
+  if (file) {
+    _pvEcSetDocStatus('Uploading&#8230;', '#666');
+    const docPath = _pvEcUploadedDocPath || await uploadFile(file);
+    if (!docPath) {
+      // uploadFile has already toasted the reason. Stop rather than saving
+      // the other edits and silently dropping the receipt swap.
+      _pvEcSetDocStatus('Upload failed — nothing was saved.', 'var(--coral-600)');
+      return;
+    }
+    _pvEcUploadedDocPath = docPath;
+    _pvEcSetDocStatus('Uploaded.', 'var(--color-success,#1e7e34)');
+    payload.supporting_document_path = docPath;
+  }
+
+  if (!Object.keys(payload).length) { showToast('Nothing changed.', 'info'); return; }
+
+  const res = await apiFetch(`${_PV_EC_API}/${id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+  if (!res) { showToast('Network error.', 'error'); return; }
+  if (res.ok) {
+    showToast('Claim updated.', 'success');
+    _pvEcEditClaim = null;
+    _pvEcUploadedDocPath = null;
+    _pvEcStatusFilter = 'submitted';
+    window._pvEcOpenId = id;   // land back on this claim's detail, not the top of the queue
+    loadView('payables-expense-claims');
+    return;
+  }
+  const msg = await parseApiError(res);
+  // 404 and 409 are both "this claim moved under you" — a toast would scroll
+  // away, so they go in the banner above the form, verbatim, with the form
+  // left intact so nothing typed is lost.
+  if (res.status === 404) { _pvEcFormBanner('This claim no longer exists. It may have been deleted while this form was open.'); return; }
+  if (res.status === 409) { _pvEcFormBanner(msg + ' Reject and resubmit if a post-approval change is required.'); return; }
+  if (res.status === 400 && /account/i.test(msg)) {
+    document.getElementById('ec-f-category-err').textContent = msg;
+    document.getElementById('ec-f-category').focus();
+    return;
+  }
+  // 422 is schema-layer (whitespace-only description, amount <= 0) — both are
+  // gated client-side, so anything landing here goes on the field it names.
+  if (res.status === 422 && /description/i.test(msg))  { document.getElementById('ec-f-description-err').textContent = msg; return; }
+  if (res.status === 422 && /amount/i.test(msg))       { document.getElementById('ec-f-amount-err').textContent = msg; return; }
+  showToast('Error: ' + msg, 'error');
+}
+
+function _pvEcFormBanner(text) {
+  const el = document.getElementById('ec-f-banner');
+  if (!el) { showToast(text, 'error'); return; }
+  el.innerHTML = `<div style="margin-bottom:14px;padding:10px 14px;border-radius:6px;border-left:3px solid var(--coral-500);background:var(--coral-100);color:var(--coral-600);font-size:0.85rem;">${_finEsc(text)}
+    <a href="#" style="color:inherit;font-weight:600;text-decoration:underline;margin-left:6px;" onclick="loadView('payables-expense-claims');return false;">Back to Expense Claims</a></div>`;
 }
 
 // Cleared when the picked file changes so a swapped receipt is re-uploaded

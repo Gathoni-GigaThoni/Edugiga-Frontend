@@ -911,7 +911,7 @@ const FORM_VIEWS = new Set([
   // Payables
   'payables-payment-vouchers-add', 'payables-payment-vouchers-edit',
   'payables-tax-vouchers-add', 'payables-supplier-invoices-add', 'payables-supplier-invoices-edit',
-  'payables-expense-claims-add', 'payables-expense-claim-disbursements-add',
+  'payables-expense-claims-add', 'payables-expense-claims-edit', 'payables-expense-claim-disbursements-add',
   'payables-petty-cash-applications-add', 'payables-petty-cash-disbursements-add',
   'payables-imprest-warrants-add', 'payables-imprest-disbursements-add', 'payables-imprest-surrenders-add',
   'journal-entries-add', 'journal-entries-edit', 'fiscal-years-add', 'finance-je-review',
@@ -1240,6 +1240,8 @@ async function loadView(view) {
       await loadPayablesExpenseClaimsView(main); break;
     case 'payables-expense-claims-add':
       openFinPayablesDropdown(); await loadPayablesExpenseClaimsAddView(main); break;
+    case 'payables-expense-claims-edit':
+      openFinPayablesDropdown(); await loadPayablesExpenseClaimsEditView(main); break;
     case 'payables-expense-claim-disbursements':
       setActiveSidebarItem('sidebar-fin-ecd'); openFinPayablesDropdown();
       await loadPayablesExpenseClaimDisbursementsView(main); break;
