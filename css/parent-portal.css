@@ -291,8 +291,146 @@
 }
 @keyframes pp-shimmer { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
 
+/* ── Per-child sub-nav (Invoices / Full Statement) ────────────────────────── */
+.pp-subnav {
+  display: flex;
+  gap: 26px;
+  border-bottom: 1px solid var(--grey-100);
+  margin-bottom: 22px;
+}
+.pp-subnav-link {
+  font-family: 'Inter', Arial, sans-serif;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--grey-600);
+  padding: 0 2px 10px;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.pp-subnav-link:hover { color: var(--navy-700); }
+.pp-subnav-link.active { color: var(--navy-900); border-bottom-color: var(--gold-500); }
+
+/* ── Statement filter row ─────────────────────────────────────────────────── */
+.pp-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 14px;
+  margin-bottom: 22px;
+}
+.pp-filter-field { display: flex; flex-direction: column; gap: 5px; }
+.pp-filter-label {
+  font-family: 'Inter', Arial, sans-serif;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--grey-600);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.pp-filter-input {
+  font-family: 'Inter', Arial, sans-serif;
+  font-size: 13.5px;
+  color: var(--navy-900);
+  background: var(--white);
+  border: 1px solid var(--grey-100);
+  border-radius: 8px;
+  padding: 9px 12px;
+}
+.pp-filter-input:focus { outline: none; border-color: var(--gold-500); }
+.pp-filter-hint { font-family: 'Inter', Arial, sans-serif; font-size: 11.5px; color: var(--grey-400); }
+.pp-filter-btn {
+  font-family: 'Inter', Arial, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--white);
+  background: var(--navy-700);
+  border: none;
+  border-radius: 8px;
+  padding: 10px 20px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.pp-filter-btn:hover { background: var(--navy-900); }
+
+/* ── Statement header card ────────────────────────────────────────────────── */
+.pp-stmt-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 18px;
+  background: var(--white);
+  border: 1px solid var(--grey-100);
+  border-radius: 12px;
+  padding: 18px 20px;
+  margin-bottom: 20px;
+}
+.pp-stmt-name {
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--navy-900);
+  margin: 0 0 4px;
+}
+.pp-stmt-meta {
+  font-family: 'Inter', Arial, sans-serif;
+  font-size: 12.5px;
+  color: var(--grey-600);
+  margin: 0;
+}
+.pp-stmt-contact { font-family: 'Inter', Arial, sans-serif; font-size: 12.5px; color: var(--grey-600); text-align: right; }
+.pp-stmt-contact p { margin: 0 0 3px; }
+.pp-stmt-contact span { color: var(--grey-400); }
+.pp-stmt-period { color: var(--navy-700); font-weight: 600; margin-top: 6px !important; }
+
+/* ── Ledger table ─────────────────────────────────────────────────────────── */
+.pp-type-pill {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--grey-100);
+  color: var(--grey-600);
+  white-space: nowrap;
+}
+.pp-type-invoice { background: var(--navy-100); color: var(--navy-700); }
+.pp-type-receipt { background: #D4EDD9; color: #1A5C30; }
+.pp-type-credit  { background: var(--gold-100); color: var(--gold-600); }
+
+.pp-table td.pp-cell-desc { white-space: normal; min-width: 200px; color: var(--grey-600); }
+.pp-table td.pp-debit   { color: var(--coral-600); }
+.pp-table td.pp-credit  { color: #1A5C30; }
+.pp-table td.pp-running { color: var(--navy-900); font-weight: 600; }
+.pp-table tr.pp-opening-row td { background: var(--grey-50); font-weight: 600; }
+.pp-table tr.pp-closing-row td { background: var(--navy-50); border-top: 2px solid var(--navy-100); }
+
+.pp-summary-value.pp-credited   { color: var(--gold-600); }
+.pp-summary-value.pp-value-muted { color: var(--grey-400); }
+
+.pp-helper-note {
+  font-family: 'Inter', Arial, sans-serif;
+  font-size: 12.5px;
+  color: var(--grey-600);
+  margin: 14px 2px 0;
+  line-height: 1.55;
+}
+.pp-warn-note {
+  font-family: 'Inter', Arial, sans-serif;
+  font-size: 13px;
+  color: var(--coral-600);
+  background: var(--coral-100);
+  border-left: 3px solid var(--coral-500);
+  border-radius: 6px;
+  padding: 11px 15px;
+  margin-top: 14px;
+}
+
 @media (max-width: 600px) {
   .pp-topbar { padding: 12px 16px; }
   .pp-topbar-email { display: none; }
   .pp-container { padding: 24px 16px 48px; }
+  .pp-stmt-contact { text-align: left; }
+  .pp-filter-row { gap: 10px; }
+  .pp-subnav { gap: 18px; }
 }

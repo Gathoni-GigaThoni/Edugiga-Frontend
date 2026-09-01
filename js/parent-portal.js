@@ -443,6 +443,7 @@ function ppDate(v) {
 }
 
 async function ppRenderFees(studentId, studentName) {
+  ppCurrentChild = { studentId, studentName };
   const root = document.getElementById('pp-root');
   root.innerHTML = `
     <div class="pp-shell">
@@ -453,6 +454,7 @@ async function ppRenderFees(studentId, studentName) {
           <h1 class="pp-page-title">${ppEsc(studentName)}</h1>
           <p class="pp-page-subtitle">Fee invoices</p>
         </div>
+        ${ppChildTabs('invoices')}
         <div id="pp-fees-content">
           <div class="pp-table-wrap">
             ${[1,2,3].map(() => `<div class="pp-skeleton-row"><div class="shimmer"></div><div class="shimmer"></div></div>`).join('')}
@@ -539,6 +541,209 @@ async function ppRenderFees(studentId, studentName) {
         </tbody>
       </table>
     </div>
+  `;
+}
+
+// ==================== FULL STATEMENT ====================
+// GET /parent/statement/{student_id} — new in the 2026-09-01 addendum (§B.2).
+// Same StudentStatement shape staff get from /reports/student-statement/{id},
+// but parent-scoped: guarded by account_can_access_student(), so it 403s if
+// the student isn't linked to this portal account. Never call the staff
+// endpoint from here — it runs staff RBAC and would fail with the wrong error.
+//
+// This is the single source of truth for a child's ledger. /parent/fees stays
+// the lightweight "invoices due" widget; receipts and credit notes have no
+// standalone parent view because they're both already rows in here.
+
+// Which child is on screen, so the tab links and the statement's date filters
+// can re-query without threading ids back through every handler. A child's
+// name can't go into an inline onclick at all: ppEsc leaves the apostrophe in
+// "O'Brien" alone, and an HTML-encoded &#39; is decoded back to a quote before
+// the JS is parsed, silently breaking the handler — the same bug the delegated
+// click on the child cards below exists to avoid.
+let ppCurrentChild = { studentId: null, studentName: '' };
+function ppGoInvoices()  { ppRenderFees(ppCurrentChild.studentId, ppCurrentChild.studentName); }
+function ppGoStatement() { ppRenderStatement(ppCurrentChild.studentId, ppCurrentChild.studentName); }
+
+function ppChildTabs(active) {
+  const tab = (key, label, fn) =>
+    `<a class="pp-subnav-link${active === key ? ' active' : ''}" onclick="${fn}()">${label}</a>`;
+  return `<nav class="pp-subnav">
+    ${tab('invoices',  'Invoices',       'ppGoInvoices')}
+    ${tab('statement', 'Full Statement', 'ppGoStatement')}
+  </nav>`;
+}
+
+const PP_STATEMENT_TYPES = {
+  invoice:     { label: 'Invoice',     cls: 'pp-type-invoice' },
+  receipt:     { label: 'Receipt',     cls: 'pp-type-receipt' },
+  credit_note: { label: 'Credit Note', cls: 'pp-type-credit' },
+};
+// entry_type gained "credit_note" in this addendum and may gain more later,
+// so an unrecognised value still renders its row — with the raw type as a
+// neutral pill — rather than dropping a line out of a running-balance ledger.
+function ppTypePill(type) {
+  const t = PP_STATEMENT_TYPES[type];
+  if (t) return `<span class="pp-type-pill ${t.cls}">${t.label}</span>`;
+  return `<span class="pp-type-pill">${ppEsc(String(type || '—').replace(/_/g, ' '))}</span>`;
+}
+
+async function ppRenderStatement(studentId, studentName) {
+  ppCurrentChild = { studentId, studentName };
+  const root = document.getElementById('pp-root');
+  document.body.classList.remove('login-page');
+  root.innerHTML = `
+    <div class="pp-shell">
+      ${ppTopbarMarkup()}
+      <div class="pp-container">
+        <a class="pp-back-link" onclick="ppRenderDashboard()">&larr; Back to My Children</a>
+        <div class="pp-page-header">
+          <h1 class="pp-page-title">${ppEsc(studentName)}</h1>
+          <p class="pp-page-subtitle">Full statement of account</p>
+        </div>
+        ${ppChildTabs('statement')}
+        <div class="pp-filter-row">
+          <div class="pp-filter-field">
+            <label class="pp-filter-label" for="pp-stmt-start">Start Date</label>
+            <input type="date" id="pp-stmt-start" class="pp-filter-input">
+            <span class="pp-filter-hint">Leave blank for full history.</span>
+          </div>
+          <div class="pp-filter-field">
+            <label class="pp-filter-label" for="pp-stmt-end">End Date</label>
+            <input type="date" id="pp-stmt-end" class="pp-filter-input" value="${new Date().toISOString().slice(0, 10)}">
+          </div>
+          <button class="pp-filter-btn" onclick="ppLoadStatement()">Apply</button>
+        </div>
+        <div id="pp-stmt-content">
+          <div class="pp-table-wrap">
+            ${[1, 2, 3, 4].map(() => `<div class="pp-skeleton-row"><div class="shimmer"></div><div class="shimmer"></div></div>`).join('')}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  await ppLoadStatement();
+}
+
+async function ppLoadStatement() {
+  const { studentId } = ppCurrentChild;
+  const contentEl = document.getElementById('pp-stmt-content');
+  if (!contentEl || studentId == null) return;
+  const params = new URLSearchParams();
+  // Omitted entirely rather than sent empty — the server defaults start_date
+  // to 1900-01-01 and end_date to today, and an empty string is a 422.
+  const start = document.getElementById('pp-stmt-start')?.value || '';
+  const end   = document.getElementById('pp-stmt-end')?.value   || '';
+  if (start) params.set('start_date', start);
+  if (end)   params.set('end_date', end);
+  const qs = params.toString();
+  const res = await ppApiFetch(`/parent/statement/${studentId}${qs ? '?' + qs : ''}`);
+  if (!res) { contentEl.innerHTML = `<p style="color:var(--color-danger)">Could not reach the school's system. Please try again.</p>`; return; }
+  if (res.status === 403) {
+    contentEl.innerHTML = `<div class="pp-empty-state"><div class="pp-empty-state-icon">&#128274;</div>
+      <p>This statement isn't available on your account. If you think that's wrong, please contact the school office.</p></div>`;
+    return;
+  }
+  if (!res.ok) { contentEl.innerHTML = `<p style="color:var(--color-danger)">Failed to load the statement. Please try again.</p>`; return; }
+  ppRenderStatementResult(await res.json());
+}
+
+function ppRenderStatementResult(data) {
+  const contentEl = document.getElementById('pp-stmt-content');
+  if (!contentEl) return;
+  const contact  = data.contact || {};
+  const lines    = ppToArray(data.lines);
+  const opening  = Number(data.opening_balance  || 0);
+  const invoiced = Number(data.total_invoiced   || 0);
+  const paid     = Number(data.total_paid       || 0);
+  const credited = Number(data.total_credited   || 0);
+  const closing  = Number(data.closing_balance  || 0);
+
+  // Server-side invariant (§3.3). If it ever fails the totals strip and the
+  // ledger disagree, and a parent should be told the number is suspect rather
+  // than quietly shown a figure the school's own books don't back.
+  const ties = Math.abs((opening + invoiced - paid - credited) - closing) <= 0.01;
+
+  // Rows are server-ordered (entry_date ASC, then invoice/receipt/credit_note)
+  // and the running_balance column is computed in that order — re-sorting here
+  // would make the balances read as nonsense.
+  const rowsHtml = lines.map(l => `
+    <tr>
+      <td>${ppDate(l.entry_date)}</td>
+      <td>${ppTypePill(l.entry_type)}</td>
+      <td>${ppEsc(l.reference || '—')}</td>
+      <td class="pp-cell-desc">${ppEsc(l.description || '')}</td>
+      <td class="pp-debit">${Number(l.debit || 0) ? ppMoney(l.debit) : '—'}</td>
+      <td class="pp-credit">${Number(l.credit || 0) ? ppMoney(l.credit) : '—'}</td>
+      <td class="pp-running">${ppMoney(l.running_balance)}</td>
+    </tr>`).join('');
+
+  contentEl.innerHTML = `
+    <div class="pp-stmt-header">
+      <div>
+        <p class="pp-stmt-name">${ppEsc(data.student_name || '')}</p>
+        <p class="pp-stmt-meta">${ppEsc(data.student_display_id || '—')} &middot; ${ppEsc(data.class_name || 'Class not set')}</p>
+      </div>
+      <div class="pp-stmt-contact">
+        <p>${ppEsc(contact.parent_name || '—')}${contact.relationship ? ` <span>(${ppEsc(String(contact.relationship).toLowerCase())})</span>` : ''}</p>
+        <p>${ppEsc(contact.phone || '—')} &middot; ${ppEsc(contact.email || '—')}</p>
+        <p class="pp-stmt-period">From ${ppDate(data.start_date)} to ${ppDate(data.end_date)}</p>
+      </div>
+    </div>
+
+    <div class="pp-summary-row">
+      <div class="pp-summary-tile">
+        <p class="pp-summary-label">Opening Balance</p>
+        <p class="pp-summary-value">${ppMoney(opening)}</p>
+      </div>
+      <div class="pp-summary-tile">
+        <p class="pp-summary-label">Total Invoiced</p>
+        <p class="pp-summary-value">${ppMoney(invoiced)}</p>
+      </div>
+      <div class="pp-summary-tile">
+        <p class="pp-summary-label">Total Paid</p>
+        <p class="pp-summary-value${closing > 0 ? ' pp-balance-due' : ''}">${ppMoney(paid)}</p>
+      </div>
+      <div class="pp-summary-tile">
+        <p class="pp-summary-label">Total Credited</p>
+        <p class="pp-summary-value${credited > 0 ? ' pp-credited' : ' pp-value-muted'}">${ppMoney(credited)}</p>
+      </div>
+      <div class="pp-summary-tile">
+        <p class="pp-summary-label">Closing Balance</p>
+        <p class="pp-summary-value${closing > 0 ? ' pp-balance-due' : ''}">${ppMoney(closing)}</p>
+      </div>
+    </div>
+
+    ${lines.length ? `
+    <div class="pp-table-wrap">
+      <table class="pp-table">
+        <thead>
+          <tr>
+            <th>Date</th><th>Type</th><th>Reference</th><th>Description</th>
+            <th>Debit</th><th>Credit</th><th>Running Balance</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="pp-opening-row">
+            <td colspan="6">Balance brought forward as at ${ppDate(data.start_date)}</td>
+            <td class="pp-running">${ppMoney(opening)}</td>
+          </tr>
+          ${rowsHtml}
+          <tr class="pp-closing-row">
+            <td colspan="6"><strong>Closing balance as at ${ppDate(data.end_date)}</strong></td>
+            <td class="pp-running"><strong>${ppMoney(closing)}</strong></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>` : `
+    <div class="pp-empty-state">
+      <div class="pp-empty-state-icon">&#128197;</div>
+      <p>No activity between the selected dates. Try widening the window.</p>
+    </div>`}
+
+    ${ties ? '' : `<div class="pp-warn-note">These totals don't add up against the closing balance shown. Please contact the school office before acting on this statement.</div>`}
+
+    <p class="pp-helper-note">Every entry is chronological. Credit notes reduce your balance without a cash payment (for example a bursary or a discount adjustment).</p>
   `;
 }
 
