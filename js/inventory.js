@@ -226,8 +226,14 @@ function _invAccountName(id) {
   if (!a) return `#${id}`;
   return `${a.number ? a.number + ' - ' : ''}${a.account_name}`;
 }
+// The inventory control account is a JE line target (goods-received and
+// issue postings hit it), so header accounts are filtered out here rather
+// than out of the cache — _invAccountName above still has to resolve a
+// legacy header selection for display (2026-09-01 §2.2).
 function _invAccountOptionsHtml(selectedId) {
-  return (_invControlAccountsCache || []).map(a =>
+  return (_invControlAccountsCache || [])
+    .filter(a => a.is_postable !== false || String(a.id) === String(selectedId))
+    .map(a =>
     `<option value="${a.id}" ${String(a.id) === String(selectedId) ? 'selected' : ''}>${_invEsc(a.number ? a.number + ' - ' : '')}${_invEsc(a.account_name)}</option>`).join('');
 }
 

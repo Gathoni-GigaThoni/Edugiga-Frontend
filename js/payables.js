@@ -54,7 +54,35 @@ function _pvOptions(list, valueKey, labelFn, selected) {
 function _pvLedgerOptions(sel)     { return _pvOptions(_pvLedgers, 'id', l => l.name, sel); }
 function _pvCostCenterOptions(sel) { return _pvOptions(_pvCostCenters, 'id', c => c.name, sel); }
 function _pvDepartmentOptions(sel) { return _pvOptions(_pvDepartments, 'id', d => d.name, sel); }
-function _pvAccountOptions(sel)    { return _pvOptions(_pvAccounts, 'id', a => `${a.number ? a.number + ' - ' : ''}${a.account_name}`, sel); }
+// AccountRead.is_postable landed on the wire in the 2026-09-01 addendum (§2.1
+// — it was on the model and on writes for a month before the read schema
+// exposed it). false marks a header / roll-up account, and posting a JE line
+// to one is refused server-side: "Account '…' is a non-postable header
+// account. Choose a postable leaf account."
+//
+// The default here is postable-only, because the overwhelming majority of the
+// ~20 call sites are JE-writing forms and a new one added later should be safe
+// without anyone remembering this flag. The four read-only surfaces — the
+// budget account filter chip, the report filter row, the budget line picker
+// (a budget is not a journal entry) and the Tendepay reconciliation
+// transaction filter — pass includeNonPostable and keep seeing headers, which
+// is what they want: headers still appear on the CoA tree, in statements as
+// parent groupings, and in reports.
+//
+// A currently-selected header account is kept in the list and labelled, the
+// same way an inactive-but-selected one is elsewhere: legacy rows do exist,
+// and a picker that silently drops the saved value renders blank and invites
+// the operator to overwrite it without noticing.
+function _pvAccountLabel(a) {
+  return `${a.number ? a.number + ' - ' : ''}${a.account_name}${a.is_postable === false ? ' (header — not postable)' : ''}`;
+}
+function _pvPostable(list, sel, includeNonPostable) {
+  if (includeNonPostable) return list;
+  return list.filter(a => a.is_postable !== false || String(a.id) === String(sel));
+}
+function _pvAccountOptions(sel, { includeNonPostable = false } = {}) {
+  return _pvOptions(_pvPostable(_pvAccounts, sel, includeNonPostable), 'id', _pvAccountLabel, sel);
+}
 // "Tendepay Wallet" options are accounts tagged with Account.wallet_role —
 // the authoritative Tendepay-pipeline marker (replaces the old parent_id
 // relationship to a "Tendepay - Main Wallet" parent, which itself replaced an
@@ -2011,10 +2039,13 @@ function _pvEcSetStatusFilter(v) { _pvEcStatusFilter = v; loadView('payables-exp
 
 // Claims must be coded to an Expense account. The picker used to offer the
 // whole active chart of accounts, which let a claim be booked against a bank,
-// a receivable or a revenue account and land in the ledger that way.
+// a receivable or a revenue account and land in the ledger that way. The
+// non-postable half of that problem was previously left to the server's 400
+// (the 08-31 addendum deferred it because AccountRead didn't expose
+// is_postable yet); it does now, so the filter is client-side.
 function _pvExpenseAccountOptions(sel) {
-  return _pvOptions(_pvAccounts.filter(a => a.account_type === 'Expense'), 'id',
-    a => `${a.number ? a.number + ' - ' : ''}${a.account_name}`, sel);
+  const expenses = _pvAccounts.filter(a => a.account_type === 'Expense');
+  return _pvOptions(_pvPostable(expenses, sel, false), 'id', _pvAccountLabel, sel);
 }
 
 // POST /upload/ returns a root-relative path ({"url": "/uploads/<hash>.png"}),
@@ -2209,7 +2240,7 @@ async function loadPayablesExpenseClaimsAddView(container) {
           <div class="fin-form-group">
             <label class="fin-form-label">Expense Account <span class="fin-required">*</span></label>
             <select id="ec-f-category" class="fin-form-select"><option value="">Please Select</option>${_pvExpenseAccountOptions()}</select>
-            <span class="fin-field-hint">Only Expense accounts are listed — a reimbursement is an expense, never a balance-sheet line. Pick a postable leaf, not a header.</span>
+            <span class="fin-field-hint">Only postable Expense accounts are listed — a reimbursement is an expense, never a balance-sheet line, and a header account can't carry a ledger posting.</span>
             <span class="fin-field-error" id="ec-f-category-err"></span>
           </div>
         </div>

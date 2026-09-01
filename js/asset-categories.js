@@ -180,17 +180,23 @@ async function _acRefreshAccountPickers(preselect) {
     return;
   }
   const res = await apiFetch(`${API_BASE}/accounts/?account_type=Asset&account_subtype=${encodeURIComponent(subtype)}&is_active=true`);
-  const rows = res && res.ok ? _toArray(await res.json()) : [];
+  const allRows = res && res.ok ? _toArray(await res.json()) : [];
+  // Cost / accumulated-depreciation / depreciation-expense accounts are all
+  // JE line targets — the depreciation run posts against them — so header
+  // accounts are dropped (2026-09-01 §2.2). A category already saved against
+  // one stays visible so its picker doesn't render blank.
+  const postable = (list, sel) => list.filter(a => a.is_postable !== false || String(a.id) === String(sel));
+  const rows = postable(allRows, preselect?.cost);
   const opts = `<option value="">Please Select</option>` + rows.map(a => `<option value="${a.id}" ${preselect?.cost === a.id ? 'selected' : ''}>${_finEsc(a.number ? a.number + ' - ' : '')}${_finEsc(a.account_name)}</option>`).join('');
   if (costSel) { costSel.innerHTML = opts; costSel.disabled = false; if (preselect?.cost) costSel.value = preselect.cost; }
   if (accumSel) {
-    accumSel.innerHTML = `<option value="">Please Select</option>` + rows.map(a => `<option value="${a.id}" ${preselect?.accum === a.id ? 'selected' : ''}>${_finEsc(a.number ? a.number + ' - ' : '')}${_finEsc(a.account_name)}</option>`).join('');
+    accumSel.innerHTML = `<option value="">Please Select</option>` + postable(allRows, preselect?.accum).map(a => `<option value="${a.id}" ${preselect?.accum === a.id ? 'selected' : ''}>${_finEsc(a.number ? a.number + ' - ' : '')}${_finEsc(a.account_name)}</option>`).join('');
     accumSel.disabled = false;
     if (preselect?.accum) accumSel.value = preselect.accum;
   }
   if (expSel && !expSel.dataset.loaded) {
     const expRes = await apiFetch(`${API_BASE}/accounts/?account_type=Expense&account_subtype=${encodeURIComponent('Depreciation')}&is_active=true`);
-    const expRows = expRes && expRes.ok ? _toArray(await expRes.json()) : [];
+    const expRows = postable(expRes && expRes.ok ? _toArray(await expRes.json()) : [], preselect?.exp);
     expSel.innerHTML = `<option value="">Please Select</option>` + expRows.map(a => `<option value="${a.id}" ${preselect?.exp === a.id ? 'selected' : ''}>${_finEsc(a.number ? a.number + ' - ' : '')}${_finEsc(a.account_name)}</option>`).join('');
     expSel.dataset.loaded = '1';
     if (preselect?.exp) expSel.value = preselect.exp;

@@ -3095,13 +3095,19 @@ function fiGoPage(p)       { _feeItemPage=p; _renderFeeItemsTable(); }
 // and render blank. Fetch that one stale id and append it labeled
 // "(inactive)" instead, so the operator sees the truth rather than a blank
 // field.
+// A fee item's / general item's account is the revenue side of the accrual JE
+// that invoice issue posts, so it has to be a postable leaf (2026-09-01 §2.2)
+// — a header account here doesn't fail at pick time, it fails much later when
+// somebody tries to issue an invoice carrying that item. Same
+// keep-the-selected-id-visible rule as the inactive case above it.
 async function _finAccountOptionsWithStaleFallback(cache, selectedId) {
   let list = cache;
   if (selectedId != null && !list.some(a => String(a.id) === String(selectedId))) {
     const res = await apiFetch(`${API_BASE}/accounts/${selectedId}`);
     if (res && res.ok) list = [...list, await res.json()];
   }
-  return list.map(a => `<option value="${a.id}" ${String(selectedId)===String(a.id)?'selected':''}>${_finEsc(a.number||'')} — ${_finEsc(a.account_name||'')}${a.is_active===false?' (inactive)':''}</option>`).join('');
+  list = list.filter(a => a.is_postable !== false || String(a.id) === String(selectedId));
+  return list.map(a => `<option value="${a.id}" ${String(selectedId)===String(a.id)?'selected':''}>${_finEsc(a.number||'')} — ${_finEsc(a.account_name||'')}${a.is_active===false?' (inactive)':''}${a.is_postable===false?' (header — not postable)':''}</option>`).join('');
 }
 
 async function renderFeeItemAddPage(container, item) {
@@ -5133,7 +5139,7 @@ function _tpReconRenderTransactionsFilters(body) {
           </select>
         </div>
         <div class="fin-filter-field"><label class="fin-filter-label">Account</label>
-          <select id="tp-recon-tx-account" class="fin-filter-select"><option value="">All</option>${_pvAccountOptions()}</select>
+          <select id="tp-recon-tx-account" class="fin-filter-select"><option value="">All</option>${_pvAccountOptions(null, { includeNonPostable: true })}</select>
         </div>
       </div>
       <div class="fin-filter-actions"><button class="fin-btn-teal" onclick="_tpReconTxGenerate()">Generate</button></div>

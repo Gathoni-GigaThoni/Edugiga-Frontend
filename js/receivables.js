@@ -124,10 +124,16 @@ function _rcvAccountOptions(filterType, selectedId) {
   // state) — active-only filtering happens here, at the picker, with the
   // selected-but-now-inactive id kept visible and labeled so a stale
   // selection never renders blank (§5.4).
+  //
+  // is_postable=false accounts are dropped for the same reason and on the
+  // same terms (2026-09-01 §2.2): the only caller is the receipt form's cash
+  // /bank debit account, which posts a JE line the server rejects outright if
+  // it names a header account.
   return (_rcvAccountsCache||[])
     .filter(a => !filterType || (a.account_type||'').toLowerCase() === filterType.toLowerCase())
     .filter(a => a.is_active !== false || String(a.id) === String(selectedId))
-    .map(a => `<option value="${a.id}" ${String(a.id)===String(selectedId)?'selected':''}>${_finEsc(a.number||'')} — ${_finEsc(a.account_name||'')}${a.is_active===false?' (inactive)':''}</option>`)
+    .filter(a => a.is_postable !== false || String(a.id) === String(selectedId))
+    .map(a => `<option value="${a.id}" ${String(a.id)===String(selectedId)?'selected':''}>${_finEsc(a.number||'')} — ${_finEsc(a.account_name||'')}${a.is_active===false?' (inactive)':''}${a.is_postable===false?' (header — not postable)':''}</option>`)
     .join('');
 }
 function _rcvLedgerOptions(selectedId) {

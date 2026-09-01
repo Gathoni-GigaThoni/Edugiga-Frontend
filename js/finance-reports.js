@@ -212,7 +212,7 @@ async function loadFinanceReportView(container, routeKey) {
   }
 
   const extraHtml = (def.extra || []).map(f => {
-    if (f.type === 'account') return `<div class="fin-filter-field"><label class="fin-filter-label">${f.label}${f.required ? ' *' : ''}</label><select id="rep-x-${f.key}" class="fin-filter-select"><option value="">${f.required ? 'Please Select' : 'All'}</option>${_pvAccountOptions()}</select></div>`;
+    if (f.type === 'account') return `<div class="fin-filter-field"><label class="fin-filter-label">${f.label}${f.required ? ' *' : ''}</label><select id="rep-x-${f.key}" class="fin-filter-select"><option value="">${f.required ? 'Please Select' : 'All'}</option>${_pvAccountOptions(null, { includeNonPostable: true })}</select></div>`;
     if (f.type === 'money_holding') return `<div class="fin-filter-field"><label class="fin-filter-label">${f.label}${f.required ? ' *' : ''}</label><select id="rep-x-${f.key}" class="fin-filter-select"><option value="">${f.required ? 'Please Select' : 'All'}</option>${_repMoneyHoldingOptions()}</select></div>`;
     if (f.type === 'ledger') return `<div class="fin-filter-field"><label class="fin-filter-label">${f.label}</label><select id="rep-x-${f.key}" class="fin-filter-select"><option value="">All</option>${_pvLedgerOptions()}</select></div>`;
     if (f.type === 'supplier') return `<div class="fin-filter-field"><label class="fin-filter-label">${f.label}${f.required ? ' *' : ''}</label><select id="rep-x-${f.key}" class="fin-filter-select"><option value="">Please Select</option>${_pvSupplierOptions()}</select></div>`;

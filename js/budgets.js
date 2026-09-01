@@ -58,7 +58,7 @@ function _bgtFiltersHtml() {
         <option value="">All Years</option>${_bgtYearOptions()}
       </select>
       <select id="bgt-filter-account" class="fin-filter-select" style="max-width:220px;" onchange="_bgtApplyFilters()">
-        <option value="">All Accounts</option>${_pvAccountOptions(_bgtAccountFilter)}
+        <option value="">All Accounts</option>${_pvAccountOptions(_bgtAccountFilter, { includeNonPostable: true })}
       </select>
     </div>`;
 }
@@ -143,7 +143,10 @@ function _bgtSplitForm(item, el) {
       <div class="stu-form-group">
         <label>Account <span style="color:var(--coral-500)">*</span></label>
         <select id="bgt-f-account" style="max-width:none;width:100%">
-          <option value="">Please Select</option>${_pvAccountOptions(item?.account_id)}
+          <!-- A budget line is not a journal entry, so header accounts stay
+               selectable here: budgeting at a roll-up level is normal practice
+               and the server has no is_postable guard on this write. -->
+          <option value="">Please Select</option>${_pvAccountOptions(item?.account_id, { includeNonPostable: true })}
         </select>
         <div id="bgt-f-account-err" style="font-size:12px;color:var(--coral-500);margin-top:4px"></div>
       </div>
