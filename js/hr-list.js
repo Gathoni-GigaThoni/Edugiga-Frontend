@@ -43,9 +43,12 @@ async function loadHrEmployeeDirectoryView(container) {
         <div class="fin-filter-field">
           <label class="fin-filter-label">Exclude Directors</label>
           <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;">
-            <input type="checkbox" id="hr-f-exclude-director" onchange="_hrDirReload()">
+            <input type="checkbox" id="hr-f-exclude-director" onchange="_hrDirReload()" ${_isSuperAdmin() ? '' : 'checked'}>
             <span>Hide Director profiles</span>
           </label>
+          <span class="fin-field-hint" style="display:block;margin-top:4px;">${_isSuperAdmin()
+            ? 'You can open Director profiles, so they are listed by default.'
+            : 'On by default: unless you hold Director-viewing rights the profiles are restricted anyway, and hiding them here saves a click into a locked screen.'}</span>
         </div>
       </div>
       <div class="fin-filter-actions">
@@ -96,10 +99,13 @@ async function _hrDirReload() {
     rowLabel: e => `${e.first_name||''} ${e.last_name||''}`.trim() || '—',
     rowSub:   e => e.email || '',
     idKey: 'id',
-    // The list endpoint doesn't filter Directors out, so a Manager still sees
-    // the row and its list-level fields — only the single-record GET is
-    // gated. Marking the row is the honest middle: nothing is hidden that the
-    // backend still returns, but Edit not opening is no longer a surprise.
+    // GET /hr/employees takes exclude_director as of the 2026-09-01 addendum
+    // (§H), wired to the toggle above and defaulted on for anyone who isn't a
+    // Super Admin — that's the "see the name, 403 on click" flow gone. It's
+    // still only a filter, not a guarantee: a Super Admin, or anyone who
+    // unticks it, gets Director rows back, and the single-record GET remains
+    // the thing that's actually gated. So the row still marks itself, and Edit
+    // not opening is still explained rather than surprising.
     detailFields: [
       {label:'Name',        key:'first_name', fmt:(_,e)=>`${e.first_name||''} ${e.last_name||''}`.trim()},
       {label:'Access',      key:'is_director', hideWhen:e=>!e.is_director || _isSuperAdmin(),
