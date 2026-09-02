@@ -10,20 +10,30 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
+  <!-- ── Asset version ──────────────────────────────────────────────────────
+       Every local css/js reference below carries ?v=<date><letter>. Vercel
+       serves this HTML fresh but caches the assets, and nothing here is
+       fingerprinted by a build step, so without a token a browser will keep
+       running yesterday's js/*.js against today's index.html indefinitely —
+       a shipped fix simply does not appear, with no error to notice.
+       BUMP THE TOKEN ON EVERY DEPLOY THAT TOUCHES css/ OR js/. It must be
+       identical across all of them; a mixed set loads a mixed build.
+       parent-portal.html carries its own copy of the same token. -->
+
   <!-- ── Core styles ── -->
-  <link rel="stylesheet" href="css/core.css">
-  <link rel="stylesheet" href="css/auth.css">
+  <link rel="stylesheet" href="css/core.css?v=20260903a">
+  <link rel="stylesheet" href="css/auth.css?v=20260903a">
 
   <!-- ── Module styles ── -->
-  <link rel="stylesheet" href="css/user-management.css">
-  <link rel="stylesheet" href="css/roles.css">
-  <link rel="stylesheet" href="css/hr.css">
-  <link rel="stylesheet" href="css/payroll.css">
-  <link rel="stylesheet" href="css/academics.css">
-  <link rel="stylesheet" href="css/finance.css">
-  <link rel="stylesheet" href="css/students.css">
-  <link rel="stylesheet" href="css/transport.css">
-  <link rel="stylesheet" href="css/parent-access.css">
+  <link rel="stylesheet" href="css/user-management.css?v=20260903a">
+  <link rel="stylesheet" href="css/roles.css?v=20260903a">
+  <link rel="stylesheet" href="css/hr.css?v=20260903a">
+  <link rel="stylesheet" href="css/payroll.css?v=20260903a">
+  <link rel="stylesheet" href="css/academics.css?v=20260903a">
+  <link rel="stylesheet" href="css/finance.css?v=20260903a">
+  <link rel="stylesheet" href="css/students.css?v=20260903a">
+  <link rel="stylesheet" href="css/transport.css?v=20260903a">
+  <link rel="stylesheet" href="css/parent-access.css?v=20260903a">
 </head>
 <body>
   <div id="login-page-container"></div>
@@ -32,45 +42,45 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
   <!-- ── Foundation (must load first) ── -->
-  <script src="js/config.js"></script>
-  <script src="js/auth.js"></script>
-  <script src="js/ui-helpers.js"></script>
-  <script src="js/dashboard.js"></script>
+  <script src="js/config.js?v=20260903a"></script>
+  <script src="js/auth.js?v=20260903a"></script>
+  <script src="js/ui-helpers.js?v=20260903a"></script>
+  <script src="js/dashboard.js?v=20260903a"></script>
 
   <!-- ── Feature modules (order within this group does not matter) ── -->
-  <script src="js/students.js"></script>
-  <script src="js/admissions.js"></script>
-  <script src="js/supplies.js"></script>
-  <script src="js/attendance.js"></script>
-  <script src="js/transport.js"></script>
-  <script src="js/academics.js"></script>
-  <script src="js/finance.js"></script>
-  <script src="js/receivables.js"></script>
-  <script src="js/payables.js"></script>
-  <script src="js/journal-entries.js"></script>
-  <script src="js/fiscal-years.js"></script>
-  <script src="js/budgets.js"></script>
-  <script src="js/credit-notes.js"></script>
-  <script src="js/fixed-assets.js"></script>
-  <script src="js/asset-categories.js"></script>
-  <script src="js/account-subtypes.js"></script>
-  <script src="js/inventory.js"></script>
-  <script src="js/reports.js"></script>
-  <script src="js/finance-reports.js"></script>
-  <script src="js/procurement.js"></script>
-  <script src="js/administration.js"></script>
-  <script src="js/user-management.js"></script>
-  <script src="js/roles.js"></script>
-  <script src="js/hr-list.js"></script>
-  <script src="js/hr-add.js"></script>
-  <script src="js/hr-edit.js"></script>
-  <script src="js/hr-esp-form.js"></script>
-  <script src="js/payroll.js"></script>
-  <script src="js/sessions.js"></script>
-  <script src="js/session-types.js"></script>
-  <script src="js/parent-access.js"></script>
-  <script src="js/document-approvals.js"></script>
-  <script src="js/communication.js"></script>
-  <script src="js/api.js"></script>
+  <script src="js/students.js?v=20260903a"></script>
+  <script src="js/admissions.js?v=20260903a"></script>
+  <script src="js/supplies.js?v=20260903a"></script>
+  <script src="js/attendance.js?v=20260903a"></script>
+  <script src="js/transport.js?v=20260903a"></script>
+  <script src="js/academics.js?v=20260903a"></script>
+  <script src="js/finance.js?v=20260903a"></script>
+  <script src="js/receivables.js?v=20260903a"></script>
+  <script src="js/payables.js?v=20260903a"></script>
+  <script src="js/journal-entries.js?v=20260903a"></script>
+  <script src="js/fiscal-years.js?v=20260903a"></script>
+  <script src="js/budgets.js?v=20260903a"></script>
+  <script src="js/credit-notes.js?v=20260903a"></script>
+  <script src="js/fixed-assets.js?v=20260903a"></script>
+  <script src="js/asset-categories.js?v=20260903a"></script>
+  <script src="js/account-subtypes.js?v=20260903a"></script>
+  <script src="js/inventory.js?v=20260903a"></script>
+  <script src="js/reports.js?v=20260903a"></script>
+  <script src="js/finance-reports.js?v=20260903a"></script>
+  <script src="js/procurement.js?v=20260903a"></script>
+  <script src="js/administration.js?v=20260903a"></script>
+  <script src="js/user-management.js?v=20260903a"></script>
+  <script src="js/roles.js?v=20260903a"></script>
+  <script src="js/hr-list.js?v=20260903a"></script>
+  <script src="js/hr-add.js?v=20260903a"></script>
+  <script src="js/hr-edit.js?v=20260903a"></script>
+  <script src="js/hr-esp-form.js?v=20260903a"></script>
+  <script src="js/payroll.js?v=20260903a"></script>
+  <script src="js/sessions.js?v=20260903a"></script>
+  <script src="js/session-types.js?v=20260903a"></script>
+  <script src="js/parent-access.js?v=20260903a"></script>
+  <script src="js/document-approvals.js?v=20260903a"></script>
+  <script src="js/communication.js?v=20260903a"></script>
+  <script src="js/api.js?v=20260903a"></script>
 </body>
 </html>
