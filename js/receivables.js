@@ -1155,6 +1155,7 @@ async function loadInvoiceGenerateView(container, presetStudentId, presetTermId)
         <div id="rcv-gen-preview">
           <p style="color:#888;font-size:0.9rem;">Select a student and term to preview assignments.</p>
         </div>
+        <div id="rcv-gen-msg"></div>
         <div class="fin-form-actions">
           <button id="rcv-gen-submit-btn" class="fin-btn-teal" onclick="submitGenerateSingleInvoice()" disabled>Generate Invoice</button>
           <button class="fin-btn-cancel" onclick="loadView('fin-fee-invoices')">Cancel</button>
@@ -1168,11 +1169,34 @@ async function loadInvoiceGenerateView(container, presetStudentId, presetTermId)
   }
 }
 
+// ── Multi-invoice per (student, term) — 2026-09-02 addendum §A ─────────────
+// A (student, term) may now carry 0..N live invoices. The invariant that stops
+// double-billing moved from "one invoice per term" down to "one assignment on
+// at most one non-cancelled invoice line", so a mid-term addition (late ECA, a
+// uniform re-order) is billed as its own supplementary invoice instead of
+// forcing a cancel-and-regenerate of the original.
+//
+// Step 2 below used to read /student-fee-assignments/ directly and price every
+// assignment client-side at proration_factor=1.0. That listed charges already
+// sitting on an earlier invoice — under the old one-per-term rule they were
+// unreachable anyway, but now they are exactly the rows that must not be shown,
+// or the bursar ticks a line generate will refuse to bill. /preview is the
+// server's own answer to "what would generate actually charge": it filters out
+// consumed assignments and returns the real proration and discount figures.
+function _rcvExistingInvoiceLinks(list) {
+  return (list || []).map(e =>
+    `<a href="#" onclick="loadInvoiceDetailView(document.getElementById('main-content'),${e.id});return false;">${_finEsc(e.invoice_number || ('#' + e.id))}</a>`
+    + (e.status ? ` <small style="color:#888;">(${_finEsc(String(e.status).replace(/_/g, ' '))})</small>` : '')
+  ).join(', ');
+}
+
 async function rcvGenReviewAssignments() {
   const studentId = document.getElementById('rcv-gen-student-hidden')?.value || document.getElementById('rcv-gen-student')?.value;
   const termId    = document.getElementById('rcv-gen-term')?.value;
   const preview   = document.getElementById('rcv-gen-preview');
   const btn       = document.getElementById('rcv-gen-submit-btn');
+  const msgEl     = document.getElementById('rcv-gen-msg');
+  if (msgEl) msgEl.innerHTML = '';
   if (!preview) return;
   if (!studentId || !termId) {
     preview.innerHTML='<p style="color:#888;font-size:0.9rem;">Select a student and term to preview assignments.</p>';
@@ -1180,35 +1204,60 @@ async function rcvGenReviewAssignments() {
   }
   preview.innerHTML='<p style="color:#888;">Loading&#8230;</p>';
   await _rcvLoadLookups({ items:true, schedules:true, accounts:true });
-  const res = await apiFetch(`${API_BASE}/receivables/student-fee-assignments/?student_id=${studentId}&term_id=${termId}`);
-  const assignments = (res&&res.ok) ? _toArray(await res.json()) : [];
-  if (!assignments.length) {
-    preview.innerHTML=`<p style="color:#b45309;font-size:0.9rem;">&#9888; No fee assignments found for this student in the selected term. Go to <a href="#" onclick="loadView('fin-fee-assignments');return false;">Fee Assignments</a> to configure them first.</p>`;
+  const res = await apiFetch(`${API_BASE}/receivables/fee-invoices/preview`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ student_id: parseInt(studentId,10), term_id: parseInt(termId,10) }),
+  });
+  if (!res || !res.ok) {
+    preview.innerHTML = `<p style="color:var(--coral-600);font-size:0.9rem;">Could not preview this student &times; term: ${_finEsc(res ? await parseApiError(res) : 'network error.')}</p>`;
     if(btn) btn.disabled=true; return;
   }
-  let total=0;
-  const rows=assignments.map(a=>{
-    const sched=_rcvScheduleById(a.fee_schedule_id);
-    const base=parseFloat(sched?.amount??0);
-    const override=a.override_amount!=null?parseFloat(a.override_amount):null;
-    const net=override??base;
-    total+=net;
+  const data = await res.json();
+  const lines    = _toArray(data.line_items || []);
+  // existing_invoices is the complete list; existing_invoice_number (singular)
+  // is kept on the wire for back-compat but only ever names the first open
+  // invoice, so it is deliberately not read here.
+  const existing = _toArray(data.existing_invoices || []);
+  const priorBanner = existing.length ? `
+    <div style="background:#EEF3FA;border-left:3px solid var(--navy-400,#4A6FA5);border-radius:6px;padding:10px 14px;margin-bottom:12px;font-size:0.86rem;color:var(--navy-700,#1B3057);">
+      ${existing.length} prior invoice${existing.length!==1?'s':''} on this student &times; term: ${_rcvExistingInvoiceLinks(existing)}.
+      <br><span style="color:#666;">Generate will bill only the assignments not yet on one of these.</span>
+    </div>` : '';
+
+  if (!lines.length) {
+    preview.innerHTML = priorBanner + (existing.length
+      ? `<div style="background:var(--coral-100);border-left:3px solid var(--coral-500);border-radius:6px;padding:10px 14px;color:var(--coral-600);font-size:0.88rem;">
+           Every charge for this student &times; term is already invoiced &mdash; there is nothing left to bill.
+           <br><span style="color:#7a3b3b;">Add a mid-term charge (ECA / uniform / meals) as a new fee assignment, or cancel a prior invoice to free its lines, then try again.</span>
+         </div>
+         <p style="margin-top:8px;font-size:0.85rem;"><a href="#" onclick="loadView('fin-fee-assignments');return false;">Go to Fee Assignments</a></p>`
+      : `<p style="color:#b45309;font-size:0.9rem;">&#9888; No fee assignments found for this student in the selected term. Go to <a href="#" onclick="loadView('fin-fee-assignments');return false;">Fee Assignments</a> to configure them first.</p>`);
+    if(btn) btn.disabled=true; return;
+  }
+
+  const rows = lines.map(li => {
+    const base     = parseFloat(li.base_unit_price || 0);
+    const factor   = parseFloat(li.proration_factor ?? 1);
+    const prorated = base * factor;
+    const disc     = parseFloat(li.discount_amount || 0);
+    const net      = parseFloat(li.net_amount || 0);
     return `<tr>
-      <td>${_finEsc(_rcvFeeItemName(sched?.fee_item_id))}</td>
-      <td>${_finEsc(_rcvLineItemAccountName({ fee_item_id: sched?.fee_item_id }))}</td>
+      <td>${_finEsc(li.fee_item_name || _rcvFeeItemName(li.fee_item_id))}</td>
+      <td>${_finEsc(_rcvLineItemAccountName({ fee_item_id: li.fee_item_id }))}</td>
       <td>KES ${_finFmt(base)}</td>
-      <td>×1.0 (100%)</td>
-      <td>KES ${_finFmt(net)}</td>
-      <td>—</td>
+      <td>&times;${factor.toFixed(4)} <small style="color:#888;">(${(factor*100).toFixed(1)}%)</small></td>
+      <td>KES ${_finFmt(prorated)}</td>
+      <td>${disc > 0 ? `&minus;KES ${_finFmt(disc)}` : '—'}</td>
       <td>KES ${_finFmt(net)}</td>
     </tr>`;
   }).join('');
-  preview.innerHTML=`<div class="fin-table-wrap"><table class="fin-table">
+
+  preview.innerHTML = priorBanner + `<div class="fin-table-wrap"><table class="fin-table">
     <thead><tr><th>LINE</th><th>ACCOUNT</th><th>BASE AMOUNT</th><th>PRORATION</th><th>PRORATED</th><th>DISCOUNT</th><th>NET</th></tr></thead>
     <tbody>${rows}
-    <tr style="font-weight:600;border-top:2px solid #e5e7eb;"><td colspan="6">Total</td><td>KES ${_finFmt(total)}</td></tr>
+    <tr style="font-weight:600;border-top:2px solid #e5e7eb;"><td colspan="6">Total</td><td>KES ${_finFmt(parseFloat(data.total_amount_due || 0))}</td></tr>
     </tbody></table></div>
-    <p style="font-size:0.8rem;color:#888;margin-top:6px;"><em>Preview amounts use proration_factor=1.0. Actual proration is computed server-side on generate. Each line posts to its Fee Item's configured income account (Finance &rsaquo; Fee Items). Generation is blocked if any Fee Item lacks an income account — the server responds 422 with the offending items named.</em></p>`;
+    <p style="font-size:0.8rem;color:#888;margin-top:6px;"><em>These are the server's own figures for this generate &mdash; proration and discounts included, and assignments already sitting on another invoice excluded. Each line posts to its Fee Item's configured income account (Finance &rsaquo; Fee Items); generation is blocked with a 422 naming any item that lacks one.</em></p>`;
   if(btn) btn.disabled=false;
 }
 
@@ -1217,15 +1266,15 @@ async function submitGenerateSingleInvoice() {
   const termId          = parseInt(document.getElementById('rcv-gen-term')?.value, 10);
   const dueDate         = document.getElementById('rcv-gen-due-date')?.value;
   const ledgerId        = parseInt(document.getElementById('rcv-gen-ledger')?.value, 10);
+  const msgEl           = document.getElementById('rcv-gen-msg');
+  if (msgEl) msgEl.innerHTML = '';
   if (!studentId||!termId||!dueDate||!ledgerId) { showToast('All fields are required.','error'); return; }
   localStorage.setItem('rcv_last_ledger_id', String(ledgerId));
   const res = await apiFetch(`${API_BASE}/receivables/fee-invoices/generate`, {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ student_id:studentId, term_id:termId, due_date:dueDate, ledger_id:ledgerId }),
   });
-  if (res && res.status===409) {
-    showToast('An open invoice already exists for this student in this term. Cancel it before regenerating.','error'); return;
-  }
+  if (res && res.status===409) { await _rcvShowGenerateConflict(res, msgEl); return; }
   if (res && res.status===422) {
     const msg = await parseApiError(res);
     showToast('Cannot generate: ' + msg, 'error');
@@ -1237,6 +1286,29 @@ async function submitGenerateSingleInvoice() {
     window._rcvCurrentInvoiceId = inv.id;
     loadInvoiceDetailView(document.getElementById('main-content'), inv.id);
   } else if (res) { showToast('Error: ' + await parseApiError(res),'error'); }
+}
+
+// The "every assignment is already billed" 409 now carries a structured detail
+// object — {message, existing_invoices[]} — so the operator can click straight
+// through to the invoices that consumed the charges. Other 409 causes on this
+// endpoint still send a plain string, hence the typeof branch rather than
+// assuming one shape; parseApiError's JSON.stringify fallback would otherwise
+// render the object as raw braces.
+async function _rcvShowGenerateConflict(res, msgEl) {
+  let detail = null;
+  try { detail = (await res.json())?.detail ?? null; } catch (_) {}
+  const structured = detail && typeof detail === 'object' && !Array.isArray(detail);
+  const existing   = structured ? _toArray(detail.existing_invoices || []) : [];
+  const text = structured
+    ? (detail.message || 'Every fee assignment for this student and term is already on an existing invoice.')
+    : (typeof detail === 'string' && detail ? detail : 'This invoice could not be generated.');
+  const html = `<div style="margin-top:14px;padding:10px 14px;border-radius:6px;border-left:3px solid var(--coral-500);background:var(--coral-100);color:var(--coral-600);font-size:0.85rem;">
+      ${existing.length
+        ? `Every charge is already invoiced. Prior invoices: ${_rcvExistingInvoiceLinks(existing)}.`
+        : _finEsc(text)}
+      <div style="margin-top:6px;color:#7a3b3b;">Add a mid-term charge (ECA / uniform / meals) as a new fee assignment, or cancel a prior invoice, then try again.</div>
+    </div>`;
+  if (msgEl) msgEl.innerHTML = html; else showToast(text, 'error');
 }
 
 // 4.2 — Invoice Detail

@@ -2577,10 +2577,17 @@ async function openStudentFeeStatement(studentId) {
   const yearName      = cid => _rcvAcademicYearName(cid);
   const className       = cid => _rcvClassName(cid);
 
+  // A (student, term) may carry more than one live invoice as of the
+  // 2026-09-02 addendum §A — a supplementary invoice for a mid-term ECA or
+  // uniform re-order sits alongside the base one instead of replacing it.
+  // Each charge therefore names the invoice it came from, so a parent
+  // querying a line can be pointed at the right document.
   const lineItems = invoices.flatMap(inv => _toArray(inv.line_items).map(li => ({
     description: li.description || feeItemName(li.fee_item_id),
+    invoiceNumber: inv.invoice_number || `#${inv.id}`,
     amount: parseFloat(li.net_amount ?? li.amount ?? 0) || 0,
   })));
+  const multiInvoice = invoices.length > 1;
 
   // Totals come from the invoice header (amount_due/amount_paid), which the backend
   // computes authoritatively, rather than re-summed from line_items client-side.
@@ -2603,7 +2610,7 @@ async function openStudentFeeStatement(studentId) {
 
   const rows = lineItems.length
     ? lineItems.map((li,i)=>`<tr style="background:${i%2?'#f4f1ea':'#fff'}">
-        <td style="padding:10px 16px;">${_esc(li.description)}</td>
+        <td style="padding:10px 16px;">${_esc(li.description)}${multiInvoice?`<br><span style="font-size:0.78rem;color:#888;">${_esc(li.invoiceNumber)}</span>`:''}</td>
         <td style="padding:10px 16px;text-align:right;">${li.amount.toLocaleString()}</td>
       </tr>`).join('')
     : `<tr><td colspan="2" style="padding:18px;text-align:center;color:#888;">No invoices have been issued for this student in this term yet. Use "Generate Invoice" on Fee Invoices first.</td></tr>`;
@@ -2670,7 +2677,7 @@ async function openStudentFeeStatement(studentId) {
           <tr class="balance-row"><td>Balance</td><td>${balance.toLocaleString()}</td></tr>
         </tfoot>
       </table>
-      <p class="footnote">*Amounts reflect the fee schedule configured for this class and term.</p>
+      <p class="footnote">*Amounts reflect the fee schedule configured for this class and term.${multiInvoice?` This term is billed across ${invoices.length} invoices (${_esc(invoices.map(i=>i.invoice_number||('#'+i.id)).join(', '))}).`:''}</p>
 
       <table class="panel">
         <tr><td colspan="3" class="panel-head">Payment Details</td></tr>
