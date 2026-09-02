@@ -14,21 +14,25 @@ const _PV_DISBURSEMENT_METHODS = [['cash','Cash'], ['bank_transfer','Bank Transf
 
 async function _pvLoadLookups(force = false) {
   if (_pvLookupsLoaded && !force) return;
-  const [ledgersRes, costCentersRes, deptsRes, acctsRes, supRes, empRes] = await Promise.all([
-    apiFetch(`${API_BASE}/lookups/ledgers`),
-    apiFetch(`${API_BASE}/lookups/cost-centers`),
-    apiFetch(`${API_BASE}/departments/`),
-    apiFetch(`${API_BASE}/accounts/?is_active=true`),
-    apiFetch(`${API_BASE}/suppliers/`),
-    apiFetch(`${API_BASE}/hr/employees`),
+  // Same 403-is-not-emptiness rule as receivables: a clerk who loses, say,
+  // Procurement access should be told the Supplier picker is locked, not
+  // handed a form with an empty supplier list and no explanation.
+  // (_toArray inside loadLookupList already unwraps the employees endpoint's
+  // {items: [...]} envelope, so that call needs no special case here.)
+  const [ledgers, costCenters, depts, accts, suppliers, employees] = await Promise.all([
+    loadLookupList(`${API_BASE}/lookups/ledgers`, 'ledgers'),
+    loadLookupList(`${API_BASE}/lookups/cost-centers`, 'cost-centers'),
+    loadLookupList(`${API_BASE}/departments/`, 'departments'),
+    loadLookupList(`${API_BASE}/accounts/?is_active=true`, 'accounts'),
+    loadLookupList(`${API_BASE}/suppliers/`, 'suppliers'),
+    loadLookupList(`${API_BASE}/hr/employees`, 'employees'),
   ]);
-  _pvLedgers      = (ledgersRes && ledgersRes.ok)     ? _toArray(await ledgersRes.json())     : [];
-  _pvCostCenters  = (costCentersRes && costCentersRes.ok) ? _toArray(await costCentersRes.json()) : [];
-  _pvDepartments  = (deptsRes && deptsRes.ok)         ? _toArray(await deptsRes.json())        : [];
-  _pvAccounts     = (acctsRes && acctsRes.ok)         ? _toArray(await acctsRes.json())         : [];
-  _pvSuppliers    = (supRes && supRes.ok)             ? _toArray(await supRes.json())           : [];
-  const empRaw    = (empRes && empRes.ok) ? await empRes.json() : null;
-  _pvEmployees    = empRaw ? (empRaw.items || _toArray(empRaw)) : [];
+  _pvLedgers      = ledgers;
+  _pvCostCenters  = costCenters;
+  _pvDepartments  = depts;
+  _pvAccounts     = accts;
+  _pvSuppliers    = suppliers;
+  _pvEmployees    = employees;
   _pvLookupsLoaded = true;
 }
 

@@ -21,18 +21,52 @@ let _rcvSchedulesCache = null;
 let _rcvAcademicYearsCache = null;
 
 async function _rcvLoadLookups({ items=false, terms=false, levels=false, classes=false, routes=false, accounts=false, ledgers=false, students=false, schedules=false, academicYears=false } = {}) {
+  // Every one of these goes through loadLookupList rather than the old
+  // `r && r.ok ? r.json() : []`, so a 403 on any single lookup is surfaced
+  // instead of silently becoming an empty picker (see ui-helpers.js).
   const reqs = [];
-  if (items    && !_rcvFeeItemsCache)  reqs.push(apiFetch(`${API_BASE}/receivables/setup/fee-items`).then(r => r&&r.ok ? r.json() : []).then(d => { _rcvFeeItemsCache  = _toArray(d); }));
-  if (terms    && !_rcvTermsCache)     reqs.push(apiFetch(`${API_BASE}/terms`).then(r => r&&r.ok ? r.json() : []).then(d => { _rcvTermsCache     = _toArray(d); }));
-  if (levels   && !_rcvLevelsCache)    reqs.push(apiFetch(`${API_BASE}/academic-levels/`).then(r => r&&r.ok ? r.json() : []).then(d => { _rcvLevelsCache    = _toArray(d); }));
-  if (classes  && !_rcvClassesCache)   reqs.push(apiFetch(`${API_BASE}/classes/`).then(r => r&&r.ok ? r.json() : []).then(d => { _rcvClassesCache   = _toArray(d); }));
-  if (routes   && !_rcvRoutesCache)    reqs.push(apiFetch(`${API_BASE}/routes/`).then(r => r&&r.ok ? r.json() : []).then(d => { _rcvRoutesCache    = _toArray(d); }));
-  if (accounts && !_rcvAccountsCache)  reqs.push(apiFetch(`${API_BASE}/accounts/`).then(r => r&&r.ok ? r.json() : []).then(d => { _rcvAccountsCache  = _toArray(d); }));
-  if (ledgers  && !_rcvLedgersCache)   reqs.push(apiFetch(`${API_BASE}/lookups/ledgers`).then(r => r&&r.ok ? r.json() : []).then(d => { _rcvLedgersCache   = _toArray(d); }));
-  if (students && !_rcvStudentsCache)  reqs.push(apiFetch(`${API_BASE}/students/`).then(r => r&&r.ok ? r.json() : []).then(d => { _rcvStudentsCache  = _toArray(d); }));
-  if (schedules&& !_rcvSchedulesCache) reqs.push(apiFetch(`${API_BASE}/receivables/setup/fee-schedules`).then(r => r&&r.ok ? r.json() : []).then(d => { _rcvSchedulesCache = _toArray(d); }));
-  if (academicYears && !_rcvAcademicYearsCache) reqs.push(apiFetch(`${API_BASE}/academic-years/`).then(r => r&&r.ok ? r.json() : []).then(d => { _rcvAcademicYearsCache = _toArray(d); }));
+  if (items    && !_rcvFeeItemsCache)  reqs.push(loadLookupList(`${API_BASE}/receivables/setup/fee-items`, 'fee-items').then(d => { _rcvFeeItemsCache  = d; }));
+  if (terms    && !_rcvTermsCache)     reqs.push(loadLookupList(`${API_BASE}/terms`, 'terms').then(d => { _rcvTermsCache     = d; }));
+  if (levels   && !_rcvLevelsCache)    reqs.push(loadLookupList(`${API_BASE}/academic-levels/`, 'academic-levels').then(d => { _rcvLevelsCache    = d; }));
+  if (classes  && !_rcvClassesCache)   reqs.push(loadLookupList(`${API_BASE}/classes/`, 'classes').then(d => { _rcvClassesCache   = d; }));
+  if (routes   && !_rcvRoutesCache)    reqs.push(loadLookupList(`${API_BASE}/routes/`, 'routes').then(d => { _rcvRoutesCache    = d; }));
+  if (accounts && !_rcvAccountsCache)  reqs.push(loadLookupList(`${API_BASE}/accounts/`, 'accounts').then(d => { _rcvAccountsCache  = d; }));
+  if (ledgers  && !_rcvLedgersCache)   reqs.push(loadLookupList(`${API_BASE}/lookups/ledgers`, 'ledgers').then(d => { _rcvLedgersCache   = d; }));
+  if (students && !_rcvStudentsCache)  reqs.push(_rcvFetchStudents().then(d => { _rcvStudentsCache  = d; }));
+  if (schedules&& !_rcvSchedulesCache) reqs.push(loadLookupList(`${API_BASE}/receivables/setup/fee-schedules`, 'fee-schedules').then(d => { _rcvSchedulesCache = d; }));
+  if (academicYears && !_rcvAcademicYearsCache) reqs.push(loadLookupList(`${API_BASE}/academic-years/`, 'academic-years').then(d => { _rcvAcademicYearsCache = d; }));
   await Promise.all(reqs);
+}
+
+// Student names for finance pickers come from the full student list, which is
+// gated on student_management.students — a finance clerk needs a name next to
+// an invoice, and has to be handed every field on the student record to get
+// it. The intended fix is a narrow finance-scoped lookup returning only
+// {id, student_id, first_name, last_name, class_name}, matching the shape
+// /lookups/ledgers and /lookups/cost-centers already have.
+//
+// That endpoint does not exist yet — checked against live openapi.json on
+// 2026-09-02, /api/lookups/ has only cost-centers, dropdown-options, ledgers
+// and money-holding-accounts. Pointing the picker at it today would 404 every
+// student dropdown in Finance, which is strictly worse than the status quo.
+// So the URL lives here alone: when BE ships it, this one line changes and
+// every finance student picker follows.
+// All four student pickers in this module render through here, so a denied
+// lookup states the reason in the dropdown itself rather than leaving the
+// operator staring at a list that looks empty because the school has no
+// students. `normal` is the placeholder the picker would otherwise show.
+function _rcvStudentOptions(normal, selectedId, { withCode = true } = {}) {
+  const placeholder = `<option value="">${_finEsc(lookupPlaceholder('students', normal))}</option>`;
+  return placeholder + (_rcvStudentsCache || []).map(st => {
+    const name = `${st.first_name||''} ${st.last_name||''}`.trim();
+    const code = withCode ? ` (${_finEsc(st.student_id || st.code || '')})` : '';
+    return `<option value="${st.id}" ${String(st.id)===String(selectedId)?'selected':''}>${_finEsc(name)}${code}</option>`;
+  }).join('');
+}
+
+const _RCV_STUDENT_LOOKUP_URL = `${API_BASE}/students/`;
+function _rcvFetchStudents() {
+  return loadLookupList(_RCV_STUDENT_LOOKUP_URL, 'students');
 }
 
 // StudentFeeAssignmentRead only carries a flat fee_schedule_id (no nested
@@ -732,8 +766,7 @@ async function loadFeeAssignmentsView(container) {
           <div class="fin-filter-field">
             <label class="fin-filter-label">Student</label>
             <select id="rcv-asn-student" class="fin-filter-select">
-              <option value="">All Students</option>
-              ${(_rcvStudentsCache||[]).map(s=>`<option value="${s.id}">${_finEsc(`${s.first_name||''} ${s.last_name||''}`.trim())} (${_finEsc(s.student_id||s.code||'')})</option>`).join('')}
+              ${_rcvStudentOptions('All Students', '')}
             </select>
           </div>
         </div>
@@ -903,8 +936,7 @@ async function openAddAssignmentModal() {
       <div class="fin-form-group">
         <label class="fin-form-label">Student <span class="fin-required">*</span></label>
         <select id="rcv-add-asn-student" class="fin-form-select">
-          <option value="">Please Select</option>
-          ${(_rcvStudentsCache||[]).map(s=>`<option value="${s.id}">${_finEsc(`${s.first_name||''} ${s.last_name||''}`.trim())} (${_finEsc(s.student_id||'')})</option>`).join('')}
+          ${_rcvStudentOptions('Please Select', '')}
         </select>
       </div>
       <div class="fin-form-group">
@@ -987,8 +1019,7 @@ async function loadFeeInvoicesView(container) {
           <div class="fin-filter-field">
             <label class="fin-filter-label">Student</label>
             <select id="rcv-inv-filter-student" class="fin-filter-select">
-              <option value="">All</option>
-              ${(_rcvStudentsCache||[]).map(s=>`<option value="${s.id}">${_finEsc(`${s.first_name||''} ${s.last_name||''}`.trim())}</option>`).join('')}
+              ${_rcvStudentOptions('All', '', { withCode: false })}
             </select>
           </div>
         </div>
@@ -1100,8 +1131,7 @@ async function loadInvoiceGenerateView(container, presetStudentId, presetTermId)
         <div class="fin-form-group">
           <label class="fin-form-label">Student <span class="fin-required">*</span></label>
           <select id="rcv-gen-student" class="fin-form-select" onchange="rcvGenReviewAssignments()" ${presetStudentId?'disabled':''}>
-            <option value="">Please Select</option>
-            ${(_rcvStudentsCache||[]).map(s=>`<option value="${s.id}" ${String(s.id)===String(presetStudentId)?'selected':''}>${_finEsc(`${s.first_name||''} ${s.last_name||''}`.trim())} (${_finEsc(s.student_id||'')})</option>`).join('')}
+            ${_rcvStudentOptions('Please Select', presetStudentId)}
           </select>
           ${presetStudentId?`<input type="hidden" id="rcv-gen-student-hidden" value="${presetStudentId}">`:''}
         </div>

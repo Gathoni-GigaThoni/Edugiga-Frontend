@@ -560,3 +560,72 @@ function creditedForInvoice(invoiceId) {
   if (!_finAppliedCreditsByInvoice) return null;
   return _finAppliedCreditsByInvoice[invoiceId] || 0;
 }
+
+// ── Lookup fetches: a 403 must never read as "there is no data" ──────────────
+// Every picker in the app is filled from a lookup cache built the same way:
+//
+//     apiFetch(url).then(r => r && r.ok ? r.json() : [])
+//
+// which collapses a permission failure into an empty array. The dropdown then
+// renders with nothing in it, and the operator is told — in effect — that the
+// school has no students, no cost centres, no suppliers. There is no way to
+// tell that apart from a genuinely empty list.
+//
+// That is not hypothetical: a bursar without student_management.students could
+// open Fee Assignments, find the Student picker on the "Add Manually" form
+// empty, and had nothing on screen to explain why she couldn't file an
+// assignment. Diagnosing it took a session. The same failure is waiting behind
+// every other picker the moment a role is tightened.
+//
+// loadLookupList is the one place that distinction is kept. It toasts once per
+// lookup per session — the caches are shared across screens, so re-toasting on
+// each one would be its own kind of noise — and records the denial so a picker
+// can also say it in place, via lookupPlaceholder().
+const LOOKUP_ACCESS_HINTS = {
+  'students':        { noun: 'students',              module: 'Student Management' },
+  'terms':           { noun: 'terms',                 module: 'Student Academics' },
+  'academic-levels': { noun: 'academic levels',       module: 'Student Academics' },
+  'academic-years':  { noun: 'academic years',        module: 'Student Academics' },
+  'classes':         { noun: 'classes',               module: 'Student Academics' },
+  'routes':          { noun: 'transport routes',      module: 'Transport Management' },
+  'accounts':        { noun: 'the chart of accounts', module: 'Finance' },
+  'ledgers':         { noun: 'ledgers',               module: 'Finance' },
+  'cost-centers':    { noun: 'cost centres',          module: 'Finance' },
+  'departments':     { noun: 'departments',           module: 'Finance' },
+  'fee-items':       { noun: 'fee items',             module: 'Finance' },
+  'fee-schedules':   { noun: 'fee schedules',         module: 'Finance' },
+  'suppliers':       { noun: 'suppliers',             module: 'Procurement' },
+  'employees':       { noun: 'employees',             module: 'Human Resource' },
+};
+
+const _lookupDenied  = new Set();
+const _lookupToasted = new Set();
+
+function lookupWasDenied(label) { return _lookupDenied.has(label); }
+
+function lookupDeniedMessage(label) {
+  const hint = LOOKUP_ACCESS_HINTS[label];
+  if (!hint) return "You don't have permission to view this list — ask an admin for access.";
+  return `You don't have permission to view ${hint.noun} — ask an admin for view access on ${hint.module}.`;
+}
+
+// Placeholder for a picker whose source was denied, so the empty dropdown says
+// why rather than just sitting there empty. Pass the normal placeholder text.
+function lookupPlaceholder(label, normal) {
+  if (!lookupWasDenied(label)) return normal;
+  const hint = LOOKUP_ACCESS_HINTS[label];
+  return hint ? `No access — ask an admin for ${hint.module}` : 'No access';
+}
+
+async function loadLookupList(url, label) {
+  const res = await apiFetch(url);
+  if (res && res.status === 403) {
+    _lookupDenied.add(label);
+    if (!_lookupToasted.has(label)) {
+      _lookupToasted.add(label);
+      showToast(lookupDeniedMessage(label), 'error');
+    }
+    return [];
+  }
+  return (res && res.ok) ? _toArray(await res.json()) : [];
+}
