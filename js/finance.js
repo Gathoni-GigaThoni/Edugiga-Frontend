@@ -181,104 +181,278 @@ function _finSendActionRow() {
   `;
 }
 
-// ==================== CHANGE 1: STUDENT FEES STATUS ====================
+// ==================== STUDENT FEES STATUS ====================
+// This page is named for the status of a student's account, and for a long
+// time it listed /students/ — admission number, class, cohort, reporting flag,
+// active flag. Six columns, not one of them money. The fee figures existed
+// only behind "View Detail", so answering "who owes us anything" meant opening
+// students one at a time. The 2026-09-02 work typed StudentFeeStatusRead and
+// rebuilt that detail page, but never touched the list in front of it.
+//
+// There is no bulk fee-status endpoint — /receivables/student-finance/{id}/
+// fee-status is per student, and one call per child does not scale to a
+// roster. GET /reports/consolidated-student-debtors is the one call that
+// answers the question: a row per student with total_invoiced, total_paid,
+// current_balance and the four ageing buckets, as at a date, optionally for
+// one class.
+//
+// It is a *debtors* report, so a student who owes nothing may legitimately be
+// absent from it. The roster therefore stays the spine of the list — from the
+// finance lookup, not /students/, which would put a Student Management grant
+// back in an accountant's way — and the report is joined onto it. A student
+// with no row is shown as settled rather than dropped, so the count at the top
+// is the whole school and not just the part of it in arrears.
+//
+// total_credited is deliberately not a column here: ConsolidatedStudentDebtorRow
+// carries no credited figure, and deriving one per student would mean the
+// applied-CN index over every invoice. Credits show on the detail page, which
+// reads the typed per-student endpoint. The caption says so.
+
+let _sfsPerPage  = 25;
+let _sfsSearch   = '';
+let _sfsRows     = [];      // roster joined with debtor rows
+let _sfsTotals   = null;    // report totals, or null when the report is unavailable
+let _sfsAsOf     = '';
+let _sfsClassId  = '';
+let _sfsPage     = 1;
+let _sfsDebtorsError = '';  // set when the report call fails, shown once above the table
+let _sfsRosterScoped = true; // false when a class view could not be scoped by name (see _loadSfsTable)
+
+function _sfsToday() { return new Date().toISOString().split('T')[0]; }
 
 async function loadStudentFeesStatusView(container) {
-  await renderSplitView({
-    container,
-    moduleKey: 'finance.student_fees_status',
-    title: 'Student Fees Status',
-    breadcrumb: [
-      {label:'Dashboard',view:null},
-      {label:'Finance',view:'fin-student-fees-status'},
-      {label:'Student Fees Status'}
-    ],
-    apiUrl: `${API_BASE}/students/`,
-    searchFields: ['first_name','last_name','student_id'],
-    col1Label: 'Student', col2Label: 'Class',
-    col1: s => `${s.first_name||''} ${s.last_name||''}`.trim() || '—',
-    col2: s => s.school_class_name || s.cohort || '—',
-    rowLabel: s => `${s.first_name||''} ${s.last_name||''}`.trim() || '—',
-    rowSub:   s => s.student_id || '',
-    idKey: 'id',
-    detailFields: [
-      {label:'Student ID',  key:'student_id'},
-      {label:'Name',        key:'first_name', fmt:(_,s)=>`${s.first_name||''} ${s.last_name||''}`.trim()},
-      {label:'Class',       key:'school_class_name', fmt:v=>v||'—'},
-      {label:'Cohort',      key:'cohort', fmt:v=>v||'—'},
-      {label:'Reporting',   key:'is_reported', fmt:v=>v?'Reported':'Not Reported'},
-      {label:'Status',      key:'is_active', fmt:v=>v?'Active':'Inactive'},
-    ],
-    onEdit: item => openFeesDetail(item.id),
-  });
+  _sfsSearch=''; _sfsRows=[]; _sfsTotals=null; _sfsPage=1; _sfsDebtorsError=''; _sfsRosterScoped=true;
+  _sfsAsOf = _sfsToday(); _sfsClassId = '';
+  await _rcvLoadLookups({ classes:true });
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Student Fees Status</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Student Fees Status</div>
+      </div>
+      <div class="fin-filter-section">
+        <div class="fin-filter-grid">
+          <div class="fin-filter-field">
+            <label class="fin-filter-label">As At</label>
+            <input type="date" id="sfs-as-of" class="fin-filter-input" value="${_sfsAsOf}">
+          </div>
+          <div class="fin-filter-field">
+            <label class="fin-filter-label">Class</label>
+            <select id="sfs-class" class="fin-filter-select">
+              <option value="">All Classes</option>${_rcvClassOptions('')}
+            </select>
+          </div>
+          <div class="fin-filter-field">
+            <label class="fin-filter-label">Search</label>
+            <input type="text" id="sfs-search" class="fin-filter-input" placeholder="Name or admission no&#8230;"
+                   oninput="onSfsSearch(this.value)">
+          </div>
+        </div>
+        <div class="fin-filter-actions">
+          <button class="fin-btn-teal" onclick="sfsReload()">Apply</button>
+          <button class="fin-btn-outline" onclick="sfsResetFilters()">Reset</button>
+        </div>
+      </div>
+      <div id="sfs-summary"></div>
+      <div id="sfs-table-container"><p class="fin-loading">Loading&#8230;</p></div>
+    </div>`;
+  await _loadSfsTable();
 }
 
-let _sfsPerPage = 10;
-let _sfsSearch  = '';
-let _sfsStudents = [];
+function sfsResetFilters() {
+  const d=document.getElementById('sfs-as-of'); if(d) d.value=_sfsToday();
+  const c=document.getElementById('sfs-class'); if(c) c.value='';
+  const q=document.getElementById('sfs-search'); if(q) q.value='';
+  _sfsSearch=''; sfsReload();
+}
 
+function sfsReload() {
+  _sfsAsOf    = document.getElementById('sfs-as-of')?.value || _sfsToday();
+  _sfsClassId = document.getElementById('sfs-class')?.value || '';
+  _sfsPage    = 1;
+  _loadSfsTable();
+}
+
+// A settled student and a student the report could not be fetched for must not
+// look the same, so the two failure shapes are kept apart: `hasRow` false with
+// the report loaded means nothing outstanding; _sfsDebtorsError set means every
+// money column is unknown, and the banner says so rather than showing zeros.
 async function _loadSfsTable() {
   const container = document.getElementById('sfs-table-container');
-  if (!container) return;
-  try {
-    const res = await fetch(`${API_BASE}/students/`, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) { container.innerHTML = '<p class="fin-error">Error loading students.</p>'; return; }
-    _sfsStudents = await res.json();
-    _renderSfsTable();
-  } catch(_) { container.innerHTML = '<p class="fin-error">Failed to load students.</p>'; }
+  if (container) container.innerHTML = '<p class="fin-loading">Loading&#8230;</p>';
+  _sfsDebtorsError = '';
+
+  const qs = `as_of_date=${encodeURIComponent(_sfsAsOf)}${_sfsClassId ? `&class_id=${_sfsClassId}` : ''}`;
+  const [roster, repRes] = await Promise.all([
+    loadFinanceStudents(),
+    apiFetch(`${API_BASE}/reports/consolidated-student-debtors?${qs}`),
+  ]);
+
+  let byStudent = new Map();
+  if (repRes && repRes.ok) {
+    const data = await repRes.json().catch(() => null);
+    _sfsTotals = data || null;
+    for (const r of _toArray(data?.rows || [])) byStudent.set(String(r.student_id), r);
+  } else {
+    _sfsTotals = null;
+    _sfsDebtorsError = repRes
+      ? (repRes.status === 403
+          ? 'Balances need the Finance › Reports permission. The roster is shown without them.'
+          : 'Could not load balances: ' + await parseApiError(repRes))
+      : 'Could not load balances: network error.';
+  }
+
+  // The report is class-filtered server-side on class_id, which is exact. The
+  // roster is not: the finance lookup carries class_name and no class_id, and
+  // class names repeat across academic years — the same trap that keeps
+  // rcvFscBackfill on /students/?class_id=. Matching on the name would list
+  // last year's cohort as this class's settled students.
+  //
+  // So the roster is only used to scope a class view when that class's name is
+  // unique across the cache. When it is not, the list falls back to the
+  // report's own rows: fewer students (a settled child has no row) but never
+  // the wrong ones, and the caption says which of the two is on screen.
+  let scoped = roster, rosterScoped = true;
+  if (_sfsClassId) {
+    const cls = (_rcvClassesCache || []).find(c => String(c.id) === String(_sfsClassId));
+    const className = cls ? (cls.name || cls.class_name || '') : '';
+    const unique = className && (_rcvClassesCache || [])
+      .filter(c => (c.name || c.class_name || '') === className).length === 1;
+    if (unique) {
+      scoped = roster.filter(st => (st.class_name || '') === className);
+    } else {
+      rosterScoped = false;
+      const ids = new Set([...byStudent.keys()]);
+      scoped = roster.filter(st => ids.has(String(st.id)));
+    }
+  }
+  _sfsRosterScoped = rosterScoped;
+
+  _sfsRows = scoped.map(st => {
+    const row = byStudent.get(String(st.id)) || null;
+    return {
+      id: st.id,
+      display_id: st.student_id || row?.student_display_id || '',
+      name: financeStudentName(st) || row?.student_name || '—',
+      class_name: st.class_name || row?.class_name || '',
+      hasRow: !!row,
+      total_invoiced: row ? parseFloat(row.total_invoiced) || 0 : 0,
+      total_paid:     row ? parseFloat(row.total_paid) || 0 : 0,
+      balance:        row ? parseFloat(row.current_balance) || 0 : 0,
+      overdue:        row ? (parseFloat(row['30_days'])||0) + (parseFloat(row['60_days'])||0) + (parseFloat(row['90_plus'])||0) : 0,
+      ninety:         row ? parseFloat(row['90_plus']) || 0 : 0,
+    };
+  });
+  // Biggest debtors first — the reason to open this page is to chase money.
+  _sfsRows.sort((a, b) => b.balance - a.balance || a.name.localeCompare(b.name));
+  _renderSfsSummary();
+  _renderSfsTable();
+}
+
+function _renderSfsSummary() {
+  const el = document.getElementById('sfs-summary');
+  if (!el) return;
+  if (!_sfsTotals) { el.innerHTML = ''; return; }
+  const outstanding = parseFloat(_sfsTotals.total_current_balance) || 0;
+  const inArrears   = _sfsRows.filter(r => r.balance > 0).length;
+  el.innerHTML = `
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
+      ${_sfsStatCard('Total Billed', formatKES(_sfsTotals.total_invoiced))}
+      ${_sfsStatCard('Total Paid',   formatKES(_sfsTotals.total_paid))}
+      ${_sfsStatCard('Outstanding',  formatKES(outstanding),
+                     outstanding > 0 ? 'var(--coral-600,#A62B2B)' : 'var(--navy-700,#1B3057)')}
+      ${_sfsStatCard('Students in Arrears', `${inArrears} of ${_sfsRows.length}`)}
+    </div>`;
+}
+
+function _sfsBalanceCell(r) {
+  if (!r.hasRow) {
+    return _sfsDebtorsError
+      ? '<span style="color:#888;" title="Balances could not be loaded">?</span>'
+      : '<span style="color:#065f46;font-size:0.84rem;">Settled</span>';
+  }
+  const colour = r.balance > 0 ? 'var(--coral-600,#A62B2B)' : r.balance < 0 ? '#7a6110' : 'inherit';
+  const overdueTag = r.overdue > 0
+    ? `<div style="font-size:0.74rem;color:${r.ninety > 0 ? '#991b1b' : '#92400e'};margin-top:2px;">
+         ${formatKES(r.overdue)} overdue${r.ninety > 0 ? ' &middot; 90+ days' : ''}</div>`
+    : '';
+  return `<span style="color:${colour};font-weight:600;">${_finFmt(r.balance)}</span>${overdueTag}`;
 }
 
 function _renderSfsTable() {
-  const totalEl = document.getElementById('sfs-total-count');
-  const filtered = _sfsSearch
-    ? _sfsStudents.filter(s =>
-        (`${s.first_name} ${s.last_name}`.toLowerCase().includes(_sfsSearch) ||
-         (s.student_id || '').toLowerCase().includes(_sfsSearch)))
-    : _sfsStudents;
-  if (totalEl) totalEl.textContent = filtered.length;
-  const page = filtered.slice(0, _sfsPerPage);
+  const container = document.getElementById('sfs-table-container');
+  if (!container) return;
 
-  let rows = '';
-  if (page.length === 0) {
-    rows = `<tr><td colspan="7" class="fin-empty">No records found.</td></tr>`;
-  } else {
-    page.forEach(s => {
-      rows += `<tr>
-        <td>${_finEsc(s.student_id || '')}</td>
-        <td>${_finEsc((s.first_name || '') + ' ' + (s.last_name || ''))}</td>
-        <td>${_finEsc(s.school_class_name || '-')}</td>
-        <td>${_finEsc(s.cohort || '-')}</td>
-        <td>${s.is_reported ? 'Reported' : 'Not Reported'}</td>
-        <td>${s.is_active ? 'Active' : 'Inactive'}</td>
+  const q = _sfsSearch;
+  const filtered = q
+    ? _sfsRows.filter(r => `${r.name} ${r.display_id} ${r.class_name}`.toLowerCase().includes(q))
+    : _sfsRows;
+
+  const pages = Math.max(1, Math.ceil(filtered.length / _sfsPerPage));
+  if (_sfsPage > pages) _sfsPage = pages;
+  const page = filtered.slice((_sfsPage - 1) * _sfsPerPage, _sfsPage * _sfsPerPage);
+
+  const banner = _sfsDebtorsError
+    ? `<div style="background:var(--coral-100,#FBEAEA);border-left:3px solid var(--coral-500,#C74444);border-radius:6px;padding:10px 14px;margin-bottom:12px;color:var(--coral-600,#A62B2B);font-size:0.86rem;">${_finEsc(_sfsDebtorsError)}</div>`
+    : '';
+
+  const rows = page.length
+    ? page.map(r => `<tr>
+        <td>${_finEsc(r.display_id || '—')}</td>
+        <td>${_finEsc(r.name)}</td>
+        <td>${_finEsc(r.class_name || '—')}</td>
+        <td>${r.hasRow ? _finFmt(r.total_invoiced) : '—'}</td>
+        <td>${r.hasRow ? _finFmt(r.total_paid) : '—'}</td>
+        <td>${_sfsBalanceCell(r)}</td>
         <td class="fin-action-cell">
           <div class="fin-action-wrap">
-            <button class="fin-action-btn" onclick="toggleFinSfsDropdown(event,${s.id})">&#8230;</button>
-            <div id="fin-sfs-dd-${s.id}" class="fin-action-dropdown" style="display:none;">
-              <a href="#" onclick="openFeesDetail(${s.id});return false;">&#128065; View Detail</a>
+            <button class="fin-action-btn" onclick="toggleFinSfsDropdown(event,${r.id})">&#8230;</button>
+            <div id="fin-sfs-dd-${r.id}" class="fin-action-dropdown" style="display:none;">
+              <a href="#" onclick="openFeesDetail(${r.id});return false;">&#128065; View Detail</a>
+              <a href="#" onclick="_sfsStmtOpenFor(${r.id});return false;">&#128203; Summarised Statement</a>
             </div>
           </div>
         </td>
-      </tr>`;
-    });
-  }
+      </tr>`).join('')
+    : `<tr><td colspan="7" class="fin-empty">No students match this filter.</td></tr>`;
 
-  const container = document.getElementById('sfs-table-container');
-  if (!container) return;
-  container.innerHTML = `
+  container.innerHTML = banner + `
     <div class="fin-table-wrap">
       <table class="fin-table">
         <thead><tr>
-          <th>STUDENT ID</th><th>STUDENT NAME</th><th>CLASS</th><th>COHORT</th>
-          <th>REPORTING STATUS</th><th>ACADEMIC STATUS</th><th>ACTION</th>
+          <th>ADMISSION NO</th><th>STUDENT NAME</th><th>CLASS</th>
+          <th>BILLED</th><th>PAID</th><th>BALANCE</th><th>ACTION</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>
-  `;
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-top:10px;">
+      <span style="font-size:0.85rem;color:#666;">
+        Showing ${page.length ? (_sfsPage-1)*_sfsPerPage + 1 : 0}&ndash;${(_sfsPage-1)*_sfsPerPage + page.length} of ${filtered.length}
+        &middot; <label>Per page
+          <select onchange="changeSfsPerPage(this.value)" class="fin-filter-select" style="width:auto;display:inline-block;padding:2px 6px;">
+            ${[25,50,100].map(n=>`<option value="${n}"${n===_sfsPerPage?' selected':''}>${n}</option>`).join('')}
+          </select></label>
+      </span>
+      <span>
+        <button class="fin-btn-outline" ${_sfsPage<=1?'disabled':''} onclick="sfsGoPage(${_sfsPage-1})">&lsaquo; Prev</button>
+        <span style="font-size:0.85rem;color:#666;margin:0 8px;">Page ${_sfsPage} of ${pages}</span>
+        <button class="fin-btn-outline" ${_sfsPage>=pages?'disabled':''} onclick="sfsGoPage(${_sfsPage+1})">Next &rsaquo;</button>
+      </span>
+    </div>
+    <p style="font-size:0.8rem;color:#888;margin-top:8px;"><em>Balances are as at ${_finEsc(_sfsAsOf)}, from the consolidated debtors report. A student with no invoices outstanding shows as Settled.${_sfsRosterScoped ? '' : ' This class shares its name with another, so only students holding invoices are listed &mdash; settled classmates are omitted rather than risk listing another cohort\'s.'} Credit notes are netted into the balance but have no column here &mdash; open a student's detail for the billed / paid / credited breakdown.</em></p>`;
 }
 
-function changeSfsPerPage(val) { _sfsPerPage = parseInt(val); _renderSfsTable(); }
-function onSfsSearch(val)       { _sfsSearch = val.trim().toLowerCase(); _renderSfsTable(); }
+function sfsGoPage(n) { _sfsPage = n; _renderSfsTable(); }
+function changeSfsPerPage(val) { _sfsPerPage = parseInt(val, 10) || 25; _sfsPage = 1; _renderSfsTable(); }
+function onSfsSearch(val)      { _sfsSearch = val.trim().toLowerCase(); _sfsPage = 1; _renderSfsTable(); }
+
+// Jump straight from a row into that student's per-term rollup, instead of
+// making the user re-find them in the Summarised Fee Statement picker.
+async function _sfsStmtOpenFor(studentId) {
+  await loadSummarizedFeeStatementView(document.getElementById('main-content'));
+  await _sfsStmtSelectStudent(studentId);
+}
 
 function toggleFinSfsDropdown(event, id) {
   event.stopPropagation();
