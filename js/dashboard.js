@@ -167,7 +167,7 @@ function showDashboard() {
           <div class="flyout-module-body" id="flyout-body-finance" data-label="Finance" hidden>
             <ul id="finance-dropdown" class="dropdown-menu">
               <li onclick="loadView('student-fees-status')">Student Fees Status</li>
-              <li onclick="loadView('summarized-fee-statement')">Summarized Fee Statement</li>
+              <li onclick="loadView('summarized-fee-statement')">Summarised Fee Statement</li>
               <li class="dropdown">
                 ${flyoutGroupHeader('Student Finance', 'fin-sf-dropdown')}
                 <ul id="fin-sf-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('fin-sf-dropdown')}">

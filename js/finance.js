@@ -1,6 +1,5 @@
 // ==================== FINANCE MODULE ====================
 
-let _sfsFilteredStudents = [];  // persists Summarized Fee Statement results for back-navigation
 
 document.addEventListener('click', () => {
   document.querySelectorAll(
@@ -323,235 +322,178 @@ function _renderFeesDetailPage(container, student, ledger, studentId) {
   `;
 }
 
-// ==================== CHANGE 2: SUMMARIZED FEE STATEMENT ====================
+// ==================== SUMMARISED FEE STATEMENT ====================
+// finance.summarized_fee_statement sat in the permission tree for a long time
+// with no endpoint behind it: the page listed students and rendered a dash in
+// every money column, and the "View Statement" drill-down rebuilt a
+// transaction ledger client-side out of invoices and receipts — which silently
+// omitted credit notes, so a forgiven balance still read as owed.
+//
+// GET /receivables/student-finance/{id}/summarised-fee-statement is the real
+// thing: one row per term with billed / paid / credited / balance, computed
+// server-side with the same `balance = due − paid − credited` formula the
+// individual invoices use, so this summary cannot drift from the invoice
+// detail views. CANCELLED invoices are excluded, as everywhere else.
+//
+// The page is a picker plus that rollup, rather than the old list-then-drill:
+// per-term totals are what the endpoint returns, and the transaction-level
+// ledger already has two homes (Student Fees Status detail, and the Statement
+// of Account tab on the student profile) that both read a server-computed
+// statement.
+
+let _sfsStmtStudent = null;
 
 async function loadSummarizedFeeStatementView(container) {
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
-        <h2 class="fin-title">Summarized Fee Statement</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Summarized Fee Statement</div>
+        <h2 class="fin-title">Summarised Fee Statement</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Student Fees &rsaquo; Summarised Statement</div>
       </div>
-
-      <!-- Filter form -->
       <div class="fin-filter-section">
-        <div class="fin-filter-grid">
-          <div class="fin-filter-field">
-            <label class="fin-filter-label">Term <span class="fin-required">*</span></label>
-            <select id="sfs-stmt-term" class="fin-filter-select">
-              <option value="">-- Select Term --</option>
-            </select>
-            <span class="fin-field-error" id="sfs-stmt-term-err"></span>
-          </div>
-          <div class="fin-filter-field">
-            <label class="fin-filter-label">Admission No.</label>
-            <input type="text" id="sfs-stmt-admno" class="fin-filter-input" placeholder="">
-          </div>
-          <div class="fin-filter-field">
-            <label class="fin-filter-label">Stream</label>
-            <input type="text" id="sfs-stmt-stream" class="fin-filter-input" placeholder="">
-          </div>
-          <div class="fin-filter-field">
-            <label class="fin-filter-label">Student Name</label>
-            <input type="text" id="sfs-stmt-name" class="fin-filter-input" placeholder="">
-          </div>
-          <div class="fin-filter-field">
-            <label class="fin-filter-label">Class</label>
-            <input type="text" id="sfs-stmt-class" class="fin-filter-input" placeholder="">
-          </div>
-          <div class="fin-filter-field">
-            <label class="fin-filter-label">Academic Records Status</label>
-            <select id="sfs-stmt-status" class="fin-filter-select">
-              <option value="">All</option>
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
-            </select>
-          </div>
-        </div>
-        <div class="fin-filter-actions">
-          <button class="fin-btn-teal" onclick="submitSummarizedFilter()">Submit</button>
-          <button class="fin-btn-outline" onclick="clearSummarizedFilter()">Clear</button>
+        <div class="fin-filter-field" style="position:relative;max-width:460px;">
+          <label class="fin-filter-label">Student <span class="fin-required">*</span></label>
+          <input type="text" id="sfs-stmt-student-search" class="fin-filter-input" autocomplete="off"
+                 placeholder="Search by name, admission no. or class&#8230;"
+                 oninput="_sfsStmtStudentSearch(this.value)">
+          <div id="sfs-stmt-student-dd" class="fin-search-dropdown" style="display:none;position:absolute;z-index:40;left:0;right:0;background:#fff;border:1px solid var(--grey-100,#ECEEF2);border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,0.10);max-height:280px;overflow:auto;"></div>
         </div>
       </div>
+      <div id="sfs-stmt-results">
+        <p style="color:#888;font-size:0.9rem;">Select a student to see their per-term fee summary.</p>
+      </div>
+    </div>`;
+  _sfsStmtStudent = null;
+  // Warm the cache so the first keystroke filters instead of waiting on a fetch.
+  loadFinanceStudents();
+}
 
-      <!-- Results -->
-      <div id="sfs-stmt-results"></div>
+let _sfsStmtSearchTimer = null;
+function _sfsStmtStudentSearch(val) {
+  clearTimeout(_sfsStmtSearchTimer);
+  const dd = document.getElementById('sfs-stmt-student-dd');
+  if (!dd) return;
+  if (!val.trim()) { dd.style.display = 'none'; return; }
+  _sfsStmtSearchTimer = setTimeout(async () => {
+    await loadFinanceStudents();
+    const list = searchFinanceStudents(val);
+    dd.innerHTML = list.length ? list.map(st => {
+      const name = _finEsc(financeStudentName(st));
+      return `<a href="#" style="display:block;padding:9px 14px;text-decoration:none;color:var(--navy-900,#0D2137);border-bottom:1px solid var(--grey-100,#ECEEF2);"
+                 onclick="_sfsStmtSelectStudent(${st.id});return false;">
+        <strong>${name}</strong> <span style="color:#888;font-size:0.85em;">${_finEsc(st.student_id || '')}${st.class_name ? ' &middot; ' + _finEsc(st.class_name) : ''}</span>
+      </a>`;
+    }).join('') : '<div style="padding:10px 14px;color:#888;font-size:0.88rem;">No results found</div>';
+    dd.style.display = 'block';
+  }, 200);
+}
+
+document.addEventListener('click', (e) => {
+  const dd = document.getElementById('sfs-stmt-student-dd');
+  const input = document.getElementById('sfs-stmt-student-search');
+  if (dd && input && !dd.contains(e.target) && e.target !== input) dd.style.display = 'none';
+});
+
+async function _sfsStmtSelectStudent(studentId) {
+  const dd = document.getElementById('sfs-stmt-student-dd');
+  if (dd) dd.style.display = 'none';
+  const list = await loadFinanceStudents();
+  _sfsStmtStudent = list.find(st => String(st.id) === String(studentId)) || null;
+  const inp = document.getElementById('sfs-stmt-student-search');
+  if (inp && _sfsStmtStudent) inp.value = `${financeStudentName(_sfsStmtStudent)} (${_sfsStmtStudent.student_id || ''})`;
+
+  const out = document.getElementById('sfs-stmt-results');
+  if (!out) return;
+  out.innerHTML = '<p class="fin-loading">Loading&#8230;</p>';
+  const res = await apiFetch(`${API_BASE}/receivables/student-finance/${studentId}/summarised-fee-statement`);
+  if (!res || !res.ok) {
+    out.innerHTML = `<p class="fin-error">${_finEsc(res ? await parseApiError(res) : 'Network error.')}</p>`;
+    return;
+  }
+  _renderSummarisedStatement(out, await res.json());
+}
+
+function _sfsStatCard(label, value, color) {
+  return `<div style="flex:1;min-width:150px;background:var(--white,#fff);border:1px solid var(--card-border,#e5e5e5);border-radius:8px;padding:14px 16px;">
+    <div style="font-size:11px;font-weight:600;color:var(--grey-400,#999);text-transform:uppercase;letter-spacing:0.06em;">${_finEsc(label)}</div>
+    <div style="font-size:1.15rem;font-weight:700;margin-top:4px;color:${color || 'var(--navy-700,#1B3057)'};">${value}</div>
+  </div>`;
+}
+
+function _renderSummarisedStatement(out, data) {
+  const rows   = _toArray(data?.rows || []);
+  const totals = data?.totals || { invoice_count: 0, total_billed: 0, total_paid: 0, total_credited: 0, balance: 0 };
+  const st     = _sfsStmtStudent;
+
+  const infoCard = `
+    <div style="background:var(--navy-700,#1B3057);color:#fff;border-radius:8px;padding:14px 18px;margin-bottom:16px;">
+      <div style="font-size:1.05rem;font-weight:700;">${_finEsc(st ? financeStudentName(st) : `Student #${data?.student_id ?? ''}`)}</div>
+      <div style="font-size:0.85rem;opacity:0.85;margin-top:2px;">
+        ${_finEsc(st?.student_id || '—')} &middot; ${_finEsc(st?.class_name || 'No class assigned')}
+      </div>
+    </div>`;
+
+  if (!rows.length) {
+    out.innerHTML = infoCard + `<p class="fin-empty" style="padding:24px 0;">No invoices yet for this student. Use Fee Invoicing &rsaquo; <a href="#" onclick="loadView('fin-invoice-generate');return false;">Generate</a> to create the first one.</p>`;
+    return;
+  }
+
+  const credited = parseFloat(totals.total_credited) || 0;
+  const balance  = parseFloat(totals.balance) || 0;
+  // A negative balance is a student credit — normally from an over-credited
+  // CN, where the excess is waiting to offset the next invoice. Gold, not
+  // coral: nothing is owed and nobody needs to chase it.
+  const balanceColour = balance > 0 ? 'var(--coral-600,#A62B2B)'
+                      : balance < 0 ? '#7a6110'
+                      : 'var(--navy-700,#1B3057)';
+
+  const bodyRows = rows.map(r => {
+    const rowBal = parseFloat(r.balance) || 0;
+    const rowCr  = parseFloat(r.total_credited) || 0;
+    return `<tr>
+      <td>${_finEsc(r.academic_year_title || '—')}</td>
+      <td>${_finEsc(r.term_title || `Term #${r.term_id}`)}</td>
+      <td>${r.invoice_count ?? 0}</td>
+      <td>${_finFmt(r.total_billed)}</td>
+      <td>${_finFmt(r.total_paid)}</td>
+      <td${rowCr ? ' style="color:#7a6110;"' : ''}>${_finFmt(r.total_credited)}</td>
+      <td style="color:${rowBal > 0 ? 'var(--coral-600,#A62B2B)' : rowBal < 0 ? '#7a6110' : 'inherit'};">${_finFmt(r.balance)}</td>
+    </tr>`;
+  }).join('');
+
+  out.innerHTML = infoCard + `
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;">
+      ${_sfsStatCard('Total Billed',    formatKES(totals.total_billed))}
+      ${_sfsStatCard('Total Paid',      formatKES(totals.total_paid))}
+      ${_sfsStatCard('Total Credited',  formatKES(totals.total_credited), credited > 0 ? '#7a6110' : 'var(--grey-400,#999)')}
+      ${_sfsStatCard('Balance',         formatKES(totals.balance), balanceColour)}
     </div>
-  `;
-  populateTermDropdown('sfs-stmt-term');
-}
-
-async function submitSummarizedFilter() {
-  const termVal = document.getElementById('sfs-stmt-term').value;
-  const errEl   = document.getElementById('sfs-stmt-term-err');
-  if (!termVal) { if (errEl) errEl.textContent = 'This field is required.'; return; }
-  if (errEl) errEl.textContent = '';
-
-  const admno      = (document.getElementById('sfs-stmt-admno').value   || '').trim().toLowerCase();
-  const nameQ      = (document.getElementById('sfs-stmt-name').value     || '').trim().toLowerCase();
-  const classQ     = (document.getElementById('sfs-stmt-class').value    || '').trim().toLowerCase();
-  const statusQ    = document.getElementById('sfs-stmt-status').value;
-
-  const resultsEl = document.getElementById('sfs-stmt-results');
-  if (resultsEl) resultsEl.innerHTML = '<p class="fin-loading">Loading&#8230;</p>';
-
-  try {
-    const res = await apiFetch(`${API_BASE}/students/`);
-    if (!res || !res.ok) { if (resultsEl) resultsEl.innerHTML = '<p class="fin-error">Failed to load students.</p>'; return; }
-    let students = await res.json();
-
-    if (admno)   students = students.filter(s => (s.student_id || '').toLowerCase().includes(admno));
-    if (nameQ)   students = students.filter(s => (`${s.first_name} ${s.last_name}`).toLowerCase().includes(nameQ));
-    if (classQ)  students = students.filter(s => (s.school_class_name || '').toLowerCase().includes(classQ));
-    if (statusQ === 'active')   students = students.filter(s =>  s.is_active);
-    if (statusQ === 'inactive') students = students.filter(s => !s.is_active);
-
-    _sfsFilteredStudents = students;
-    _renderSummarizedResults(resultsEl, students);
-  } catch(_) {
-    if (resultsEl) resultsEl.innerHTML = '<p class="fin-error">Failed to load results.</p>';
-  }
-}
-
-function clearSummarizedFilter() {
-  ['sfs-stmt-term','sfs-stmt-admno','sfs-stmt-stream','sfs-stmt-name','sfs-stmt-class','sfs-stmt-status']
-    .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
-  const errEl = document.getElementById('sfs-stmt-term-err');
-  if (errEl) errEl.textContent = '';
-  const resultsEl = document.getElementById('sfs-stmt-results');
-  if (resultsEl) resultsEl.innerHTML = '';
-  _sfsFilteredStudents = [];
-}
-
-function _renderSummarizedResults(container, students) {
-  if (!container) return;
-  let rows = '';
-  if (students.length === 0) {
-    rows = `<tr><td colspan="10" class="fin-empty">No records found.</td></tr>`;
-  } else {
-    students.forEach(s => {
-      rows += `<tr>
-        <td>${_finEsc(s.student_id || '-')}</td>
-        <td>${_finEsc((s.first_name||'') + ' ' + (s.last_name||''))}</td>
-        <td>-</td>
-        <td>${_finEsc(s.school_class_name || '-')}</td>
-        <td>${_finEsc(s.currency || 'KES')}</td>
-        <td>${s.is_active ? 'Active' : 'Inactive'}</td>
-        <td>-</td>
-        <td>-</td>
-        <td>-</td>
-        <td class="fin-action-cell">
-          <div class="fin-action-wrap">
-            <button class="fin-action-btn" onclick="toggleFinStmtDropdown(event,${s.id})">&#8230;</button>
-            <div id="fin-stmt-dd-${s.id}" class="fin-action-dropdown" style="display:none;">
-              <a href="#" onclick="openSummarizedStatementDetail(${s.id});return false;">&#128065; View Statement</a>
-            </div>
-          </div>
-        </td>
-      </tr>`;
-    });
-  }
-  container.innerHTML = `
+    ${balance < 0 ? `<div style="background:var(--gold-100,#F7EFD5);border-left:3px solid var(--gold-500,#C9A227);border-radius:6px;padding:10px 14px;margin-bottom:14px;color:#7a6110;font-size:0.86rem;">
+      This student is in credit by ${formatKES(Math.abs(balance))}. It will offset their next invoice.
+    </div>` : ''}
     <div class="fin-table-wrap">
       <table class="fin-table">
         <thead><tr>
-          <th>ADMISSION NO.</th><th>NAME</th><th>CLASS</th>
-          <th>CURRENCY</th><th>ACADEMIC STATUS</th><th>ARREARS/PREPAID</th>
-          <th>FEES EXPECTED</th><th>FEE BALANCE (CURRENT)</th><th>ACTION</th>
+          <th>ACADEMIC YEAR</th><th>TERM</th><th>INVOICES</th>
+          <th>BILLED</th><th>PAID</th><th>CREDITED</th><th>BALANCE</th>
         </tr></thead>
-        <tbody>${rows}</tbody>
+        <tbody>${bodyRows}</tbody>
+        <tfoot>
+          <tr class="fin-tfoot-total" style="font-weight:700;color:var(--navy-700,#1B3057);">
+            <td colspan="2">Total</td>
+            <td>${totals.invoice_count ?? 0}</td>
+            <td>${_finFmt(totals.total_billed)}</td>
+            <td>${_finFmt(totals.total_paid)}</td>
+            <td>${_finFmt(totals.total_credited)}</td>
+            <td>${_finFmt(totals.balance)}</td>
+          </tr>
+        </tfoot>
       </table>
     </div>
-  `;
-}
-
-function toggleFinStmtDropdown(event, id) {
-  event.stopPropagation();
-  document.querySelectorAll('[id^="fin-stmt-dd-"]').forEach(d => {
-    if (d.id !== `fin-stmt-dd-${id}`) d.style.display = 'none';
-  });
-  const dd = document.getElementById(`fin-stmt-dd-${id}`);
-  if (dd) dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
-}
-
-async function openSummarizedStatementDetail(studentId) {
-  const main = document.getElementById('main-content');
-  main.innerHTML = '<p class="fin-loading">Loading&#8230;</p>';
-  try {
-    const res = await fetch(`${API_BASE}/students/${studentId}`, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) { main.innerHTML = '<p class="fin-error">Could not load student.</p>'; return; }
-    const student = await res.json();
-    const ledger  = await _finBuildLedger(studentId);
-    _renderSummarizedStatementPage(main, student, ledger, studentId);
-  } catch(_) { main.innerHTML = '<p class="fin-error">Failed to load statement.</p>'; }
-}
-
-function _renderSummarizedStatementPage(container, student, ledger, studentId) {
-  container.innerHTML = `
-    <div class="fin-page">
-      <div class="fin-header-row">
-        <h2 class="fin-title">Summarized Fee Statement</h2>
-        <div class="fin-breadcrumb">
-          Dashboard &rsaquo; Finance &rsaquo;
-          <a href="#" class="fin-bc-link" onclick="loadView('summarized-fee-statement');return false;">Summarized Fee Statement</a>
-          &rsaquo; Show
-        </div>
-      </div>
-
-      <!-- Date range filter -->
-      <div class="fin-filter-section">
-        <div class="fin-filter-grid">
-          <div class="fin-filter-field">
-            <label class="fin-filter-label">Start Date</label>
-            <input type="date" id="stmt-start-date" class="fin-filter-input">
-          </div>
-          <div class="fin-filter-field">
-            <label class="fin-filter-label">End Date</label>
-            <input type="date" id="stmt-end-date" class="fin-filter-input">
-          </div>
-          <div class="fin-filter-field">
-            <label class="fin-filter-label">As At</label>
-            <input type="date" id="stmt-as-at" class="fin-filter-input">
-          </div>
-        </div>
-        <div class="fin-filter-actions">
-          <button class="fin-btn-teal" onclick="submitStmtDateFilter(${studentId})">Submit</button>
-          <button class="fin-btn-outline" onclick="clearStmtDateFilter(${studentId})">Clear</button>
-        </div>
-      </div>
-
-      ${_finSendActionRow()}
-      ${_finStudentInfoGrid(student)}
-      <div class="fin-section-label">Transaction Ledger</div>
-      <div id="fin-stmt-ledger">${_finLedgerTable(ledger)}</div>
-      <div id="fin-stmt-ledger-store"
-           data-student="${studentId}"
-           data-ledger='${JSON.stringify(ledger).replace(/'/g,"&#39;")}'
-           style="display:none;"></div>
-    </div>
-  `;
-}
-
-function submitStmtDateFilter(studentId) {
-  const store  = document.getElementById('fin-stmt-ledger-store');
-  if (!store) return;
-  const ledger = JSON.parse(store.dataset.ledger || '[]');
-  const start  = document.getElementById('stmt-start-date').value;
-  const end    = document.getElementById('stmt-end-date').value;
-  const asAt   = document.getElementById('stmt-as-at').value;
-  const el     = document.getElementById('fin-stmt-ledger');
-  if (el) el.innerHTML = _finLedgerTable(_finFilterLedger(ledger, start, end, asAt));
-}
-
-function clearStmtDateFilter(studentId) {
-  ['stmt-start-date','stmt-end-date','stmt-as-at'].forEach(id => {
-    const el = document.getElementById(id); if (el) el.value = '';
-  });
-  const store = document.getElementById('fin-stmt-ledger-store');
-  if (!store) return;
-  const ledger = JSON.parse(store.dataset.ledger || '[]');
-  const el = document.getElementById('fin-stmt-ledger');
-  if (el) el.innerHTML = _finLedgerTable(ledger);
+    <p style="font-size:0.8rem;color:#888;margin-top:8px;"><em>Rows are ordered by term start date, with any term missing one sorted last. Cancelled invoices are excluded. A term can carry more than one invoice — the count says how many.</em></p>
+    <div class="fin-send-row" style="margin-top:16px;">
+      <button class="fin-btn-teal" onclick="window.print()">Print Statement</button>
+    </div>`;
 }
 
 // ==================== SHARED STUDENT-NAME LOOKUP ====================
