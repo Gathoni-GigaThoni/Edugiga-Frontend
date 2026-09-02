@@ -753,9 +753,48 @@ async function rcvFscDeleteSchedule(scheduleId) {
 // ==================== MODULE 3 — STUDENT FEE ASSIGNMENTS ====================
 let _rcvAsnData  = [];
 let _rcvAsnTerm  = '', _rcvAsnStudent = '';
+// assignment_id -> the non-cancelled invoice line that consumed it. See
+// _rcvLoadConsumedAssignments below for why this is derived client-side.
+let _rcvAsnInvoiced = new Map();
+let _rcvAsnHideInvoiced = false;
+
+// The 2026-09-02 multi-invoice change moved the anti-double-billing invariant
+// down to "one assignment on at most one non-cancelled invoice line", and
+// taught the Generate preview to respect it. This listing was left behind: it
+// renders every assignment the term has ever had, billed or not, so the bursar
+// cannot tell what is still chargeable without running a preview.
+//
+// There is no server-side answer to ask for. GET /student-fee-assignments/
+// takes only student_id and term_id, and StudentFeeAssignmentRead carries no
+// invoice link. But FeeInvoiceRead returns its line_items inline and
+// FeeInvoiceLineItemRead.assignment_id is populated, so one invoice-list call
+// reconstructs the same set /preview filters on. Cancelled invoices release
+// their lines and are excluded here exactly as they are server-side.
+//
+// Assignment ids are unique across terms, so indexing every invoice rather
+// than just the selected term's cannot collide — and fee-invoices has no
+// term_id filter to narrow it with anyway. A student filter does narrow it.
+async function _rcvLoadConsumedAssignments(studentId) {
+  const url = `${API_BASE}/receivables/fee-invoices${studentId ? `?student_id=${studentId}` : ''}`;
+  const res = await apiFetch(url);
+  const map = new Map();
+  if (!res || !res.ok) return map;   // an unreadable list must not fake "billable"
+  for (const inv of _toArray(await res.json().catch(() => []))) {
+    if (inv.status === 'cancelled') continue;
+    for (const li of _toArray(inv.line_items || [])) {
+      if (li.assignment_id != null) map.set(String(li.assignment_id), inv);
+    }
+  }
+  return map;
+}
+
+function _rcvAsnInvoiceFor(assignmentId) {
+  return _rcvAsnInvoiced.get(String(assignmentId)) || null;
+}
 
 async function loadFeeAssignmentsView(container) {
   _rcvAsnTerm=''; _rcvAsnStudent=''; _rcvAsnData=[];
+  _rcvAsnInvoiced = new Map(); _rcvAsnHideInvoiced = false;
   await _rcvLoadLookups({ terms:true, items:true, students:true, schedules:true });
   container.innerHTML = `
     <div class="fin-page">
@@ -783,6 +822,10 @@ async function loadFeeAssignmentsView(container) {
           <button class="fin-btn-teal" onclick="rcvAsnLoad()">Load</button>
           <button class="fin-btn-outline" onclick="rcvAsnClear()">Clear</button>
           <button class="fin-btn-cancel" onclick="openAddAssignmentModal()">+ Add Manually</button>
+          <label style="display:inline-flex;align-items:center;gap:6px;margin-left:4px;font-size:0.86rem;color:#444;cursor:pointer;">
+            <input type="checkbox" id="rcv-asn-hide-invoiced" onchange="rcvAsnToggleHideInvoiced(this.checked)">
+            Hide already-invoiced
+          </label>
         </div>
       </div>
       <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;margin-top:12px;">
@@ -804,15 +847,26 @@ async function rcvAsnLoad() {
   _rcvAsnStudent = studentId;
   await _rcvLoadLookups({ schedules:true });
   const url = `${API_BASE}/receivables/student-fee-assignments/?term_id=${termId}${studentId?`&student_id=${studentId}`:''}`;
-  const res = await apiFetch(url);
+  const [res, consumed] = await Promise.all([
+    apiFetch(url),
+    _rcvLoadConsumedAssignments(studentId),
+  ]);
   _rcvAsnData = (res && res.ok) ? _toArray(await res.json()) : [];
+  _rcvAsnInvoiced = consumed;
   _rcvRenderAsnTable();
   if (studentId) _rcvRenderAsnPreview(studentId, termId);
   else { const pp=document.getElementById('rcv-asn-preview-panel'); if(pp) pp.style.display='none'; }
 }
 
+function rcvAsnToggleHideInvoiced(checked) {
+  _rcvAsnHideInvoiced = !!checked;
+  _rcvRenderAsnTable();
+}
+
 function rcvAsnClear() {
   _rcvAsnTerm=''; _rcvAsnStudent=''; _rcvAsnData=[];
+  _rcvAsnInvoiced = new Map(); _rcvAsnHideInvoiced = false;
+  const h=document.getElementById('rcv-asn-hide-invoiced'); if(h) h.checked=false;
   const t=document.getElementById('rcv-asn-term'); if(t) t.value='';
   const s=document.getElementById('rcv-asn-student'); if(s) s.value='';
   const w=document.getElementById('rcv-asn-table-wrap'); if(w) w.innerHTML='<p style="color:#888;padding:20px 0;">Select a term above and click Load.</p>';
@@ -831,41 +885,86 @@ function _rcvSourceBadge(source) {
   return `<span title="${m.label}" style="display:inline-block;padding:2px 7px;border-radius:10px;font-size:0.74rem;font-weight:600;color:${m.color};background:${m.bg};">${_finEsc(source||'-')}</span>`;
 }
 
+// Override Amount is implemented as DELETE + re-POST (rcvAsnOverrideSave
+// below) because the endpoint has no PATCH. On an already-invoiced assignment
+// that is destructive twice over: it orphans the invoice line whose
+// assignment_id points at the deleted row, and the replacement row comes back
+// unconsumed — so the same charge becomes billable again and generate will
+// happily bill it a second time. Both write actions are therefore withheld on
+// an invoiced row; the correct remedies are a credit note against the invoice,
+// or cancelling it to release the line.
+function _rcvAsnStatusCell(inv) {
+  if (!inv) {
+    return `<span style="display:inline-block;padding:2px 9px;border-radius:10px;font-size:0.74rem;font-weight:600;color:#065f46;background:#d1fae5;">Not yet invoiced</span>`;
+  }
+  const label = _finEsc(inv.invoice_number || ('#' + inv.id));
+  const status = _finEsc(String(inv.status || '').replace(/_/g, ' '));
+  return `<a href="#" title="Billed on ${label}${status ? ' (' + status + ')' : ''}"
+      onclick="window._rcvCurrentInvoiceId=${inv.id};loadInvoiceDetailView(document.getElementById('main-content'),${inv.id});return false;"
+      style="display:inline-block;padding:2px 9px;border-radius:10px;font-size:0.74rem;font-weight:600;color:#1a5fb4;background:#dce8fb;text-decoration:none;">Invoiced &middot; ${label}</a>`;
+}
+
 function _rcvRenderAsnTable() {
   const wrap = document.getElementById('rcv-asn-table-wrap');
   if (!wrap) return;
   if (!_rcvAsnData.length) { wrap.innerHTML='<p style="color:#888;padding:20px 0;">No assignments found for this selection.</p>'; return; }
-  const rows = _rcvAsnData.map(a => {
+
+  const billable = _rcvAsnData.filter(a => !_rcvAsnInvoiceFor(a.id)).length;
+  const invoiced = _rcvAsnData.length - billable;
+  const shown    = _rcvAsnHideInvoiced ? _rcvAsnData.filter(a => !_rcvAsnInvoiceFor(a.id)) : _rcvAsnData;
+
+  const summary = `<p style="font-size:0.85rem;color:#555;margin:0 0 8px;">
+      ${_rcvAsnData.length} assignment${_rcvAsnData.length!==1?'s':''} &middot;
+      <strong style="color:#065f46;">${billable} still billable</strong> &middot;
+      <span style="color:#1a5fb4;">${invoiced} already invoiced</span>
+      ${_rcvAsnHideInvoiced && invoiced ? `<span style="color:#888;"> &mdash; ${invoiced} hidden</span>` : ''}
+    </p>`;
+
+  if (!shown.length) {
+    wrap.innerHTML = summary + '<p style="color:#888;padding:20px 0;">Every assignment in this selection is already invoiced. Untick &ldquo;Hide already-invoiced&rdquo; to see them.</p>';
+    return;
+  }
+
+  const rows = shown.map(a => {
     const sched  = _rcvScheduleById(a.fee_schedule_id);
     const effAmt = a.override_amount != null ? a.override_amount : (sched?.amount ?? 0);
     const amtDisplay = a.override_amount != null
-      ? `<span style="color:#d97706;font-weight:600;" title="Override amount">KES ${_finFmt(a.override_amount)} ✎</span>`
+      ? `<span style="color:#d97706;font-weight:600;" title="Override amount">KES ${_finFmt(a.override_amount)} \u270e</span>`
       : `KES ${_finFmt(effAmt)}`;
     const schedDesc = sched
-      ? `${_rcvFeeItemName(sched.fee_item_id)} — ${_rcvScopeBadge(sched.scope_type)}`
-      : (a.fee_schedule_id ? `Schedule #${a.fee_schedule_id}` : '—');
-    return `<tr id="rcv-asn-row-${a.id}">
+      ? `${_rcvFeeItemName(sched.fee_item_id)} \u2014 ${_rcvScopeBadge(sched.scope_type)}`
+      : (a.fee_schedule_id ? `Schedule #${a.fee_schedule_id}` : '\u2014');
+    const inv = _rcvAsnInvoiceFor(a.id);
+    const actions = inv
+      ? `<div style="padding:8px 12px;font-size:0.8rem;color:#666;max-width:230px;line-height:1.4;">
+           Already billed on ${_finEsc(inv.invoice_number || ('#' + inv.id))}. Editing or deleting it would orphan that invoice line \u2014 raise a credit note, or cancel the invoice to release it.
+         </div>`
+      : `<a href="#" onclick="rcvAsnOverrideInline(${a.id},${effAmt});return false;">\u270e Override Amount</a>
+         <a href="#" onclick="rcvAsnDelete(${a.id});return false;">&#128465; Delete</a>`;
+    return `<tr id="rcv-asn-row-${a.id}"${inv ? ' style="background:#fbfcfe;"' : ''}>
       <td>${_finEsc(_rcvStudentName(a.student_id))}</td>
       <td>${schedDesc}</td>
       <td>${amtDisplay}</td>
-      <td>${a.override_amount != null ? `KES ${_finFmt(a.override_amount)}` : '—'}</td>
+      <td>${a.override_amount != null ? `KES ${_finFmt(a.override_amount)}` : '\u2014'}</td>
       <td>${_rcvSourceBadge(a.source_type)}</td>
+      <td>${_rcvAsnStatusCell(inv)}</td>
       <td>${_finEsc((a.created_at||'').split('T')[0])}</td>
       <td class="fin-action-cell">
         <div class="fin-action-wrap">
           <button class="fin-action-btn" onclick="_pvToggleDropdown(event,'rcv-asn','${a.id}')">&#8230;</button>
           <div id="rcv-asn-dd-${a.id}" class="fin-action-dropdown" style="display:none;">
-            <a href="#" onclick="rcvAsnOverrideInline(${a.id},${effAmt});return false;">✎ Override Amount</a>
-            <a href="#" onclick="rcvAsnDelete(${a.id});return false;">&#128465; Delete</a>
+            ${actions}
           </div>
         </div>
       </td>
     </tr>`;
   }).join('');
-  wrap.innerHTML = `<div class="fin-table-wrap"><table class="fin-table">
-    <thead><tr><th>STUDENT</th><th>FEE SCHEDULE</th><th>EFFECTIVE AMOUNT</th><th>OVERRIDE</th><th>SOURCE</th><th>CREATED</th><th>ACTION</th></tr></thead>
+
+  wrap.innerHTML = summary + `<div class="fin-table-wrap"><table class="fin-table">
+    <thead><tr><th>STUDENT</th><th>FEE SCHEDULE</th><th>EFFECTIVE AMOUNT</th><th>OVERRIDE</th><th>SOURCE</th><th>BILLING STATUS</th><th>CREATED</th><th>ACTION</th></tr></thead>
     <tbody>${rows}</tbody>
-  </table></div>`;
+  </table></div>
+  <p style="font-size:0.8rem;color:#888;margin-top:6px;"><em>Billing status is read from the fee invoices themselves \u2014 an assignment counts as invoiced while it sits on a line of any non-cancelled invoice, which is the same rule Generate uses to decide what is left to bill. Cancelling an invoice releases its lines.</em></p>`;
 }
 
 function rcvAsnOverrideInline(id, currentAmt) {
