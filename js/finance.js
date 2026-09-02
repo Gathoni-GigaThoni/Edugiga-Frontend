@@ -560,11 +560,14 @@ function clearStmtDateFilter(studentId) {
 // /receivables/fee-invoices endpoints correctly). Sibling Groups and Receive
 // Payments below still need a plain id -> student name resolver.
 
+// Finance-scoped lookup (see loadFinanceStudents in ui-helpers.js) — the id,
+// name and admission number this resolver and the printable receipt need are
+// all on it, and it doesn't demand a student_management grant of an
+// accountant whose only business with a student is their ledger.
 let _invStudentsCache = [];
 async function _invLoadLookups() {
   if (_invStudentsCache.length) return;
-  const res = await apiFetch(`${API_BASE}/students/`);
-  _invStudentsCache = (res && res.ok) ? _toArray(await res.json()) : [];
+  _invStudentsCache = await loadFinanceStudents();
 }
 function _invStudentName(id) {
   const s = _invStudentsCache.find(s => String(s.id) === String(id));
@@ -954,14 +957,14 @@ function sgLookupStudentSearch(val) {
   // arrive after a faster later one and overwrite the dropdown with stale
   // results, which looked like the search only reacting to the first letter.
   _sgLookupSearchTimer = setTimeout(async () => {
-    const res = await apiFetch(`${API_BASE}/students/?search=${encodeURIComponent(val.trim())}`);
-    const list = (res && res.ok) ? await res.json() : [];
+    await loadFinanceStudents();
+    const list = searchFinanceStudents(val);
     if (!list.length) {
       dd.innerHTML = '<div style="padding:10px 14px;color:#888;font-size:0.88rem;">No results found</div>';
       dd.style.display = 'block';
       return;
     }
-    dd.innerHTML = list.slice(0, 10).map(s => {
+    dd.innerHTML = list.map(s => {
       const name = _finEsc(`${s.first_name||''} ${s.last_name||''}`.trim());
       const idLabel = _finEsc(s.student_id||'');
       return `<a href="#" class="fin-search-option" onclick="sgLookupStudentSelect(${s.id},${s.sibling_group_id ?? 'null'},'${idLabel} — ${name}');return false;">
@@ -1038,9 +1041,9 @@ function sgAddStudentSearch(val) {
   if (!dd) return;
   if (!val.trim()) { dd.style.display = 'none'; return; }
   _sgAddSearchTimer = setTimeout(async () => {
-    const res = await apiFetch(`${API_BASE}/students/?search=${encodeURIComponent(val.trim())}`);
-    const list = (res && res.ok) ? await res.json() : [];
-    dd.innerHTML = list.length ? list.slice(0, 10).map(s => {
+    await loadFinanceStudents();
+    const list = searchFinanceStudents(val);
+    dd.innerHTML = list.length ? list.map(s => {
       const name = _finEsc(`${s.first_name||''} ${s.last_name||''}`.trim());
       const idLabel = _finEsc(s.student_id||'');
       return `<a href="#" class="fin-search-option" onclick="sgAddStudentSelect(${s.id},'${idLabel} — ${name}');return false;">
@@ -1104,6 +1107,8 @@ async function loadSiblingGroupFormView(container) {
     </div>`;
 }
 
+// Stays on /students/: this picker greys out children who are already in a
+// sibling group, and sibling_group_id is not on the finance lookup shape.
 async function sgPickSearch(slot, val) {
   const dd = document.getElementById(`sg-add-pick-${slot}-dd`);
   if (!dd) return;
@@ -1824,10 +1829,13 @@ function _paStudentSearch(val) {
   const dd = document.getElementById('pa-student-dd');
   if (!dd) return;
   if (!val.trim()) { dd.style.display = 'none'; return; }
+  // The finance lookup takes no ?search=, so the match is client-side over the
+  // cached list. The debounce stays: it now saves re-rendering the dropdown on
+  // every keystroke rather than saving a round trip.
   _paSearchTimer = setTimeout(async () => {
-    const res = await apiFetch(`${API_BASE}/students/?search=${encodeURIComponent(val.trim())}`);
-    const list = (res && res.ok) ? await res.json() : [];
-    dd.innerHTML = list.length ? list.slice(0, 10).map(s => {
+    await loadFinanceStudents();
+    const list = searchFinanceStudents(val);
+    dd.innerHTML = list.length ? list.map(s => {
       const name = _finEsc(`${s.first_name||''} ${s.last_name||''}`.trim());
       const idLabel = _finEsc(s.student_id||'');
       return `<a href="#" class="fin-search-option" onclick="_paStudentSelect(${s.id},'${idLabel} — ${name}');return false;">
@@ -5693,14 +5701,14 @@ function _coopSearchStudent(unmatchedId, val) {
   const dd = document.getElementById('coop-manual-search-dd');
   if (!val.trim()) { if (dd) dd.style.display = 'none'; return; }
   _coopSearchDebounce = setTimeout(async () => {
-    const res = await apiFetch(`${API_BASE}/students/?search=${encodeURIComponent(val)}`);
-    const list = (res && res.ok) ? _toArray(await res.json().catch(() => [])) : [];
+    await loadFinanceStudents();
+    const list = searchFinanceStudents(val);
     if (!dd) return;
     if (!list.length) {
       dd.innerHTML = `<div style="padding:10px 14px;color:#888;font-size:0.88rem;">No results found</div>`;
     } else {
-      dd.innerHTML = list.slice(0, 10).map(s => {
-        const name = `${s.first_name || ''} ${s.last_name || ''}`.trim();
+      dd.innerHTML = list.map(s => {
+        const name = financeStudentName(s);
         return `<a href="#" style="display:block;padding:9px 14px;text-decoration:none;color:var(--navy-900,#0D2137);border-bottom:1px solid var(--grey-100,#ECEEF2);"
                    onclick="_coopAssign(${unmatchedId}, ${s.id});return false;">
           ${_finEsc(s.student_id || '')} — ${_finEsc(name)}

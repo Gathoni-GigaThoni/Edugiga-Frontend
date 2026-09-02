@@ -179,8 +179,7 @@ async function _acRefreshAccountPickers(preselect) {
     if (accumSel) { accumSel.innerHTML = '<option value="">Select Cost Subtype first</option>'; accumSel.disabled = true; }
     return;
   }
-  const res = await apiFetch(`${API_BASE}/accounts/?account_type=Asset&account_subtype=${encodeURIComponent(subtype)}&is_active=true`);
-  const allRows = res && res.ok ? _toArray(await res.json()) : [];
+  const allRows = await loadLookupList(`${API_BASE}/accounts/?account_type=Asset&account_subtype=${encodeURIComponent(subtype)}&is_active=true`, 'asset-accounts');
   // Cost / accumulated-depreciation / depreciation-expense accounts are all
   // JE line targets — the depreciation run posts against them — so header
   // accounts are dropped (2026-09-01 §2.2). A category already saved against
@@ -195,8 +194,7 @@ async function _acRefreshAccountPickers(preselect) {
     if (preselect?.accum) accumSel.value = preselect.accum;
   }
   if (expSel && !expSel.dataset.loaded) {
-    const expRes = await apiFetch(`${API_BASE}/accounts/?account_type=Expense&account_subtype=${encodeURIComponent('Depreciation')}&is_active=true`);
-    const expRows = postable(expRes && expRes.ok ? _toArray(await expRes.json()) : [], preselect?.exp);
+    const expRows = postable(await loadLookupList(`${API_BASE}/accounts/?account_type=Expense&account_subtype=${encodeURIComponent('Depreciation')}&is_active=true`, 'accounts'), preselect?.exp);
     expSel.innerHTML = `<option value="">Please Select</option>` + expRows.map(a => `<option value="${a.id}" ${preselect?.exp === a.id ? 'selected' : ''}>${_finEsc(a.number ? a.number + ' - ' : '')}${_finEsc(a.account_name)}</option>`).join('');
     expSel.dataset.loaded = '1';
     if (preselect?.exp) expSel.value = preselect.exp;

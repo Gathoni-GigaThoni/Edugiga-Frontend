@@ -56,7 +56,7 @@ async function _rcvLoadLookups({ items=false, terms=false, levels=false, classes
 // operator staring at a list that looks empty because the school has no
 // students. `normal` is the placeholder the picker would otherwise show.
 function _rcvStudentOptions(normal, selectedId, { withCode = true } = {}) {
-  const placeholder = `<option value="">${_finEsc(lookupPlaceholder('students', normal))}</option>`;
+  const placeholder = `<option value="">${_finEsc(lookupPlaceholder('finance-students', normal))}</option>`;
   return placeholder + (_rcvStudentsCache || []).map(st => {
     const name = `${st.first_name||''} ${st.last_name||''}`.trim();
     const code = withCode ? ` (${_finEsc(st.student_id || st.code || '')})` : '';
@@ -64,9 +64,13 @@ function _rcvStudentOptions(normal, selectedId, { withCode = true } = {}) {
   }).join('');
 }
 
-const _RCV_STUDENT_LOOKUP_URL = `${API_BASE}/students/`;
+// Finance-scoped: /lookups/students, not /students/. Every field this module
+// reads off a student — id, name, admission number — is on the lookup shape,
+// and the lookup is gated on any finance.* view permission, so a bursar with
+// no student_management grant can still fill these pickers. See
+// loadFinanceStudents in ui-helpers.js.
 function _rcvFetchStudents() {
-  return loadLookupList(_RCV_STUDENT_LOOKUP_URL, 'students');
+  return loadFinanceStudents();
 }
 
 // StudentFeeAssignmentRead only carries a flat fee_schedule_id (no nested
@@ -709,6 +713,11 @@ async function openFeeScheduleModalForClass(classId) {
   if (termSel && _rcvFscTermId) termSel.value = String(_rcvFscTermId);
 }
 
+// Deliberately still on /students/?class_id=, not the finance lookup: the
+// lookup carries class_name but no class_id, and class names repeat across
+// academic years, so matching on the name would enrol the wrong cohort's
+// children onto a fee schedule. A wrong assignment here bills a real parent,
+// which is worth more than widening who can run the backfill.
 async function rcvFscBackfill(scheduleId, classId, termId) {
   if (!classId || !termId) { showToast('Please select both a term and a class first.', 'error'); return; }
   const studRes = await apiFetch(`${API_BASE}/students/?class_id=${classId}`);
@@ -1653,6 +1662,8 @@ async function rcvBulkPreFlight() {
 
   let studentIds = null;
   if (target==='class') {
+    // Same reasoning as rcvFscBackfill: class_id has no equivalent on the
+    // finance student lookup, and a name match would target the wrong cohort.
     const stRes = await apiFetch(`${API_BASE}/students/?class_id=${classId}`);
     const students = (stRes&&stRes.ok) ? _toArray(await stRes.json()) : [];
     studentIds = students.map(s=>s.id);

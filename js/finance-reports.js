@@ -24,8 +24,7 @@ function _tpWalletRoleSort(a, b) {
 let _repMoneyHoldingAccounts = null;
 async function _repLoadMoneyHoldingAccounts() {
   if (_repMoneyHoldingAccounts !== null) return;
-  const res = await apiFetch(`${API_BASE}/lookups/money-holding-accounts`);
-  _repMoneyHoldingAccounts = (res && res.ok) ? _toArray(await res.json()) : [];
+  _repMoneyHoldingAccounts = await loadLookupList(`${API_BASE}/lookups/money-holding-accounts`, 'money-holding-accounts');
 }
 const _REP_MH_KIND_ORDER = { bank: 0, petty_cash: 1, wallet: 2 };
 const _REP_MH_KIND_LABEL = { bank: 'Banks', petty_cash: 'Petty Cash', wallet: 'Wallets' };

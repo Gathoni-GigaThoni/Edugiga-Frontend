@@ -104,8 +104,7 @@ async function loadDepartmentOptions(selectId, selectedId = null) {
   if (!selectEl) return;
   if (_deptOptionsCache === null) {
     try {
-      const res = await apiFetch(`${API_BASE}/departments/?is_active=true`);
-      _deptOptionsCache = (res && res.ok) ? _toArray(await res.json()) : [];
+      _deptOptionsCache = await loadLookupList(`${API_BASE}/departments/?is_active=true`, 'departments');
     } catch (_) { _deptOptionsCache = []; }
   }
   let list = _deptOptionsCache;
@@ -138,12 +137,10 @@ async function loadDepartmentOptions(selectId, selectedId = null) {
 async function ensureDepartmentCache() {
   if (_deptAllCache !== null) return;
   try {
-    const [activeRes, inactiveRes] = await Promise.all([
-      apiFetch(`${API_BASE}/departments/?is_active=true`),
-      apiFetch(`${API_BASE}/departments/?is_active=false`),
+    const [active, inactive] = await Promise.all([
+      loadLookupList(`${API_BASE}/departments/?is_active=true`, 'departments'),
+      loadLookupList(`${API_BASE}/departments/?is_active=false`, 'departments'),
     ]);
-    const active   = (activeRes && activeRes.ok)   ? _toArray(await activeRes.json())   : [];
-    const inactive = (inactiveRes && inactiveRes.ok) ? _toArray(await inactiveRes.json()) : [];
     _deptAllCache = [...active, ...inactive];
   } catch (_) { _deptAllCache = []; }
 }
@@ -583,6 +580,10 @@ function creditedForInvoice(invoiceId) {
 // can also say it in place, via lookupPlaceholder().
 const LOOKUP_ACCESS_HINTS = {
   'students':        { noun: 'students',              module: 'Student Management' },
+  // Distinct label from 'students' on purpose: /lookups/students is gated on
+  // any finance view permission, so "ask for Student Management" would send
+  // the operator after the wrong grant entirely.
+  'finance-students':{ noun: 'students',              module: 'Finance' },
   'terms':           { noun: 'terms',                 module: 'Student Academics' },
   'academic-levels': { noun: 'academic levels',       module: 'Student Academics' },
   'academic-years':  { noun: 'academic years',        module: 'Student Academics' },
@@ -594,6 +595,8 @@ const LOOKUP_ACCESS_HINTS = {
   'departments':     { noun: 'departments',           module: 'Finance' },
   'fee-items':       { noun: 'fee items',             module: 'Finance' },
   'fee-schedules':   { noun: 'fee schedules',         module: 'Finance' },
+  'money-holding-accounts': { noun: 'bank, wallet and petty-cash accounts', module: 'Finance' },
+  'asset-accounts':  { noun: 'asset accounts',        module: 'Finance' },
   'suppliers':       { noun: 'suppliers',             module: 'Procurement' },
   'employees':       { noun: 'employees',             module: 'Human Resource' },
 };
@@ -629,3 +632,49 @@ async function loadLookupList(url, label) {
   }
   return (res && res.ok) ? _toArray(await res.json()) : [];
 }
+
+// ── Finance-scoped student lookup ────────────────────────────────────────────
+// Every student picker on a finance form used to hit GET /students/, which is
+// gated on student_management.students:view. An accountant who had no business
+// reading a student's DOB, nationality or parent contacts therefore couldn't
+// raise an invoice either: the picker came back empty with nothing on screen to
+// say why. GET /lookups/students exists for exactly this — the same id,
+// student_id, first_name, last_name and class_name the pickers already read,
+// no PII, gated on *any* finance.* view permission.
+//
+// It takes no query parameters, so search-as-you-type filters the cached list
+// client-side rather than round-tripping ?search= per keystroke. The list is
+// active students only, ordered (last_name, first_name), and includes students
+// with no active enrollment (class_name null) so finance can still invoice a
+// newly admitted child or accept a pre-placement deposit.
+const FINANCE_STUDENT_LOOKUP_URL = `${API_BASE}/lookups/students`;
+let _financeStudentsCache = null;
+
+async function loadFinanceStudents(force = false) {
+  if (_financeStudentsCache && !force) return _financeStudentsCache;
+  _financeStudentsCache = await loadLookupList(FINANCE_STUDENT_LOOKUP_URL, 'finance-students');
+  return _financeStudentsCache;
+}
+
+function financeStudentName(s) {
+  if (!s) return '';
+  return `${s.first_name || ''} ${s.last_name || ''}`.trim();
+}
+
+// Matches on name, admission number or class, so "maple" narrows to a class and
+// "SOIS-42" jumps to one child. Returns at most `limit` rows — the dropdowns
+// that call this all render a short list.
+function searchFinanceStudents(term, limit = 10) {
+  const q = (term || '').trim().toLowerCase();
+  if (!q) return [];
+  const out = [];
+  for (const s of (_financeStudentsCache || [])) {
+    const hay = `${financeStudentName(s)} ${s.student_id || ''} ${s.class_name || ''}`.toLowerCase();
+    if (hay.includes(q)) {
+      out.push(s);
+      if (out.length >= limit) break;
+    }
+  }
+  return out;
+}
+
