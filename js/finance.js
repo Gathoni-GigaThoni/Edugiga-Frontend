@@ -49,46 +49,35 @@ function _finToday() {
   return new Date().toISOString().split('T')[0];
 }
 
-// Build a transaction ledger from fee invoices (debits) + receipts (credits).
-// draft/cancelled invoices are excluded — they haven't posted an AR charge.
+// Transaction ledger for a student, straight off GET /students/{id}/fee-statement.
+//
+// This used to be assembled here from two calls — fee invoices as debits,
+// receipts as credits — with the running balance summed client-side. There was
+// no third call for credit notes, so an applied CN was invisible: the ledger
+// showed the full charge, the cash against it, and a balance that still
+// claimed money already forgiven was owed. That is the "Student Fee Statement
+// does not pick the CN amount" report, and it was ours, not the backend's.
+//
+// The endpoint now joins credit notes and returns its own running balance,
+// which also carries an opening balance forward — something the local sum
+// could never do. The balance column is taken as authoritative; nothing here
+// recomputes it.
 async function _finBuildLedger(studentId) {
-  try {
-    const [invRes, rcptRes] = await Promise.all([
-      apiFetch(`${API_BASE}/receivables/fee-invoices?student_id=${studentId}`),
-      apiFetch(`${API_BASE}/receivables/receipts?student_id=${studentId}&voided=false`)
-    ]);
-    if (!invRes || !invRes.ok || !rcptRes || !rcptRes.ok) {
-      showToast('Could not load full ledger data. Some entries may be missing.', 'error');
-    }
-    const invoices = invRes && invRes.ok ? await invRes.json() : [];
-    const receipts = rcptRes && rcptRes.ok ? await rcptRes.json() : [];
-
-    const rows = [];
-    invoices
-      .filter(inv => inv.status !== 'draft' && inv.status !== 'cancelled')
-      .forEach(inv => rows.push({
-        date:        inv.issue_date || '',
-        term:        inv.term_id ? `Term ${inv.term_id}` : '-',
-        description: `Fee Invoice ${inv.invoice_number || ''}`.trim(),
-        debit:       parseFloat(inv.amount_due) || 0,
-        credit:      0
-      }));
-    receipts.forEach(r => rows.push({
-      date:        r.payment_date || '',
-      term:        '-',
-      description: `Payment (${receiptMethodLabel(r.payment_method)})`,
-      debit:       0,
-      credit:      parseFloat(r.amount) || 0
-    }));
-
-    rows.sort((a, b) => (a.date > b.date ? 1 : a.date < b.date ? -1 : 0));
-    let running = 0;
-    rows.forEach(r => { running += r.debit - r.credit; r.balance = running; });
-    return rows;
-  } catch(_) {
-    showToast('Failed to build ledger. Please try again.', 'error');
+  const res = await apiFetch(`${API_BASE}/students/${studentId}/fee-statement`);
+  if (!res || !res.ok) {
+    showToast('Could not load the fee statement for this student.', 'error');
     return [];
   }
+  const data = await res.json().catch(() => null);
+  return _toArray(data?.statement || []).map(e => ({
+    date:        (e.date || '').split('T')[0],
+    type:        e.type || '',
+    reference:   e.reference || '',
+    description: e.description || '',
+    debit:       parseFloat(e.debit)   || 0,
+    credit:      parseFloat(e.credit)  || 0,
+    balance:     parseFloat(e.balance) || 0,
+  }));
 }
 
 function _finFilterLedger(rows, startDate, endDate, asAt) {
@@ -99,18 +88,30 @@ function _finFilterLedger(rows, startDate, endDate, asAt) {
   return out;
 }
 
+// 'credit_note' joined 'invoice' and 'receipt' on this wire in the 2026-09-02
+// addendum §G. The trailing branch renders an unrecognised value as a plain
+// label rather than dropping the row, so a fourth type added later shows up as
+// itself instead of looking like a blank line in the middle of a ledger.
+function _finLedgerTypePill(type) {
+  if (type === 'invoice')     return '<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.75rem;font-weight:600;color:#fff;background:var(--navy-700,#1B3057);">Invoice</span>';
+  if (type === 'receipt')     return '<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.75rem;font-weight:600;color:#1e7e34;background:#d1fae5;">Receipt</span>';
+  if (type === 'credit_note') return '<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.75rem;font-weight:600;color:#7a6110;background:var(--gold-100,#F7EFD5);">&#8630; Credit Note</span>';
+  return `<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.75rem;font-weight:600;color:#555;background:#eee;">${_finEsc(String(type || '—').replace(/_/g,' '))}</span>`;
+}
+
 function _finLedgerTable(rows) {
   let totalDebit = 0, totalCredit = 0;
   let bodyRows = '';
   if (rows.length === 0) {
-    bodyRows = `<tr><td colspan="6" class="fin-empty">No transactions found.</td></tr>`;
+    bodyRows = `<tr><td colspan="7" class="fin-empty">No transactions found.</td></tr>`;
   } else {
     rows.forEach(r => {
       totalDebit  += r.debit;
       totalCredit += r.credit;
       bodyRows += `<tr>
         <td>${_finEsc(r.date)}</td>
-        <td>${_finEsc(r.term)}</td>
+        <td>${_finLedgerTypePill(r.type)}</td>
+        <td>${_finEsc(r.reference || '—')}</td>
         <td>${_finEsc(r.description)}</td>
         <td>${r.debit  ? _finFmt(r.debit)  : ''}</td>
         <td>${r.credit ? _finFmt(r.credit) : ''}</td>
@@ -122,13 +123,13 @@ function _finLedgerTable(rows) {
     <div class="fin-table-wrap">
       <table class="fin-table">
         <thead><tr>
-          <th>DATE</th><th>SESSION</th><th>DESCRIPTION</th>
+          <th>DATE</th><th>TYPE</th><th>REFERENCE</th><th>DESCRIPTION</th>
           <th>DEBIT</th><th>CREDIT</th><th>BALANCE</th>
         </tr></thead>
         <tbody>${bodyRows}</tbody>
         <tfoot>
           <tr class="fin-tfoot-total">
-            <td colspan="3">Totals</td>
+            <td colspan="4">Totals</td>
             <td>${_finFmt(totalDebit)}</td>
             <td>${_finFmt(totalCredit)}</td>
             <td></td>
@@ -293,15 +294,76 @@ async function openFeesDetail(studentId) {
   const main = document.getElementById('main-content');
   main.innerHTML = '<p class="fin-loading">Loading&#8230;</p>';
   try {
-    const res = await fetch(`${API_BASE}/students/${studentId}`, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) { main.innerHTML = '<p class="fin-error">Could not load student.</p>'; return; }
+    const res = await apiFetch(`${API_BASE}/students/${studentId}`);
+    if (!res || !res.ok) { main.innerHTML = '<p class="fin-error">Could not load student.</p>'; return; }
     const student = await res.json();
-    const ledger  = await _finBuildLedger(studentId);
-    _renderFeesDetailPage(main, student, ledger, studentId);
+    const [status, ledger] = await Promise.all([
+      _finFetchFeeStatus(studentId),
+      _finBuildLedger(studentId),
+    ]);
+    _renderFeesDetailPage(main, student, status, ledger, studentId);
   } catch(_) { main.innerHTML = '<p class="fin-error">Failed to load detail.</p>'; }
 }
 
-function _renderFeesDetailPage(container, student, ledger, studentId) {
+// StudentFeeStatusRead is typed as of the 2026-09-02 addendum §F, and
+// total_credited — which the service had been computing all along — is on the
+// response now instead of being dropped before it reached the wire. Without it
+// the header read "billed 115k, paid 30k, balance 80k" and left the bursar to
+// guess at the missing 5k.
+async function _finFetchFeeStatus(studentId) {
+  const res = await apiFetch(`${API_BASE}/receivables/student-finance/${studentId}/fee-status`);
+  if (!res || !res.ok) return null;
+  return await res.json().catch(() => null);
+}
+
+const _FIN_INV_STATUS_LABEL = {
+  draft: 'Draft', issued: 'Issued', partially_paid: 'Partially Paid',
+  paid: 'Paid', overdue: 'Overdue', cancelled: 'Cancelled',
+};
+
+function _finFeeStatusPanel(status) {
+  if (!status) return '<p class="fin-empty">Fee status is unavailable for this student.</p>';
+  const credited = parseFloat(status.total_credited) || 0;
+  const balance  = parseFloat(status.balance) || 0;
+  const invoices = _toArray(status.invoices || []);
+
+  const cards = invoices.map(inv => {
+    const invCredited = parseFloat(inv.amount_credited) || 0;
+    const receipts = _toArray(inv.receipts || []);
+    return `
+      <div style="background:#f9fafb;border:1px solid #e0e0e0;border-radius:6px;padding:12px 16px;margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;align-items:baseline;">
+          <div><strong>${_finEsc(inv.invoice_number || ('Invoice #' + inv.invoice_id))}</strong>
+            <span style="color:#888;font-size:0.85rem;">&middot; ${_finEsc(_FIN_INV_STATUS_LABEL[inv.status] || inv.status || '—')}</span></div>
+          <div style="color:#888;font-size:0.85rem;">Due ${_finEsc((inv.due_date || '').split('T')[0] || '—')}</div>
+        </div>
+        <div style="display:flex;gap:22px;flex-wrap:wrap;margin-top:8px;font-size:0.86rem;">
+          <span>Billed <strong>${_finFmt(inv.amount_due)}</strong></span>
+          <span>Paid <strong>${_finFmt(inv.amount_paid)}</strong></span>
+          <span${invCredited ? ' style="color:#7a6110;"' : ''}>Credited <strong>${_finFmt(inv.amount_credited)}</strong></span>
+          <span>Balance <strong>${_finFmt(inv.balance)}</strong></span>
+        </div>
+        ${receipts.length ? `<div style="margin-top:8px;font-size:0.82rem;color:#555;">
+          ${receipts.map(r => `${_finEsc(r.receipt_number || '')} &middot; ${_finFmt(r.amount)} &middot; ${_finEsc(receiptMethodLabel(r.payment_method))} &middot; ${_finEsc((r.payment_date || '').split('T')[0])}`).join('<br>')}
+        </div>` : ''}
+        <div style="margin-top:8px;">
+          <a href="#" style="font-size:0.84rem;" onclick="window._rcvCurrentInvoiceId=${inv.invoice_id};loadInvoiceDetailView(document.getElementById('main-content'),${inv.invoice_id});return false;">Open invoice</a>
+        </div>
+      </div>`;
+  }).join('');
+
+  return `
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;">
+      ${_sfsStatCard('Total Billed',   formatKES(status.total_billed))}
+      ${_sfsStatCard('Total Paid',     formatKES(status.total_paid))}
+      ${_sfsStatCard('Total Credited', formatKES(status.total_credited), credited > 0 ? '#7a6110' : 'var(--grey-400,#999)')}
+      ${_sfsStatCard('Balance',        formatKES(status.balance),
+                     balance > 0 ? 'var(--coral-600,#A62B2B)' : balance < 0 ? '#7a6110' : 'var(--navy-700,#1B3057)')}
+    </div>
+    ${cards || '<p class="fin-empty">No invoices for this student yet.</p>'}`;
+}
+
+function _renderFeesDetailPage(container, student, status, ledger, studentId) {
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -314,12 +376,56 @@ function _renderFeesDetailPage(container, student, ledger, studentId) {
       </div>
       ${_finSendActionRow()}
       ${_finStudentInfoGrid(student)}
+      <div class="fin-section-label">Fee Status</div>
+      ${_finFeeStatusPanel(status)}
       <div class="fin-section-label">Transaction Ledger</div>
+      <div class="fin-filter-section">
+        <div class="fin-filter-grid">
+          <div class="fin-filter-field"><label class="fin-filter-label">Start Date</label><input type="date" id="fin-detail-start" class="fin-filter-input"></div>
+          <div class="fin-filter-field"><label class="fin-filter-label">End Date</label><input type="date" id="fin-detail-end" class="fin-filter-input"></div>
+          <div class="fin-filter-field"><label class="fin-filter-label">As At</label><input type="date" id="fin-detail-as-at" class="fin-filter-input"></div>
+        </div>
+        <div class="fin-filter-actions">
+          <button class="fin-btn-teal" onclick="finDetailApplyDateFilter()">Apply</button>
+          <button class="fin-btn-outline" onclick="finDetailClearDateFilter()">Clear</button>
+        </div>
+      </div>
       <div id="fin-detail-ledger">${_finLedgerTable(ledger)}</div>
       <div id="fin-detail-date-store" data-student="${studentId}"
            data-ledger='${JSON.stringify(ledger).replace(/'/g,"&#39;")}' style="display:none;"></div>
     </div>
   `;
+}
+
+// The BALANCE column stays the server's full-history running balance even when
+// the range hides earlier rows — filtering the view must not rewrite what the
+// student actually owed on that date. Only the debit/credit totals narrow.
+function _finDetailStoredLedger() {
+  const store = document.getElementById('fin-detail-date-store');
+  if (!store) return null;
+  try { return JSON.parse(store.dataset.ledger || '[]'); } catch (_) { return []; }
+}
+
+function finDetailApplyDateFilter() {
+  const ledger = _finDetailStoredLedger();
+  if (!ledger) return;
+  const el = document.getElementById('fin-detail-ledger');
+  if (el) el.innerHTML = _finLedgerTable(_finFilterLedger(
+    ledger,
+    document.getElementById('fin-detail-start')?.value,
+    document.getElementById('fin-detail-end')?.value,
+    document.getElementById('fin-detail-as-at')?.value,
+  ));
+}
+
+function finDetailClearDateFilter() {
+  ['fin-detail-start','fin-detail-end','fin-detail-as-at'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  const ledger = _finDetailStoredLedger();
+  if (!ledger) return;
+  const el = document.getElementById('fin-detail-ledger');
+  if (el) el.innerHTML = _finLedgerTable(ledger);
 }
 
 // ==================== SUMMARISED FEE STATEMENT ====================

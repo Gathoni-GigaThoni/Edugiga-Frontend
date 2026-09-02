@@ -1369,7 +1369,17 @@ async function loadInvoiceDetailView(container, invoiceId) {
   // populated only going forward, so historical pre-fix rows render '—'.
   // Mirrors the accrual_journal_entry_id link already shown on supplier
   // invoices in js/payables.js.
-  let jeLinkHtml = '—';
+  //
+  // A zero-value invoice is the third case, and a legitimate one as of the
+  // 2026-09-02 addendum §H: a director's dependent with no ECA items has every
+  // line waived to nothing, so there is no entry to post and the server
+  // short-circuits rather than failing the JE validator. It still issues, with
+  // journal_entry_id null. Saying so beats a bare dash, which reads as a
+  // missing JE somebody should go and find.
+  const fullyWaived = !inv.journal_entry_id && (parseFloat(inv.amount_due) || 0) === 0;
+  let jeLinkHtml = fullyWaived
+    ? '<span style="color:#888;font-size:0.85rem;">No JE &mdash; fully waived invoice</span>'
+    : '—';
   if (inv.journal_entry_id) {
     try {
       const jeRes = await apiFetch(`${_JE_API}${inv.journal_entry_id}`);

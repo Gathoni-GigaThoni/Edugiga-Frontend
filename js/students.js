@@ -3258,17 +3258,6 @@ function _dRow(label, value) {
   </div>`;
 }
 
-async function openFeeStatement(studentId) {
-  const res = await apiFetch(`${API_BASE}/finance/statement/${studentId}`);
-  if (res && res.ok) {
-    const data = await res.json();
-    const w = window.open('', '_blank', 'width=700,height=500');
-    if (w) w.document.write(`<pre style="font-family:sans-serif;padding:20px;">${JSON.stringify(data, null, 2)}</pre>`);
-  } else {
-    showToast('Could not load fee statement.', 'error');
-  }
-}
-
 // ==================== 4. STUDENT SEARCH (CARD GRID) ====================
 
 let _ssData = [], _ssFiltered = [], _ssPage = 1, _ssPerPage = 12, _ssQ = '';
