@@ -1,11 +1,12 @@
 // ==================== USER MANAGEMENT ====================
 let umUsers = [];
-let umPage  = 1;
-let umPerPage = 10;
-let _umSearch = '';
-let _umEditingId = null;
-let _assignRoleUserId = null;
+let umRoles = [];   // permission roles from Administration > Roles
 
+// TeamRead.role is the StaffRole enum — a job label, NOT a permission grant.
+// Module access comes from TeamRead.role_id, the FK to a Role created under
+// Administration > Roles: the backend filters GET /administration/modules by
+// that role's RolePermission rows, and config.js's canView/canAdd/canEdit read
+// the result. A user with role_id null therefore sees nothing but the shell.
 const UM_ROLE_LABELS = {
   super_admin: 'Super Admin',
   manager:     'Manager',
@@ -14,13 +15,20 @@ const UM_ROLE_LABELS = {
   utility:     'Utility',
 };
 
-document.addEventListener('click', () => {
-  document.querySelectorAll('[id^="um-dd-"]').forEach(d => d.style.display = 'none');
-});
-
 // ── List ──────────────────────────────────────────────────────────────────────
 
+async function _umLoadRoles() {
+  const res = await apiFetch(`${API_BASE}/roles/?page=1&per_page=1000`);
+  if (res && res.ok) {
+    const data = await res.json().catch(() => ({}));
+    umRoles = data.items || data.data || (Array.isArray(data) ? data : []);
+  } else {
+    umRoles = [];
+  }
+}
+
 async function loadUserManagementView(container) {
+  await _umLoadRoles();
   const res = await apiFetch(`${API_BASE}/team/?skip=0&limit=1000`);
   if (res && res.ok) {
     const raw = await res.json().catch(() => []);
@@ -52,12 +60,64 @@ async function loadUserManagementView(container) {
       {label:'Email',         key:'email'},
       {label:'Staff Type',    key:'role', fmt:v=>UM_ROLE_LABELS[v]||v||'—'},
       {label:'Location',      key:'location'},
-      {label:'Assigned Role', key:'assigned_role_title', fmt:v=>v||'No role assigned'},
+      {label:'Permission Role', key:'assigned_role_title',
+        fmt:(v,u)=>v || _umRoleTitle(u.role_id) || 'No role assigned — this user has no module access'},
       {label:'Status',        key:'is_active', fmt:v=>v!==false?'Active':'Inactive'},
     ],
     renderAdd:  el => _umSplitForm(null, el),
     renderEdit: (item, el) => _umSplitForm(item, el),
+    detailActions: u => canEdit('administration.roles') ? _umAssignRoleRow(u) : '',
   });
+}
+
+function _umRoleTitle(roleId) {
+  if (roleId == null) return '';
+  const r = umRoles.find(x => String(x.id) === String(roleId));
+  return r ? r.title : `Role #${roleId}`;
+}
+
+// PATCH /team/{id}/role is the only endpoint that moves role_id — TeamUpdate
+// (PATCH /team/{id}) has no role_id field at all, so profile edits can never
+// carry the assignment.
+async function _umPatchRole(userId, role_id) {
+  const res = await apiFetch(`${API_BASE}/team/${userId}/role`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role_id }),
+  });
+  return res;
+}
+
+// Rendered into the detail pane's action row: the one place a permission role
+// gets attached to a set of login credentials.
+function _umAssignRoleRow(u) {
+  if (!umRoles.length) {
+    return `<span style="font-size:13px;color:var(--grey-400)">No permission roles exist yet — create one under Administration &rsaquo; Roles.</span>`;
+  }
+  const opts = ['<option value="">-- No role assigned --</option>']
+    .concat(umRoles.map(r =>
+      `<option value="${r.id}"${String(r.id) === String(u.role_id) ? ' selected' : ''}>${_umEsc(r.title)}</option>`
+    )).join('');
+  return `
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <label style="font-size:13px;color:var(--grey-500)">Permission Role</label>
+      <select id="um-assign-role" style="max-width:220px">${opts}</select>
+      <button class="btn" onclick="_umAssignRole(${u.id})">Assign</button>
+    </div>`;
+}
+
+async function _umAssignRole(userId) {
+  const sel = document.getElementById('um-assign-role');
+  if (!sel) return;
+  const role_id = sel.value ? parseInt(sel.value, 10) : null;
+  const res = await _umPatchRole(userId, role_id);
+  if (!res) return;
+  if (res.ok) {
+    showToast(role_id ? 'Permission role assigned.' : 'Permission role cleared.', 'success');
+    loadView('user-management');
+  } else {
+    showToast(await parseApiError(res), 'error');
+  }
 }
 
 function _umSplitForm(item, el) {
@@ -65,6 +125,10 @@ function _umSplitForm(item, el) {
   const isEdit = !!item;
   const roleOptions = ['super_admin','manager','teacher','kitchen','utility'].map(r =>
     `<option value="${r}"${item?.role===r?' selected':''}>${UM_ROLE_LABELS[r]||r}</option>`
+  ).join('');
+  const canAssignRole   = canEdit('administration.roles');
+  const permRoleOptions = umRoles.map(r =>
+    `<option value="${r.id}"${String(r.id)===String(item?.role_id)?' selected':''}>${_umEsc(r.title)}</option>`
   ).join('');
   el.innerHTML = `
     <div style="max-width:480px">
@@ -95,6 +159,15 @@ function _umSplitForm(item, el) {
         <div class="stu-form-group">
           <label>Location <span style="color:var(--coral-500)">*</span></label>
           <input id="um-f-location" value="${_umEsc(item?.location||'')}" style="max-width:none;width:100%">
+        </div>
+        <div class="stu-form-group" style="grid-column:span 2">
+          <label>Permission Role</label>
+          <select id="um-f-role-id" style="max-width:none;width:100%"${canAssignRole?'':' disabled'}>
+            <option value="">-- No role assigned --</option>${permRoleOptions}
+          </select>
+          <div style="font-size:12px;color:var(--grey-400);margin-top:4px">
+            Staff Type is a job label. This is what grants module access &mdash; without it the user can log in but sees nothing.
+          </div>
         </div>
         ${isEdit?`<div class="stu-form-group" style="grid-column:span 2">
           <label><input type="checkbox" id="um-f-active" style="width:auto;margin:0 6px 0 0;padding:0"${item?.is_active!==false?' checked':''}> Active</label>
@@ -128,6 +201,11 @@ async function _umSaveSplit(id) {
     if (statusEl) statusEl.textContent = 'First name, last name, email, staff type, and location are required.';
     return;
   }
+  const roleIdEl = document.getElementById('um-f-role-id');
+  const role_id  = roleIdEl && !roleIdEl.disabled
+    ? (roleIdEl.value ? parseInt(roleIdEl.value, 10) : null)
+    : undefined;   // undefined = caller may not assign roles; leave it alone
+
   let body = { first_name, last_name, email, role, location, is_active };
   if (!id) {
     const password = document.getElementById('um-f-password')?.value || '';
@@ -136,423 +214,32 @@ async function _umSaveSplit(id) {
       return;
     }
     body.password = password;
+    // TeamCreate takes role_id, so a new login gets its permissions in one call.
+    if (role_id !== undefined) body.role_id = role_id;
   }
   const res = await apiFetch(
     id ? `${API_BASE}/team/${id}` : `${API_BASE}/team/`,
     { method: id ? 'PATCH' : 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) }
   );
   if (res && res.ok) {
+    // TeamUpdate has no role_id field — on edit the assignment is a second,
+    // dedicated call, and only when it actually changed.
+    if (id && role_id !== undefined) {
+      const before = umUsers.find(u => String(u.id) === String(id));
+      const changed = String(before?.role_id ?? '') !== String(role_id ?? '');
+      if (changed) {
+        const rres = await _umPatchRole(id, role_id);
+        if (!rres || !rres.ok) {
+          if (statusEl) statusEl.textContent = rres
+            ? `Profile saved, but the permission role did not: ${await parseApiError(rres)}`
+            : 'Profile saved, but the permission role did not.';
+          return;
+        }
+      }
+    }
     showToast(id ? 'User updated!' : 'User created!', 'success');
     loadView('user-management');
   } else {
     if (statusEl) statusEl.textContent = res ? await parseApiError(res) : 'Save failed.';
-  }
-}
-
-function renderUmListPage(container) {
-  const _canAddUser = canAdd('administration.users');
-
-  container.innerHTML = `
-    <div class="um-page">
-      <div class="um-header-row">
-        <h2 class="um-title">User Management</h2>
-        <div class="um-breadcrumb">Dashboard &rsaquo; Administration &rsaquo; User Management</div>
-      </div>
-      <div class="um-controls-row">
-        <div class="um-controls-left">
-          Show <select id="um-per-page" onchange="changeUmPerPage(this.value)">
-            <option value="10">10</option><option value="25">25</option>
-            <option value="50">50</option><option value="100">100</option>
-          </select> entries
-          &nbsp;|&nbsp; Total <span id="um-total-count">${umUsers.length}</span>
-        </div>
-        <div class="um-controls-right">
-          <input id="um-search-input" placeholder="Search name or email…" onkeyup="handleUmSearch()" class="um-search">
-          ${_canAddUser ? `<button class="role-add-btn" onclick="openUmCreateModal()">+ Add User</button>` : ''}
-        </div>
-      </div>
-      <div id="um-table-container"></div>
-      <div id="um-pagination"></div>
-    </div>
-
-    <!-- Create/Edit User Modal -->
-    <div id="um-user-modal" class="role-modal-overlay" style="display:none;" onclick="closeUmModal(event)">
-      <div class="role-modal-box um-modal-wide" onclick="event.stopPropagation()">
-        <div class="role-modal-header">
-          <span id="um-modal-title">Add User</span>
-          <button class="role-modal-close" onclick="closeUmModal()">&times;</button>
-        </div>
-        <div class="role-modal-body">
-          <div class="um-modal-grid">
-            <div class="role-form-group">
-              <label class="role-form-label">First Name <span class="role-required">*</span></label>
-              <input type="text" id="um-modal-first-name">
-            </div>
-            <div class="role-form-group">
-              <label class="role-form-label">Last Name <span class="role-required">*</span></label>
-              <input type="text" id="um-modal-last-name">
-            </div>
-            <div class="role-form-group">
-              <label class="role-form-label">Email <span class="role-required">*</span></label>
-              <input type="email" id="um-modal-email">
-            </div>
-            <div class="role-form-group" id="um-modal-pwd-group">
-              <label class="role-form-label">Password <span class="role-required">*</span></label>
-              <input type="password" id="um-modal-password" placeholder="Min 8 characters">
-            </div>
-            <div class="role-form-group">
-              <label class="role-form-label">Staff Type <span class="role-required">*</span></label>
-              <select id="um-modal-role">
-                <option value="">-- Select --</option>
-                <option value="super_admin">Super Admin</option>
-                <option value="manager">Manager</option>
-                <option value="teacher">Teacher</option>
-                <option value="kitchen">Kitchen</option>
-                <option value="utility">Utility</option>
-              </select>
-            </div>
-            <div class="role-form-group">
-              <label class="role-form-label">Location <span class="role-required">*</span></label>
-              <input type="text" id="um-modal-location">
-            </div>
-          </div>
-          <div style="margin-top:10px;">
-            <label class="um-checkbox-label" style="font-size:0.88rem;">
-              <input type="checkbox" id="um-modal-active" style="width:auto;margin:0 6px 0 0;padding:0;"> Active
-            </label>
-          </div>
-          <div id="um-modal-status" class="role-form-status" style="margin-top:10px;"></div>
-        </div>
-        <div class="role-modal-footer">
-          <button class="role-btn-submit" id="um-modal-save-btn" onclick="submitUmSave()">Save</button>
-          <button class="role-btn-cancel" onclick="closeUmModal()">Cancel</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Assign Role Modal -->
-    <div id="um-assign-modal" class="role-modal-overlay" style="display:none;" onclick="closeAssignRoleModal(event)">
-      <div class="role-modal-box" style="max-width:400px;" onclick="event.stopPropagation()">
-        <div class="role-modal-header">
-          <span>Assign Role</span>
-          <button class="role-modal-close" onclick="closeAssignRoleModal()">&times;</button>
-        </div>
-        <div class="role-modal-body">
-          <p id="um-assign-user-name" style="margin:0 0 14px;font-weight:600;color:#2c3e50;"></p>
-          <div class="role-form-group">
-            <label class="role-form-label">Permission Role</label>
-            <select id="um-assign-role-select">
-              <option value="">-- No role assigned --</option>
-            </select>
-          </div>
-          <div id="um-assign-status" class="role-form-status" style="margin-top:8px;"></div>
-        </div>
-        <div class="role-modal-footer">
-          <button class="role-btn-submit" onclick="submitAssignRole()">Assign</button>
-          <button class="role-btn-cancel" onclick="closeAssignRoleModal()">Cancel</button>
-        </div>
-      </div>
-    </div>
-  `;
-
-  document.getElementById('um-per-page').value = String(umPerPage);
-  renderUmTable();
-}
-
-function handleUmSearch() {
-  _umSearch = (document.getElementById('um-search-input')?.value || '').toLowerCase();
-  umPage = 1;
-  renderUmTable();
-}
-
-function changeUmPerPage(val) {
-  umPerPage = parseInt(val);
-  umPage = 1;
-  renderUmTable();
-}
-
-function umGoToPage(page) {
-  umPage = page;
-  renderUmTable();
-}
-
-function renderUmTable() {
-  const _canEditUser   = canEdit('administration.users');
-  const _canAssignRole = canEdit('administration.roles');
-
-  const filtered = _umSearch
-    ? umUsers.filter(u => {
-        const name = `${u.first_name || ''} ${u.last_name || ''}`.toLowerCase();
-        return name.includes(_umSearch) || (u.email || '').toLowerCase().includes(_umSearch);
-      })
-    : umUsers;
-
-  const totalEl = document.getElementById('um-total-count');
-  if (totalEl) totalEl.textContent = filtered.length;
-
-  const start = (umPage - 1) * umPerPage;
-  const pageData = filtered.slice(start, start + umPerPage);
-
-  let html = `<table class="um-table"><thead><tr>
-    <th>NAME</th><th>EMAIL</th><th>STAFF TYPE</th><th>LOCATION</th>
-    <th>ASSIGNED ROLE</th><th>STATUS</th><th>ACTION</th>
-  </tr></thead><tbody>`;
-
-  if (!pageData.length) {
-    html += `<tr><td colspan="7" class="um-empty">No records found</td></tr>`;
-  } else {
-    pageData.forEach(u => {
-      const name      = `${u.first_name || ''} ${u.last_name || ''}`.trim() || '—';
-      const roleLabel = UM_ROLE_LABELS[u.role] || u.role || '—';
-      const badgeCls  = `um-badge-${(u.role || '').toLowerCase()}`;
-      const roleChip  = u.assigned_role_title
-        ? `<span class="um-role-chip">${u.assigned_role_title}</span>`
-        : `<span class="um-no-role-chip" title="No permission role assigned — staff has no module access">No role assigned</span>`;
-      const statusChip = u.is_active
-        ? `<span class="um-status-active">Active</span>`
-        : `<span class="um-status-inactive">Inactive</span>`;
-
-      html += `<tr>
-        <td>${name}</td>
-        <td>${u.email || '—'}</td>
-        <td><span class="um-staff-type-badge ${badgeCls}">${roleLabel}</span></td>
-        <td>${u.location || '—'}</td>
-        <td>${roleChip}</td>
-        <td>${statusChip}</td>
-        <td class="um-action-cell">
-          <div class="um-action-wrap">
-            <button class="um-action-btn" onclick="toggleUmDropdown(event,${u.id})">&#8230;</button>
-            <div id="um-dd-${u.id}" class="um-action-dropdown" style="display:none;">
-              ${_canEditUser ? `<a href="#" onclick="openUmEditModal(${u.id});return false;">&#9998; Edit Profile</a>` : ''}
-              ${_canAssignRole ? `<a href="#" onclick="openAssignRoleModal(${u.id});return false;">&#128274; Assign Role</a>` : ''}
-              ${_canEditUser && u.is_active  ? `<a href="#" onclick="deactivateUser(${u.id});return false;" style="color:#e0534a;">&#10005; Deactivate</a>` : ''}
-              ${_canEditUser && !u.is_active ? `<a href="#" onclick="activateUser(${u.id});return false;" style="color:#27ae60;">&#10003; Activate</a>` : ''}
-            </div>
-          </div>
-        </td>
-      </tr>`;
-    });
-  }
-  html += '</tbody></table>';
-  const tc = document.getElementById('um-table-container');
-  if (tc) tc.innerHTML = html;
-
-  const totalPages = Math.ceil(filtered.length / umPerPage);
-  let pgHtml = '';
-  if (totalPages > 1) {
-    pgHtml = '<div class="um-pagination">';
-    for (let i = 1; i <= totalPages; i++) {
-      pgHtml += `<button onclick="umGoToPage(${i})"${i === umPage ? ' class="um-page-active"' : ''}>${i}</button>`;
-    }
-    pgHtml += '</div>';
-  }
-  const pgEl = document.getElementById('um-pagination');
-  if (pgEl) pgEl.innerHTML = pgHtml;
-}
-
-function toggleUmDropdown(event, userId) {
-  event.stopPropagation();
-  document.querySelectorAll('[id^="um-dd-"]').forEach(d => {
-    if (d.id !== `um-dd-${userId}`) d.style.display = 'none';
-  });
-  const dd = document.getElementById(`um-dd-${userId}`);
-  if (dd) dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
-}
-
-// ── Create / Edit Modal ───────────────────────────────────────────────────────
-
-function _umModalReset() {
-  document.getElementById('um-modal-first-name').value = '';
-  document.getElementById('um-modal-last-name').value  = '';
-  document.getElementById('um-modal-email').value      = '';
-  document.getElementById('um-modal-password').value   = '';
-  document.getElementById('um-modal-role').value       = '';
-  document.getElementById('um-modal-location').value   = '';
-  document.getElementById('um-modal-active').checked   = true;
-  document.getElementById('um-modal-status').innerHTML = '';
-}
-
-function openUmCreateModal() {
-  _umEditingId = null;
-  _umModalReset();
-  document.getElementById('um-modal-title').textContent = 'Add User';
-  document.getElementById('um-modal-pwd-group').style.display = '';
-  document.getElementById('um-user-modal').style.display = 'flex';
-}
-
-function openUmEditModal(userId) {
-  document.querySelectorAll('[id^="um-dd-"]').forEach(d => d.style.display = 'none');
-  const u = umUsers.find(x => x.id === userId);
-  if (!u) return;
-  _umEditingId = userId;
-  _umModalReset();
-  document.getElementById('um-modal-title').textContent     = 'Edit User';
-  document.getElementById('um-modal-first-name').value      = u.first_name  || '';
-  document.getElementById('um-modal-last-name').value       = u.last_name   || '';
-  document.getElementById('um-modal-email').value           = u.email       || '';
-  document.getElementById('um-modal-role').value            = u.role        || '';
-  document.getElementById('um-modal-location').value        = u.location    || '';
-  document.getElementById('um-modal-active').checked        = u.is_active !== false;
-  document.getElementById('um-modal-pwd-group').style.display = 'none';
-  document.getElementById('um-user-modal').style.display = 'flex';
-}
-
-function closeUmModal(event) {
-  const modal = document.getElementById('um-user-modal');
-  if (!modal) return;
-  if (event && event.target !== modal) return;
-  modal.style.display = 'none';
-}
-
-async function submitUmSave() {
-  const statusEl = document.getElementById('um-modal-status');
-  const first_name = document.getElementById('um-modal-first-name').value.trim();
-  const last_name  = document.getElementById('um-modal-last-name').value.trim();
-  const email      = document.getElementById('um-modal-email').value.trim();
-  const role       = document.getElementById('um-modal-role').value;
-  const location   = document.getElementById('um-modal-location').value.trim();
-  const is_active  = document.getElementById('um-modal-active').checked;
-
-  if (!first_name || !last_name || !email || !role || !location) {
-    statusEl.innerHTML = '<span class="role-status-error">First name, last name, email, staff type, and location are required.</span>';
-    return;
-  }
-
-  if (!_umEditingId) {
-    // Create
-    const password = document.getElementById('um-modal-password').value;
-    if (!password || password.length < 8) {
-      statusEl.innerHTML = '<span class="role-status-error">Password must be at least 8 characters.</span>';
-      return;
-    }
-    const res = await apiFetch(`${API_BASE}/team/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ first_name, last_name, email, password, role, location, is_active }),
-    });
-    if (!res) return;
-    if (res.ok) {
-      const created = await res.json().catch(() => null);
-      if (created) umUsers.unshift(created);
-      showToast('User created!', 'success');
-      document.getElementById('um-user-modal').style.display = 'none';
-      renderUmTable();
-    } else {
-      statusEl.innerHTML = `<span class="role-status-error">${await parseApiError(res)}</span>`;
-    }
-  } else {
-    // Edit
-    const res = await apiFetch(`${API_BASE}/team/${_umEditingId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ first_name, last_name, email, role, location, is_active }),
-    });
-    if (!res) return;
-    if (res.ok) {
-      const updated = await res.json().catch(() => null);
-      const idx = umUsers.findIndex(u => u.id === _umEditingId);
-      if (idx !== -1) umUsers[idx] = { ...umUsers[idx], ...(updated || {}), first_name, last_name, email, role, location, is_active };
-      showToast('User updated!', 'success');
-      document.getElementById('um-user-modal').style.display = 'none';
-      renderUmTable();
-    } else {
-      statusEl.innerHTML = `<span class="role-status-error">${await parseApiError(res)}</span>`;
-    }
-  }
-}
-
-// ── Activate / Deactivate ─────────────────────────────────────────────────────
-
-async function _patchUserActive(userId, is_active) {
-  document.querySelectorAll('[id^="um-dd-"]').forEach(d => d.style.display = 'none');
-  const res = await apiFetch(`${API_BASE}/team/${userId}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ is_active }),
-  });
-  if (!res) return;
-  if (res.ok) {
-    const idx = umUsers.findIndex(u => u.id === userId);
-    if (idx !== -1) umUsers[idx].is_active = is_active;
-    showToast(is_active ? 'User activated.' : 'User deactivated.', 'success');
-    renderUmTable();
-  } else {
-    showToast(await parseApiError(res), 'error');
-  }
-}
-
-async function deactivateUser(userId) {
-  if (!confirm('Deactivate this user?')) return;
-  await _patchUserActive(userId, false);
-}
-
-async function activateUser(userId) {
-  await _patchUserActive(userId, true);
-}
-
-// ── Assign Role Modal ─────────────────────────────────────────────────────────
-
-async function openAssignRoleModal(userId) {
-  document.querySelectorAll('[id^="um-dd-"]').forEach(d => d.style.display = 'none');
-  const u = umUsers.find(x => x.id === userId);
-  if (!u) return;
-  _assignRoleUserId = userId;
-
-  const nameEl   = document.getElementById('um-assign-user-name');
-  const selectEl = document.getElementById('um-assign-role-select');
-  const statusEl = document.getElementById('um-assign-status');
-
-  nameEl.textContent = `${u.first_name || ''} ${u.last_name || ''}`.trim();
-  selectEl.innerHTML = '<option value="">-- No role assigned --</option>';
-  statusEl.innerHTML = '';
-  document.getElementById('um-assign-modal').style.display = 'flex';
-
-  const res = await apiFetch(`${API_BASE}/roles/?page=1&per_page=100`);
-  if (res && res.ok) {
-    const data = await res.json().catch(() => ({}));
-    const roles = data.items || data.data || (Array.isArray(data) ? data : []);
-    roles.forEach(r => {
-      const opt = document.createElement('option');
-      opt.value = r.id;
-      opt.textContent = r.title;
-      if (u.role_id != null && String(r.id) === String(u.role_id)) opt.selected = true;
-      selectEl.appendChild(opt);
-    });
-  }
-}
-
-function closeAssignRoleModal(event) {
-  const modal = document.getElementById('um-assign-modal');
-  if (!modal) return;
-  if (event && event.target !== modal) return;
-  modal.style.display = 'none';
-}
-
-async function submitAssignRole() {
-  const userId   = _assignRoleUserId;
-  if (!userId) return;
-  const selectEl = document.getElementById('um-assign-role-select');
-  const statusEl = document.getElementById('um-assign-status');
-  const role_id  = selectEl.value ? parseInt(selectEl.value) : null;
-
-  const res = await apiFetch(`${API_BASE}/team/${userId}/role`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ role_id }),
-  });
-  if (!res) return;
-  if (res.ok) {
-    const updated = await res.json().catch(() => null);
-    const idx = umUsers.findIndex(u => u.id === userId);
-    if (idx !== -1) {
-      umUsers[idx].role_id = role_id;
-      umUsers[idx].assigned_role_title = updated?.assigned_role_title
-        || (role_id ? selectEl.options[selectEl.selectedIndex]?.textContent : null);
-    }
-    showToast(role_id ? 'Role assigned!' : 'Role cleared.', 'success');
-    document.getElementById('um-assign-modal').style.display = 'none';
-    renderUmTable();
-  } else {
-    statusEl.innerHTML = `<span class="role-status-error">${await parseApiError(res)}</span>`;
   }
 }
