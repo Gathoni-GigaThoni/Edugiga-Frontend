@@ -81,6 +81,13 @@ async function _invEnsureStoresCache() {
   const res = await apiFetch(`${_INV_API}/stores?is_active=true`);
   _invStoresCache = (res && res.ok) ? _toArray(await res.json()) : [];
 }
+// The stores cache is loaded once and held for the whole session, so every
+// store picker built from it — GRN, Issues, Transfers, Adjustments,
+// Stock-Takes, Internal Requisitions — keeps showing the list as it stood the
+// first time any of those screens was opened. A store added or deactivated
+// afterwards stays invisible until a full page reload. Every mutation must
+// drop the cache; the next _invEnsureStoresCache refetches.
+function _invInvalidateStoresCache() { _invStoresCache = null; }
 function _invStoreLabel(id) {
   if (id == null) return '—';
   const s = (_invStoresCache || []).find(x => String(x.id) === String(id));
@@ -421,7 +428,12 @@ async function _invSubmitStoreAdd() {
     is_active: active,
   };
   const res = await apiFetch(`${_INV_API}/stores`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-  if (res && res.ok) { showToast('Store added.', 'success'); await window._splitReload?.(); return; }
+  if (res && res.ok) {
+    _invInvalidateStoresCache();
+    showToast('Store added.', 'success');
+    await window._splitReload?.();
+    return;
+  }
   if (!res) return;
 
   if (res.status === 409) {
@@ -490,7 +502,12 @@ async function _invSubmitStoreEdit(id) {
   if (!name) { setErr('inv-store-e-name-err', 'This field is required.'); return; }
   const payload = { name, custodian_employee_id: custId ? parseInt(custId) : null, is_active: active };
   const res = await apiFetch(`${_INV_API}/stores/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-  if (res && res.ok) { showToast('Store updated.', 'success'); await window._splitRefreshSelected?.(); return; }
+  if (res && res.ok) {
+    _invInvalidateStoresCache();
+    showToast('Store updated.', 'success');
+    await window._splitRefreshSelected?.();
+    return;
+  }
   if (res) { const { message } = await _invParseError(res); showToast('Error: ' + message, 'error'); }
 }
 
@@ -503,7 +520,12 @@ async function _invToggleStoreActive(id, activate) {
   const verb = activate ? 'reactivate' : 'deactivate';
   if (!confirm(`Are you sure you want to ${verb} this store?`)) return;
   const res = await apiFetch(`${_INV_API}/stores/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ is_active: activate }) });
-  if (res && res.ok) { showToast(`Store ${activate ? 'reactivated' : 'deactivated'}.`, 'success'); await window._splitRefreshSelected?.(); return; }
+  if (res && res.ok) {
+    _invInvalidateStoresCache();
+    showToast(`Store ${activate ? 'reactivated' : 'deactivated'}.`, 'success');
+    await window._splitRefreshSelected?.();
+    return;
+  }
   if (res) { const { message } = await _invParseError(res); showToast('Error: ' + message, 'error'); }
 }
 
