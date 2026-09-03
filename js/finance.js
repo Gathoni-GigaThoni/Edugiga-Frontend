@@ -6315,6 +6315,29 @@ function _reconWsFilterRow(side) {
     : [['unmatched','Unmatched'],['matched','Matched'],['all','All']];
   return `<div style="display:flex;gap:6px;margin-bottom:8px;">
     ${tabs.map(([val,label]) => `<button class="${current===val?'fin-btn-teal':'fin-btn-outline'}" style="padding:4px 10px;font-size:0.78rem;" onclick="_reconWsSetFilter('${side}','${val}')">${label}</button>`).join('')}
+  </div>${side === 'book' ? _reconWsBookExitHint() : ''}`;
+}
+
+// The book pane has three filter tabs where the bank pane has four: there is
+// no Ignored state for a book line anywhere in the API — BookLineRead carries
+// only match_id, and mark-ignored takes bank_line_ids exclusively. That is a
+// deliberate asymmetry rather than a gap: a bank line is the bank's document
+// (duplicates, next-period rows, errors awaiting reversal are all fairly
+// ignorable), whereas a book line is our own posted entry against the bank GL
+// account, and tickable-away would drop a real GL movement out of the
+// reconciliation with no trace in the ledger. Both correct outcomes already
+// exist — leave it open as a reconciling item, or fix the entry at source —
+// so spell them out here instead of leaving users hunting for a button that
+// is never coming.
+function _reconWsBookExitHint() {
+  if (!_reconWsData || _reconWsBookFilter !== 'unmatched') return '';
+  if (!(_reconWsData.summary?.unmatched_book_count > 0)) return '';
+  if (_reconWsData.session.status === 'completed') return '';
+  return `<div style="background:#EEF1F5;border-radius:6px;padding:9px 12px;margin-bottom:8px;font-size:0.78rem;color:#5F6B7C;line-height:1.5;">
+    An unmatched book line has no &ldquo;ignore&rdquo; &mdash; it is our own posted entry, not the bank&rsquo;s. Either:
+    <div style="margin-top:4px;">&bull; <strong>the statement line is missing</strong> &mdash; import it under Finance &rsaquo; Bank &amp; Cash &rsaquo; Statement Imports (Co-op Sync tab, or upload the statement), then <em>Match Selected</em>;</div>
+    <div>&bull; <strong>it cleared after the cut-off</strong> (deposit in transit) &mdash; leave it open, it is a valid reconciling item and matches next period;</div>
+    <div>&bull; <strong>the entry itself is wrong</strong> &mdash; reverse or correct it in Journal Entries. Hiding it here would not fix the ledger.</div>
   </div>`;
 }
 
@@ -6508,8 +6531,28 @@ function _reconWsOpenIgnoreModal() {
 // ── Post Adjustment — reuses journal-entries.js's debit/credit line pattern ─
 let _reconAdjDebitLines = [], _reconAdjCreditLines = [];
 
+// Post Adjustment sits in the same button row as Match Selected and Mark
+// Ignored, both of which act on the checkbox selection and refuse loudly when
+// it's wrong. This one reads no selection at all — and /adjust POSTS the new
+// journal entry immediately, with no draft state to back out of. Ticking
+// unmatched book lines and hitting this (the natural gesture when receipts
+// were keyed manually because an IPN never fired) leaves those lines exactly
+// as unmatched as before, adds the adjustment's own lines to the unmatched
+// pile, and double-counts money already receipted. So the modal says what it
+// does, and names the selection it is about to ignore.
 async function _reconWsOpenAdjustModal() {
   await _pvLoadLookups();
+  const selBank = Object.keys(_reconWsBankChecked).filter(k => _reconWsBankChecked[k]).length;
+  const selBook = Object.keys(_reconWsBookChecked).filter(k => _reconWsBookChecked[k]).length;
+  const selParts = [];
+  if (selBank) selParts.push(`${selBank} bank line${selBank === 1 ? '' : 's'}`);
+  if (selBook) selParts.push(`${selBook} book line${selBook === 1 ? '' : 's'}`);
+  const selectionWarning = selParts.length ? `
+      <div style="background:#FBEAEA;border-left:3px solid var(--coral-500,#D94040);border-radius:6px;padding:10px 14px;margin-bottom:14px;font-size:0.82rem;color:#7a2020;">
+        <strong>${_finEsc(selParts.join(' and '))} selected &mdash; an adjustment will not touch ${selParts.length > 1 ? 'them' : 'it'}.</strong>
+        ${selBook ? `<div style="margin-top:5px;">Book lines with no bank line usually mean the statement side is missing, not the book side. Import it under Finance &rsaquo; Bank &amp; Cash &rsaquo; Statement Imports (Co-op Sync tab, or upload the statement), then clear them with <em>Match Selected</em>.</div>` : ''}
+        ${selBank && !selBook ? `<div style="margin-top:5px;">To clear a bank line, match it to a book line or use <em>Mark Ignored</em>.</div>` : ''}
+      </div>` : '';
   _reconAdjDebitLines = [{ account_id: '', amount: '' }];
   _reconAdjCreditLines = [{ account_id: '', amount: '' }];
   const today = new Date().toISOString().split('T')[0];
@@ -6518,7 +6561,13 @@ async function _reconWsOpenAdjustModal() {
   wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;overflow-y:auto;';
   wrap.innerHTML = `
     <div style="background:white;border-radius:8px;padding:24px;width:560px;max-width:92vw;max-height:90vh;overflow-y:auto;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
-      <h3 style="margin:0 0 14px;font-size:1.05rem;color:#2c3e50;">Post Adjustment</h3>
+      <h3 style="margin:0 0 6px;font-size:1.05rem;color:#2c3e50;">Post Adjustment</h3>
+      <p style="margin:0 0 14px;font-size:0.8rem;color:#5F6B7C;line-height:1.45;">
+        Creates and posts a new journal entry for something on the statement your books are missing
+        &mdash; bank charges, interest, forex. Its lines then join this session as book lines for you
+        to match. It does not clear or amend existing lines.
+      </p>
+      ${selectionWarning}
       <div class="fin-form-group">
         <label class="fin-form-label">Description <span class="fin-required">*</span></label>
         <input type="text" id="recon-adj-desc" class="fin-form-input" maxlength="200" placeholder="e.g. Bank charges June 2026">

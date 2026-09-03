@@ -2,6 +2,55 @@
 let _supData = [];
 let _supPage = 1, _supPerPage = 10, _supSearch = '';
 let _supEditId = null;
+let _supBanks = [];
+let _supBanksLoaded = false;
+
+const _SUP_PAYMENT_MODES = [
+  ['bank_transfer',    'Bank Transfer'],
+  ['mpesa_paybill',    'M-Pesa Paybill'],
+  ['mpesa_till',       'M-Pesa Till'],
+  ['mpesa_send_money', 'M-Pesa Send Money'],
+  ['cheque',           'Cheque'],
+  ['cash',             'Cash'],
+];
+
+async function _supEnsureBanks() {
+  if (_supBanksLoaded) return;
+  try {
+    const res = await apiFetch(`${API_BASE}/finance/utilities/financial-institutions/`);
+    if (res && res.ok) {
+      const data = await res.json().catch(() => []);
+      _supBanks = Array.isArray(data) ? data : (data.data || []);
+      _supBanksLoaded = true;
+    }
+  } catch (e) { /* fall back to free text */ }
+}
+
+function _supTogglePayMode() {
+  const mode = document.getElementById('sup-f-pay-mode')?.value || '';
+  const map = {
+    bank_transfer:    'sup-sec-bank',
+    mpesa_paybill:    'sup-sec-paybill',
+    mpesa_till:       'sup-sec-till',
+    mpesa_send_money: 'sup-sec-send',
+  };
+  ['sup-sec-bank','sup-sec-paybill','sup-sec-till','sup-sec-send'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+  const target = map[mode];
+  if (target) {
+    const el = document.getElementById(target);
+    if (el) el.style.display = '';
+  }
+  if (mode === 'bank_transfer') _supToggleBankOther();
+}
+
+function _supToggleBankOther() {
+  const fi = document.getElementById('sup-f-fi')?.value || '';
+  const other = document.getElementById('sup-fg-bank-other');
+  if (other) other.style.display = fi === '__other' ? '' : 'none';
+}
 
 document.addEventListener('click', () => {
   document.querySelectorAll('[id^="sup-dd-"]').forEach(d => d.style.display = 'none');
@@ -189,6 +238,8 @@ async function loadSupplierFormView(container, editId) {
   const isEdit = !!_supEditId;
   let supplier = null;
 
+  await _supEnsureBanks();
+
   if (isEdit) {
     container.innerHTML = '<div class="fin-page"><p style="padding:16px;color:#777;">Loading…</p></div>';
     const res = await apiFetch(`${API_BASE}/suppliers/${_supEditId}`);
@@ -267,11 +318,36 @@ async function loadSupplierFormView(container, editId) {
         </div>
 
         <div class="fin-filter-section">
+          <div class="fin-section-label">Payment Method</div>
+          <div class="fin-form-grid-2">
+            <div class="fin-form-group">
+              <label class="fin-form-label">Payment Mode</label>
+              <select id="sup-f-pay-mode" class="fin-form-select" onchange="_supTogglePayMode()">
+                <option value="">-- Select --</option>
+                ${_SUP_PAYMENT_MODES.map(([val,lbl]) =>
+                  `<option value="${val}" ${(supplier?.payment_mode||'')===val?'selected':''}>${lbl}</option>`
+                ).join('')}
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="fin-filter-section" id="sup-sec-bank" style="display:none">
           <div class="fin-section-label">Bank Details</div>
           <div class="fin-form-grid-2">
             <div class="fin-form-group">
-              <label class="fin-form-label">Bank Name</label>
-              <input type="text" id="sup-f-bank-name" class="fin-form-input" value="${v('bank_name')}" placeholder="e.g. Equity Bank">
+              <label class="fin-form-label">Bank <span class="fin-required">*</span></label>
+              <select id="sup-f-fi" class="fin-form-select" onchange="_supToggleBankOther()">
+                <option value="">-- Select bank --</option>
+                ${_supBanks.map(fi =>
+                  `<option value="${fi.id}" ${String(supplier?.financial_institution_id||'')===String(fi.id)?'selected':''}>${_finEsc(fi.institution)}</option>`
+                ).join('')}
+                <option value="__other" ${supplier?.bank_name && !supplier?.financial_institution_id ? 'selected':''}>Other (specify below)</option>
+              </select>
+            </div>
+            <div class="fin-form-group" id="sup-fg-bank-other" style="display:none">
+              <label class="fin-form-label">Bank Name (Other)</label>
+              <input type="text" id="sup-f-bank-name" class="fin-form-input" value="${v('bank_name')}" placeholder="Bank name">
             </div>
             <div class="fin-form-group">
               <label class="fin-form-label">Branch</label>
@@ -279,11 +355,45 @@ async function loadSupplierFormView(container, editId) {
             </div>
             <div class="fin-form-group">
               <label class="fin-form-label">Account Name</label>
-              <input type="text" id="sup-f-acct-name" class="fin-form-input" value="${v('account_name')}" placeholder="Account holder name">
+              <input type="text" id="sup-f-acct-name" class="fin-form-input" value="${v('bank_account_name')}" placeholder="Account holder name">
             </div>
             <div class="fin-form-group">
-              <label class="fin-form-label">Account Number</label>
-              <input type="text" id="sup-f-acct-no" class="fin-form-input" value="${v('account_number')}" placeholder="Account number">
+              <label class="fin-form-label">Account Number <span class="fin-required">*</span></label>
+              <input type="text" id="sup-f-acct-no" class="fin-form-input" value="${v('bank_account_number')}" placeholder="Account number">
+            </div>
+          </div>
+        </div>
+
+        <div class="fin-filter-section" id="sup-sec-paybill" style="display:none">
+          <div class="fin-section-label">M-Pesa Paybill</div>
+          <div class="fin-form-grid-2">
+            <div class="fin-form-group">
+              <label class="fin-form-label">Paybill Number <span class="fin-required">*</span></label>
+              <input type="text" id="sup-f-mp-paybill" class="fin-form-input" value="${v('mpesa_paybill_number')}" placeholder="e.g. 522522" inputmode="numeric">
+            </div>
+            <div class="fin-form-group">
+              <label class="fin-form-label">Account / Reference <span class="fin-required">*</span></label>
+              <input type="text" id="sup-f-mp-paybill-acct" class="fin-form-input" value="${v('mpesa_paybill_account')}" placeholder="Account no. as printed by supplier">
+            </div>
+          </div>
+        </div>
+
+        <div class="fin-filter-section" id="sup-sec-till" style="display:none">
+          <div class="fin-section-label">M-Pesa Till (Buy Goods)</div>
+          <div class="fin-form-grid-2">
+            <div class="fin-form-group">
+              <label class="fin-form-label">Till Number <span class="fin-required">*</span></label>
+              <input type="text" id="sup-f-mp-till" class="fin-form-input" value="${v('mpesa_till_number')}" placeholder="e.g. 123456" inputmode="numeric">
+            </div>
+          </div>
+        </div>
+
+        <div class="fin-filter-section" id="sup-sec-send" style="display:none">
+          <div class="fin-section-label">M-Pesa Send Money</div>
+          <div class="fin-form-grid-2">
+            <div class="fin-form-group">
+              <label class="fin-form-label">Mobile Number <span class="fin-required">*</span></label>
+              <input type="tel" id="sup-f-mp-send" class="fin-form-input" value="${v('mpesa_send_money_phone')}" placeholder="+254 7XX XXX XXX or 07XX XXX XXX">
             </div>
           </div>
         </div>
@@ -297,6 +407,9 @@ async function loadSupplierFormView(container, editId) {
         <div id="sup-form-status" class="fin-form-status" style="margin-top:10px;"></div>
       </div>
     </div>`;
+
+  // Show the right fieldset for a pre-existing payment_mode on Edit
+  _supTogglePayMode();
 }
 
 async function _supSubmit() {
@@ -307,6 +420,13 @@ async function _supSubmit() {
   errEl.textContent = name ? '' : 'Supplier name is required.';
   if (!name) return;
 
+  const mode = document.getElementById('sup-f-pay-mode')?.value || '';
+  const fiRaw = document.getElementById('sup-f-fi')?.value || '';
+  const financial_institution_id = (mode === 'bank_transfer' && fiRaw && fiRaw !== '__other')
+    ? parseInt(fiRaw, 10) : null;
+  const bankNameOther = (mode === 'bank_transfer' && fiRaw === '__other')
+    ? (document.getElementById('sup-f-bank-name')?.value.trim() || null) : null;
+
   const payload = {
     name,
     email:          document.getElementById('sup-f-email').value.trim()       || null,
@@ -315,11 +435,25 @@ async function _supSubmit() {
     kra_pin:        document.getElementById('sup-f-kra').value.trim()         || null,
     address:        document.getElementById('sup-f-address').value.trim()     || null,
     payment_terms:  document.getElementById('sup-f-payment-terms').value      || null,
-    bank_name:      document.getElementById('sup-f-bank-name').value.trim()   || null,
-    bank_branch:    document.getElementById('sup-f-bank-branch').value.trim() || null,
-    account_name:   document.getElementById('sup-f-acct-name').value.trim()   || null,
-    account_number: document.getElementById('sup-f-acct-no').value.trim()     || null,
     is_active:      document.getElementById('sup-f-active').checked,
+
+    payment_mode:              mode || null,
+    financial_institution_id,
+    bank_name:                 bankNameOther,
+    bank_branch:               mode === 'bank_transfer'
+      ? (document.getElementById('sup-f-bank-branch')?.value.trim() || null) : null,
+    bank_account_name:         mode === 'bank_transfer'
+      ? (document.getElementById('sup-f-acct-name')?.value.trim()   || null) : null,
+    bank_account_number:       mode === 'bank_transfer'
+      ? (document.getElementById('sup-f-acct-no')?.value.trim()     || null) : null,
+    mpesa_paybill_number:      mode === 'mpesa_paybill'
+      ? (document.getElementById('sup-f-mp-paybill')?.value.trim()  || null) : null,
+    mpesa_paybill_account:     mode === 'mpesa_paybill'
+      ? (document.getElementById('sup-f-mp-paybill-acct')?.value.trim() || null) : null,
+    mpesa_till_number:         mode === 'mpesa_till'
+      ? (document.getElementById('sup-f-mp-till')?.value.trim()     || null) : null,
+    mpesa_send_money_phone:    mode === 'mpesa_send_money'
+      ? (document.getElementById('sup-f-mp-send')?.value.trim()     || null) : null,
   };
 
   const isEdit = !!_supEditId;
