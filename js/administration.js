@@ -117,6 +117,11 @@ async function _deptSaveSplit(id) {
     { method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, is_active }) }
   );
   if (res && res.ok) {
+    // Payables caches the department list for the whole session (_pvLoadLookups),
+    // so a department created here stays invisible in the Payment Voucher form
+    // until a full page reload unless the cache is dropped — the same
+    // invalidation the supplier form already does after a save.
+    _pvLookupsLoaded = false;
     showToast(id ? 'Department updated.' : 'Department created.', 'success');
     loadView('finance-budgeting-departments');
   } else if (res && res.status === 409) {
@@ -130,6 +135,7 @@ async function _deptArchive(id) {
   if (!confirm('Archive this department? It will be hidden from pickers but preserved on existing vouchers and employee records.')) return;
   const res = await apiFetch(`${API_BASE}/departments/${id}`, { method: 'DELETE' });
   if (res && res.ok) {
+    _pvLookupsLoaded = false;   // see _deptSaveSplit
     showToast('Department archived.', 'success');
     loadView('finance-budgeting-departments');
   } else if (res) {

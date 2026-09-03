@@ -64,6 +64,18 @@ function _pvOptions(list, valueKey, labelFn, selected) {
 function _pvLedgerOptions(sel)     { return _pvOptions(_pvLedgers, 'id', l => l.name, sel); }
 function _pvCostCenterOptions(sel) { return _pvOptions(_pvCostCenters, 'id', c => c.name, sel); }
 function _pvDepartmentOptions(sel) { return _pvOptions(_pvDepartments, 'id', d => d.name, sel); }
+// Department is required on PaymentVoucherCreate, so an empty picker is a dead
+// end: the operator cannot submit and the select alone says nothing about why.
+// Distinguish the two reasons it can be empty — the lookup 403'd, or no
+// department has been created yet (see [[lookup-403-silent-empty-picker]]).
+function _pvEmptyPickerHint(list, label, whereToAdd) {
+  if ((list || []).length) return '';
+  const perm = whereToAdd.permKey ? ` (permission key <code>${whereToAdd.permKey}</code>)` : '';
+  const msg = lookupWasDenied(label)
+    ? `You do not have permission to read ${whereToAdd.noun}${perm}, so this list is empty. Ask an administrator to grant your role view access.`
+    : `No ${whereToAdd.noun} exist yet. Create one under ${whereToAdd.path}, then reopen this form.`;
+  return `<span style="display:block;font-size:11px;color:var(--coral-500,#D94040);margin-top:4px;">${msg}</span>`;
+}
 // AccountRead.is_postable landed on the wire in the 2026-09-01 addendum (§2.1
 // — it was on the model and on writes for a month before the read schema
 // exposed it). false marks a header / roll-up account, and posting a JE line
@@ -583,6 +595,7 @@ function _pvPvFormHtml(v, lockedTaxType) {
         <select id="pv-f-ledger" class="fin-form-select">
           <option value="">Please Select</option>${_pvLedgerOptions(v?.ledger_id)}
         </select>
+        ${_pvEmptyPickerHint(_pvLedgers, 'ledgers', { noun: 'ledgers', path: 'Finance &rsaquo; Set-up' })}
         <span class="fin-field-error" id="pv-f-ledger-err"></span>
       </div>
       <div class="fin-form-group">
@@ -594,6 +607,7 @@ function _pvPvFormHtml(v, lockedTaxType) {
         <select id="pv-f-cost-center" class="fin-form-select">
           <option value="">Please Select</option>${_pvCostCenterOptions(v?.cost_center_id)}
         </select>
+        ${_pvEmptyPickerHint(_pvCostCenters, 'cost-centers', { noun: 'cost centers', path: 'Finance &rsaquo; Set-up' })}
         <span class="fin-field-error" id="pv-f-cc-err"></span>
       </div>
       <div class="fin-form-group">
@@ -623,6 +637,7 @@ function _pvPvFormHtml(v, lockedTaxType) {
         <select id="pv-f-department" class="fin-form-select">
           <option value="">Please Select</option>${_pvDepartmentOptions(v?.department_id)}
         </select>
+        ${_pvEmptyPickerHint(_pvDepartments, 'departments', { noun: 'departments', path: 'Finance &rsaquo; Budgeting &rsaquo; Departments', permKey: 'finance.budgeting.departments' })}
         <span class="fin-field-error" id="pv-f-dept-err"></span>
       </div>
       <div class="fin-form-group">
