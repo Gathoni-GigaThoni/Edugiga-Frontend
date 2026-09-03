@@ -7,11 +7,11 @@ let _umEditingId = null;
 let _assignRoleUserId = null;
 
 const UM_ROLE_LABELS = {
-  SUPER_ADMIN: 'Super Admin',
-  MANAGER:     'Manager',
-  TEACHER:     'Teacher',
-  KITCHEN:     'Kitchen',
-  UTILITY:     'Utility',
+  super_admin: 'Super Admin',
+  manager:     'Manager',
+  teacher:     'Teacher',
+  kitchen:     'Kitchen',
+  utility:     'Utility',
 };
 
 document.addEventListener('click', () => {
@@ -63,7 +63,7 @@ async function loadUserManagementView(container) {
 function _umSplitForm(item, el) {
   const id = item?.id ?? null;
   const isEdit = !!item;
-  const roleOptions = ['SUPER_ADMIN','MANAGER','TEACHER','KITCHEN','UTILITY'].map(r =>
+  const roleOptions = ['super_admin','manager','teacher','kitchen','utility'].map(r =>
     `<option value="${r}"${item?.role===r?' selected':''}>${UM_ROLE_LABELS[r]||r}</option>`
   ).join('');
   el.innerHTML = `
@@ -93,7 +93,7 @@ function _umSplitForm(item, el) {
           </select>
         </div>
         <div class="stu-form-group">
-          <label>Location</label>
+          <label>Location <span style="color:var(--coral-500)">*</span></label>
           <input id="um-f-location" value="${_umEsc(item?.location||'')}" style="max-width:none;width:100%">
         </div>
         ${isEdit?`<div class="stu-form-group" style="grid-column:span 2">
@@ -124,8 +124,8 @@ async function _umSaveSplit(id) {
   const location   = document.getElementById('um-f-location')?.value.trim() || '';
   const is_active  = id ? (document.getElementById('um-f-active')?.checked ?? true) : true;
 
-  if (!first_name || !last_name || !email || !role) {
-    if (statusEl) statusEl.textContent = 'First name, last name, email, and staff type are required.';
+  if (!first_name || !last_name || !email || !role || !location) {
+    if (statusEl) statusEl.textContent = 'First name, last name, email, staff type, and location are required.';
     return;
   }
   let body = { first_name, last_name, email, role, location, is_active };
@@ -204,15 +204,15 @@ function renderUmListPage(container) {
               <label class="role-form-label">Staff Type <span class="role-required">*</span></label>
               <select id="um-modal-role">
                 <option value="">-- Select --</option>
-                <option value="SUPER_ADMIN">Super Admin</option>
-                <option value="MANAGER">Manager</option>
-                <option value="TEACHER">Teacher</option>
-                <option value="KITCHEN">Kitchen</option>
-                <option value="UTILITY">Utility</option>
+                <option value="super_admin">Super Admin</option>
+                <option value="manager">Manager</option>
+                <option value="teacher">Teacher</option>
+                <option value="kitchen">Kitchen</option>
+                <option value="utility">Utility</option>
               </select>
             </div>
             <div class="role-form-group">
-              <label class="role-form-label">Location</label>
+              <label class="role-form-label">Location <span class="role-required">*</span></label>
               <input type="text" id="um-modal-location">
             </div>
           </div>
@@ -413,8 +413,8 @@ async function submitUmSave() {
   const location   = document.getElementById('um-modal-location').value.trim();
   const is_active  = document.getElementById('um-modal-active').checked;
 
-  if (!first_name || !last_name || !email || !role) {
-    statusEl.innerHTML = '<span class="role-status-error">First name, last name, email, and staff type are required.</span>';
+  if (!first_name || !last_name || !email || !role || !location) {
+    statusEl.innerHTML = '<span class="role-status-error">First name, last name, email, staff type, and location are required.</span>';
     return;
   }
 
