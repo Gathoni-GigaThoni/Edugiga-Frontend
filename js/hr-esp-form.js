@@ -112,20 +112,22 @@ function renderHrEspFormPage(container) {
             <label class="hr-form-label">Employee Status</label>
             <select id="hr-esp-emp-status" class="hr-form-select">
               <option value="">Please Select</option>
-              <option value="Active"     ${sel(pre('employee_status'),'Active')}>Active</option>
-              <option value="Inactive"   ${sel(pre('employee_status'),'Inactive')}>Inactive</option>
-              <option value="Suspended"  ${sel(pre('employee_status'),'Suspended')}>Suspended</option>
-              <option value="On Leave"   ${sel(pre('employee_status'),'On Leave')}>On Leave</option>
+              <option value="active"     ${sel(pre('employee_status'),'active')}>Active</option>
+              <option value="probation"  ${sel(pre('employee_status'),'probation')}>Probation</option>
+              <option value="confirmed"  ${sel(pre('employee_status'),'confirmed')}>Confirmed</option>
+              <option value="on_leave"   ${sel(pre('employee_status'),'on_leave')}>On Leave</option>
+              <option value="suspended"  ${sel(pre('employee_status'),'suspended')}>Suspended</option>
+              <option value="terminated" ${sel(pre('employee_status'),'terminated')}>Terminated</option>
             </select>
           </div>
           <div class="hr-form-group">
             <label class="hr-form-label">Salary Disbursement Mode <span class="hr-required">*</span></label>
             <select id="hr-esp-disbursement-mode" class="hr-form-select">
               <option value="">Please Select</option>
-              <option value="Bank Transfer"  ${sel(pre('salary_disbursement_mode'),'Bank Transfer')}>Bank Transfer</option>
-              <option value="Cash"           ${sel(pre('salary_disbursement_mode'),'Cash')}>Cash</option>
-              <option value="Cheque"         ${sel(pre('salary_disbursement_mode'),'Cheque')}>Cheque</option>
-              <option value="Mobile Money"   ${sel(pre('salary_disbursement_mode'),'Mobile Money')}>Mobile Money</option>
+              <option value="bank_transfer" ${sel(pre('salary_disbursement_mode'),'bank_transfer')}>Bank Transfer</option>
+              <option value="cash"          ${sel(pre('salary_disbursement_mode'),'cash')}>Cash</option>
+              <option value="cheque"        ${sel(pre('salary_disbursement_mode'),'cheque')}>Cheque</option>
+              <option value="mpesa"         ${sel(pre('salary_disbursement_mode'),'mpesa')}>Mobile Money (M-Pesa)</option>
             </select>
           </div>
           <div class="hr-form-group">
@@ -375,29 +377,42 @@ async function submitHrEspForm() {
   if (!effectiveDate)    { showToast('Effective Date is required.', 'error'); return; }
 
   const emp     = employeesData.find(e => e.employee_code === empCode);
+  const isEdit  = hrEspFormState.context === 'edit';
+  const espId   = hrEspFormState.existingRecord?.id;
+
+  // The API keys service profiles by the numeric employee id, not the code the
+  // form collects — resolve it here and fail loudly rather than posting a body
+  // the backend rejects with "employee_id: Field required".
+  const employeeId = emp?.id ?? hrEspFormState.existingRecord?.employee_id ?? null;
+  if (!isEdit && employeeId == null) {
+    showToast(`No employee found with code ${empCode}. Pick one from the list.`, 'error');
+    return;
+  }
+
   const empName = emp
     ? ((emp.first_name || emp.surname || '') + ' ' + (emp.last_name || emp.other_names || '')).trim()
     : hrEspFormState.lockedEmpName;
 
   // Map internal camelCase bank account fields to snake_case for the API
+  // account_details is a display-only column the API's BankAccountCreate has no
+  // field for, so it stays out of the request body.
   const bankAccountsForApi = hrEspFormState.bankAccounts.map(b => ({
     account_no:               b.accountNo || '',
     financial_institution_id: b.bankId || null,
-    account_details:          b.accountDetails || '',
     percentage:               parseFloat(b.percentage) || 0,
     account_name:             b.accountName || null,
     gateway_display_name:     b.gatewayDisplayName || null,
   }));
 
   const payload = {
-    employee_code:             empCode,
     reason_event:              reasonEvent,
     processing_method:         document.getElementById('hr-esp-processing-method')?.value || '',
     pay_grade_id:              parseInt(payGrade, 10) || null,
     basic_salary:              parseFloat(document.getElementById('hr-esp-basic-salary')?.value) || null,
     effective_date:            effectiveDate,
     end_date:                  document.getElementById('hr-esp-end-date')?.value || null,
-    employee_status:           document.getElementById('hr-esp-emp-status')?.value || '',
+    // Blank means "not set" — the enum rejects an empty string, so send null.
+    employee_status:           document.getElementById('hr-esp-emp-status')?.value || null,
     salary_disbursement_mode:  disbursementMode,
     sheltered_paye:            document.getElementById('hr-esp-sh-paye')?.checked    || false,
     sheltered_shif:            document.getElementById('hr-esp-sh-shif')?.checked    || false,
@@ -406,9 +421,9 @@ async function submitHrEspForm() {
     bank_accounts: bankAccountsForApi,
     notes: document.getElementById('hr-esp-notes')?.value || '',
   };
+  // Create takes employee_id; the update schema has no employee field at all.
+  if (!isEdit) payload.employee_id = employeeId;
 
-  const isEdit  = hrEspFormState.context === 'edit';
-  const espId   = hrEspFormState.existingRecord?.id;
   const url     = isEdit && espId
     ? `${API_BASE}/payroll/employee-service-profiles/${espId}`
     : `${API_BASE}/payroll/employee-service-profiles/`;
@@ -428,6 +443,7 @@ async function submitHrEspForm() {
     const record = {
       ...(saved || payload),
       id:            saved?.id || (isEdit ? espId : Date.now()),
+      employee_code: empCode,
       employee_name: empName,
       department:    document.getElementById('hr-esp-department')?.value || '',
       bank_accounts: [...hrEspFormState.bankAccounts],  // keep camelCase for local display
