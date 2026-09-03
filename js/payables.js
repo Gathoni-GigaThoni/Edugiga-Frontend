@@ -300,6 +300,46 @@ async function loadPayablesPaymentVouchersView(container) {
   });
 }
 
+// Only a Tendepay wallet can actually settle a voucher. The whole API has no
+// mark-paid / settle / record-payment route on payment-vouchers — the single
+// thing that writes `paid` is POST /tendepay/import/{batch}/confirm ("create
+// journal entries, settle invoices, mark vouchers paid"), and /mark-paid was
+// deleted from the backend on purpose (see _pvPvQueueForTendepay below).
+//
+// So a voucher whose Payment Account is a bank or the petty cash float has no
+// settlement path at all: queueing it parks it at awaiting_tendepay waiting
+// for an import row that never arrives. Rather than let the button imply
+// otherwise, say so and name the rails that do post a payment.
+//
+// wallet_role is the authoritative Tendepay marker (main/mini/suspense/
+// charges). main and mini are the two a payment can legitimately come out of;
+// suspense and charges are pipeline internals. Returns null when the account
+// cannot be resolved at all — an inactive-but-valid wallet is not in
+// _pvAccounts, and blocking on a lookup miss would be worse than deferring to
+// the server, so callers fail open on null.
+const _PV_PAYABLE_WALLET_ROLES = ['main', 'mini'];
+function _pvPaymentAccountKind(accountId) {
+  if (!accountId) return 'unset';
+  const acct = _pvAccounts.find(a => String(a.id) === String(accountId));
+  if (!acct) return null;
+  if (_PV_PAYABLE_WALLET_ROLES.includes(acct.wallet_role)) return 'wallet';
+  if (acct.wallet_role) return 'wallet_internal';
+  return 'non_wallet';
+}
+
+function _pvNonTendepayRailsHtml(accountName) {
+  return `<div style="width:100%;margin-top:8px;padding:10px 14px;background:#FBEAEA;border-left:3px solid var(--coral-500,#D94040);border-radius:6px;font-size:0.85rem;color:#7a2020;line-height:1.5;">
+    <strong>${_finEsc(accountName)} is not a Tendepay wallet, so this voucher cannot be paid from here.</strong>
+    <div style="margin-top:5px;">Payment Vouchers settle only through a Tendepay import &mdash; there is no other route that marks one paid. Queueing this would park it at Awaiting Tendepay for a payment that never arrives.</div>
+    <div style="margin-top:5px;">To pay outside Tendepay, use the document type built for that rail:
+      <strong>Expense Claims</strong> &rarr; Expense Claim Disbursements (cash, bank transfer or M-Pesa, against any bank account);
+      <strong>Petty Cash Applications</strong> &rarr; Petty Cash Disbursements (off the float);
+      or <strong>Imprest Warrants</strong> &rarr; Imprest Disbursements (names its own credit bank).
+    </div>
+    <div style="margin-top:5px;">Otherwise set the Payment Account to the Tendepay wallet this will be paid from.</div>
+  </div>`;
+}
+
 // ── Detail-pane lifecycle actions (draft → submitted → approved → awaiting_tendepay → paid) ──
 function _pvPvDetailActions(v) {
   const isCreator = currentUser && v.personnel_id && String(currentUser.id) === String(v.personnel_id);
@@ -310,12 +350,29 @@ function _pvPvDetailActions(v) {
     if (!isCreator) html += `<button class="btn" onclick="_pvPvApprove(${v.id})">Approve</button>`;
     html += `<button class="fin-btn-cancel" onclick="_pvPvReject(${v.id})">Reject</button>`;
   } else if (v.status === 'approved') {
-    html += `<button class="btn" onclick="_pvPvQueueForTendepay(${v.id}, ${v.debit_account_id || 'null'}, ${v.tendepay_wallet_account_id || 'null'})">Queue for Tendepay</button>`;
-    if (!v.debit_account_id || !v.tendepay_wallet_account_id) {
-      html += `<div style="width:100%;margin-top:8px;color:var(--color-danger);font-size:0.85rem;">Set the Debit Account and Payment Account before queueing this voucher for payment.</div>`;
+    const kind = _pvPaymentAccountKind(v.tendepay_wallet_account_id);
+    // Withhold the button entirely when the account cannot settle: offering it
+    // next to an explanation of why it will not work just invites the click.
+    if (kind === 'non_wallet' || kind === 'wallet_internal') {
+      html += _pvNonTendepayRailsHtml(_pvAccountName(v.tendepay_wallet_account_id));
+    } else {
+      html += `<button class="btn" onclick="_pvPvQueueForTendepay(${v.id}, ${v.debit_account_id || 'null'}, ${v.tendepay_wallet_account_id || 'null'})">Queue for Tendepay</button>`;
+      if (!v.debit_account_id || !v.tendepay_wallet_account_id) {
+        html += `<div style="width:100%;margin-top:8px;color:var(--color-danger);font-size:0.85rem;">Set the Debit Account and Payment Account before queueing this voucher for payment.</div>`;
+      }
     }
   } else if (v.status === 'awaiting_tendepay') {
-    html += `<div style="color:var(--grey-500,#666);font-size:0.9rem;">Queued for Tendepay. Payment will post automatically on the next Tendepay import.</div>`;
+    // Already queued against an account no import can settle — the reassuring
+    // "will post automatically" line would be a plain untruth here.
+    const kind = _pvPaymentAccountKind(v.tendepay_wallet_account_id);
+    if (kind === 'non_wallet' || kind === 'wallet_internal' || kind === 'unset') {
+      html += `<div style="width:100%;padding:10px 14px;background:#FBEAEA;border-left:3px solid var(--coral-500,#D94040);border-radius:6px;font-size:0.85rem;color:#7a2020;line-height:1.5;">
+        <strong>Queued, but nothing will settle it.</strong>
+        <div style="margin-top:5px;">The Payment Account is ${v.tendepay_wallet_account_id ? `<em>${_finEsc(_pvAccountName(v.tendepay_wallet_account_id))}</em>, which is not a Tendepay wallet` : 'not set'}, so no Tendepay import row will match this voucher. Ask Finance to correct the wallet on this voucher, or reject it and raise the payment on the rail that fits &mdash; Expense Claim, Petty Cash or Imprest.</div>
+      </div>`;
+    } else {
+      html += `<div style="color:var(--grey-500,#666);font-size:0.9rem;">Queued for Tendepay. Payment will post automatically on the next Tendepay import.</div>`;
+    }
   }
   html += `<button class="fin-btn-outline" onclick="_pvPvPrint(${v.id})">View / Print</button>`;
   html += `<div id="pv-link-msg" style="width:100%;"></div>`;
@@ -491,6 +548,13 @@ function _pvShowNotesModal(title, onConfirm) {
 async function _pvPvQueueForTendepay(id, debitAccountId, tendepayWalletAccountId) {
   if (!debitAccountId || !tendepayWalletAccountId) {
     showToast('Set the Debit Account and Payment Account before queueing this voucher for payment.', 'error');
+    return;
+  }
+  // Defence in depth: the detail pane withholds the button for these, but this
+  // is a global reachable from stale markup.
+  const kind = _pvPaymentAccountKind(tendepayWalletAccountId);
+  if (kind === 'non_wallet' || kind === 'wallet_internal') {
+    showToast(`${_pvAccountName(tendepayWalletAccountId)} is not a Tendepay wallet — a Tendepay import cannot settle this voucher.`, 'error');
     return;
   }
   _pvShowNotesModal('Queue for Tendepay', async (notes) => {

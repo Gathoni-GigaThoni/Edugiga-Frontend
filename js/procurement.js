@@ -210,7 +210,11 @@ async function _supToggleActive(id, is_active) {
   document.querySelectorAll('[id^="sup-dd-"]').forEach(d => d.style.display = 'none');
   if (!is_active && !confirm('Deactivate this supplier?')) return;
   const res = await apiFetch(`${API_BASE}/suppliers/${id}`, {
-    method: 'PATCH',
+    // PUT, not PATCH: /suppliers/{id} exposes GET/PUT/DELETE only, and PATCH
+    // 405'd "Method Not Allowed" on every edit. SupplierUpdate has no required
+    // fields and every field is nullable, so it is a partial-update schema
+    // served over PUT — sending just the changed field is the intended shape.
+    method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ is_active }),
   });
@@ -458,7 +462,8 @@ async function _supSubmit() {
 
   const isEdit = !!_supEditId;
   const url    = isEdit ? `${API_BASE}/suppliers/${_supEditId}` : `${API_BASE}/suppliers/`;
-  const method = isEdit ? 'PATCH' : 'POST';
+  // See _supToggleActive: the update route is PUT, not PATCH.
+  const method = isEdit ? 'PUT' : 'POST';
 
   const res = await apiFetch(url, {
     method,
