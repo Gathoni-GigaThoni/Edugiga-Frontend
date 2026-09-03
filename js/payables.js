@@ -19,13 +19,18 @@ async function _pvLoadLookups(force = false) {
   // handed a form with an empty supplier list and no explanation.
   // (_toArray inside loadLookupList already unwraps the employees endpoint's
   // {items: [...]} envelope, so that call needs no special case here.)
-  const [ledgers, costCenters, depts, accts, suppliers, employees] = await Promise.all([
+  const [ledgers, costCenters, depts, accts, suppliers, employees, moneyHolding] = await Promise.all([
     loadLookupList(`${API_BASE}/lookups/ledgers`, 'ledgers'),
     loadLookupList(`${API_BASE}/lookups/cost-centers`, 'cost-centers'),
     loadLookupList(`${API_BASE}/departments/`, 'departments'),
     loadLookupList(`${API_BASE}/accounts/?is_active=true`, 'accounts'),
     loadLookupList(`${API_BASE}/suppliers/`, 'suppliers'),
     loadLookupList(`${API_BASE}/hr/employees`, 'employees'),
+    // The PV form's Payment Account picker needs this, so it is no longer
+    // lazy-loaded by the disbursement forms alone — one more parallel lookup
+    // on a Promise.all of six costs nothing and removes the ordering hazard
+    // of a synchronous modal rendering before the registry has arrived.
+    loadLookupList(`${API_BASE}/lookups/money-holding-accounts`, 'money-holding-accounts'),
   ]);
   _pvLedgers      = ledgers;
   _pvCostCenters  = costCenters;
@@ -33,6 +38,7 @@ async function _pvLoadLookups(force = false) {
   _pvAccounts     = accts;
   _pvSuppliers    = suppliers;
   _pvEmployees    = employees;
+  _pvMoneyHoldingAccounts = moneyHolding;
   _pvLookupsLoaded = true;
 }
 
@@ -93,10 +99,16 @@ function _pvAccountOptions(sel, { includeNonPostable = false } = {}) {
 // even older account_name ILIKE 'Tendepay%' scan). wallet_role is nullable —
 // a hand-named "Tendepay Clearing" account with no role set is deliberately
 // invisible here, which is intentional per the backend contract.
-// Default role is 'mini' — every existing caller (disbursement forms picking
-// which sub-wallet a payment comes out of) wants the Suppliers/Payroll/
-// Transport mini wallets, matching the old parent_id-children behavior; only
-// Fund Loads' top-up/transfer forms pass role='main' explicitly.
+// Default role is 'mini' — the remaining callers (payroll's consultant voucher
+// wallet, and the Tendepay report filters) want the Suppliers/Payroll/Transport
+// mini wallets, matching the old parent_id-children behavior.
+//
+// The Payment Voucher form no longer uses this. Its Payment Account field is
+// the account a voucher is actually paid out of, and not every voucher is
+// settled through Tendepay — cheque, bank transfer and petty cash payments
+// need their own account, and even a Tendepay one may come off the Main
+// wallet, which role='mini' excluded outright. That field now lists every
+// postable money-holding account via _pvMoneyHoldingOptions.
 function _pvTendepayWalletOptions(sel, role = 'mini') {
   const wallets = _pvAccounts.filter(a => a.wallet_role === role);
   return _pvOptions(wallets, 'id', a => a.account_name, sel);
@@ -277,7 +289,7 @@ async function loadPayablesPaymentVouchersView(container) {
       {label:'Payee Type',       key:'payee_type', fmt:v=>v||'—'},
       {label:'Amount',           key:'amount', fmt:v=>_pvMoney(v)},
       {label:'Debit Account',    key:'debit_account_id', fmt:v=>v?_pvAccountName(v):'—'},
-      {label:'Tendepay Wallet',  key:'tendepay_wallet_account_id', fmt:v=>v?_pvAccountName(v):'—'},
+      {label:'Payment Account',  key:'tendepay_wallet_account_id', fmt:v=>v?_pvAccountName(v):'—'},
       {label:'Status',           key:'status', fmt:v=>_pvBadge(v)},
       {label:'Date',             key:'created_at', fmt:v=>_pvDate(v)},
     ],
@@ -300,7 +312,7 @@ function _pvPvDetailActions(v) {
   } else if (v.status === 'approved') {
     html += `<button class="btn" onclick="_pvPvQueueForTendepay(${v.id}, ${v.debit_account_id || 'null'}, ${v.tendepay_wallet_account_id || 'null'})">Queue for Tendepay</button>`;
     if (!v.debit_account_id || !v.tendepay_wallet_account_id) {
-      html += `<div style="width:100%;margin-top:8px;color:var(--color-danger);font-size:0.85rem;">Set the Debit Account and Tendepay Wallet before queueing this voucher for payment.</div>`;
+      html += `<div style="width:100%;margin-top:8px;color:var(--color-danger);font-size:0.85rem;">Set the Debit Account and Payment Account before queueing this voucher for payment.</div>`;
     }
   } else if (v.status === 'awaiting_tendepay') {
     html += `<div style="color:var(--grey-500,#666);font-size:0.9rem;">Queued for Tendepay. Payment will post automatically on the next Tendepay import.</div>`;
@@ -478,7 +490,7 @@ function _pvShowNotesModal(title, onConfirm) {
 // through a Tendepay statement import (see js/finance.js Tendepay module).
 async function _pvPvQueueForTendepay(id, debitAccountId, tendepayWalletAccountId) {
   if (!debitAccountId || !tendepayWalletAccountId) {
-    showToast('Set the Debit Account and Tendepay Wallet before queueing this voucher for payment.', 'error');
+    showToast('Set the Debit Account and Payment Account before queueing this voucher for payment.', 'error');
     return;
   }
   _pvShowNotesModal('Queue for Tendepay', async (notes) => {
@@ -536,10 +548,11 @@ function _pvPvFormHtml(v, lockedTaxType) {
         `}
       </div>
       <div class="fin-form-group">
-        <label class="fin-form-label">Tendepay Wallet</label>
+        <label class="fin-form-label">Payment Account</label>
         <select id="pv-f-tendepay-wallet" class="fin-form-select">
-          <option value="">Please Select</option>${_pvTendepayWalletOptions(v?.tendepay_wallet_account_id)}
+          <option value="">Please Select</option>${_pvMoneyHoldingOptions(v?.tendepay_wallet_account_id)}
         </select>
+        <span style="font-size:11px;color:var(--grey-500,#888);">The account the money leaves. For a voucher settled through Tendepay, pick the Tendepay wallet it will be paid from.</span>
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Department <span class="fin-required">*</span></label>
@@ -829,7 +842,7 @@ function _pvTvDetailActions(tv) {
     const walletId = _pvTvField(tv, 'tendepay_wallet_account_id');
     html += `<button class="btn" onclick="_pvPvQueueForTendepay(${pvId}, ${debitId || 'null'}, ${walletId || 'null'})">Queue for Tendepay</button>`;
     if (!debitId || !walletId) {
-      html += `<div style="width:100%;margin-top:8px;color:var(--color-danger);font-size:0.85rem;">Set the Debit Account and Tendepay Wallet before queueing this voucher for payment.</div>`;
+      html += `<div style="width:100%;margin-top:8px;color:var(--color-danger);font-size:0.85rem;">Set the Debit Account and Payment Account before queueing this voucher for payment.</div>`;
     }
   } else if (status === 'awaiting_tendepay') {
     html += `<div style="color:var(--grey-500,#666);font-size:0.9rem;">Queued for Tendepay. Payment will post automatically on the next Tendepay import.</div>`;
@@ -1375,8 +1388,8 @@ function _pvSiOpenCreateVoucherModal(invoiceId) {
           <select id="si-pv-debit-account" class="fin-form-select"><option value="">Please Select</option>${_pvAccountOptions(null)}</select>
         </div>
         <div class="fin-form-group">
-          <label class="fin-form-label">Tendepay Wallet</label>
-          <select id="si-pv-tendepay-wallet" class="fin-form-select"><option value="">Please Select</option>${_pvTendepayWalletOptions(null)}</select>
+          <label class="fin-form-label">Payment Account</label>
+          <select id="si-pv-tendepay-wallet" class="fin-form-select"><option value="">Please Select</option>${_pvMoneyHoldingOptions(null)}</select>
         </div>
         <div class="fin-form-group">
           <label class="fin-form-label">Amount (KES) <span class="fin-required">*</span></label>
@@ -2509,9 +2522,23 @@ async function _pvLoadMoneyHoldingAccounts() {
 }
 const _PV_MH_KIND_ORDER = { bank: 0, petty_cash: 1, wallet: 2 };
 const _PV_MH_KIND_LABEL = { bank: 'Banks', petty_cash: 'Petty Cash', wallet: 'Wallets' };
+// Same postable rule _pvAccountOptions applies: every consumer of this picker
+// writes a JE line against the chosen account, and posting to a non-postable
+// header is refused server-side. The money-holding lookup returns Cash-and-Bank
+// accounts without an is_postable flag of its own, so cross-reference the
+// accounts lookup by gl_account_id; an account missing from that list is kept
+// (fail open), as is the current selection.
+function _pvMoneyHoldingPostable(list, sel) {
+  return list.filter(a => {
+    if (String(sel) === String(a.gl_account_id)) return true;
+    const acct = _pvAccounts.find(x => String(x.id) === String(a.gl_account_id));
+    return !acct || acct.is_postable !== false;
+  });
+}
 function _pvMoneyHoldingOptions(sel) {
   const groups = { bank: [], petty_cash: [], wallet: [] };
-  (_pvMoneyHoldingAccounts || []).forEach(a => { groups[groups[a.kind] ? a.kind : 'wallet'].push(a); });
+  _pvMoneyHoldingPostable(_pvMoneyHoldingAccounts || [], sel)
+    .forEach(a => { groups[groups[a.kind] ? a.kind : 'wallet'].push(a); });
   return Object.keys(groups)
     .sort((a, b) => (_PV_MH_KIND_ORDER[a] ?? 99) - (_PV_MH_KIND_ORDER[b] ?? 99))
     .filter(k => groups[k].length)
