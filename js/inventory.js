@@ -165,17 +165,29 @@ function _invPopulateItemDatalist(listId, mapKey) {
 
 // ==================== STORES (§2) ====================
 
+// Single source of truth for store types. `legacy: true` types are still
+// rendered everywhere (badge, detail, filter) but are not offered on the Add
+// form: `class` stores are auto-created 1:1 with SchoolClass records and
+// `other` is a legacy catch-all.
 const INV_STORE_TYPES = [
-  { value: 'pantry',          label: 'Pantry',            color: 'color:#1e7e34;background:#dcf3e2;' },
-  { value: 'kitchen_grocery', label: 'Kitchen & Grocery', color: 'color:#8a6d00;background:var(--gold-100,#fdf3d6);' },
-  { value: 'stationery',      label: 'Stationery',        color: 'color:#1B3057;background:var(--navy-100,#e4e9f3);' },
-  { value: 'uniform',         label: 'Uniform',           color: 'color:#6a1b9a;background:#efe0f7;' },
-  { value: 'toiletries',      label: 'Toiletries',        color: 'color:#00695c;background:#dcf0ee;' },
-  { value: 'class',           label: 'Class Store',       color: 'color:#c0392b;background:#fde0de;' },
-  { value: 'other',           label: 'Other',             color: 'color:#666;background:#eee;' },
+  { value: 'pantry',          label: 'Dry Food Pantry',                color: 'color:#1e7e34;background:#dcf3e2;' },
+  { value: 'kitchen_grocery', label: 'Fresh Food',                     color: 'color:#8a6d00;background:var(--gold-100,#fdf3d6);' },
+  { value: 'stationery',      label: 'Stationery & Office Supplies',   color: 'color:#1B3057;background:var(--navy-100,#e4e9f3);' },
+  { value: 'uniform',         label: 'Uniform',                        color: 'color:#6a1b9a;background:#efe0f7;' },
+  { value: 'toiletries',      label: 'Toiletries & Cleaning Supplies', color: 'color:#00695c;background:#dcf0ee;' },
+  { value: 'tools_equipment', label: 'Tools & Small Equipment',        color: 'color:#37474f;background:#e3e8ea;', hint: 'Paper punches, staplers, brooms, brushes, mops, buckets.' },
+  { value: 'kitchenware',     label: 'Kitchenware & Utensils',         color: 'color:#b35309;background:#fdeadb;', hint: 'Pots, plates, cutlery.' },
+  { value: 'textbooks',       label: 'Textbooks & Story Books',        color: 'color:#1565c0;background:#dfeaf9;', hint: 'Reference books and library replenishment.' },
+  { value: 'class',           label: 'Class Store',                    color: 'color:#c0392b;background:#fde0de;', legacy: true },
+  { value: 'other',           label: 'Other',                          color: 'color:#666;background:#eee;', legacy: true },
 ];
+// Types ops can pick when creating a store (excludes the legacy ones).
+const INV_STORE_TYPES_SELECTABLE = INV_STORE_TYPES.filter(t => !t.legacy);
 function _invStoreTypeLabel(v) {
   return (INV_STORE_TYPES.find(t => t.value === v) || {}).label || v || '—';
+}
+function _invStoreTypeHint(v) {
+  return (INV_STORE_TYPES.find(t => t.value === v) || {}).hint || '';
 }
 function _invStoreTypePill(v) {
   const t = INV_STORE_TYPES.find(x => x.value === v);
@@ -216,10 +228,6 @@ function _invClassLabel(id) {
   const c = (_invClassesCache || []).find(x => String(x.id) === String(id));
   if (!c) return `#${id}`;
   return c.name || c.class_code || `#${id}`;
-}
-function _invClassOptionsHtml(selectedId) {
-  return (_invClassesCache || []).map(c =>
-    `<option value="${c.id}" ${String(c.id) === String(selectedId) ? 'selected' : ''}>${_invEsc(c.name || c.class_code || ('#' + c.id))}</option>`).join('');
 }
 
 async function _invEnsureControlAccountsCache() {
@@ -345,17 +353,10 @@ function _invRenderStoreAddForm(el) {
         <label class="fin-form-label">Store Type <span class="fin-required">*</span></label>
         <select id="inv-store-f-type" class="fin-form-select" onchange="_invOnStoreTypeChange()">
           <option value="">Please Select</option>
-          ${INV_STORE_TYPES.map(t => `<option value="${t.value}">${t.label}</option>`).join('')}
+          ${INV_STORE_TYPES_SELECTABLE.map(t => `<option value="${t.value}">${t.label}</option>`).join('')}
         </select>
+        <span id="inv-store-f-type-hint" style="display:none;font-size:12px;color:var(--grey-600)"></span>
         <span class="fin-field-error" id="inv-store-f-type-err"></span>
-      </div>
-      <div class="fin-form-group" id="inv-store-f-class-wrap" style="display:none;">
-        <label class="fin-form-label">School Class <span class="fin-required">*</span></label>
-        <select id="inv-store-f-class" class="fin-form-select">
-          <option value="">Please Select</option>
-          ${_invClassOptionsHtml(null)}
-        </select>
-        <span class="fin-field-error" id="inv-store-f-class-err"></span>
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Custodian (Staff)</label>
@@ -386,8 +387,12 @@ function _invRenderStoreAddForm(el) {
 }
 function _invOnStoreTypeChange() {
   const type = document.getElementById('inv-store-f-type')?.value;
-  const wrap = document.getElementById('inv-store-f-class-wrap');
-  if (wrap) wrap.style.display = type === 'class' ? '' : 'none';
+  const hintEl = document.getElementById('inv-store-f-type-hint');
+  if (hintEl) {
+    const hint = _invStoreTypeHint(type);
+    hintEl.textContent = hint;
+    hintEl.style.display = hint ? '' : 'none';
+  }
 }
 function _invShowStoreConflict(message, existingId) {
   const banner = document.getElementById('inv-store-conflict-banner');
@@ -403,13 +408,12 @@ async function _invSubmitStoreAdd() {
   const code = (document.getElementById('inv-store-f-code').value || '').trim();
   const name = (document.getElementById('inv-store-f-name').value || '').trim();
   const type = document.getElementById('inv-store-f-type').value;
-  const classId = document.getElementById('inv-store-f-class').value;
   const custId = document.getElementById('inv-store-f-custodian').value;
   const acctId = document.getElementById('inv-store-f-account').value;
   const active = document.getElementById('inv-store-f-active').checked;
 
   const setErr = (id, msg) => { const e = document.getElementById(id); if (e) e.textContent = msg || ''; };
-  ['inv-store-f-code-err', 'inv-store-f-name-err', 'inv-store-f-type-err', 'inv-store-f-class-err', 'inv-store-f-account-err'].forEach(id => setErr(id, ''));
+  ['inv-store-f-code-err', 'inv-store-f-name-err', 'inv-store-f-type-err', 'inv-store-f-account-err'].forEach(id => setErr(id, ''));
   const banner = document.getElementById('inv-store-conflict-banner');
   if (banner) banner.style.display = 'none';
 
@@ -417,12 +421,10 @@ async function _invSubmitStoreAdd() {
   if (!code) { setErr('inv-store-f-code-err', 'This field is required.'); valid = false; }
   if (!name) { setErr('inv-store-f-name-err', 'This field is required.'); valid = false; }
   if (!type) { setErr('inv-store-f-type-err', 'This field is required.'); valid = false; }
-  if (type === 'class' && !classId) { setErr('inv-store-f-class-err', 'School Class is required for a class store.'); valid = false; }
   if (!valid) return;
 
   const payload = {
     code, name, store_type: type,
-    school_class_id: type === 'class' ? parseInt(classId) : null,
     custodian_employee_id: custId ? parseInt(custId) : null,
     inventory_control_account_id: acctId ? parseInt(acctId) : null,
     is_active: active,
@@ -444,7 +446,7 @@ async function _invSubmitStoreAdd() {
   }
   if (res.status === 404) {
     const { message } = await _invParseError(res);
-    setErr('inv-store-f-class-err', message);
+    showToast('Error: ' + message, 'error');
     return;
   }
   if (res.status === 400) {
@@ -454,7 +456,7 @@ async function _invSubmitStoreAdd() {
   }
   if (res.status === 422) {
     const { fieldErrors, message } = await _invParseError(res);
-    const map = { code: 'inv-store-f-code-err', name: 'inv-store-f-name-err', store_type: 'inv-store-f-type-err', school_class_id: 'inv-store-f-class-err', inventory_control_account_id: 'inv-store-f-account-err' };
+    const map = { code: 'inv-store-f-code-err', name: 'inv-store-f-name-err', store_type: 'inv-store-f-type-err', inventory_control_account_id: 'inv-store-f-account-err' };
     let matched = false;
     Object.entries(fieldErrors).forEach(([k, v]) => { if (map[k]) { setErr(map[k], v); matched = true; } });
     if (!matched) showToast('Error: ' + message, 'error');
