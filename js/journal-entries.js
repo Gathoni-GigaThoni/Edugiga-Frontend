@@ -8,7 +8,6 @@
 // so "Print" uses the browser's native print on the rendered detail instead.
 
 const _JE_API = `${API_BASE}/journal-entries/`;
-let _jePage = 1, _jePerPage = 10, _jeData = [];
 
 // Deep-link handoff so other modules (e.g. Supplier Invoice's Accrual
 // Journal Entry link) can navigate straight to a specific JE's detail pane
@@ -65,87 +64,29 @@ async function loadJournalEntriesView(container) {
     },
     onAdd: () => loadView('journal-entries-add'),
     onEdit: item => { window._jeEditId = item.id; loadView('journal-entries-edit'); },
+    // A posted entry is a closed GL boundary: PATCHing it is refused by the
+    // backend, so don't offer the pencil at all. Without this gate the detail
+    // banner contradicted the very warning _jePost() makes the user accept.
+    canEdit: je => je.status === 'draft',
+    detailActions: je => _jeDetailActionsHtml(je),
     bulkUpload: { module: 'journal-entries' },
   });
 }
 
-async function _jeRefreshData() {
-  renderSkeletonRows('je-table-container', 7);
-  try {
-    const res = await apiFetch(_JE_API);
-    if (res && res.ok) { _jeData = _toArray(await res.json()); }
-    else { showToast(`Could not load journal entries: HTTP ${res ? res.status : ''} ${res ? await parseApiError(res) : ''}`, 'error'); _jeData = []; }
-  } catch (e) { showToast('Network error loading journal entries.', 'error'); _jeData = []; }
-  _jeRenderTable();
-}
-
-function _jeRenderListPage(container) {
-  container.innerHTML = `
-    <div class="fin-page">
-      <div class="fin-header-row">
-        <h2 class="fin-title">Journal Entry</h2>
-        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Journal Entry &rsaquo; Listing</div>
-      </div>
-      <div class="fin-controls-row">
-        <div class="fin-controls-left">Total <span id="je-total">0</span> entries</div>
-        <div class="fin-controls-right"><button class="fin-btn-teal" onclick="loadView('journal-entries-add')">+ Add</button></div>
-      </div>
-      <div id="je-table-container"></div>
-      <div id="je-pagination"></div>
-    </div>`;
-}
-
-function _jeLineTotal(je) {
-  return parseFloat(je.total_amount || 0);
-}
-
-function _jeRenderTable() {
-  const start = (_jePage - 1) * _jePerPage;
-  const paged = _jeData.slice(start, start + _jePerPage);
-  document.getElementById('je-total').textContent = _jeData.length;
-
-  const rows = paged.length === 0
-    ? `<tr><td colspan="7" class="fin-empty">No records found.</td></tr>`
-    : paged.map(je => `<tr>
-        <td>${_finEsc(je.jv_number)}</td>
-        <td>${_finEsc(_pvLedgerName(je.ledger_id))}</td>
-        <td>${_finEsc(je.reference)}</td>
-        <td>${_pvDate(je.entry_date)}</td>
-        <td>${_pvMoney(_jeLineTotal(je))}</td>
-        <td>${_pvBadge(je.status)}</td>
-        <td class="fin-action-cell">
-          <div class="fin-action-wrap">
-            <button class="fin-action-btn" onclick="_pvToggleDropdown(event,'je','${je.id}')">&#8230;</button>
-            <div id="je-dd-${je.id}" class="fin-action-dropdown" style="display:none;">
-              ${_jeActionsHtml(je)}
-            </div>
-          </div>
-        </td>
-      </tr>`).join('');
-
-  document.getElementById('je-table-container').innerHTML = `
-    <div class="fin-table-wrap"><table class="fin-table">
-      <thead><tr><th>JV NUMBER</th><th>LEDGER</th><th>REFERENCE</th><th>DATE</th><th>TOTAL AMOUNT</th><th>STATUS</th><th>ACTION</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table></div>`;
-
-  const pages = Math.max(1, Math.ceil(_jeData.length / _jePerPage));
-  let pg = ''; for (let i = 1; i <= pages; i++) pg += `<button class="${i === _jePage ? 'fin-pg-active' : ''}" onclick="_jeGoPage(${i})">${i}</button>`;
-  document.getElementById('je-pagination').innerHTML = `<div class="fin-pagination">${pg}</div>`;
-}
-function _jeGoPage(p) { _jePage = p; _jeRenderTable(); }
-
-function _jeActionsHtml(je) {
+// renderSplitView omits the whole action row unless cfg.detailActions is a
+// function -- which is how Post, Reverse and Print went missing when this
+// module moved off the old paginated table onto the split view. Status model
+// is the backend's JournalEntryStatus: draft -> posted -> reversed.
+function _jeDetailActionsHtml(je) {
   let actions = '';
   if (je.status === 'draft') {
-    actions += `<a href="#" onclick="window._jeEditId=${je.id};loadView('journal-entries-edit');return false;">&#9998; Edit</a>`;
-    actions += `<a href="#" onclick="_jePost(${je.id});return false;">&#10148; Post</a>`;
+    actions += `<button class="fin-btn-teal" onclick="_jePost(${je.id})">Post</button>`;
   } else if (je.status === 'posted') {
-    actions += `<a href="#" onclick="_jeReverse(${je.id});return false;">&#8634; Reverse</a>`;
-    actions += `<a href="#" onclick="_jePrint(${je.id});return false;">&#128438; Print</a>`;
+    actions += `<button class="fin-btn-outline" style="color:#c0392b;border-color:#c0392b;" onclick="_jeReverse(${je.id})">Reverse</button>`;
+    actions += `<button class="fin-btn-outline" onclick="_jePrint(${je.id})">Print</button>`;
   }
-  actions += `<a href="#" onclick="_jeViewDetail(${je.id});return false;">&#128065; View Detail</a>`;
-  return actions;
+  actions += `<button class="fin-btn-outline" onclick="_jeViewDetail(${je.id})">View Detail</button>`;
+  return `<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">${actions}</div>`;
 }
 
 async function _jePost(id) {
@@ -159,7 +100,7 @@ async function _jePost(id) {
   if (!confirmed) return;
 
   const res = await apiFetch(`${_JE_API}${id}/post`, { method: 'POST' });
-  if (res && res.ok) { showToast('Journal entry posted.', 'success'); await _jeRefreshData(); return; }
+  if (res && res.ok) { showToast('Journal entry posted.', 'success'); await window._splitRefreshSelected?.(); return; }
   if (!res) { showToast('Network error posting journal entry.', 'error'); return; }
   const detail = await parseApiError(res);
   if (res.status === 422)      showToast('Cannot post — journal entry is unbalanced. ' + detail, 'error');
@@ -169,7 +110,7 @@ async function _jePost(id) {
 }
 async function _jeReverse(id) {
   const res = await apiFetch(`${_JE_API}${id}/reverse`, { method: 'POST' });
-  if (res && res.ok) { showToast('Reversing entry created and original marked reversed.', 'success'); await _jeRefreshData(); }
+  if (res && res.ok) { showToast('Reversing entry created and original marked reversed.', 'success'); await window._splitRefreshSelected?.(); }
   else if (res) showToast('Error: ' + await parseApiError(res), 'error');
 }
 async function _jeViewDetail(id) {
