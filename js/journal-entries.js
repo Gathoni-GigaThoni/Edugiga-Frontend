@@ -149,9 +149,23 @@ function _jeActionsHtml(je) {
 }
 
 async function _jePost(id) {
+  // Post is a hard GL boundary — a posted JE shows in TB / SoFP / P&L / GL / CFS
+  // immediately and can only be undone via a reversal (which itself hits the GL).
+  const confirmed = confirm(
+    'Once posted, this journal entry will appear in the Trial Balance, ' +
+    'Balance Sheet, and Income Statement. It cannot be edited or deleted — ' +
+    'only reversed. Continue?'
+  );
+  if (!confirmed) return;
+
   const res = await apiFetch(`${_JE_API}${id}/post`, { method: 'POST' });
-  if (res && res.ok) { showToast('Journal entry posted.', 'success'); await _jeRefreshData(); }
-  else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+  if (res && res.ok) { showToast('Journal entry posted.', 'success'); await _jeRefreshData(); return; }
+  if (!res) { showToast('Network error posting journal entry.', 'error'); return; }
+  const detail = await parseApiError(res);
+  if (res.status === 422)      showToast('Cannot post — journal entry is unbalanced. ' + detail, 'error');
+  else if (res.status === 409) showToast('Cannot post — ' + detail, 'error');
+  else if (res.status === 403) showToast('Blocked by period lock — ' + detail, 'error');
+  else                         showToast('Error posting journal entry: ' + detail, 'error');
 }
 async function _jeReverse(id) {
   const res = await apiFetch(`${_JE_API}${id}/reverse`, { method: 'POST' });
