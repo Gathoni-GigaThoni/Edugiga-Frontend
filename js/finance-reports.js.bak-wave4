@@ -88,13 +88,9 @@ const REPORT_DEFS = {
   'reports-supplier-statements': { title: 'Supplier Statements', api: 'supplier-statements', dateMode: 'range', pathParam: 'supplier_id',
     extra: [{ key: 'supplier_id', label: 'Supplier', type: 'supplier', required: true }],
     columns: [['invoice_date','DATE'],['invoice_number','REFERENCE'],['amount','AMOUNT'],['running_balance','RUNNING BALANCE']] },
-  // Rendered by _repRenderTaxSchedules (nested groups: tax_type →
-  // {tax_vouchers, wht_certificates, total}). Pre-Wave-4 the columns
-  // config here was aspirational and never matched the payload; the
-  // report fell to _repRenderTable which couldn't find any list under
-  // the {grouped_by_tax_type: {...}} shape and always rendered "No data".
   'reports-tax-schedules': { title: 'Tax Schedules', api: 'tax-schedules', dateMode: 'range',
-    extra: [{ key: 'tax_type', label: 'Tax Type', type: 'taxtype' }] },
+    extra: [{ key: 'tax_type', label: 'Tax Type', type: 'taxtype' }],
+    columns: [['tax_type','TAX TYPE'],['period','PERIOD'],['amount_deducted','AMOUNT DEDUCTED'],['amount_remitted','AMOUNT REMITTED'],['variance','VARIANCE']] },
   // Live shape (openapi.json — FeesInvoicedPerGLAccountReport /
   // FeesPaidPerGLAccountReport) is an object
   // { start_date, end_date, by_gl_account: [...], grand_total }, not the flat
@@ -357,7 +353,6 @@ async function _repGenerate(routeKey) {
     else if (routeKey === 'reports-trial-balance') _repRenderTrialBalance(def, data);
     else if (routeKey === 'reports-cash-book' || routeKey === 'reports-general-ledger') _repRenderLedgerLines(def, data);
     else if (routeKey === 'reports-daily-cash-return') _repRenderDailyCashReturn(def, data);
-    else if (routeKey === 'reports-tax-schedules') _repRenderTaxSchedules(def, data);
     else _repRenderTable(def, data);
   } catch (e) { showToast('Network error generating report.', 'error'); }
 }
@@ -635,66 +630,6 @@ function _repRenderDailyCashReturn(def, data) {
     + section('Petty Cash Disbursements',
         ['DISBURSEMENT', 'AMOUNT'],
         pettyRows, 'No petty cash disbursements on this date.', null);
-}
-
-// ── Tax Schedules ──────────────────────────────────────────────────────────
-// Grouped by tax_type; each group has (tax_vouchers, wht_certificates,
-// total). Pre-Wave-4 this report fell through the generic table renderer
-// which couldn't find any top-level list under the {grouped_by_tax_type}
-// shape and always showed "No data" regardless of activity. Voucher
-// numbers deep-link to the paying PV (doc_ref); WHT certificate numbers
-// stay plain — there's no cert detail view.
-function _repRenderTaxSchedules(def, data) {
-  const out = document.getElementById('rep-output');
-  if (!data || typeof data !== 'object') {
-    out.innerHTML = '<p class="fin-empty">No data for the selected period.</p>';
-    return;
-  }
-  const grouped = data.grouped_by_tax_type || {};
-  const keys = Object.keys(grouped);
-  if (!keys.length) {
-    out.innerHTML = '<div class="fin-table-wrap"><table class="fin-table"><tbody><tr><td class="fin-empty">No tax vouchers or WHT certificates in the selected period.</td></tr></tbody></table></div>';
-    return;
-  }
-
-  const groupHtml = keys.sort().map(taxType => {
-    const g = grouped[taxType] || {};
-    const tvs = Array.isArray(g.tax_vouchers) ? g.tax_vouchers : [];
-    const certs = Array.isArray(g.wht_certificates) ? g.wht_certificates : [];
-
-    const tvRows = tvs.length ? tvs.map(tv => `<tr>
-      <td>${_repDocLink(tv.doc_ref) || _finEsc(tv.voucher_no || '—')}</td>
-      <td>${_finEsc((tv.period_month || '') + '/' + tv.period_year)}</td>
-      <td>${_pvDate(tv.remittance_due_date)}</td>
-      <td>${_finEsc(tv.kra_payment_slip_ref || '—')}</td>
-      <td>${_pvMoney(tv.amount)}</td>
-    </tr>`).join('')
-      : '<tr><td colspan="5" class="fin-empty">No tax vouchers in this group.</td></tr>';
-
-    const certRows = certs.length ? certs.map(c => `<tr>
-      <td>${_finEsc(c.certificate_number || '—')}</td>
-      <td>${_finEsc(typeof _pvSupplierName === 'function' ? _pvSupplierName(c.supplier_id) : '#' + c.supplier_id)}</td>
-      <td>${_pvDate(c.issue_date)}</td>
-      <td>${_pvMoney(c.gross_amount)}</td>
-      <td>${_pvMoney(c.wht_rate)}</td>
-      <td>${_pvMoney(c.wht_amount)}</td>
-    </tr>`).join('') : '';
-
-    return `
-      <div class="fin-section-label" style="margin-top:18px;">${_finEsc(taxType)} — Total ${_pvMoney(g.total)}</div>
-      <div class="fin-table-wrap"><table class="fin-table">
-        <thead><tr><th>REMITTANCE PV</th><th>PERIOD</th><th>DUE DATE</th><th>KRA SLIP</th><th>AMOUNT</th></tr></thead>
-        <tbody>${tvRows}</tbody>
-      </table></div>
-      ${certs.length ? `
-        <div style="font-size:0.82rem;color:#555;margin:10px 0 4px;">WHT Certificates issued in period</div>
-        <div class="fin-table-wrap"><table class="fin-table">
-          <thead><tr><th>CERTIFICATE NO.</th><th>SUPPLIER</th><th>ISSUE DATE</th><th>GROSS</th><th>RATE</th><th>WHT</th></tr></thead>
-          <tbody>${certRows}</tbody>
-        </table></div>` : ''}`;
-  }).join('');
-
-  out.innerHTML = groupHtml;
 }
 
 // ── Notes of Financial Statement — labelled schedule cards ──────────────────
@@ -1638,49 +1573,21 @@ function _repRenderApReconciliation(def, data) {
     ${_repStatCard('Difference', _pvMoney(data.difference), data.is_reconciled ? 'var(--color-success)' : 'var(--coral-500)')}
   </div>`;
 
-  // Anomalies — data-integrity smells surfaced independently of the drift
-  // math. A clean total can still mask sick rows (e.g. a PENDING invoice
-  // that still carries an accrual JE), so this section must render even
-  // when is_reconciled=True. Pre-Wave-4 the FE renderer didn't show
-  // anomalies at all — the BE emitted them but the data was invisible.
-  const anomalies = data.anomalies || [];
-  const anomaliesSection = anomalies.length ? `
-    <div class="fin-section-label" style="margin-top:20px;color:var(--coral-600);">Anomalies — data-integrity smells (independent of the drift math)</div>
-    <div class="fin-table-wrap"><table class="fin-table">
-      <thead><tr>
-        <th>INVOICE</th><th>SUPPLIER</th><th>STATUS</th>
-        <th>ACCRUAL JE</th><th>ANOMALY</th><th>MESSAGE</th>
-      </tr></thead>
-      <tbody>${anomalies.map(a => `<tr>
-        <td>${_repDocLink(a.doc_ref) || _finEsc(a.invoice_number || ('#' + a.invoice_id))}</td>
-        <td>${_finEsc(_pvSupplierName(a.supplier_id))}</td>
-        <td>${_finEsc(a.status || '—')}</td>
-        <td>${_repDocLink(a.accrual_je_ref) || (a.accrual_journal_entry_id ? '#' + a.accrual_journal_entry_id : '—')}</td>
-        <td>${_finEsc(a.anomaly_type || '—')}</td>
-        <td style="font-size:0.85rem;">${_finEsc(a.message || '')}</td>
-      </tr>`).join('')}</tbody>
-    </table></div>` : '';
-
   if (data.is_reconciled) {
     out.innerHTML = `
       <div style="padding:12px 18px;border-radius:6px;background:#dcf3e2;color:#1e7e34;font-weight:600;font-size:0.9rem;">
         &#10003; Reconciled — the AP sub-ledger agrees with the GL.
       </div>
-      ${cards}
-      ${anomaliesSection}`;
+      ${cards}`;
     return;
   }
 
-  const driftRows = (data.drift_invoices || []).map(d => {
-    const invLink = _repDocLink(d.doc_ref)
-      || `<a href="#payables-supplier-invoices?open=${d.invoice_id}" target="_blank" rel="noopener">${_finEsc(d.invoice_number || ('#' + d.invoice_id))}</a>`;
-    return `<tr>
-      <td>${invLink}</td>
-      <td>${_finEsc(_pvSupplierName(d.supplier_id))}</td>
-      <td>${_finEsc(d.reason || '')}</td>
-      <td>${_pvMoney(d.expected_in_gl)}</td>
-    </tr>`;
-  }).join('');
+  const driftRows = (data.drift_invoices || []).map(d => `<tr>
+    <td><a href="#payables-supplier-invoices?open=${d.invoice_id}" target="_blank" rel="noopener">${_finEsc(d.invoice_number || ('#' + d.invoice_id))}</a></td>
+    <td>${_finEsc(_pvSupplierName(d.supplier_id))}</td>
+    <td>${_finEsc(d.reason || '')}</td>
+    <td>${_pvMoney(d.expected_in_gl)}</td>
+  </tr>`).join('');
 
   out.innerHTML = `
     <div style="padding:12px 18px;border-radius:6px;border-left:3px solid var(--coral-500);background:var(--coral-100);color:var(--coral-600);font-weight:600;font-size:0.9rem;">
@@ -1690,8 +1597,7 @@ function _repRenderApReconciliation(def, data) {
     <div class="fin-table-wrap"><table class="fin-table">
       <thead><tr><th>INVOICE NUMBER</th><th>SUPPLIER</th><th>REASON</th><th>EXPECTED IN GL</th></tr></thead>
       <tbody>${driftRows || '<tr><td colspan="4" class="fin-empty">No drift rows returned.</td></tr>'}</tbody>
-    </table></div>
-    ${anomaliesSection}`;
+    </table></div>`;
 }
 
 // ── Supplier Statement (§3 of the 2026-07-16 addendum) ─────────────────────
@@ -1731,25 +1637,14 @@ function _repRenderSupplierStatement(def, data) {
     return;
   }
 
-  // Explicit column list — replaces def.columns fallback so we can slot
-  // in the ACCRUAL JE column (Wave 4) between REFERENCE and AMOUNT and
-  // control cell rendering per key without hunting through the def.
-  const cols = [
-    ['invoice_date',    'DATE'],
-    ['invoice_number',  'REFERENCE'],
-    ['accrual_je_ref',  'ACCRUAL JE'],
-    ['amount',          'AMOUNT'],
-    ['running_balance', 'RUNNING BALANCE'],
-  ];
-
-  const renderCell = (r, k) => {
-    if (k === 'invoice_number') return _repDocLink(r.doc_ref) || _repCell(r[k]);
-    if (k === 'accrual_je_ref') return _repDocLink(r.accrual_je_ref) || '—';
-    return _repCell(r[k]);
-  };
+  const firstRow = rows[0];
+  const knownKeysPresent = def.columns.some(([key]) => firstRow.hasOwnProperty(key));
+  const cols = knownKeysPresent ? def.columns : Object.keys(firstRow)
+    .filter(k => !['status','invoice_status','is_voided'].includes(k))
+    .map(k => [k, _repHumanize(k)]);
 
   const bodyRows = rows.map(r => {
-    const cells = cols.map(([k]) => `<td>${renderCell(r, k)}</td>`).join('');
+    const cells = cols.map(([k]) => `<td>${_repCell(r[k])}</td>`).join('');
     if (_repIsVoidedStatementRow(r)) {
       return `<tr style="text-decoration:line-through;opacity:0.6;">${cells}<td><span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.72rem;font-weight:600;color:var(--white);background:var(--coral-500);">Voided</span></td></tr>`;
     }
