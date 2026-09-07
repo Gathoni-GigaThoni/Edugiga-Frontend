@@ -186,14 +186,9 @@ const REPORT_DEFS = {
   'reports-tendepay-wallet-balances': { title: 'Tendepay Wallet Balances', api: 'tendepay-wallet-balances', dateMode: 'asof',
     columns: [['wallet_role','ROLE'],['wallet_name','WALLET'],['account_name','ACCOUNT'],['balance','BALANCE']],
     groupBy: 'wallet_role', sortBy: _tpWalletRoleSort },
-  // Rendered by _repRenderTendepayHistory (multi-ref per row: PV +
-  // JE deep-links). Pre-Wave-5 the columns config referenced a
-  // `tendepay_status` field that never came back from the BE and
-  // omitted both matched_voucher_id and journal_entry_id, so the two
-  // most useful cross-references (which PV and which JE settled this
-  // tendepay transaction) were invisible on screen.
   'reports-tendepay-transaction-history': { title: 'Tendepay Transaction History', api: 'tendepay-transaction-history', dateMode: 'range',
-    extra: [{ key: 'wallet_account_id', label: 'Wallet Account', type: 'tendepaywallet' }] },
+    extra: [{ key: 'wallet_account_id', label: 'Wallet Account', type: 'tendepaywallet' }],
+    columns: [['transaction_date','DATE'],['tendepay_reference','REFERENCE'],['wallet_name','WALLET'],['payee_name','PAYEE'],['amount','AMOUNT'],['tendepay_status','STATUS']] },
   'reports-unmatched-tendepay-transactions': { title: 'Unmatched Tendepay Transactions', api: 'unmatched-tendepay-transactions',
     columns: [['transaction_date','DATE'],['tendepay_reference','REFERENCE'],['wallet_name','WALLET'],['payee_name','PAYEE'],['amount','AMOUNT']] },
 
@@ -363,7 +358,6 @@ async function _repGenerate(routeKey) {
     else if (routeKey === 'reports-cash-book' || routeKey === 'reports-general-ledger') _repRenderLedgerLines(def, data);
     else if (routeKey === 'reports-daily-cash-return') _repRenderDailyCashReturn(def, data);
     else if (routeKey === 'reports-tax-schedules') _repRenderTaxSchedules(def, data);
-    else if (routeKey === 'reports-tendepay-transaction-history') _repRenderTendepayHistory(def, data);
     else _repRenderTable(def, data);
   } catch (e) { showToast('Network error generating report.', 'error'); }
 }
@@ -701,44 +695,6 @@ function _repRenderTaxSchedules(def, data) {
   }).join('');
 
   out.innerHTML = groupHtml;
-}
-
-// ── Tendepay Transaction History ────────────────────────────────────────────
-// Multi-ref per row: the same tendepay transaction can point at both a PV
-// (via matched_voucher_ref) and a JE (via journal_entry_ref). Both refs
-// are nullable — a suspense-posted tx that was never later matched has
-// neither. Pre-Wave-5 the FE dropped both id columns entirely, so users
-// investigating a Tendepay drift couldn't jump from the tx to the paying
-// PV or the accrual JE without cross-referencing them by hand.
-function _repRenderTendepayHistory(def, data) {
-  const out = document.getElementById('rep-output');
-  const rows = Array.isArray(data) ? data : (data && data.data) || [];
-  if (!rows.length) {
-    out.innerHTML = '<div class="fin-table-wrap"><table class="fin-table"><tbody><tr><td class="fin-empty">No posted Tendepay transactions in the selected period.</td></tr></tbody></table></div>';
-    return;
-  }
-  const bodyRows = rows.map(r => `<tr>
-    <td>${_pvDate(r.transaction_date)}</td>
-    <td>${_finEsc(r.tendepay_reference || '—')}</td>
-    <td>${_finEsc(r.wallet_name || '—')}</td>
-    <td>${_finEsc(r.payee_name || '—')}</td>
-    <td>${_repDocLink(r.matched_voucher_ref) || (r.matched_voucher_id ? '#' + r.matched_voucher_id : '—')}</td>
-    <td>${_repDocLink(r.journal_entry_ref) || (r.journal_entry_id ? '#' + r.journal_entry_id : '—')}</td>
-    <td>${_pvMoney(r.amount)}</td>
-  </tr>`).join('');
-  const total = rows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
-  out.innerHTML = `
-    <div class="fin-table-wrap"><table class="fin-table">
-      <thead><tr>
-        <th>DATE</th><th>TENDEPAY REF</th><th>WALLET</th><th>PAYEE</th>
-        <th>PV</th><th>JE</th><th>AMOUNT</th>
-      </tr></thead>
-      <tbody>${bodyRows}</tbody>
-      <tfoot><tr class="fin-tfoot-total">
-        <td colspan="6"><strong>TOTAL</strong></td>
-        <td><strong>${_pvMoney(total)}</strong></td>
-      </tr></tfoot>
-    </table></div>`;
 }
 
 // ── Notes of Financial Statement — labelled schedule cards ──────────────────

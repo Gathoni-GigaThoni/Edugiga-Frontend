@@ -724,15 +724,6 @@ function _prBadge(status) {
 async function loadPayrollRunsView(container) {
   await _pvLoadLookups();
   _prStopPolling();
-  // Deep-link handoff: hash router (dashboard.js:_maybeOpenDocFromHash)
-  // and any future clickable PAYROLL_RUN doc_ref sets window._prOpenId to
-  // pre-open a specific run. Bridged into the module-level _prSelectedRunId
-  // that _prRenderShell already reads on load. One-shot: cleared so a
-  // plain loadView('payroll-runs') doesn't stick to the old id.
-  if (window._prOpenId != null) {
-    _prSelectedRunId = window._prOpenId;
-    window._prOpenId = null;
-  }
   await _prLoadRuns();
   _prRenderShell(container);
 }
@@ -1362,11 +1353,6 @@ function _crBadge(status) {
 
 async function loadConsultantRunsView(container) {
   await _pvLoadLookups();
-  // Deep-link handoff — mirrors loadPayrollRunsView above.
-  if (window._crOpenId != null) {
-    _crSelectedRunId = window._crOpenId;
-    window._crOpenId = null;
-  }
   await _crLoadRuns();
   _crRenderShell(container);
 }

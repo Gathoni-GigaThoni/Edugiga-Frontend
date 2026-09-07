@@ -422,12 +422,6 @@ const _DOC_ROUTE_TO_PRESELECT = {
   // the split-view preselectId pattern (var read + cleared inside
   // loadReceivePaymentsView).
   'fin-receive-payments':        '_rpOpenId',
-  // Wave 5 — Payroll + Consultant runs. Both use module-level state
-  // (_prSelectedRunId / _crSelectedRunId) rather than the split-view
-  // preselect, so their loaders bridge window._prOpenId / _crOpenId
-  // into those variables before rendering.
-  'payroll-runs':                '_prOpenId',
-  'payroll-consultant-runs':     '_crOpenId',
 };
 
 function _maybeOpenDocFromHash() {
