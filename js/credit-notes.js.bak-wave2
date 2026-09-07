@@ -53,12 +53,6 @@ function _cnInvoiceById(id) {
 
 async function loadFinCreditNotesView(container) {
   await _invLoadLookups();
-  // Deep-link handoff: hash router (js/dashboard.js:_maybeOpenDocFromHash)
-  // and other modules set window._cnOpenId to pre-open a specific CN in
-  // the split-view. One-shot: read + clear so a later plain
-  // loadView('fin-credit-notes') doesn't stick to the old id.
-  const preselectId = window._cnOpenId ?? null;
-  window._cnOpenId = null;
   await renderSplitView({
     container,
     moduleKey: 'finance.receivables',
@@ -69,7 +63,6 @@ async function loadFinCreditNotesView(container) {
       {label:'Credit Notes'}
     ],
     apiUrl: _CN_API,
-    preselectId,
     searchFields: ['credit_note_number','reason'],
     col1Label: 'Credit Note No', col2Label: 'Student',
     col1: cn => _finEsc(cn.credit_note_number || `#${cn.id}`) + _cnOverCreditBadge(cn),

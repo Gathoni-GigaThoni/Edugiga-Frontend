@@ -162,12 +162,8 @@ const REPORT_DEFS = {
   // for this one route without touching the shared 'asof' handling.
   'reports-ap-reconciliation': { title: 'AP Reconciliation', api: 'ap-reconciliation', dateMode: 'asof', dateParam: 'as_of', layout: 'ap-reconciliation' },
 
-  // Rendered by _repRenderDailyCashReturn (three parallel row lists
-  // — receipts / vouchers / petty cash — plus opening/closing summary).
-  // No `columns` config: the pre-2026-09-07 ['account','opening_balance',
-  // 'inflows','outflows','closing_balance'] list didn't match the payload
-  // at all and rendered as "No data" through _repRenderTable.
-  'reports-daily-cash-return': { title: 'Daily Cash Return', api: 'daily-cash-return', dateMode: 'single', dateParam: 'report_date' },
+  'reports-daily-cash-return': { title: 'Daily Cash Return', api: 'daily-cash-return', dateMode: 'single', dateParam: 'report_date',
+    columns: [['account','ACCOUNT'],['opening_balance','OPENING BALANCE'],['inflows','INFLOWS'],['outflows','OUTFLOWS'],['closing_balance','CLOSING BALANCE']] },
 
   // Statement-layout reports — handled by dedicated renderers, see _repRenderStatement()
   'reports-statement-of-financial-performance': { title: 'Statement of Financial Performance', api: 'statement-of-financial-performance', dateMode: 'range', layout: 'statement', statementType: 'sfp' },
@@ -352,7 +348,6 @@ async function _repGenerate(routeKey) {
     else if (routeKey === 'reports-supplier-statements') _repRenderSupplierStatement(def, data);
     else if (routeKey === 'reports-trial-balance') _repRenderTrialBalance(def, data);
     else if (routeKey === 'reports-cash-book' || routeKey === 'reports-general-ledger') _repRenderLedgerLines(def, data);
-    else if (routeKey === 'reports-daily-cash-return') _repRenderDailyCashReturn(def, data);
     else _repRenderTable(def, data);
   } catch (e) { showToast('Network error generating report.', 'error'); }
 }
@@ -553,83 +548,6 @@ function _repRenderLedgerLines(def, data) {
       <tbody>${bodyRows}</tbody>
       <tfoot><tr class="fin-tfoot-total">${totalsRow}</tr></tfoot>
     </table></div>`;
-}
-
-// ── Daily Cash Return ──────────────────────────────────────────────────────
-// Three parallel sections + opening/closing summary. Pre-2026-09-07 this
-// report fell through to the generic table renderer, which couldn't find
-// any of {cash_receipts, cash_payments_vouchers, petty_cash_disbursements}
-// and rendered "No data" regardless of what the BE returned. Receipt +
-// voucher numbers are clickable when the BE ships a doc_ref (Wave 3);
-// petty cash rows have no owning detail view and stay as plain PC ids.
-function _repRenderDailyCashReturn(def, data) {
-  const out = document.getElementById('rep-output');
-  if (!data || typeof data !== 'object') {
-    out.innerHTML = '<p class="fin-empty">No data for the selected date.</p>';
-    return;
-  }
-  const receipts = Array.isArray(data.cash_receipts) ? data.cash_receipts : [];
-  const vouchers = Array.isArray(data.cash_payments_vouchers) ? data.cash_payments_vouchers : [];
-  const petty    = Array.isArray(data.petty_cash_disbursements) ? data.petty_cash_disbursements : [];
-
-  const summaryBox = `
-    <div class="fin-form-wrap" style="max-width:520px;margin-bottom:14px;">
-      <div style="display:flex;justify-content:space-between;padding:4px 0;"><span>Report Date</span><span>${_pvDate(data.report_date)}</span></div>
-      <div style="display:flex;justify-content:space-between;padding:4px 0;"><span>Opening Cash</span><span>${_pvMoney(data.opening_cash)}</span></div>
-      <div style="display:flex;justify-content:space-between;padding:4px 0;"><span>Total Receipts</span><span>${_pvMoney(data.total_receipts)}</span></div>
-      <div style="display:flex;justify-content:space-between;padding:4px 0;"><span>Total Payments</span><span>${_pvMoney(data.total_payments)}</span></div>
-      <div style="display:flex;justify-content:space-between;padding:6px 0;font-weight:bold;border-top:2px solid #2c3e50;"><span>Closing Cash</span><span>${_pvMoney(data.closing_cash)}</span></div>
-    </div>`;
-
-  const section = (label, headers, rows, emptyMsg, totalCell) => {
-    const body = rows.length
-      ? rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join('')}</tr>`).join('')
-      : `<tr><td colspan="${headers.length}" class="fin-empty">${_finEsc(emptyMsg)}</td></tr>`;
-    const tfoot = rows.length && totalCell != null
-      ? `<tfoot><tr class="fin-tfoot-total">${
-          headers.map((_, i) =>
-            i === 0 ? '<td><strong>TOTAL</strong></td>'
-            : i === headers.length - 1 ? `<td><strong>${_pvMoney(totalCell)}</strong></td>`
-            : '<td></td>'
-          ).join('')
-        }</tr></tfoot>`
-      : '';
-    return `
-      <div class="fin-section-label" style="margin-top:16px;">${_finEsc(label)}</div>
-      <div class="fin-table-wrap"><table class="fin-table">
-        <thead><tr>${headers.map(h => `<th>${_finEsc(h)}</th>`).join('')}</tr></thead>
-        <tbody>${body}</tbody>
-        ${tfoot}
-      </table></div>`;
-  };
-
-  const receiptsRows = receipts.map(r => [
-    _repDocLink(r.doc_ref) || _finEsc(r.receipt_number || '—'),
-    _finEsc(typeof _rcvStudentName === 'function' ? _rcvStudentName(r.student_id) : `#${r.student_id}`),
-    _finEsc(r.reference || '—'),
-    _pvMoney(r.amount),
-  ]);
-  const vouchersRows = vouchers.map(v => [
-    _repDocLink(v.doc_ref) || _finEsc(v.voucher_no || '—'),
-    _finEsc(v.payee_name || '—'),
-    _finEsc(v.description || '—'),
-    _pvMoney(v.amount),
-  ]);
-  const pettyRows = petty.map(p => [
-    _finEsc(`PC-${p.disbursement_id}`),
-    _pvMoney(p.disbursed_amount),
-  ]);
-
-  out.innerHTML = summaryBox
-    + section('Cash Receipts',
-        ['RECEIPT NO.', 'STUDENT', 'REFERENCE', 'AMOUNT'],
-        receiptsRows, 'No cash receipts on this date.', data.total_receipts)
-    + section('Cash Payment Vouchers',
-        ['VOUCHER NO.', 'PAYEE', 'DESCRIPTION', 'AMOUNT'],
-        vouchersRows, 'No cash payment vouchers on this date.', data.total_payments)
-    + section('Petty Cash Disbursements',
-        ['DISBURSEMENT', 'AMOUNT'],
-        pettyRows, 'No petty cash disbursements on this date.', null);
 }
 
 // ── Notes of Financial Statement — labelled schedule cards ──────────────────
@@ -1147,9 +1065,7 @@ function _repRenderAgedStudentDebtors(data) {
   const bucketCell = (rows) => {
     const sum = rows.reduce((s, r) => s + (parseFloat(r.balance) || 0), 0);
     if (!rows.length) return `<td>${_pvMoney(0)}</td>`;
-    // Each invoice_number is clickable when the BE ships a doc_ref;
-    // falls back to plain escaped text on older payloads.
-    const refs = rows.map(r => _repDocLink(r.doc_ref) || _finEsc(r.invoice_number)).join(', ');
+    const refs = rows.map(r => _finEsc(r.invoice_number)).join(', ');
     return `<td>${_pvMoney(sum)}<br><span style="font-size:0.75rem;color:#888;">${refs}</span></td>`;
   };
 
@@ -1203,7 +1119,7 @@ function _repRenderAgedPayables(data) {
   const bucketCell = (rows) => {
     const sum = rows.reduce((s, r) => s + (parseFloat(r.balance) || 0), 0);
     if (!rows.length) return `<td>${_pvMoney(0)}</td>`;
-    const refs = rows.map(r => _repDocLink(r.doc_ref) || _finEsc(r.invoice_number)).join(', ');
+    const refs = rows.map(r => _finEsc(r.invoice_number)).join(', ');
     return `<td>${_pvMoney(sum)}<br><span style="font-size:0.75rem;color:#888;">${refs}</span></td>`;
   };
 
@@ -1228,7 +1144,7 @@ function _repRenderAgedPayables(data) {
     const dRows = Object.keys(bySupplierDisputed).sort((a, b) => _pvSupplierName(a).localeCompare(_pvSupplierName(b))).map(sid => {
       const rows = bySupplierDisputed[sid];
       const sum = rows.reduce((s, r) => s + (parseFloat(r.balance) || 0), 0);
-      const refs = rows.map(r => _repDocLink(r.doc_ref) || _finEsc(r.invoice_number)).join(', ');
+      const refs = rows.map(r => _finEsc(r.invoice_number)).join(', ');
       return `<tr><td>${_finEsc(_pvSupplierName(sid))}</td><td>${_pvMoney(sum)}<br><span style="font-size:0.75rem;color:#888;">${refs}</span></td></tr>`;
     }).join('');
     return `
@@ -1353,9 +1269,7 @@ const _REP_FEES_PER_GL = {
     countLabel: 'INVOICES', amountLabel: 'TOTAL INVOICED', childNoun: 'invoice',
     childHead: ['INVOICE NO.', 'STUDENT', 'ISSUE DATE', 'STATUS', 'AMOUNT DUE'],
     childCells: r => [
-      // Wave 3: clickable when the BE ships a doc_ref (INV_STUDENT);
-      // plain text on older payloads.
-      _repDocLink(r.doc_ref) || _finEsc(r.invoice_number || '—'),
+      _finEsc(r.invoice_number || '—'),
       _finEsc(_rcvStudentName(r.student_id)),
       _pvDate(r.issue_date),
       _pvBadge(r.status),
@@ -1368,7 +1282,7 @@ const _REP_FEES_PER_GL = {
     countLabel: 'RECEIPTS', amountLabel: 'TOTAL PAID', childNoun: 'receipt',
     childHead: ['RECEIPT NO.', 'STUDENT', 'PAYMENT DATE', 'METHOD', 'AMOUNT'],
     childCells: r => [
-      _repDocLink(r.doc_ref) || _finEsc(r.receipt_number || '—'),
+      _finEsc(r.receipt_number || '—'),
       _finEsc(_rcvStudentName(r.student_id)),
       _pvDate(r.payment_date),
       _finEsc(String(r.payment_method || '—').replace(/_/g, ' ')),

@@ -413,15 +413,6 @@ const _DOC_ROUTE_TO_PRESELECT = {
   'journal-entries':             '_jeOpenId',
   'payables-payment-vouchers':   '_pvPvOpenId',
   'payables-supplier-invoices':  '_pvSiOpenId',
-  // Wave 2 — Fee Invoice detail view reads _rcvCurrentInvoiceId directly
-  // (not a preselectId; the view case builds the full detail page from
-  // that single id). Credit Notes uses the split-view preselectId pattern.
-  'fin-invoice-detail':          '_rcvCurrentInvoiceId',
-  'fin-credit-notes':            '_cnOpenId',
-  // Wave 3 — Receive Payments IS the Fund Receipt detail view. Reuses
-  // the split-view preselectId pattern (var read + cleared inside
-  // loadReceivePaymentsView).
-  'fin-receive-payments':        '_rpOpenId',
 };
 
 function _maybeOpenDocFromHash() {

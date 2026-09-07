@@ -77,9 +77,6 @@ async function _finBuildLedger(studentId) {
     debit:       parseFloat(e.debit)   || 0,
     credit:      parseFloat(e.credit)  || 0,
     balance:     parseFloat(e.balance) || 0,
-    // Clickable ref from the BE. Populated for invoice + credit_note;
-    // null on receipts until Wave 3 lands the FUND_RECEIPT detail view.
-    doc_ref:     e.doc_ref || null,
   }));
 }
 
@@ -111,17 +108,10 @@ function _finLedgerTable(rows) {
     rows.forEach(r => {
       totalDebit  += r.debit;
       totalCredit += r.credit;
-      // Reference cell: clickable when BE ships a doc_ref (invoice / CN);
-      // plain text on receipts (Wave 3 will add the receipt link). Guard
-      // with typeof so an unusual load order can't turn the whole
-      // ledger into a ReferenceError.
-      const refCell = (r.doc_ref && typeof _repDocLink === 'function')
-        ? (_repDocLink(r.doc_ref) || _finEsc(r.reference || '—'))
-        : _finEsc(r.reference || '—');
       bodyRows += `<tr>
         <td>${_finEsc(r.date)}</td>
         <td>${_finLedgerTypePill(r.type)}</td>
-        <td>${refCell}</td>
+        <td>${_finEsc(r.reference || '—')}</td>
         <td>${_finEsc(r.description)}</td>
         <td>${r.debit  ? _finFmt(r.debit)  : ''}</td>
         <td>${r.credit ? _finFmt(r.credit) : ''}</td>
@@ -1989,12 +1979,6 @@ function _rcvPaySetMethodFilter(v) {
 
 async function loadReceivePaymentsView(container) {
   await _invLoadLookups();
-  // Deep-link handoff: the hash router (dashboard.js:_maybeOpenDocFromHash)
-  // and clickable doc_refs in Wave 3 reports set window._rpOpenId to pre-open
-  // a specific receipt. One-shot: read + clear so a later plain
-  // loadView('fin-receive-payments') doesn't stick to the old id.
-  const preselectId = window._rpOpenId ?? null;
-  window._rpOpenId = null;
   await renderSplitView({
     container,
     moduleKey: 'finance.receivables',
@@ -2005,7 +1989,6 @@ async function loadReceivePaymentsView(container) {
       {label:'Receive Payments'}
     ],
     apiUrl: `${API_BASE}/receivables/receipts`,
-    preselectId,
     searchFields: ['receipt_number','reference'],
     listFilters: _rcvPayMethodChipsHtml(),
     listFilterFn: p => !_rcvPayMethodFilter || p.payment_method === _rcvPayMethodFilter,

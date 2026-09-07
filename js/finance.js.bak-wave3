@@ -1989,12 +1989,6 @@ function _rcvPaySetMethodFilter(v) {
 
 async function loadReceivePaymentsView(container) {
   await _invLoadLookups();
-  // Deep-link handoff: the hash router (dashboard.js:_maybeOpenDocFromHash)
-  // and clickable doc_refs in Wave 3 reports set window._rpOpenId to pre-open
-  // a specific receipt. One-shot: read + clear so a later plain
-  // loadView('fin-receive-payments') doesn't stick to the old id.
-  const preselectId = window._rpOpenId ?? null;
-  window._rpOpenId = null;
   await renderSplitView({
     container,
     moduleKey: 'finance.receivables',
@@ -2005,7 +1999,6 @@ async function loadReceivePaymentsView(container) {
       {label:'Receive Payments'}
     ],
     apiUrl: `${API_BASE}/receivables/receipts`,
-    preselectId,
     searchFields: ['receipt_number','reference'],
     listFilters: _rcvPayMethodChipsHtml(),
     listFilterFn: p => !_rcvPayMethodFilter || p.payment_method === _rcvPayMethodFilter,
