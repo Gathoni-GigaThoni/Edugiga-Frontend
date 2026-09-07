@@ -59,17 +59,6 @@ function _repCell(val) {
   return _finEsc(String(val));
 }
 
-// Clickable document reference — attached by the BE to any report row that
-// surfaces a document number (JV, PV, invoice, CN, receipt, payroll run).
-// Renders as an anchor that opens the owning module's detail view in a
-// new tab (target="_blank" — leaves the report intact in the original
-// tab). Returns '' when no doc_ref is present so callers can fall back to
-// _repCell() with `_repDocLink(r.doc_ref) || _repCell(r.some_number)`.
-function _repDocLink(docRef) {
-  if (!docRef || !docRef.url || !docRef.number) return '';
-  return `<a href="${_finEsc(docRef.url)}" target="_blank" rel="noopener">${_finEsc(docRef.number)}</a>`;
-}
-
 // ── Report definitions ──────────────────────────────────────────────────────
 // dateMode: 'range' (start_date/end_date), 'asof' (as_of_date[+compare_to_date]), 'single' (report_date)
 const REPORT_DEFS = {
@@ -113,8 +102,7 @@ const REPORT_DEFS = {
     columns: [['account','ACCOUNT'],['budgeted','BUDGETED'],['actual','ACTUAL'],['variance','VARIANCE'],['variance_pct','VARIANCE %']] },
   'reports-journal-entry': { title: 'Journal Entry Report', api: 'journal-entry-report', dateMode: 'range',
     extra: [{ key: 'status', label: 'Status', type: 'jestatus' }, { key: 'ledger_id', label: 'Ledger', type: 'ledger' }],
-    columns: [['jv_number','JV NUMBER'],['date','DATE'],['reference','REFERENCE'],['ledger','LEDGER'],['status','STATUS'],['debit_account','DEBIT ACCOUNT'],['credit_account','CREDIT ACCOUNT'],['amount','AMOUNT']], groupBy: 'jv_number',
-    docRefKeys: ['jv_number'] },
+    columns: [['jv_number','JV NUMBER'],['date','DATE'],['reference','REFERENCE'],['ledger','LEDGER'],['status','STATUS'],['debit_account','DEBIT ACCOUNT'],['credit_account','CREDIT ACCOUNT'],['amount','AMOUNT']], groupBy: 'jv_number' },
 
   'reports-balances-report': { title: 'Balances Report', api: 'balances-report', dateMode: 'asof',
     columns: [['account_name','ACCOUNT NAME'],['account_type','ACCOUNT TYPE'],['balance','BALANCE']] },
@@ -381,28 +369,15 @@ function _repRenderTable(def, data) {
   const cols = knownKeysPresent ? def.columns : Object.keys(firstRow).map(k => [k, _repHumanize(k)]);
   const sortedRows = (def.sortBy && knownKeysPresent) ? [...rows].sort(def.sortBy) : rows;
 
-  // Per-column doc_ref support: if def.docRefKeys lists a column key,
-  // that cell renders as a clickable link when the row carries a doc_ref
-  // payload. Non-listed columns and rows without doc_ref render as
-  // plain text via _repCell (no BE/FE deploy skew guard needed).
-  const docRefKeys = def.docRefKeys || [];
-  const renderCell = (r, k) => {
-    if (docRefKeys.includes(k) && r.doc_ref) {
-      const link = _repDocLink(r.doc_ref);
-      if (link) return link;
-    }
-    return _repCell(r[k]);
-  };
-
   let bodyRows;
   if (def.groupBy && knownKeysPresent) {
     let lastGroup = null, toggle = false;
     bodyRows = sortedRows.map(r => {
       if (r[def.groupBy] !== lastGroup) { toggle = !toggle; lastGroup = r[def.groupBy]; }
-      return `<tr style="${toggle ? 'background:#f5fafa;' : ''}">${cols.map(([k]) => `<td>${renderCell(r, k)}</td>`).join('')}</tr>`;
+      return `<tr style="${toggle ? 'background:#f5fafa;' : ''}">${cols.map(([k]) => `<td>${_repCell(r[k])}</td>`).join('')}</tr>`;
     }).join('');
   } else {
-    bodyRows = sortedRows.map(r => `<tr>${cols.map(([k]) => `<td>${renderCell(r, k)}</td>`).join('')}</tr>`).join('');
+    bodyRows = sortedRows.map(r => `<tr>${cols.map(([k]) => `<td>${_repCell(r[k])}</td>`).join('')}</tr>`).join('');
   }
 
   let footRow = '';
@@ -529,12 +504,7 @@ function _repRenderLedgerLines(def, data) {
       credit: cr || '',
       running_balance: r.running_balance,
     };
-    // jv_number is a clickable doc_ref when the BE ships one; falls back
-    // to plain text on older payloads (no BE/FE deploy skew guard needed).
-    return `<tr>${cols.map(([k]) => {
-      if (k === 'jv_number') return `<td>${_repDocLink(r.doc_ref) || _repCell(view[k])}</td>`;
-      return `<td>${_repCell(view[k])}</td>`;
-    }).join('')}</tr>`;
+    return `<tr>${cols.map(([k]) => `<td>${_repCell(view[k])}</td>`).join('')}</tr>`;
   }).join('');
   const totalsRow = cols.map(([k], i) => {
     if (i === 0) return '<td><strong>TOTAL</strong></td>';
@@ -1497,7 +1467,7 @@ function _repRenderApReconciliation(def, data) {
   }
 
   const driftRows = (data.drift_invoices || []).map(d => `<tr>
-    <td><a href="#payables-supplier-invoices?open=${d.invoice_id}" target="_blank" rel="noopener">${_finEsc(d.invoice_number || ('#' + d.invoice_id))}</a></td>
+    <td><a href="#" onclick="_pvSiOpenDetail(${d.invoice_id});return false;">${_finEsc(d.invoice_number || ('#' + d.invoice_id))}</a></td>
     <td>${_finEsc(_pvSupplierName(d.supplier_id))}</td>
     <td>${_finEsc(d.reason || '')}</td>
     <td>${_pvMoney(d.expected_in_gl)}</td>

@@ -397,37 +397,6 @@ function showDashboard() {
   document.getElementById('main-content').addEventListener('click', () => {
     if (activeModule !== null) closeFlyout();
   });
-
-  // Deep-link handoff: when a new tab boots at #<route>?open=<id> (from a
-  // clickable doc_ref anchor in a report), skip the dashboard home and open
-  // the requested document instead. Unrecognised hashes are ignored and the
-  // dashboard renders normally.
-  _maybeOpenDocFromHash();
-}
-
-// route → window var name that the owning module reads to preselect a row
-// on load. Coupled to the same set as app/utils/doc_links.py _DOC_ROUTES —
-// any addition there must land here too, otherwise the deep-link will land
-// on the list view without opening the target document.
-const _DOC_ROUTE_TO_PRESELECT = {
-  'journal-entries':             '_jeOpenId',
-  'payables-payment-vouchers':   '_pvPvOpenId',
-  'payables-supplier-invoices':  '_pvSiOpenId',
-};
-
-function _maybeOpenDocFromHash() {
-  const raw = (location.hash || '').replace(/^#/, '');
-  if (!raw) return;
-  const qIdx = raw.indexOf('?');
-  if (qIdx < 0) return;
-  const route = raw.slice(0, qIdx);
-  const query = raw.slice(qIdx + 1);
-  const openId = parseInt(new URLSearchParams(query).get('open'), 10);
-  if (!openId) return;
-  const varName = _DOC_ROUTE_TO_PRESELECT[route];
-  if (!varName) return;
-  window[varName] = openId;
-  loadView(route);
 }
 
 // Home view content — shown on initial login and whenever the user clicks the

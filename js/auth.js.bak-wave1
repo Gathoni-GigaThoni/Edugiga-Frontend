@@ -439,21 +439,6 @@ function apiFetchPublic(path, options = {}) {
 
 // ==================== BOOTSTRAP ====================
 
-// Session-token bootstrap: config.js has already restored `token` and
-// decoded `currentUser` from sessionStorage. If both are present the user
-// has an unexpired session (config.js clears them on decode failure), so
-// jump straight into the dashboard instead of re-prompting for
-// credentials on every reload / new tab. showDashboard() then invokes
-// _maybeOpenDocFromHash() so deep-link URLs open their target document.
-// If a later API call 401s (server-side expiry / revocation) the existing
-// 401 handler falls back to renderLoginPage().
 if (!checkForPasswordResetToken()) {
-  if (token && currentUser) {
-    // Arrow-wrap the callback so `showDashboard` is resolved at call time.
-    // dashboard.js is loaded after auth.js by index.html, so the name is
-    // not defined at the moment .then() is registered.
-    loadModulesCache().then(() => showDashboard());
-  } else {
-    renderLoginPage();
-  }
+  renderLoginPage();
 }
