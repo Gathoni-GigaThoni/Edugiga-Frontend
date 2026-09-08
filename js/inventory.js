@@ -211,6 +211,20 @@ let _invControlAccountsDiag = null;
 // the id was resolved against the employee list, naming whichever employee
 // happened to hold that number. /api/team/ is the id space the constraint
 // actually enforces, so it is the only correct source for both.
+//
+// INTERIM — a store custodian is *meant* to be an HR employee (confirmed with
+// the product owner 2026-09-08), not a user account. Today's FK cannot express
+// that: it can only name staff who happen to have a login, so a storekeeper
+// with no user account cannot be recorded as custodian at all. Reverting this
+// picker to /hr/employees ahead of the backend is not an option — the database
+// rejects Employee ids outright. When the BE repoints the constraint at
+// `hr_employee` (and ideally renames nothing, since the column name already
+// says employee), the change here is: swap this fetch back to
+// `${API_BASE}/hr/employees`, and read `first_name`/`last_name` off the
+// Employee rows, which _invCustodianName already does. Nothing else moves —
+// the picker, the label resolver and the edit-diff guard are all id-space
+// agnostic. Until then this stays on /api/team/ and stores can only be handed
+// to staff who have logins.
 async function _invEnsureCustodianCache() {
   if (_invCustodianCache && _invCustodianCache.length) return;
   _invCustodianCache = await loadLookupList(`${API_BASE}/team/?skip=0&limit=1000`, 'team-members');

@@ -3356,7 +3356,7 @@ async function loadStreamsView(container) {
       {label:'Student Management',view:'students-list'},
       {label:'Streams'}
     ],
-    apiUrl: `${API_BASE}/student-management/streams`,
+    apiUrl: `${API_BASE}/student-management/streams/`,
     col1Label: 'Title', col2Label: 'Status',
     col1: s => s.title || '—',
     col2: s => (s.status === 'inactive' || s.status === 'Inactive') ? 'Inactive' : 'Active',
@@ -4574,7 +4574,7 @@ async function _loadStuRptFilterDropdowns() {
   // Left wired for visibility but not enforced in _fetchStuReport() — flagged there too.
   const [classesRes, streamsRes, routesRes, ecRes, housesRes] = await Promise.all([
     apiFetch(`${API_BASE}/classes/`),
-    apiFetch(`${API_BASE}/student-management/streams`),
+    apiFetch(`${API_BASE}/student-management/streams/`),
     apiFetch(`${API_BASE}/routes/`),
     apiFetch(`${API_BASE}/student-management/extra-curriculum/`),
     apiFetch(`${API_BASE}/student-management/sports-houses/`),
@@ -5938,7 +5938,7 @@ async function loadCloseRecordsView(container) {
 
   const [clsRes, strRes] = await Promise.all([
     apiFetch(`${API_BASE}/classes/`),
-    apiFetch(`${API_BASE}/student-management/streams`),
+    apiFetch(`${API_BASE}/student-management/streams/`),
   ]);
   const classes = (clsRes && clsRes.ok) ? await clsRes.json() : [];
   const streams = (strRes && strRes.ok) ? await strRes.json() : [];
@@ -5964,7 +5964,7 @@ async function loadCloseRecordClassStudents(classId, streamId) {
   params.set('class_id', classId);
   if (streamId) params.set('stream_id', streamId);
 
-  const res = await apiFetch(`${API_BASE}/students?${params}`);
+  const res = await apiFetch(`${API_BASE}/students/?${params}`);
   _closeRecordsStudents = (res && res.ok) ? await res.json() : [];
 
   if (!_closeRecordsStudents.length) {
