@@ -215,10 +215,28 @@ const _FLYOUT_GROUP_MODULE_PREFIXES = {
 };
 
 function _applyFlyoutPermissions() {
+  // Belt-and-suspenders: hide the whole flyout-module-body wrapper for every
+  // module the caller has zero descendant access on. The rail button for
+  // such a module is already never rendered (_computeRailAccess above), but
+  // this makes the flyout panel itself vanish too so a stray openFlyout()
+  // call — from the console, a legacy shortcut, whatever — has nothing to
+  // reveal.
+  Object.entries(RAIL_MODULE_KEYS).forEach(([railKey, moduleKey]) => {
+    if (!hasModuleAccess(moduleKey)) {
+      const body = document.getElementById('flyout-body-' + railKey);
+      if (body) body.style.display = 'none';
+    }
+  });
+  // Per-<li> gate: strict canView on the specific module_key. A sibling
+  // sub-module having view access does NOT rescue this one — each row is
+  // judged on its own key, and view-only permission still counts as view.
   Object.entries(_SIDEBAR_ITEM_MODULE_KEYS).forEach(([elId, key]) => {
     const el = document.getElementById(elId);
     if (el && !canView(key)) el.style.display = 'none';
   });
+  // Group-header gate: hide the whole <li class="dropdown"> wrapping the
+  // ul when nothing under the prefix is viewable, so an empty group header
+  // doesn't linger after all its children have been gated away.
   Object.entries(_FLYOUT_GROUP_MODULE_PREFIXES).forEach(([ulId, prefix]) => {
     if (!hasModuleAccess(prefix)) {
       const ul = document.getElementById(ulId);
