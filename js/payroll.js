@@ -38,6 +38,18 @@ function _prEspDepartment(sp) {
   return employeeDepartmentForRecord(sp);
 }
 
+function _prEspIsConsultant(sp) {
+  const emp = employeeFromRecord(sp);
+  return !!emp && emp.tax_profile === 'consultant';
+}
+
+// Takes the employee id rather than the name: the name goes into an inline
+// onclick string, and _finEsc doesn't escape apostrophes.
+function _prEspEndEngagement(espId, employeeId) {
+  const name = employeeFullName(employeeFromRecord({ employee_id: employeeId }));
+  endHrEspEngagement(espId, name, async () => { await window._splitReload?.(); });
+}
+
 async function loadPayrollEspListingView(container) {
   await ensureDepartmentCache();
   await ensurePayGradeCache();
@@ -66,10 +78,22 @@ async function loadPayrollEspListingView(container) {
       {label:'Employee',    key:'employee_id', fmt:(_,sp)=>employeeNameForRecord(sp)},
       {label:'Emp Code',    key:'employee_id', fmt:(_,sp)=>employeeCodeForRecord(sp)},
       {label:'Department',  key:'employee_id', fmt:(_,sp)=>_prEspDepartment(sp)},
-      {label:'Pay Grade',   key:'pay_grade_id', fmt:v=>payGradeLabelFor(v)},
-      {label:'Basic Salary',key:'basic_salary', fmt:v=>v!=null?String(v):'—'},
+      {label:'Profile',     key:'employee_id', fmt:(_,sp)=>_prEspIsConsultant(sp)
+        ? '<span style="color:var(--navy-700,#1B3057);font-weight:600;">Consultant — paid on consultant runs (WHT only)</span>'
+        : 'Employee — paid on payroll runs'},
+      // A consultant profile can't carry a pay grade at all, so the row would
+      // always read '—' for them; saying so beats an empty dash.
+      {label:'Pay Grade',   key:'pay_grade_id', hideWhen:sp=>_prEspIsConsultant(sp), fmt:v=>payGradeLabelFor(v)},
+      {label:'Consultancy Fee', key:'basic_salary', hideWhen:sp=>!_prEspIsConsultant(sp), fmt:v=>v!=null?String(v):'—'},
+      {label:'Basic Salary',key:'basic_salary', hideWhen:sp=>_prEspIsConsultant(sp), fmt:v=>v!=null?String(v):'—'},
       {label:'Eff. Date',   key:'effective_date', fmt:v=>v||'—'},
+      {label:'End Date',    key:'end_date', fmt:(v,sp)=>v
+        ? `${v}${_prEspIsConsultant(sp) ? ' — engagement ended' : ''}`
+        : (_prEspIsConsultant(sp) ? 'Open-ended (still billable)' : '—')},
     ],
+    detailActions: sp => _prEspIsConsultant(sp) && !sp.end_date && sp.id != null
+      ? `<button class="fin-btn-outline" onclick="_prEspEndEngagement(${sp.id}, ${sp.employee_id ?? 'null'})">End engagement</button>`
+      : '',
     renderAdd: _prAddPlaceholder('Service Profile', 'payrollEspAdd()', 'Set up a new employee service profile.'),
     onAdd:  () => payrollEspAdd(),
     onEdit: item => {
@@ -1900,8 +1924,17 @@ function _srUpdateBand(i,key,val) { _srBandsEditor[i][key] = val; }
 function _srRenderRatesEditor() {
   const el = document.getElementById('sr-rates-editor');
   if (!el) return;
-  el.innerHTML = _srRatesEditor.map((r,i) => `<tr>
-    <td><input type="text" class="fin-li-input" value="${_finEsc(r.payment_type)}" maxlength="60" oninput="_srUpdateRate(${i},'payment_type',this.value)"></td>
+  // payment_type is a free-text column, but a consultant's
+  // consultant_wht_payment_type must be one of five fixed values — and the
+  // consultant run matches the two by string. A row typed as anything else
+  // is a rate no consultant can ever be assigned to, so the five are offered
+  // here as a datalist. Still free text: an ops-defined type for supplier
+  // WHT (which has its own payment_type axis) stays possible.
+  const datalist = `<datalist id="sr-wht-payment-types">${
+    CONSULTANT_WHT_PAYMENT_TYPES.map(t => `<option value="${t.value}">${t.label}</option>`).join('')
+  }</datalist>`;
+  el.innerHTML = datalist + _srRatesEditor.map((r,i) => `<tr>
+    <td><input type="text" class="fin-li-input" list="sr-wht-payment-types" value="${_finEsc(r.payment_type)}" maxlength="60" oninput="_srUpdateRate(${i},'payment_type',this.value)"></td>
     <td><input type="number" class="fin-li-input" value="${r.resident_rate}" step="0.01" oninput="_srUpdateRate(${i},'resident_rate',this.value)"></td>
     <td><input type="number" class="fin-li-input" value="${r.nonresident_rate}" step="0.01" oninput="_srUpdateRate(${i},'nonresident_rate',this.value)"></td>
     <td><input type="number" class="fin-li-input" value="${r.resident_exempt_below}" step="0.01" placeholder="Always deduct" oninput="_srUpdateRate(${i},'resident_exempt_below',this.value)"></td>

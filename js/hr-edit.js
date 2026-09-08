@@ -31,6 +31,7 @@ function renderHrEditPage(container, record) {
   `;
   loadDepartmentOptions('hr-edit-department', hrEditRecord.department_id);
   loadHrWhtPaymentTypes('edit', hrEditRecord.consultant_wht_payment_type);
+  applyHrConsultantFieldRules('edit', hrEditRecord.tax_profile === 'consultant');
 }
 
 function hrEditTabPlaceholder() {
@@ -260,11 +261,11 @@ function renderHrEditTabBasic() {
           <label class="hr-form-label">Joining Date <span class="hr-required">*</span></label>
           <input type="date" id="hr-edit-joining-date" class="hr-form-input" value="${r.joining_date || ''}">
         </div>
-        <div class="hr-form-group">
+        <div class="hr-form-group" id="hr-edit-probation-group">
           <label class="hr-form-label">Probation Period (days) <span class="hr-required">*</span></label>
           <input type="number" id="hr-edit-probation" class="hr-form-input" value="${r.probation_period || ''}" min="0">
         </div>
-        <div class="hr-form-group">
+        <div class="hr-form-group" id="hr-edit-confirmation-group">
           <label class="hr-form-label">Confirmation Date</label>
           <input type="text" class="hr-form-input hr-form-readonly" value="${r.confirmation_date || ''}" readonly placeholder="Auto-calculated">
         </div>
@@ -343,19 +344,23 @@ async function updateHrEditBasic() {
   if (!birth_date)       { showToast('Birth Date is required.', 'error'); return; }
   if (!gender)           { showToast('Gender is required.', 'error'); return; }
   if (!joining_date)     { showToast('Joining Date is required.', 'error'); return; }
-  if (!probation_period) { showToast('Probation Period is required.', 'error'); return; }
-  if (!nationality)      { showToast('Nationality is required.', 'error'); return; }
 
   const taxProfileEl = document.querySelector('input[name="hr-edit-tax-profile"]:checked');
   const tax_profile = taxProfileEl ? taxProfileEl.value : 'employee';
+  const isConsultant = tax_profile === 'consultant';
+  // Probation is hidden for a consultant and forced to 0 by the API, so it
+  // can't be a required field for one.
+  if (!isConsultant && !probation_period) { showToast('Probation Period is required.', 'error'); return; }
+  if (!nationality)      { showToast('Nationality is required.', 'error'); return; }
+
   const consultant_wht_payment_type = gv('hr-edit-wht-type');
-  if (tax_profile === 'consultant' && !consultant_wht_payment_type) {
+  if (isConsultant && !consultant_wht_payment_type) {
     showToast('Payment Type is required for consultant employees.', 'error'); return;
   }
   hrEditRecord.tax_profile = tax_profile;
-  hrEditRecord.consultant_wht_payment_type = tax_profile === 'consultant' ? consultant_wht_payment_type : null;
-  hrEditRecord.is_non_resident = tax_profile === 'consultant' ? (document.getElementById('hr-edit-non-resident')?.checked || false) : false;
-  hrEditRecord.consultant_kra_pin = tax_profile === 'consultant' ? gvt('hr-edit-consultant-kra-pin') : null;
+  hrEditRecord.consultant_wht_payment_type = isConsultant ? consultant_wht_payment_type : null;
+  hrEditRecord.is_non_resident = isConsultant ? (document.getElementById('hr-edit-non-resident')?.checked || false) : false;
+  hrEditRecord.consultant_kra_pin = isConsultant ? gvt('hr-edit-consultant-kra-pin') : null;
 
   hrEditRecord.employment_terms = employment_terms;
   hrEditRecord.last_name        = surname;
@@ -389,7 +394,13 @@ async function updateHrEditBasic() {
     birth_date:        hrEditRecord.birth_date,
     gender:            hrEditRecord.gender,
     joining_date:      hrEditRecord.joining_date,
-    probation_days:    hrEditRecord.probation_period ? parseInt(hrEditRecord.probation_period, 10) : null,
+    // Converting an existing employee to a consultant: the API zeroes
+    // probation_days and coerces a "probation" status to "active". Sent
+    // explicitly so the stored record matches what the form now shows.
+    ...hrConsultantEmployeeOverrides(
+      isConsultant,
+      hrEditRecord.probation_period ? parseInt(hrEditRecord.probation_period, 10) : null,
+      isConsultant && hrEditRecord.employee_status === 'probation' ? 'probation' : undefined),
     address:           hrEditRecord.address,
     nationality:       hrEditRecord.nationality,
     national_id_no:    hrEditRecord.national_id,
@@ -839,16 +850,22 @@ function deleteHrEditDependent(idx) {
 
 // ==================== EDIT TAB F — Employee Service Profile ====================
 function renderHrEditTabServiceProfile() {
-  const rows = (hrEditRecord.service_profile || []).length === 0
+  const isConsultant = hrEditRecord.tax_profile === 'consultant';
+  const list = hrEditRecord.service_profile || [];
+  const rows = list.length === 0
     ? `<tr><td colspan="6" class="hr-empty">No records found</td></tr>`
-    : (hrEditRecord.service_profile || []).map((sp, i) => `<tr>
-        <td>${sp.reason_event || ''}</td><td>${payGradeLabelFor(sp.pay_grade_id)}</td>
-        <td>${sp.basic_salary || ''}</td><td>${sp.effective_date || ''}</td><td>${sp.end_date || ''}</td>
+    : list.map((sp, i) => `<tr>
+        <td>${sp.reason_event || ''}</td>
+        <td>${isConsultant ? '<span style="color:#888;">n/a — consultant</span>' : payGradeLabelFor(sp.pay_grade_id)}</td>
+        <td>${sp.basic_salary || ''}</td><td>${sp.effective_date || ''}</td>
+        <td>${sp.end_date ? `${sp.end_date}${isConsultant ? ' <span style="color:#888;">(ended)</span>' : ''}` : ''}</td>
         <td class="hr-action-cell">
           <div class="hr-action-wrap">
             <button class="hr-action-btn" onclick="toggleHrEditSpDropdown(event,${i})">&#8230;</button>
             <div id="hr-edit-sp-dd-${i}" class="hr-action-dropdown" style="display:none;">
               <a href="#" onclick="hrEditSpEdit(${i});return false;">&#9998; Edit</a>
+              ${isConsultant && !sp.end_date && sp.id != null
+                ? `<a href="#" onclick="hrEditSpEndEngagement(${i});return false;">&#9203; End engagement</a>` : ''}
               <a href="#" onclick="deleteHrEditServiceProfile(${i});return false;">&#128465; Delete</a>
             </div>
           </div>
@@ -856,17 +873,33 @@ function renderHrEditTabServiceProfile() {
       </tr>`).join('');
   return `
     <div class="hr-tab-body">
+      ${isConsultant ? `
+        <div style="background:#EEF3FA;border-left:3px solid var(--navy-400,#4A6FA5);border-radius:6px;padding:10px 16px;margin-bottom:12px;font-size:12.5px;color:var(--navy-900,#0D2137);">
+          This is a consultant. Their profile carries a consultancy fee and an engagement window — no pay grade, no statutory shelters.
+          To stop paying them, use <strong>End engagement</strong> to set an end date; changing their employee status has no effect on
+          <a href="#" onclick="loadView('payroll-consultant-runs');return false;">consultant runs</a>.
+        </div>` : ''}
       <div class="hr-form-table-header">
         <button class="hr-add-btn" onclick="hrEditSpAdd()">Add Employee Service Profile</button>
       </div>
       <div class="hr-table-wrap">
         <table class="hr-table"><thead><tr>
           <th>REASON/EVENT</th><th>PAY GRADE</th>
-          <th>BASIC SALARY</th><th>EFFECTIVE DATE</th><th>END DATE</th><th>ACTION</th>
+          <th>${isConsultant ? 'CONSULTANCY FEE' : 'BASIC SALARY'}</th><th>EFFECTIVE DATE</th><th>END DATE</th><th>ACTION</th>
         </tr></thead><tbody>${rows}</tbody></table>
       </div>
     </div>
   `;
+}
+
+function hrEditSpEndEngagement(idx) {
+  const sp = (hrEditRecord.service_profile || [])[idx];
+  if (!sp) return;
+  endHrEspEngagement(sp.id, employeeFullName(hrEditRecord), async () => {
+    // Re-read the employee so the row shows the end date the server stored.
+    await hrEditEmployee(hrEditRecord.id);
+    switchHrEditTab('service-profile');
+  });
 }
 
 function toggleHrEditSpDropdown(event, idx) {
@@ -919,6 +952,7 @@ function switchHrEditTab(tabId) {
   if (content) content.innerHTML = renderHrEditTabContent(tabId);
   loadDepartmentOptions('hr-edit-department', hrEditRecord.department_id);
   loadHrWhtPaymentTypes('edit', hrEditRecord.consultant_wht_payment_type);
+  applyHrConsultantFieldRules('edit', hrEditRecord.tax_profile === 'consultant');
   if (tabId === 'service-profile') {
     ensurePayGradeCache().then(() => {
       const c = document.getElementById('hr-edit-tab-content');

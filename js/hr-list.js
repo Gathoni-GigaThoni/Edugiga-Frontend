@@ -41,6 +41,16 @@ async function loadHrEmployeeDirectoryView(container) {
           <select id="hr-f-department-id" class="fin-filter-input"></select>
         </div>
         <div class="fin-filter-field">
+          <label class="fin-filter-label">Statutory pipeline</label>
+          <select id="hr-f-tax-profile" class="fin-filter-input" onchange="_hrDirReload()">
+            <option value="">All</option>
+            <option value="employee">Employees only</option>
+            <option value="consultant">Consultants only</option>
+          </select>
+          <span class="fin-field-hint" style="display:block;margin-top:4px;">Consultants are paid on
+            <a href="#" onclick="loadView('payroll-consultant-runs');return false;">Consultant Runs</a> (WHT only), never on payroll runs.</span>
+        </div>
+        <div class="fin-filter-field">
           <label class="fin-filter-label">Exclude Directors</label>
           <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;">
             <input type="checkbox" id="hr-f-exclude-director" onchange="_hrDirReload()" ${_isSuperAdmin() ? '' : 'checked'}>
@@ -78,6 +88,11 @@ async function loadHrEmployeeDirectoryView(container) {
 async function _hrDirReload() {
   const deptId = document.getElementById('hr-f-department-id')?.value || '';
   const excludeDir = document.getElementById('hr-f-exclude-director')?.checked || false;
+  // GET /hr/employees has no tax_profile query parameter (checked against the
+  // live spec — page/per_page/search/name/email/is_tutor/designation/
+  // department_id/branch/employee_status/exclude_director is the whole list),
+  // so this one filters client-side through renderSplitView's listFilterFn.
+  const taxProfile = document.getElementById('hr-f-tax-profile')?.value || '';
   const params = new URLSearchParams();
   if (deptId) params.set('department_id', deptId);
   if (excludeDir) params.set('exclude_director', 'true');
@@ -92,10 +107,18 @@ async function _hrDirReload() {
       {label:'Employees'}
     ],
     apiUrl: `${API_BASE}/hr/employees${params.toString() ? '?' + params.toString() : ''}`,
+    listFilterFn: taxProfile
+      ? e => (e.tax_profile || 'employee') === taxProfile
+      : undefined,
     searchFields: ['first_name','last_name','email','employee_code','designation'],
     col1Label: 'Name', col2Label: 'Code / Role',
     col1: e => `${e.first_name||''} ${e.last_name||''}`.trim() || '—',
-    col2: e => [e.employee_code, e.designation].filter(Boolean).join(' · ') || '—',
+    col2: e => {
+      const base = [e.employee_code, e.designation].filter(Boolean).join(' · ') || '—';
+      return e.tax_profile === 'consultant'
+        ? `${base} <span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:0.7rem;font-weight:600;color:var(--navy-700,#1B3057);background:var(--navy-50,#EEF3FA);margin-left:4px;">Consultant</span>`
+        : base;
+    },
     rowLabel: e => `${e.first_name||''} ${e.last_name||''}`.trim() || '—',
     rowSub:   e => e.email || '',
     idKey: 'id',
@@ -116,6 +139,17 @@ async function _hrDirReload() {
       {label:'Phone',       key:'phone_number', fmt:(v,e)=>v?`${e.phone_country_code||''} ${v}`.trim():'—'},
       {label:'Designation', key:'designation', fmt:v=>v||'—'},
       {label:'Department',  key:'department_id', fmt:v=>departmentLabelFor(v)},
+      {label:'Statutory pipeline', key:'tax_profile', fmt:v=>v==='consultant'
+        ? 'Consultant — WHT only, paid on consultant runs'
+        : 'Employee — PAYE/SHIF/NSSF/AHL, paid on payroll runs'},
+      {label:'WHT Payment Type', key:'consultant_wht_payment_type',
+        hideWhen:e=>e.tax_profile!=='consultant',
+        fmt:v=>v?whtPaymentTypeLabel(v):'<span style="color:var(--coral-600);">Not set — their consultant run will warn</span>'},
+      {label:'Residency', key:'is_non_resident',
+        hideWhen:e=>e.tax_profile!=='consultant',
+        fmt:v=>v?'Non-resident (higher WHT rate, never exempt)':'Resident'},
+      {label:'Consultant KRA PIN', key:'consultant_kra_pin',
+        hideWhen:e=>e.tax_profile!=='consultant', fmt:v=>v||'N/A (printed as N/A on fee notes)'},
     ],
     renderAdd: el => {
       el.innerHTML = `<div style="padding:40px 20px;text-align:center;color:var(--grey-600)">
@@ -170,7 +204,13 @@ function hrAddEmployee() {
     disability_type: '', medical_info: '',
     education: [], kra_pin: '', nssf_number: '', shif_number: '',
     tax_profile: 'employee', consultant_wht_payment_type: '', is_non_resident: false, consultant_kra_pin: '',
-    identity_docs: [], dependents: [], service_profile: []
+    identity_docs: [], dependents: [], service_profile: [],
+    // First service profile, collected on the wizard's last tab and sent as
+    // EmployeeOnboardRequest.service_profile in the same atomic call.
+    sp_reason_event: '', sp_processing_method: '', sp_pay_grade_id: '', sp_basic_salary: '',
+    sp_employee_status: '', sp_salary_disbursement_mode: '', sp_effective_date: '', sp_end_date: '',
+    sp_notes: '', sp_sheltered_paye: false, sp_sheltered_shif: false,
+    sp_sheltered_nssf: false, sp_sheltered_housing_levy: false
   };
   renderHrAddPage(document.getElementById('main-content'));
 }

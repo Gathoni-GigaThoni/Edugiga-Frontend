@@ -1,5 +1,41 @@
 // ==================== EMPLOYEE SERVICE PROFILE — SHARED FORM ====================
 
+function _espSalaryLabel(isConsultant) {
+  return isConsultant ? 'Consultancy Fee (per period)' : 'Basic Salary';
+}
+
+// Everything on the form that differs between an employee and a consultant
+// profile, applied from one place. Called on render, and again whenever the
+// employee picker changes on the unlocked (payroll Add) form — the fields stay
+// in the DOM and are dropped from the payload at submit instead of being
+// re-rendered, so a half-filled form survives switching employee.
+function applyEspConsultantShape(isConsultant) {
+  const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
+  show('hr-esp-pay-grade-group', !isConsultant);
+  show('hr-esp-sheltered-section', !isConsultant);
+  show('hr-esp-basic-salary-hint', isConsultant);
+  const hint = document.getElementById('hr-esp-window-hint');
+  if (hint) hint.style.display = isConsultant ? 'block' : 'none';
+  const salaryLabel = document.getElementById('hr-esp-basic-salary-label');
+  if (salaryLabel) salaryLabel.textContent = _espSalaryLabel(isConsultant);
+  const winTitle = document.getElementById('hr-esp-window-title');
+  if (winTitle) winTitle.textContent = isConsultant ? 'Engagement window' : 'Effective dates';
+  const endLabel = document.getElementById('hr-esp-end-date-label');
+  if (endLabel) endLabel.textContent = isConsultant ? 'End Date (engagement over)' : 'End Date';
+}
+
+// The employee the form is currently about, whatever the entry point — the
+// locked employee, or whatever the picker holds on the unlocked form. Both
+// the shape toggle and the submit payload key off this, so they can't disagree.
+function _espCurrentEmployee() {
+  const codeEl = document.getElementById('hr-esp-emp-code');
+  const code = (codeEl?.value || hrEspFormState.lockedEmpCode || '').trim();
+  return employeeFromRecord({
+    employee_id:   hrEspFormState.existingRecord?.employee_id,
+    employee_code: code,
+  });
+}
+
 function _hrEspEmpOptions() {
   return (employeesData || []).map(e =>
     `<option value="${e.employee_code}">${employeeFullName(e)} (${e.employee_code})</option>`
@@ -49,7 +85,13 @@ function renderHrEspFormPage(container) {
   // carries tax_profile, so this reuses the same resolved employee as the
   // department auto-populate above.
   const espEmp = locked ? lockedEmp : employeeFromRecord(sp);
-  const basicSalaryLabel = espEmp && espEmp.tax_profile === 'consultant' ? 'Monthly Consultancy Fee' : 'Basic Salary';
+  // A consultant ESP is a different shape, not just a different label. The
+  // shared create/update service 400s when a consultant's profile carries a
+  // pay_grade_id or any sheltered_* flag — those belong to the PAYE pipeline
+  // a consultant is not on. Both blocks are hidden (and dropped from the
+  // payload) rather than left on screen to be rejected on save.
+  const isConsultant = !!espEmp && espEmp.tax_profile === 'consultant';
+  const basicSalaryLabel = _espSalaryLabel(isConsultant);
 
   const empOptions = _hrEspEmpOptions();
 
@@ -106,7 +148,7 @@ function renderHrEspFormPage(container) {
               <option value="Hourly"    ${sel(pre('processing_method'),'Hourly')}>Hourly</option>
             </select>
           </div>
-          <div class="hr-form-group">
+          <div class="hr-form-group" id="hr-esp-pay-grade-group" style="display:${isConsultant ? 'none' : ''};">
             <label class="hr-form-label">Pay Grade <span class="hr-required">*</span></label>
             <select id="hr-esp-pay-grade" class="hr-form-select">
               ${_renderEspPayGradeOptions(pre('pay_grade_id'))}
@@ -114,11 +156,12 @@ function renderHrEspFormPage(container) {
           </div>
           <div class="hr-form-group hr-form-span2">
             <label class="hr-form-label" id="hr-esp-basic-salary-label">${basicSalaryLabel}</label>
-            <input type="number" id="hr-esp-basic-salary" class="hr-form-input" step="0.01" min="0" value="${pre('basic_salary')}" placeholder="Enter basic salary">
+            <input type="number" id="hr-esp-basic-salary" class="hr-form-input" step="0.01" min="0" value="${pre('basic_salary')}" placeholder="Enter amount">
+            <span id="hr-esp-basic-salary-hint" style="font-size:12px;color:var(--grey-600);display:${isConsultant ? '' : 'none'};">The gross fee for one run period. Withholding tax is computed from it on the consultant run.</span>
           </div>
         </div>
 
-        <div class="hr-esp-sheltered-section">
+        <div class="hr-esp-sheltered-section" id="hr-esp-sheltered-section" style="display:${isConsultant ? 'none' : ''};">
           <label class="hr-form-label">Shettered from Paying</label>
           <div class="hr-esp-sheltered-row">
             <label class="hr-form-checkbox-label"><input type="checkbox" id="hr-esp-sh-paye"    class="hr-form-cb" ${sp.sheltered_paye         ? 'checked' : ''}> P.A.Y.E.</label>
@@ -151,13 +194,23 @@ function renderHrEspFormPage(container) {
               <option value="mpesa"         ${sel(pre('salary_disbursement_mode'),'mpesa')}>Mobile Money (M-Pesa)</option>
             </select>
           </div>
-          <div class="hr-form-group">
-            <label class="hr-form-label">Effective Date <span class="hr-required">*</span></label>
-            <input type="date" id="hr-esp-effective-date" class="hr-form-input" value="${pre('effective_date')}">
-          </div>
-          <div class="hr-form-group">
-            <label class="hr-form-label">End Date</label>
-            <input type="date" id="hr-esp-end-date" class="hr-form-input" value="${pre('end_date')}">
+        </div>
+
+        <div class="hr-esp-sheltered-section" id="hr-esp-window-section">
+          <label class="hr-form-label" id="hr-esp-window-title">${isConsultant ? 'Engagement window' : 'Effective dates'}</label>
+          <span id="hr-esp-window-hint" style="display:${isConsultant ? 'block' : 'none'};font-size:12px;color:var(--grey-600);margin-bottom:8px;">
+            A consultant run pays the latest profile whose window covers the run period: it starts on or before the period end, and either has no end date or ends on or after the period start.
+            Setting an end date is how you stop paying a consultant — leave their employee status alone.
+          </span>
+          <div class="hr-form-grid">
+            <div class="hr-form-group">
+              <label class="hr-form-label">Effective Date <span class="hr-required">*</span></label>
+              <input type="date" id="hr-esp-effective-date" class="hr-form-input" value="${pre('effective_date')}">
+            </div>
+            <div class="hr-form-group">
+              <label class="hr-form-label" id="hr-esp-end-date-label">${isConsultant ? 'End Date (engagement over)' : 'End Date'}</label>
+              <input type="date" id="hr-esp-end-date" class="hr-form-input" value="${pre('end_date')}">
+            </div>
           </div>
         </div>
 
@@ -237,10 +290,9 @@ async function _hrEspHydrateEmployeeFields(locked, sp) {
     if (strip) strip.textContent = code || '—';
     const stripName = document.getElementById('hr-esp-strip-name');
     if (stripName) stripName.textContent = name || '—';
-    const labelEl = document.getElementById('hr-esp-basic-salary-label');
-    if (labelEl && emp) {
-      labelEl.textContent = emp.tax_profile === 'consultant' ? 'Monthly Consultancy Fee' : 'Basic Salary';
-    }
+    if (emp) applyEspConsultantShape(emp.tax_profile === 'consultant');
+  } else {
+    applyEspConsultantShape(!!_espCurrentEmployee() && _espCurrentEmployee().tax_profile === 'consultant');
   }
 
   const deptId = (sp && sp.department_id != null) ? sp.department_id
@@ -408,10 +460,39 @@ function onHrEspEmpCodeChange() {
     const label = emp ? departmentLabelFor(emp.department_id) : '';
     deptEl.value = label === '—' ? '' : label;
   }
-  const labelEl = document.getElementById('hr-esp-basic-salary-label');
-  if (labelEl) labelEl.textContent = (emp && emp.tax_profile === 'consultant') ? 'Monthly Consultancy Fee' : 'Basic Salary';
+  applyEspConsultantShape(!!emp && emp.tax_profile === 'consultant');
 }
 
+
+// ── End engagement (2026-09-08 consultant flow) ───────────────────────────
+// _resolve_gross_for_consultant picks the latest profile whose window covers
+// the run period, so setting end_date on the live profile is what stops a
+// consultant being paid. Flipping employee_status does not: the resolver never
+// looks at it. This is the affordance for that, reachable from both ESP lists.
+async function endHrEspEngagement(espId, employeeLabel, onDone) {
+  if (espId == null) { showToast('Save this service profile before ending the engagement.', 'error'); return; }
+  const today = new Date().toISOString().slice(0, 10);
+  const entered = prompt(
+    `End the engagement for ${employeeLabel || 'this consultant'}.\n\n` +
+    `Last day covered (YYYY-MM-DD). Consultant runs whose period starts after this date will skip them.`,
+    today);
+  if (entered === null) return;
+  const endDate = entered.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(endDate)) { showToast('Enter the date as YYYY-MM-DD.', 'error'); return; }
+
+  const res = await apiFetch(`${API_BASE}/payroll/employee-service-profiles/${espId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ end_date: endDate }),
+  });
+  if (!res) return;
+  if (res.ok) {
+    showToast(`Engagement ends ${endDate}.`, 'success');
+    if (typeof onDone === 'function') await onDone();
+    return;
+  }
+  showToast('Error: ' + await parseApiError(res), 'error');
+}
 
 function cancelHrEspForm() {
   const main = document.getElementById('main-content');
@@ -437,13 +518,21 @@ async function submitHrEspForm() {
   const disbursementMode  = document.getElementById('hr-esp-disbursement-mode')?.value || '';
   const effectiveDate     = document.getElementById('hr-esp-effective-date')?.value || '';
 
+  const emp     = (employeesData || []).find(e => e.employee_code === empCode);
+  const isConsultant = !!emp && emp.tax_profile === 'consultant';
+
   if (!empCode)          { showToast('Employee Code is required.', 'error'); return; }
   if (!reasonEvent)      { showToast('Reason/Event is required.', 'error'); return; }
-  if (!payGrade)         { showToast('Pay Grade is required.', 'error'); return; }
+  // A consultant profile must not carry a pay grade at all — the API 400s on
+  // one — so it can't be a required field for them.
+  if (!isConsultant && !payGrade) { showToast('Pay Grade is required.', 'error'); return; }
   if (!disbursementMode) { showToast('Salary Disbursement Mode is required.', 'error'); return; }
   if (!effectiveDate)    { showToast('Effective Date is required.', 'error'); return; }
+  const endDateVal = document.getElementById('hr-esp-end-date')?.value || '';
+  if (endDateVal && endDateVal < effectiveDate) {
+    showToast('End Date cannot be before the Effective Date.', 'error'); return;
+  }
 
-  const emp     = (employeesData || []).find(e => e.employee_code === empCode);
   const isEdit  = hrEspFormState.context === 'edit';
   const espId   = hrEspFormState.existingRecord?.id;
 
@@ -472,20 +561,38 @@ async function submitHrEspForm() {
   const payload = {
     reason_event:              reasonEvent,
     processing_method:         document.getElementById('hr-esp-processing-method')?.value || '',
-    pay_grade_id:              parseInt(payGrade, 10) || null,
     basic_salary:              parseFloat(document.getElementById('hr-esp-basic-salary')?.value) || null,
     effective_date:            effectiveDate,
-    end_date:                  document.getElementById('hr-esp-end-date')?.value || null,
+    end_date:                  endDateVal || null,
     // Blank means "not set" — the enum rejects an empty string, so send null.
     employee_status:           document.getElementById('hr-esp-emp-status')?.value || null,
     salary_disbursement_mode:  disbursementMode,
-    sheltered_paye:            document.getElementById('hr-esp-sh-paye')?.checked    || false,
-    sheltered_shif:            document.getElementById('hr-esp-sh-shif')?.checked    || false,
-    sheltered_nssf:            document.getElementById('hr-esp-sh-nssf')?.checked    || false,
-    sheltered_housing_levy:    document.getElementById('hr-esp-sh-housing')?.checked || false,
     bank_accounts: bankAccountsForApi,
     notes: document.getElementById('hr-esp-notes')?.value || '',
   };
+  // create_service_profile/update_service_profile 400 when a consultant's
+  // profile carries a pay grade or any sheltered_* flag. The inputs stay in the
+  // DOM while hidden (so switching the employee picker doesn't wipe a
+  // half-filled form), so their values are never read for a consultant.
+  //
+  // Sent as explicit null/false rather than omitted: ServiceProfileCreate
+  // defaults every sheltered_* to false, so the backend always sees the field
+  // and must be testing its value, not its presence — and on the PATCH-shaped
+  // update path an omitted key would leave a legacy true in place and keep
+  // tripping the guard. This clears it instead.
+  if (isConsultant) {
+    payload.pay_grade_id           = null;
+    payload.sheltered_paye         = false;
+    payload.sheltered_shif         = false;
+    payload.sheltered_nssf         = false;
+    payload.sheltered_housing_levy = false;
+  } else {
+    payload.pay_grade_id           = parseInt(payGrade, 10) || null;
+    payload.sheltered_paye         = document.getElementById('hr-esp-sh-paye')?.checked    || false;
+    payload.sheltered_shif         = document.getElementById('hr-esp-sh-shif')?.checked    || false;
+    payload.sheltered_nssf         = document.getElementById('hr-esp-sh-nssf')?.checked    || false;
+    payload.sheltered_housing_levy = document.getElementById('hr-esp-sh-housing')?.checked || false;
+  }
   // Create takes employee_id; the update schema has no employee field at all.
   if (!isEdit) payload.employee_id = employeeId;
 

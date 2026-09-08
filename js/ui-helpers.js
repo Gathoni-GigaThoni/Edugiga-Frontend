@@ -410,8 +410,29 @@ async function fetchActiveWhtSchedule() {
   return _whtActiveScheduleCache;
 }
 function whtPaymentTypeLabel(key) {
+  const known = CONSULTANT_WHT_PAYMENT_TYPES.find(t => t.value === key);
+  if (known) return known.label;
   return String(key || '').split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 }
+
+// ── Consultant WHT payment types (2026-09-08 consultant flow) ─────────────
+// EmployeeCreate/Update type consultant_wht_payment_type as a bare string, so
+// the schema can't tell you the accepted set — the service layer validates it
+// and 422s on anything else. These are the five it accepts. They are NOT the
+// same list as the active WHT schedule's rate rows: that table's payment_type
+// is a free-text column ops fill in themselves (Payroll ▸ Utilities ▸
+// Statutory Rates), so sourcing the picker from it — which is what the FE did
+// — offered whatever ops happened to type and 422'd the employee save when
+// that wasn't one of these. The schedule is still read, but only to annotate
+// each option with the rate actually in force and to flag the ones ops hasn't
+// configured yet.
+const CONSULTANT_WHT_PAYMENT_TYPES = [
+  { value: 'professional_management_consultancy', label: 'Professional / Management / Consultancy' },
+  { value: 'commercial_rent',                     label: 'Commercial Rent' },
+  { value: 'dividends',                           label: 'Dividends' },
+  { value: 'royalties',                           label: 'Royalties' },
+  { value: 'interest',                            label: 'Interest' },
+];
 
 // ── Statutory pipeline fieldset (BE/FE Contract Addendum 2026-08-06 §3.2) ───
 // Identical markup on both the Add and Edit Employee forms, so it's rendered
@@ -452,8 +473,40 @@ function renderHrTaxProfileFieldset(prefix, s) {
 
 function toggleHrTaxProfile(prefix) {
   const checked = document.querySelector(`input[name="hr-${prefix}-tax-profile"]:checked`);
+  const isConsultant = !!checked && checked.value === 'consultant';
   const sec = document.getElementById(`hr-${prefix}-consultant-fields`);
-  if (sec) sec.style.display = (checked && checked.value === 'consultant') ? 'grid' : 'none';
+  if (sec) sec.style.display = isConsultant ? 'grid' : 'none';
+  applyHrConsultantFieldRules(prefix, isConsultant);
+}
+
+// The API silently forces probation_days to 0 and coerces employee_status
+// "probation" to "active" for a consultant. Showing fields whose values the
+// server is about to overwrite is the dishonest version of that, so they're
+// hidden and the submit path sends what the server would have written anyway.
+function applyHrConsultantFieldRules(prefix, isConsultant) {
+  const grp = document.getElementById(`hr-${prefix}-probation-group`);
+  if (grp) grp.style.display = isConsultant ? 'none' : '';
+  const conf = document.getElementById(`hr-${prefix}-confirmation-group`);
+  if (conf) conf.style.display = isConsultant ? 'none' : '';
+
+  // A consultant has no probation, so the status option is removed rather
+  // than left selectable and quietly rewritten server-side.
+  const status = document.getElementById(`hr-${prefix}-employee-status`);
+  if (status) {
+    const opt = status.querySelector('option[value="probation"]');
+    if (opt) opt.hidden = isConsultant;
+    if (isConsultant && status.value === 'probation') status.value = 'active';
+  }
+}
+
+// What the employee payload's probation/status fields must be for a
+// consultant. One place so hr-add.js and hr-edit.js can't drift.
+function hrConsultantEmployeeOverrides(isConsultant, probationDays, employeeStatus) {
+  if (!isConsultant) return { probation_days: probationDays, employee_status: employeeStatus };
+  return {
+    probation_days: 0,
+    employee_status: employeeStatus === 'probation' ? 'active' : employeeStatus,
+  };
 }
 
 // Populates the #hr-{prefix}-wht-type <select> from the in-force WHT schedule.
@@ -463,18 +516,42 @@ async function loadHrWhtPaymentTypes(prefix, selectedValue) {
   const sel = document.getElementById(`hr-${prefix}-wht-type`);
   if (!sel) return;
   const active = await fetchActiveWhtSchedule();
-  if (!active || !active.rates.length) {
-    sel.innerHTML = '<option value="">No active WHT schedule configured</option>';
-    sel.disabled = true;
-    const hint = document.createElement('div');
-    hint.style = 'background:#FBF3D9;border-left:3px solid var(--gold-500,#C9A227);border-radius:6px;padding:8px 12px;margin-top:6px;font-size:12.5px;color:#5c4a00;';
-    hint.textContent = 'No active WHT schedule configured. Ask ops to set up statutory rates under Payroll → Utilities → Statutory Rates.';
-    sel.parentElement?.appendChild(hint);
-    return;
+  const rates = new Map(((active && active.rates) || []).map(r => [r.payment_type, r]));
+
+  // The options are the five values the API accepts, never the schedule's rows.
+  // A missing rate row is a run-time problem (the consultant run can't compute
+  // WHT), not a reason to block onboarding — the old code disabled the whole
+  // select when no schedule existed, which made it impossible to save a
+  // consultant at all, since the API requires this field for one.
+  let opts = CONSULTANT_WHT_PAYMENT_TYPES.map(t => {
+    const r = rates.get(t.value);
+    const note = r
+      ? ` (${_srPercent(r.resident_rate)} resident, ${_srPercent(r.nonresident_rate)} non-resident)`
+      : ' — no rate configured yet';
+    return `<option value="${t.value}" ${t.value === selectedValue ? 'selected' : ''}>${t.label}${note}</option>`;
+  });
+
+  // A value already saved against this employee that isn't one of the five —
+  // set before this list was enforced, or by an admin-created schedule row.
+  // Kept selectable so opening Edit and pressing Save can't silently rewrite
+  // it, but labelled so the operator knows it will be rejected on re-save.
+  if (selectedValue && !CONSULTANT_WHT_PAYMENT_TYPES.some(t => t.value === selectedValue)) {
+    opts.unshift(`<option value="${selectedValue}" selected>${whtPaymentTypeLabel(selectedValue)} — not one of the five accepted types</option>`);
   }
+
   sel.disabled = false;
-  sel.innerHTML = '<option value="">Please Select</option>' +
-    active.rates.map(r => `<option value="${r.payment_type}" ${r.payment_type === selectedValue ? 'selected' : ''}>${whtPaymentTypeLabel(r.payment_type)}</option>`).join('');
+  sel.innerHTML = '<option value="">Please Select</option>' + opts.join('');
+
+  const hintId = `hr-${prefix}-wht-hint`;
+  document.getElementById(hintId)?.remove();
+  const missing = CONSULTANT_WHT_PAYMENT_TYPES.filter(t => !rates.has(t.value));
+  if (missing.length === CONSULTANT_WHT_PAYMENT_TYPES.length) {
+    const hint = document.createElement('div');
+    hint.id = hintId;
+    hint.style = 'background:#FBF3D9;border-left:3px solid var(--gold-500,#C9A227);border-radius:6px;padding:8px 12px;margin-top:6px;font-size:12.5px;color:#5c4a00;';
+    hint.textContent = 'No WHT rates are configured for any of these payment types. You can still save the consultant, but their consultant run will not be able to calculate withholding until ops set the rates up under Payroll → Utilities → Statutory Rates.';
+    sel.parentElement?.appendChild(hint);
+  }
 }
 
 // Authenticated blob download for any endpoint that streams a file behind

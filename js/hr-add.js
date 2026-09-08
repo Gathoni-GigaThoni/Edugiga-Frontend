@@ -20,6 +20,10 @@ function _hrAddSetTabContent(tabId) {
   document.getElementById('hr-add-tab-content').innerHTML = renderHrAddTabContent(tabId);
   loadDepartmentOptions('hr-add-department', hrAddFormState.department_id);
   loadHrWhtPaymentTypes('add', hrAddFormState.consultant_wht_payment_type);
+  // The statutory-pipeline radios live on the Identity tab but the fields they
+  // govern (probation) are on Basic, so the toggle's own handler can't reach
+  // them — re-apply on every tab render from the saved state instead.
+  applyHrConsultantFieldRules('add', hrAddFormState.tax_profile === 'consultant');
 }
 
 function hrAddModalsHtml() {
@@ -172,6 +176,19 @@ function saveHrAddCurrentTabState() {
   if (nonResCb) hrAddFormState.is_non_resident = nonResCb.checked;
   const dirCb = document.getElementById('hr-add-director');
   if (dirCb) hrAddFormState.is_director = dirCb.checked;
+  // Service Profile tab
+  set('sp_reason_event',             'hr-add-sp-reason-event');
+  set('sp_processing_method',        'hr-add-sp-processing-method');
+  set('sp_pay_grade_id',             'hr-add-sp-pay-grade');
+  set('sp_basic_salary',             'hr-add-sp-basic-salary');
+  set('sp_employee_status',          'hr-add-sp-emp-status');
+  set('sp_salary_disbursement_mode', 'hr-add-sp-disbursement-mode');
+  set('sp_effective_date',           'hr-add-sp-effective-date');
+  set('sp_end_date',                 'hr-add-sp-end-date');
+  set('sp_notes',                    'hr-add-sp-notes');
+  [['sp_sheltered_paye','hr-add-sp-sh-paye'], ['sp_sheltered_shif','hr-add-sp-sh-shif'],
+   ['sp_sheltered_nssf','hr-add-sp-sh-nssf'], ['sp_sheltered_housing_levy','hr-add-sp-sh-housing']]
+    .forEach(([key, id]) => { const cb = document.getElementById(id); if (cb) hrAddFormState[key] = cb.checked; });
   const photoInput = document.getElementById('hr-add-photo');
   if (photoInput && photoInput.files[0]) hrAddFormState.photo = photoInput.files[0].name;
 }
@@ -254,11 +271,11 @@ function renderHrAddTabBasic() {
           <label class="hr-form-label">Joining Date <span class="hr-required">*</span></label>
           <input type="date" id="hr-add-joining-date" class="hr-form-input" value="${s.joining_date}">
         </div>
-        <div class="hr-form-group">
+        <div class="hr-form-group" id="hr-add-probation-group">
           <label class="hr-form-label">Probation Period (days) <span class="hr-required">*</span></label>
           <input type="number" id="hr-add-probation" class="hr-form-input" value="${s.probation_period}" placeholder="e.g. 90" min="0">
         </div>
-        <div class="hr-form-group">
+        <div class="hr-form-group" id="hr-add-confirmation-group">
           <label class="hr-form-label">Confirmation Date</label>
           <input type="text" id="hr-add-confirm-date" class="hr-form-input hr-form-readonly" value="${s.confirmation_date}" readonly placeholder="Auto-calculated">
         </div>
@@ -434,21 +451,154 @@ function renderHrAddTabDependents() {
   `;
 }
 
-// Service profiles are created via a direct POST to
-// /payroll/employee-service-profiles/ keyed on employee_code — that only
-// works once the employee actually exists server-side. This tab used to
-// offer an "Add" button that opened the ESP form mid-wizard, which posted
-// against a client-only placeholder code and 404'd. Service profiles are
-// now added from Edit Employee (js/hr-edit.js), once the employee is real.
+// This tab used to be a "come back later" placeholder: the standalone ESP
+// form POSTs to /payroll/employee-service-profiles/ against an employee that
+// doesn't exist yet mid-wizard, so it 404'd and was removed.
+//
+// EmployeeOnboardRequest carries an optional `service_profile`
+// (ServiceProfileCreate) alongside employee/identity/medical, so the first
+// profile can be created in the same atomic call instead. That matters most
+// for a consultant: without a profile they have no fee and no engagement
+// window, and their first consultant run warns "no_contract_amount".
+//
+// Deliberately narrower than the full ESP form — no bank-accounts widget.
+// Bank splits have their own percentages-sum-to-100 rules and an editor of
+// their own; they're added afterwards from Edit Employee, which the hint says.
 function renderHrAddTabServiceProfile() {
+  const s = hrAddFormState;
+  const isConsultant = s.tax_profile === 'consultant';
+  const sel = (val, opt) => val === opt ? 'selected' : '';
+  const v = k => s[k] || '';
   return `
     <div class="hr-tab-body">
-      <div style="background:#EEF3FA;border-left:3px solid var(--navy-400,#4A6FA5);border-radius:6px;padding:14px 18px;font-size:13px;color:var(--navy-900,#0D2137);line-height:1.6;">
-        Service profiles can only be added once this employee has been saved. Submit this form first, then open
-        the new employee from the Employee Directory and add a Service Profile from there.
+      <div style="background:#EEF3FA;border-left:3px solid var(--navy-400,#4A6FA5);border-radius:6px;padding:12px 18px;margin-bottom:16px;font-size:12.5px;color:var(--navy-900,#0D2137);line-height:1.6;">
+        Optional — fill this in and the ${isConsultant ? 'engagement' : 'service profile'} is created together with the employee, in one call.
+        Leave it blank to add one later from the Employee Directory.
+        ${isConsultant
+          ? 'A consultant needs a fee and an effective date before their first consultant run can calculate anything.'
+          : ''}
+        Bank account splits are added afterwards from Edit Employee &rsaquo; Employee Service Profile.
+      </div>
+      <div class="hr-form-grid">
+        <div class="hr-form-group">
+          <label class="hr-form-label">Reason/Event</label>
+          <select id="hr-add-sp-reason-event" class="hr-form-select">
+            <option value="">Please Select</option>
+            ${['New Hire','Promotion','Salary Review','Demotion','Transfer','Termination']
+              .map(o => `<option value="${o}" ${sel(v('sp_reason_event') || 'New Hire', o)}>${o}</option>`).join('')}
+          </select>
+        </div>
+        <div class="hr-form-group">
+          <label class="hr-form-label">Processing Method</label>
+          <select id="hr-add-sp-processing-method" class="hr-form-select">
+            ${['Pay Grade','Basic','Hourly']
+              .map(o => `<option value="${o}" ${sel(v('sp_processing_method') || (isConsultant ? 'Basic' : 'Pay Grade'), o)}>${o}</option>`).join('')}
+          </select>
+        </div>
+        <div class="hr-form-group" id="hr-add-sp-pay-grade-group" style="display:${isConsultant ? 'none' : ''};">
+          <label class="hr-form-label">Pay Grade</label>
+          <select id="hr-add-sp-pay-grade" class="hr-form-select">
+            ${_renderEspPayGradeOptions(v('sp_pay_grade_id'))}
+          </select>
+        </div>
+        <div class="hr-form-group">
+          <label class="hr-form-label" id="hr-add-sp-salary-label">${isConsultant ? 'Consultancy Fee (per period)' : 'Basic Salary'}</label>
+          <input type="number" id="hr-add-sp-basic-salary" class="hr-form-input" step="0.01" min="0" value="${v('sp_basic_salary')}" placeholder="Enter amount">
+        </div>
+        <div class="hr-form-group">
+          <label class="hr-form-label">Employee Status</label>
+          <select id="hr-add-sp-emp-status" class="hr-form-select">
+            <option value="">Please Select</option>
+            <option value="active"     ${sel(v('sp_employee_status'), 'active')}>Active</option>
+            <option value="probation"  ${sel(v('sp_employee_status'), 'probation')} ${isConsultant ? 'hidden' : ''}>Probation</option>
+            <option value="confirmed"  ${sel(v('sp_employee_status'), 'confirmed')}>Confirmed</option>
+            <option value="on_leave"   ${sel(v('sp_employee_status'), 'on_leave')}>On Leave</option>
+            <option value="suspended"  ${sel(v('sp_employee_status'), 'suspended')}>Suspended</option>
+            <option value="terminated" ${sel(v('sp_employee_status'), 'terminated')}>Terminated</option>
+          </select>
+        </div>
+        <div class="hr-form-group">
+          <label class="hr-form-label">Salary Disbursement Mode</label>
+          <select id="hr-add-sp-disbursement-mode" class="hr-form-select">
+            <option value="">Please Select</option>
+            <option value="bank_transfer" ${sel(v('sp_salary_disbursement_mode'),'bank_transfer')}>Bank Transfer</option>
+            <option value="cash"          ${sel(v('sp_salary_disbursement_mode'),'cash')}>Cash</option>
+            <option value="cheque"        ${sel(v('sp_salary_disbursement_mode'),'cheque')}>Cheque</option>
+            <option value="mpesa"         ${sel(v('sp_salary_disbursement_mode'),'mpesa')}>Mobile Money (M-Pesa)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="hr-esp-sheltered-section" id="hr-add-sp-sheltered-section" style="display:${isConsultant ? 'none' : ''};">
+        <label class="hr-form-label">Sheltered from Paying</label>
+        <div class="hr-esp-sheltered-row">
+          <label class="hr-form-checkbox-label"><input type="checkbox" id="hr-add-sp-sh-paye"    class="hr-form-cb" ${s.sp_sheltered_paye ? 'checked' : ''}> P.A.Y.E.</label>
+          <label class="hr-form-checkbox-label"><input type="checkbox" id="hr-add-sp-sh-shif"    class="hr-form-cb" ${s.sp_sheltered_shif ? 'checked' : ''}> S.H.I.F.</label>
+          <label class="hr-form-checkbox-label"><input type="checkbox" id="hr-add-sp-sh-nssf"    class="hr-form-cb" ${s.sp_sheltered_nssf ? 'checked' : ''}> N.S.S.F.</label>
+          <label class="hr-form-checkbox-label"><input type="checkbox" id="hr-add-sp-sh-housing" class="hr-form-cb" ${s.sp_sheltered_housing_levy ? 'checked' : ''}> Housing Levy</label>
+        </div>
+      </div>
+
+      <div class="hr-esp-sheltered-section">
+        <label class="hr-form-label">${isConsultant ? 'Engagement window' : 'Effective dates'}</label>
+        ${isConsultant ? `<span style="display:block;font-size:12px;color:var(--grey-600);margin-bottom:8px;">
+          A consultant run pays the latest profile whose window covers the run period. Leave the end date blank for an open-ended engagement — you set it later to stop paying them.
+        </span>` : ''}
+        <div class="hr-form-grid">
+          <div class="hr-form-group">
+            <label class="hr-form-label">Effective Date</label>
+            <input type="date" id="hr-add-sp-effective-date" class="hr-form-input" value="${v('sp_effective_date')}">
+          </div>
+          <div class="hr-form-group">
+            <label class="hr-form-label">${isConsultant ? 'End Date (engagement over)' : 'End Date'}</label>
+            <input type="date" id="hr-add-sp-end-date" class="hr-form-input" value="${v('sp_end_date')}">
+          </div>
+        </div>
+      </div>
+
+      <div class="hr-form-group" style="margin-top:20px;">
+        <label class="hr-form-label">Notes / Details</label>
+        <textarea id="hr-add-sp-notes" class="hr-form-textarea" rows="3" placeholder="Additional notes...">${v('sp_notes')}</textarea>
       </div>
     </div>
   `;
+}
+
+// Returns a ServiceProfileCreate for the onboard body, or null when the
+// operator left the tab alone. "Left alone" means no fee, no effective date
+// and no pay grade — the three things that make a profile worth creating.
+function _hrAddServiceProfilePayload() {
+  const s = hrAddFormState;
+  const isConsultant = s.tax_profile === 'consultant';
+  const fee = parseFloat(s.sp_basic_salary);
+  const hasFee = !Number.isNaN(fee);
+  const hasGrade = !isConsultant && !!s.sp_pay_grade_id;
+  if (!hasFee && !s.sp_effective_date && !hasGrade) return null;
+
+  const sp = {
+    reason_event:             s.sp_reason_event || 'New Hire',
+    processing_method:        s.sp_processing_method || (isConsultant ? 'Basic' : 'Pay Grade'),
+    basic_salary:             hasFee ? fee : null,
+    employee_status:          s.sp_employee_status || null,
+    salary_disbursement_mode: s.sp_salary_disbursement_mode || null,
+    effective_date:           s.sp_effective_date || null,
+    end_date:                 s.sp_end_date || null,
+    notes:                    s.sp_notes || '',
+    bank_accounts:            [],
+  };
+  // Same guardrail as the standalone ESP form: a consultant's profile must
+  // carry no pay grade and no shelters or the create 400s.
+  if (isConsultant) {
+    sp.pay_grade_id = null;
+    sp.sheltered_paye = sp.sheltered_shif = sp.sheltered_nssf = sp.sheltered_housing_levy = false;
+  } else {
+    sp.pay_grade_id           = s.sp_pay_grade_id ? parseInt(s.sp_pay_grade_id, 10) : null;
+    sp.sheltered_paye         = !!s.sp_sheltered_paye;
+    sp.sheltered_shif         = !!s.sp_sheltered_shif;
+    sp.sheltered_nssf         = !!s.sp_sheltered_nssf;
+    sp.sheltered_housing_levy = !!s.sp_sheltered_housing_levy;
+  }
+  return sp;
 }
 
 // ---- Add Employee submission ----
@@ -462,10 +612,17 @@ async function submitHrAddEmployee() {
   if (!s.birth_date)          { showToast('Birth Date is required.', 'error'); return; }
   if (!s.gender)              { showToast('Gender is required.', 'error'); return; }
   if (!s.joining_date)        { showToast('Joining Date is required.', 'error'); return; }
-  if (!s.probation_period)    { showToast('Probation Period is required.', 'error'); return; }
+  const isConsultant = s.tax_profile === 'consultant';
+  // Consultants have no probation — the API forces probation_days to 0 for
+  // them, and the field is hidden, so requiring it here would block a save on
+  // a value the server discards.
+  if (!isConsultant && !s.probation_period) { showToast('Probation Period is required.', 'error'); return; }
   if (!s.nationality)         { showToast('Nationality is required.', 'error'); return; }
-  if (s.tax_profile === 'consultant' && !s.consultant_wht_payment_type) {
+  if (isConsultant && !s.consultant_wht_payment_type) {
     showToast('Payment Type is required for consultant employees.', 'error'); return;
+  }
+  if (s.sp_end_date && s.sp_effective_date && s.sp_end_date < s.sp_effective_date) {
+    showToast('Service profile End Date cannot be before the Effective Date.', 'error'); return;
   }
 
   // POST /hr/employees/onboard (EmployeeOnboardRequest) is the atomic
@@ -494,7 +651,13 @@ async function submitHrAddEmployee() {
     birth_date: s.birth_date || null,
     gender: s.gender || null,
     joining_date: s.joining_date,
-    probation_days: s.probation_period ? parseInt(s.probation_period, 10) : 90,
+    // EmployeeCreate defaults probation_days to 90 and employee_status to
+    // "probation"; for a consultant the API overwrites both (0 / "active").
+    // Sent explicitly so the request says what will actually be stored.
+    ...hrConsultantEmployeeOverrides(
+      isConsultant,
+      s.probation_period ? parseInt(s.probation_period, 10) : 90,
+      isConsultant ? 'active' : undefined),
     address: s.address || null,
     nationality: s.nationality || null,
     national_id_no: s.national_id || null,
@@ -520,10 +683,18 @@ async function submitHrAddEmployee() {
     medical_info: s.medical_info || null,
   };
 
+  // service_profile is part of EmployeeOnboardRequest, so the first profile
+  // commits atomically with the employee rather than needing a second trip
+  // through the Employee Directory. Omitted entirely when the tab was left
+  // blank — sending an empty object would create a meaningless profile row.
+  const service_profile = _hrAddServiceProfilePayload();
+  const onboardBody = { employee, identity, medical };
+  if (service_profile) onboardBody.service_profile = service_profile;
+
   const res = await apiFetch(`${API_BASE}/hr/employees/onboard`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ employee, identity, medical }),
+    body: JSON.stringify(onboardBody),
   });
 
   if (submitBtn) submitBtn.disabled = false;
