@@ -199,6 +199,7 @@ function _invStoreTypePill(v) {
 let _invStaffCache = null;
 let _invClassesCache = null;
 let _invControlAccountsCache = null;
+let _invControlAccountsDiag = null;
 
 async function _invEnsureStaffCache() {
   if (_invStaffCache) return;
@@ -230,10 +231,71 @@ function _invClassLabel(id) {
   return c.name || c.class_code || `#${id}`;
 }
 
-async function _invEnsureControlAccountsCache() {
-  if (_invControlAccountsCache) return;
-  const res = await apiFetch(`${API_BASE}/accounts/?account_type=Asset&account_subtype=${encodeURIComponent('Inventory')}&is_active=true`);
-  _invControlAccountsCache = (res && res.ok) ? _toArray(await res.json()) : [];
+// The backend guard on inv_store.inventory_control_account_id is
+// "active + Asset + INVENTORY subtype" (StoreCreate, and StoreUpdate re-runs
+// it), so this query mirrors it exactly — widening it would only buy 400s.
+// Two things used to make an empty result indistinguishable from a broken one:
+// the raw apiFetch swallowed a 403 into [], and `if (_invControlAccountsCache)`
+// treated that [] as a hit and never retried for the rest of the session. Now
+// it goes through loadLookupList (which toasts a denial and records it for
+// lookupPlaceholder), only a non-empty result is cached, and an empty one is
+// explained by _invDiagnoseControlAccounts below rather than left blank.
+async function _invEnsureControlAccountsCache(force = false) {
+  if (_invControlAccountsCache && _invControlAccountsCache.length && !force) return;
+  _invControlAccountsCache = await loadLookupList(
+    `${API_BASE}/accounts/?account_type=Asset&account_subtype=${encodeURIComponent('Inventory')}&is_active=true`,
+    'accounts');
+  _invControlAccountsDiag = await _invDiagnoseControlAccounts(_invControlAccountsCache);
+}
+
+// Answers "why is this dropdown empty?" from the operator's own session, which
+// is the only place the question can actually be answered — each branch names
+// the one condition that failed and where to go and fix it.
+async function _invDiagnoseControlAccounts(rows) {
+  if (lookupWasDenied('accounts')) return { message: lookupDeniedMessage('accounts') };
+
+  if (rows.length === 0) {
+    const allAssets = await loadLookupList(`${API_BASE}/accounts/?account_type=Asset&is_active=true`, 'accounts');
+    if (lookupWasDenied('accounts')) return { message: lookupDeniedMessage('accounts') };
+    if (allAssets.length === 0) {
+      return { message: 'No active Asset accounts exist yet — the Chart of Accounts has not been set up. Create the inventory control accounts under Finance ▸ Chart of Accounts first.' };
+    }
+    const subtypes = [...new Set(allAssets.map(a => a.account_subtype).filter(Boolean))].sort();
+    return { message: `${allAssets.length} active Asset account${allAssets.length === 1 ? '' : 's'} exist, but none is classified under the "Inventory" sub-type${subtypes.length ? ` — the sub-types in use are: ${subtypes.join(', ')}` : ''}. Open Finance ▸ Chart of Accounts and set the sub-type to Inventory on the accounts that should back your stores.` };
+  }
+
+  if (!rows.some(a => a.is_postable !== false)) {
+    return { message: `${rows.length} Asset/Inventory account${rows.length === 1 ? ' is a header' : 's are all headers'} (not postable). Stock postings hit this account directly, so it has to be a postable leaf — add a child account under the Inventory header in Finance ▸ Chart of Accounts.` };
+  }
+  return null;
+}
+
+// Renders the control-account picker with the diagnosis in place of a silently
+// empty dropdown. selectId lets the Add and Edit forms share it.
+function _invAccountPickerHtml(selectId, selectedId, errId) {
+  const diag = _invControlAccountsDiag;
+  const placeholder = diag
+    ? lookupPlaceholder('accounts', 'No eligible account found')
+    : 'Please Select';
+  // A store bound to an account the eligibility query no longer returns (it was
+  // deactivated, or reclassified out of the Inventory subtype) would otherwise
+  // render as an empty picker, reading as "no account set" when one very much
+  // is. Show the current binding, disabled, so the state is visible.
+  const options = _invAccountOptionsHtml(selectedId);
+  const currentMissing = selectedId != null &&
+    !(_invControlAccountsCache || []).some(a => String(a.id) === String(selectedId));
+  return `
+    <label class="fin-form-label">Inventory Control Account</label>
+    <select id="${selectId}" class="fin-form-select">
+      <option value="">${_invEsc(placeholder)}</option>
+      ${currentMissing ? `<option value="" selected disabled>Currently #${selectedId} — no longer an active Asset/Inventory account</option>` : ''}
+      ${options}
+    </select>
+    ${diag
+      ? `<span style="display:block;font-size:12px;color:var(--coral-600);margin-top:4px;">${_invEsc(diag.message)}</span>
+         <span style="display:block;font-size:12px;color:var(--grey-600);margin-top:2px;">Leaving this blank is still safe — the backend resolves the default Asset/Inventory account for the store type.</span>`
+      : `<span style="font-size:12px;color:var(--grey-600)">Leave blank to use the default Asset/Inventory account for this store type.</span>`}
+    ${errId ? `<span class="fin-field-error" id="${errId}"></span>` : ''}`;
 }
 function _invAccountName(id) {
   if (id == null) return '—';
@@ -366,13 +428,7 @@ function _invRenderStoreAddForm(el) {
         </select>
       </div>
       <div class="fin-form-group">
-        <label class="fin-form-label">Inventory Control Account</label>
-        <select id="inv-store-f-account" class="fin-form-select">
-          <option value="">Please Select</option>
-          ${_invAccountOptionsHtml(null)}
-        </select>
-        <span style="font-size:12px;color:var(--grey-600)">Leave blank to use the default Asset/Inventory account for this store type.</span>
-        <span class="fin-field-error" id="inv-store-f-account-err"></span>
+        ${_invAccountPickerHtml('inv-store-f-account', null, 'inv-store-f-account-err')}
       </div>
       <div class="fin-form-group">
         <label style="display:flex;align-items:center;gap:8px;">
@@ -466,8 +522,10 @@ async function _invSubmitStoreAdd() {
   showToast('Error: ' + message, 'error');
 }
 
-// ── Edit — name, custodian, is_active only (§2.7) ───────────────────────
+// ── Edit — name, custodian, is_active, control account ──────────────────
+let _invStoreEditOriginalAccountId = null;
 function _invRenderStoreEditForm(item, el) {
+  _invStoreEditOriginalAccountId = item.inventory_control_account_id ?? null;
   el.innerHTML = `
     <div style="max-width:460px;">
       <h3 class="split-right-add-title">Edit ${_invEsc(item.code || '')}</h3>
@@ -484,11 +542,14 @@ function _invRenderStoreEditForm(item, el) {
         </select>
       </div>
       <div class="fin-form-group">
+        ${_invAccountPickerHtml('inv-store-e-account', item.inventory_control_account_id, 'inv-store-e-account-err')}
+      </div>
+      <div class="fin-form-group">
         <label style="display:flex;align-items:center;gap:8px;">
           <input type="checkbox" id="inv-store-e-active" ${item.is_active !== false ? 'checked' : ''}> Active
         </label>
       </div>
-      <p style="font-size:12px;color:var(--grey-600);margin:4px 0 0;">Store type, class, and control account are locked once created. To change them, deactivate this store and create a new one.</p>
+      <p style="font-size:12px;color:var(--grey-600);margin:4px 0 0;">Store type and class link are locked once created — changing them would invalidate the GL posting on historical stock movements. The control account can be rebound to repair a store that picked up the wrong default.</p>
       <div style="display:flex;gap:12px;margin-top:20px;">
         <button class="fin-btn-teal" onclick="_invSubmitStoreEdit(${item.id})">Update</button>
         <button class="fin-btn-cancel" onclick="window._splitRefreshSelected?.()">Cancel</button>
@@ -503,6 +564,17 @@ async function _invSubmitStoreEdit(id) {
   setErr('inv-store-e-name-err', '');
   if (!name) { setErr('inv-store-e-name-err', 'This field is required.'); return; }
   const payload = { name, custodian_employee_id: custId ? parseInt(custId) : null, is_active: active };
+  // StoreUpdate accepts inventory_control_account_id — rebinding is how an
+  // operator repairs a store that resolved to the wrong default at create
+  // time. Only sent when it actually changed, so a blank picker (no eligible
+  // account loaded) can never null out a working binding.
+  // Only a positive pick is sent. An empty picker means "nothing eligible
+  // loaded", not "clear the binding" — and StoreRead has the field non-null
+  // anyway, so there is no clear-to-default case to support here.
+  const acctId = document.getElementById('inv-store-e-account')?.value || '';
+  if (acctId && String(parseInt(acctId)) !== String(_invStoreEditOriginalAccountId ?? '')) {
+    payload.inventory_control_account_id = parseInt(acctId);
+  }
   const res = await apiFetch(`${_INV_API}/stores/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   if (res && res.ok) {
     _invInvalidateStoresCache();
@@ -510,7 +582,14 @@ async function _invSubmitStoreEdit(id) {
     await window._splitRefreshSelected?.();
     return;
   }
-  if (res) { const { message } = await _invParseError(res); showToast('Error: ' + message, 'error'); }
+  if (!res) return;
+  if (res.status === 400 || res.status === 422) {
+    const { message } = await _invParseError(res);
+    const e = document.getElementById('inv-store-e-account-err');
+    if (e) { e.textContent = message; return; }
+  }
+  const { message } = await _invParseError(res);
+  showToast('Error: ' + message, 'error');
 }
 
 // ── Detail actions — Deactivate / Reactivate ────────────────────────────
