@@ -254,14 +254,13 @@ function stopKeepAlive() {
 // Fetched once at login. Confirmed live response shape:
 //   { modules: [{ key, label, parent_key, can_view, can_add, can_edit, can_delete }] }
 // Flat list, dot-notation keys (e.g. "finance.receivables"), parent_key is
-// null for top-level nav headers. A top-level (or any) entry with
-// can_view:false that still appears in the response is a nav-header-only
-// row — it exists purely so its viewable children have somewhere to hang
-// (confirmed: "the backend already omits header-only items that have no
-// viewable descendants"). Replaces the old /roles/{role_id}/permissions +
-// /roles/permissions/matrix label-matching approach entirely — this one
-// endpoint gives real keys and per-action flags in a single call, so there's
-// no more guessing/label-matching needed anywhere.
+// null for top-level nav headers. The backend returns EVERY registered
+// module_key on every response — keys the caller has no permission on come
+// back with can_view/add/edit/delete all False (not omitted). That
+// exhaustiveness is the contract canView/canAdd/canEdit/canDelete rely on:
+// a key missing from the cache means the FE is asking about a permission
+// that's not registered at all (typo, or a screen whose gate hasn't been
+// wired up yet), which is the only case those helpers fail open on.
 let _modulesByKey = {};
 let _modulesLoaded = false; // true once a fetch has SUCCEEDED — see _moduleFlag for why this matters
 
@@ -285,12 +284,12 @@ function _isSuperAdmin() {
 // Generic flag lookup — flag is 'can_view'|'can_add'|'can_edit'|'can_delete'.
 // Fails OPEN only when there's genuinely no data to judge from: the fetch
 // never completed (network/auth issue — avoids locking every non-admin user
-// out of everything over an unrelated loading bug) or this specific key was
-// never registered (a screen with no matching permission key yet — nothing
-// defined to enforce). Fails CLOSED (returns false) whenever the fetch
-// succeeded and the registry explicitly says false for this key — including
-// the documented "authenticated but no role assigned" -> modules:[] case,
-// since that's real signal from the backend, not a data-loading gap.
+// out of everything over an unrelated loading bug) or the key is not in
+// the registry at all (a screen whose gate hasn't been wired up yet). Since
+// the backend now returns every registered key on every response — with
+// can_view/add/edit/delete all False for keys the caller has no permission
+// on — a key that IS registered but the user can't access will be present
+// in the cache with False flags and correctly fails CLOSED.
 function _moduleFlag(key, flag) {
   if (_isSuperAdmin()) return true;
   if (!key) return true;

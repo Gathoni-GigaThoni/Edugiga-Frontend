@@ -40,6 +40,194 @@ function _computeRailAccess() {
   return Object.fromEntries(entries);
 }
 
+// Sidebar <li> id -> module_key. The rail button already hides whole modules
+// the caller can't touch (_computeRailAccess above), but the flyout body for
+// every module is emitted into the DOM once at showDashboard time regardless
+// of role — so without a per-item gate the caller sees every sub-nav the
+// module has. _applyFlyoutPermissions runs after showDashboard renders and
+// hides every id in this map whose module_key returns canView===false.
+// Items not listed here are legacy nav rows without a dedicated permission
+// key; the backend endpoint they call still enforces its own gate.
+const _SIDEBAR_ITEM_MODULE_KEYS = {
+  // Student Management
+  'sidebar-stu-list':                     'student_management.students',
+  'sidebar-stu-cohort':                   'student_management.students',
+  'sidebar-stu-classes':                  'student_management.students',
+  'sidebar-stu-close-records':            'student_management.class_record_close',
+  'sidebar-stu-parent-portal':            'student_management.parent_portal',
+  'sidebar-stu-supplies':                 'student_management.supplies',
+  'sidebar-stu-my-class-supplies':        'student_management.supplies',
+  'sidebar-stu-admissions-applicants':    'student_management.admissions',
+  'sidebar-stu-streams':                  'student_management.students',
+  'sidebar-stu-funding':                  'student_management.students',
+  'sidebar-stu-sports-houses':            'student_management.students',
+  'sidebar-stu-stream-assign':            'student_management.students',
+  'sidebar-stu-ec-assign':                'extra_curricular.assignments',
+  'sidebar-stu-report':                   'student_management.students',
+  'sidebar-stu-gua-report':               'student_management.students',
+
+  // Student Academics
+  'sidebar-att-register':                 'student_academics.attendance_register',
+  'sidebar-att-reg-report':               'student_academics.attendance_register',
+  'sidebar-formative-assessment':         'student_academics.attendance_register',
+  'sidebar-sa-subjects':                  'student_academics.academic_year_setup',
+  'sidebar-sa-sessions':                  'student_academics.academic_year_setup',
+  'sidebar-sa-session-types':             'student_academics.academic_year_setup',
+  'sidebar-sa-academic-years':            'student_academics.academic_year_setup',
+  'sidebar-sa-academic-levels':           'student_academics.levels',
+
+  // Transport
+  'sidebar-trn-servicings':               'transport_management',
+  'sidebar-trn-fueling':                  'transport_management',
+  'sidebar-trn-schedules':                'transport_management',
+  'sidebar-trn-schedules-upload':         'transport_management',
+  'sidebar-trn-casual-bus':               'transport_management',
+  'sidebar-trn-routes':                   'transport_management',
+  'sidebar-trn-bus-boarding':             'transport_management',
+  'sidebar-trn-student-per-route':        'transport_management',
+  'sidebar-trn-service-items':            'transport_management',
+  'sidebar-trn-maintenance':              'transport_management',
+  'sidebar-trn-vehicles':                 'transport_management',
+
+  // Finance
+  'sidebar-fin-student-fees-status':      'finance.student_fees_status',
+  'sidebar-fin-summarized-fee-statement': 'finance.summarized_fee_statement',
+  'sidebar-fin-fee-schedules':            'finance.student_finance',
+  'sidebar-fin-fee-setup-class':          'finance.student_finance',
+  'sidebar-fin-fee-assign':               'finance.receivables',
+  'sidebar-fin-fee-invoices':             'finance.receivables',
+  'sidebar-fin-bulk':                     'finance.receivables',
+  'sidebar-fin-inv-adj':                  'finance.receivables',
+  'sidebar-fin-spon-alloc':               'finance.student_finance',
+  'sidebar-fin-spon-mgmt':                'finance.student_finance',
+  'sidebar-fin-bc-recon':                 'finance.cash_bank_management',
+  'sidebar-fin-bc-imports':               'finance.cash_bank_management',
+  'sidebar-fin-tp-import':                'finance.cash_bank_management',
+  'sidebar-fin-tp-history':               'finance.cash_bank_management',
+  'sidebar-fin-tp-suspense':              'finance.cash_bank_management',
+  'sidebar-fin-tp-funds':                 'finance.cash_bank_management',
+  'sidebar-fin-tp-funds-upload':          'finance.cash_bank_management',
+  'sidebar-fin-tp-recon':                 'finance.cash_bank_management',
+  'sidebar-fin-pv':                       'finance.payables',
+  'sidebar-fin-tv':                       'finance.payables',
+  'sidebar-fin-si':                       'finance.payables',
+  'sidebar-fin-wht':                      'finance.payables',
+  'sidebar-fin-ec':                       'finance.payables',
+  'sidebar-fin-ecd':                      'finance.payables',
+  'sidebar-fin-pca':                      'finance.payables',
+  'sidebar-fin-pcd':                      'finance.payables',
+  'sidebar-fin-iw':                       'finance.payables',
+  'sidebar-fin-id':                       'finance.payables',
+  'sidebar-fin-isr':                      'finance.payables',
+  'sidebar-fin-tv-mismatches':            'finance.reports',
+  'sidebar-fin-rcv-pay':                  'finance.receivables',
+  'sidebar-fin-txns':                     'finance.receivables',
+  'sidebar-fin-deposit':                  'finance.cash_bank_management',
+  'sidebar-fin-credit':                   'finance.cancellations',
+  'sidebar-fin-coop':                     'finance.receivables',
+  'sidebar-fin-cancellations':            'finance.cancellations',
+  'sidebar-fin-journal-entries':          'finance.journal_entries',
+  'sidebar-fin-je-review':                'finance.journal_entries',
+  'sidebar-fin-coa':                      'finance.setup',
+  'sidebar-fin-fee-accts':                'finance.setup',
+  'sidebar-fin-fee-items':                'finance.setup',
+  'sidebar-fin-gen-items':                'finance.setup',
+  'sidebar-fin-subtypes':                 'finance.utilities',
+  'sidebar-fin-fiscal':                   'finance.year_close',
+  'sidebar-fin-pay-modes':                'finance.setup',
+  'sidebar-fin-departments':              'finance.budgeting.departments',
+  'sidebar-fin-budgets':                  'finance.budgeting.budgets',
+  'sidebar-fin-setup-main':               'finance.setup',
+  'sidebar-fin-discount-setup':           'finance.setup',
+  'sidebar-fin-sibling-groups':           'finance.student_finance',
+
+  // Document Approvals
+  'sidebar-da-queue':                     'document_approval',
+  'sidebar-da-all':                       'document_approval',
+  'sidebar-da-surcharge':                 'document_approval',
+
+  // Inventory
+  'sidebar-inv-stores':                   'inventory_management.stores',
+  'sidebar-inv-grn':                      'inventory_management.grn',
+  'sidebar-inv-stock':                    'inventory_management.stock',
+  'sidebar-inv-issues':                   'inventory_management.issues',
+  'sidebar-inv-transfers':                'inventory_management.transfers',
+  'sidebar-inv-adjustments':              'inventory_management.adjustments',
+  'sidebar-inv-stocktakes':               'inventory_management.stocktakes',
+  'sidebar-inv-internal-requisitions':    'inventory_management.internal_requisitions',
+
+  // HR
+  'sidebar-hr-employee-directory':        'human_resource.employee_directory',
+  'sidebar-hr-staff-attendance':          'human_resource.employee_directory',
+  'sidebar-hr-pay-grades':                'payroll.utilities.pay_grades',
+
+  // Payroll
+  'sidebar-payroll-esp':                  'payroll.employee_service_profiles',
+  'sidebar-payroll-runs':                 'payroll.payslips',
+  'sidebar-payroll-consultant-runs':      'payroll.payslips',
+  'sidebar-payroll-payslips':             'payroll.payslips',
+  'sidebar-payroll-p9a':                  'payroll.payslips',
+  'sidebar-payroll-salary-deductions':    'payroll.salary_deductions',
+  'sidebar-payroll-salary-advances':      'payroll.salary_advances',
+  'sidebar-payroll-pay-accounts':         'payroll.utilities.pay_accounts',
+  'sidebar-payroll-salary-periods':       'payroll.utilities.salary_periods',
+  'sidebar-payroll-salary-disbursement':  'payroll.utilities.salary_disbursement_modes',
+  'sidebar-payroll-fi':                   'payroll.utilities.financial_institutions',
+  'sidebar-payroll-employee-events':      'payroll.utilities.employee_events',
+  'sidebar-payroll-employee-status':      'payroll.utilities.employee_status',
+  'sidebar-payroll-statutory-rates':      'payroll.utilities.statutory_rates',
+
+  // Procurement
+  'sidebar-prc-suppliers':                'procurement',
+  'sidebar-prc-requisitions':             'procurement',
+
+  // Assets
+  'sidebar-asset-fixed-assets':           'asset_management.fixed_assets',
+  'sidebar-asset-categories':             'asset_management.categories',
+
+  // Communication
+  'sidebar-com-parent-docs':              'communication',
+};
+
+// Dropdown group <ul> id -> module_key (or dot-prefix). When no descendant
+// of the prefix is viewable (hasModuleAccess returns false), the whole
+// `<li class="dropdown">` wrapper containing the ul is hidden, so an empty
+// group header doesn't linger after all its children have been gated away.
+const _FLYOUT_GROUP_MODULE_PREFIXES = {
+  'stu-admissions-dropdown':      'student_management.admissions',
+  'stu-utilities-dropdown':       'student_management.students',
+  'stu-reports-dropdown':         'student_management.students',
+  'att-reports-dropdown':         'student_academics.attendance_register',
+  'transport-reports-dropdown':   'transport_management',
+  'transport-utilities-dropdown': 'transport_management',
+  'fin-sf-dropdown':              'finance.student_finance',
+  'fin-bankcash-dropdown':        'finance.cash_bank_management',
+  'fin-tendepay-dropdown':        'finance.cash_bank_management',
+  'fin-payables-dropdown':        'finance.payables',
+  'fin-audit-dropdown':           'finance.reports',
+  'fin-receivables-dropdown':     'finance.receivables',
+  'fin-utilities-dropdown':       'finance.setup',
+  'fin-budgeting-dropdown':       'finance.budgeting',
+  'fin-setup-dropdown':           'finance.setup',
+  'fin-reports-dropdown':         'finance.reports',
+  'hr-utilities-dropdown':        'payroll.utilities.pay_grades',
+  'payroll-utilities-dropdown':   'payroll.utilities',
+};
+
+function _applyFlyoutPermissions() {
+  Object.entries(_SIDEBAR_ITEM_MODULE_KEYS).forEach(([elId, key]) => {
+    const el = document.getElementById(elId);
+    if (el && !canView(key)) el.style.display = 'none';
+  });
+  Object.entries(_FLYOUT_GROUP_MODULE_PREFIXES).forEach(([ulId, prefix]) => {
+    if (!hasModuleAccess(prefix)) {
+      const ul = document.getElementById(ulId);
+      const li = ul?.closest('li.dropdown');
+      if (li) li.style.display = 'none';
+    }
+  });
+}
+
 function showDashboard() {
   const isSuperAdmin = currentUser?.clearance_level === 1 || currentUser?.role === 'super_admin';
   const access = _computeRailAccess();
@@ -166,8 +354,8 @@ function showDashboard() {
 
           <div class="flyout-module-body" id="flyout-body-finance" data-label="Finance" hidden>
             <ul id="finance-dropdown" class="dropdown-menu">
-              <li onclick="loadView('student-fees-status')">Student Fees Status</li>
-              <li onclick="loadView('summarized-fee-statement')">Summarised Fee Statement</li>
+              <li id="sidebar-fin-student-fees-status" onclick="loadView('student-fees-status')">Student Fees Status</li>
+              <li id="sidebar-fin-summarized-fee-statement" onclick="loadView('summarized-fee-statement')">Summarised Fee Statement</li>
               <li class="dropdown">
                 ${flyoutGroupHeader('Student Finance', 'fin-sf-dropdown')}
                 <ul id="fin-sf-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('fin-sf-dropdown')}">
@@ -231,8 +419,8 @@ function showDashboard() {
                   <li id="sidebar-fin-coop"       class="sidebar-sub-sub" onclick="loadView('fin-coop-unmatched')">Unmatched Co-op Payments</li>
                 </ul>
               </li>
-              <li onclick="loadView('cancellations')">Cancellations</li>
-              <li onclick="loadView('journal-entries')">Journal Entries</li>
+              <li id="sidebar-fin-cancellations" onclick="loadView('cancellations')">Cancellations</li>
+              <li id="sidebar-fin-journal-entries" onclick="loadView('journal-entries')">Journal Entries</li>
               <li id="sidebar-fin-je-review" onclick="loadView('finance-je-review')">JE Review</li>
               <li class="dropdown">
                 ${flyoutGroupHeader('Utilities', 'fin-utilities-dropdown')}
@@ -393,6 +581,7 @@ function showDashboard() {
     </div>
   `;
   renderDashboardHome(document.getElementById('main-content'));
+  _applyFlyoutPermissions();
 
   document.getElementById('main-content').addEventListener('click', () => {
     if (activeModule !== null) closeFlyout();
