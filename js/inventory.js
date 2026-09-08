@@ -78,7 +78,7 @@ function _invSupplierOptionsHtml(selectedId) {
 
 async function _invEnsureStoresCache() {
   if (_invStoresCache) return;
-  const res = await apiFetch(`${_INV_API}/stores?is_active=true`);
+  const res = await apiFetch(`${_INV_API}/stores/?is_active=true`);
   _invStoresCache = (res && res.ok) ? _toArray(await res.json()) : [];
 }
 // The stores cache is loaded once and held for the whole session, so every
@@ -195,27 +195,50 @@ function _invStoreTypePill(v) {
   return `<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.72rem;font-weight:600;${style}">${_invEsc(t ? t.label : (v || '—'))}</span>`;
 }
 
-// ── Shared lookups (staff, school classes, control accounts) ───────────────
-let _invStaffCache = null;
+// ── Shared lookups (custodians, school classes, control accounts) ──────────
+let _invCustodianCache = null;
 let _invClassesCache = null;
 let _invControlAccountsCache = null;
 let _invControlAccountsDiag = null;
 
-async function _invEnsureStaffCache() {
-  if (_invStaffCache) return;
-  const res = await apiFetch(`${API_BASE}/hr/employees`);
-  const raw = (res && res.ok) ? await res.json() : null;
-  _invStaffCache = raw ? (raw.items || _toArray(raw)) : [];
+// Custodian is `inv_store.custodian_employee_id`, but the FK it is checked
+// against is `team` — the staff *user account* table — not `hr_employee`,
+// despite the column name. This picker used to be filled from /hr/employees,
+// which meant it offered Employee ids: the database rejected them
+// ("Key (custodian_employee_id)=(2) is not present in table \"team\"", a 400
+// the user saw as the unhelpful "Referenced record does not exist"), and any
+// store that *did* have a custodian was mislabelled everywhere it rendered —
+// the id was resolved against the employee list, naming whichever employee
+// happened to hold that number. /api/team/ is the id space the constraint
+// actually enforces, so it is the only correct source for both.
+async function _invEnsureCustodianCache() {
+  if (_invCustodianCache && _invCustodianCache.length) return;
+  _invCustodianCache = await loadLookupList(`${API_BASE}/team/?skip=0&limit=1000`, 'team-members');
 }
-function _invStaffLabel(id) {
+function _invCustodianName(m) {
+  return `${m.first_name || ''} ${m.last_name || ''}`.trim() || m.email || `#${m.id}`;
+}
+function _invCustodianLabel(id) {
   if (id == null) return '—';
-  const e = (_invStaffCache || []).find(x => String(x.id) === String(id));
-  if (!e) return `#${id}`;
-  return `${e.first_name || ''} ${e.last_name || ''}`.trim() || `#${id}`;
+  const m = (_invCustodianCache || []).find(x => String(x.id) === String(id));
+  return m ? _invCustodianName(m) : `#${id}`;
 }
-function _invStaffOptionsHtml(selectedId) {
-  return (_invStaffCache || []).map(e =>
-    `<option value="${e.id}" ${String(e.id) === String(selectedId) ? 'selected' : ''}>${_invEsc((`${e.first_name || ''} ${e.last_name || ''}`).trim())}</option>`).join('');
+// Inactive members are dropped from the choices but kept selectable when they
+// are the store's current custodian, so opening the edit form on a store whose
+// custodian has since been deactivated doesn't silently re-point it at nobody.
+function _invCustodianPickerHtml(selectId, selectedId) {
+  const rows = (_invCustodianCache || []).filter(m =>
+    m.is_active !== false || String(m.id) === String(selectedId));
+  const known = rows.some(m => String(m.id) === String(selectedId));
+  return `
+    <label class="fin-form-label">Custodian (Staff)</label>
+    <select id="${selectId}" class="fin-form-select">
+      <option value="">${_invEsc(lookupPlaceholder('team-members', 'Please Select'))}</option>
+      ${selectedId != null && !known
+        ? `<option value="${selectedId}" selected>Currently #${selectedId} — ${lookupWasDenied('team-members') ? 'staff list unavailable' : 'no longer in the staff list'}</option>`
+        : ''}
+      ${rows.map(m => `<option value="${m.id}" ${String(m.id) === String(selectedId) ? 'selected' : ''}>${_invEsc(_invCustodianName(m))}${m.is_active === false ? ' (inactive)' : ''}</option>`).join('')}
+    </select>`;
 }
 
 async function _invEnsureClassesCache() {
@@ -324,12 +347,12 @@ function _invStoreRowCol2(s) {
   if (s.is_active === false) {
     html += ` <span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:0.7rem;font-weight:600;color:var(--white);background:var(--coral-500);margin-left:4px;">Inactive</span>`;
   }
-  html += `<br><span style="font-size:12px;color:#888;">${s.custodian_employee_id ? _invEsc(_invStaffLabel(s.custodian_employee_id)) : '—'}</span>`;
+  html += `<br><span style="font-size:12px;color:#888;">${s.custodian_employee_id ? _invEsc(_invCustodianLabel(s.custodian_employee_id)) : '—'}</span>`;
   return s.is_active === false ? `<span style="opacity:0.6;">${html}</span>` : html;
 }
 
 async function loadInventoryStoresView(container) {
-  await Promise.all([_invEnsureStaffCache(), _invEnsureClassesCache(), _invEnsureControlAccountsCache()]);
+  await Promise.all([_invEnsureCustodianCache(), _invEnsureClassesCache(), _invEnsureControlAccountsCache()]);
   const preselectId = window._invStoreOpenId ?? null;
   window._invStoreOpenId = null;
   const cfg = {
@@ -341,7 +364,7 @@ async function loadInventoryStoresView(container) {
       { label: 'Inventory', view: 'inventory-stores' },
       { label: 'Stores' },
     ],
-    apiUrl: `${_INV_API}/stores?is_active=true`,
+    apiUrl: `${_INV_API}/stores/?is_active=true`,
     searchFields: ['code', 'name'],
     col1Label: 'Code', col2Label: 'Name / Type',
     col1: _invStoreRowCol1,
@@ -355,7 +378,7 @@ async function loadInventoryStoresView(container) {
       { label: 'Name', key: 'name' },
       { label: 'Store Type', key: 'store_type', fmt: v => _invStoreTypeLabel(v) },
       { label: 'School Class', key: 'school_class_id', fmt: v => _invClassLabel(v), hideWhen: item => item.store_type !== 'class' },
-      { label: 'Custodian', key: 'custodian_employee_id', fmt: v => v ? _invStaffLabel(v) : '—' },
+      { label: 'Custodian', key: 'custodian_employee_id', fmt: v => v ? _invCustodianLabel(v) : '—' },
       { label: 'Inventory Control Account', key: 'inventory_control_account_id', fmt: v => v ? _invAccountName(v) : '(default for store type)' },
       { label: 'Status', key: 'is_active', fmt: v => v === false ? 'Inactive' : 'Active' },
     ],
@@ -391,7 +414,7 @@ function _invStoresReapplyFilters(cfg) {
   if (type) params.set('store_type', type);
   if (activeOnly) params.set('is_active', 'true');
   const qs = params.toString();
-  cfg.apiUrl = `${_INV_API}/stores` + (qs ? `?${qs}` : '');
+  cfg.apiUrl = `${_INV_API}/stores/` + (qs ? `?${qs}` : '');
   window._splitReload && window._splitReload();
 }
 
@@ -421,11 +444,7 @@ function _invRenderStoreAddForm(el) {
         <span class="fin-field-error" id="inv-store-f-type-err"></span>
       </div>
       <div class="fin-form-group">
-        <label class="fin-form-label">Custodian (Staff)</label>
-        <select id="inv-store-f-custodian" class="fin-form-select">
-          <option value="">Please Select</option>
-          ${_invStaffOptionsHtml(null)}
-        </select>
+        ${_invCustodianPickerHtml('inv-store-f-custodian', null)}
       </div>
       <div class="fin-form-group">
         ${_invAccountPickerHtml('inv-store-f-account', null, 'inv-store-f-account-err')}
@@ -485,7 +504,7 @@ async function _invSubmitStoreAdd() {
     inventory_control_account_id: acctId ? parseInt(acctId) : null,
     is_active: active,
   };
-  const res = await apiFetch(`${_INV_API}/stores`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  const res = await apiFetch(`${_INV_API}/stores/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   if (res && res.ok) {
     _invInvalidateStoresCache();
     showToast('Store added.', 'success');
@@ -507,7 +526,13 @@ async function _invSubmitStoreAdd() {
   }
   if (res.status === 400) {
     const { message } = await _invParseError(res);
-    setErr('inv-store-f-account-err', message);
+    // The account eligibility guard is the one 400 that names its own field.
+    // Everything else — notably the FK check, which answers only with the
+    // opaque "Referenced record does not exist." — has no field to attach to,
+    // and pinning it under the account picker sent operators to inspect the
+    // one input that wasn't at fault.
+    if (/account/i.test(message)) setErr('inv-store-f-account-err', message);
+    else _invShowStoreConflict(message, null);
     return;
   }
   if (res.status === 422) {
@@ -524,8 +549,10 @@ async function _invSubmitStoreAdd() {
 
 // ── Edit — name, custodian, is_active, control account ──────────────────
 let _invStoreEditOriginalAccountId = null;
+let _invStoreEditOriginalCustodianId = null;
 function _invRenderStoreEditForm(item, el) {
   _invStoreEditOriginalAccountId = item.inventory_control_account_id ?? null;
+  _invStoreEditOriginalCustodianId = item.custodian_employee_id ?? null;
   el.innerHTML = `
     <div style="max-width:460px;">
       <h3 class="split-right-add-title">Edit ${_invEsc(item.code || '')}</h3>
@@ -544,11 +571,7 @@ function _invRenderStoreEditForm(item, el) {
         <span class="fin-field-error" id="inv-store-e-name-err"></span>
       </div>
       <div class="fin-form-group">
-        <label class="fin-form-label">Custodian (Staff)</label>
-        <select id="inv-store-e-custodian" class="fin-form-select">
-          <option value="">Please Select</option>
-          ${_invStaffOptionsHtml(item.custodian_employee_id)}
-        </select>
+        ${_invCustodianPickerHtml('inv-store-e-custodian', item.custodian_employee_id)}
       </div>
       <div class="fin-form-group">
         ${_invAccountPickerHtml('inv-store-e-account', item.inventory_control_account_id, 'inv-store-e-account-err')}
@@ -572,7 +595,16 @@ async function _invSubmitStoreEdit(id) {
   const setErr = (id, msg) => { const e = document.getElementById(id); if (e) e.textContent = msg || ''; };
   setErr('inv-store-e-name-err', '');
   if (!name) { setErr('inv-store-e-name-err', 'This field is required.'); return; }
-  const payload = { name, custodian_employee_id: custId ? parseInt(custId) : null, is_active: active };
+  const payload = { name, is_active: active };
+  // Sent only when it actually changed. If /team/ came back empty — denied, or
+  // simply not loaded — the picker holds no options, and an unconditional send
+  // would read that blank as "clear the custodian" and quietly unassign one.
+  // Choosing the blank option on a populated picker is still a real change, so
+  // deliberately clearing a custodian keeps working.
+  const custIdNum = custId ? parseInt(custId) : null;
+  if (String(custIdNum ?? '') !== String(_invStoreEditOriginalCustodianId ?? '')) {
+    payload.custodian_employee_id = custIdNum;
+  }
   // StoreUpdate accepts inventory_control_account_id — rebinding is how an
   // operator repairs a store that resolved to the wrong default at create
   // time. Only sent when it actually changed, so a blank picker (no eligible
@@ -647,7 +679,7 @@ async function loadInventoryGrnView(container) {
       { label: 'Inventory', view: 'inventory-grn' },
       { label: 'Goods Received Notes' },
     ],
-    apiUrl: `${_INV_API}/grn`,
+    apiUrl: `${_INV_API}/grn/`,
     searchFields: ['grn_number'],
     col1Label: 'GRN', col2Label: 'Status',
     col1: g => `<strong>${_invEsc(g.grn_number || '—')}</strong><br><span style="font-weight:400;font-size:12px;color:#888;">${_invEsc(_invSupplierLabel(g.supplier_id))} &middot; ${g.received_date || ''}</span>`,
@@ -707,7 +739,7 @@ function _grnReapplyFilters(cfg) {
   if (start) params.set('start_date', start);
   if (end) params.set('end_date', end);
   const qs = params.toString();
-  cfg.apiUrl = `${_INV_API}/grn` + (qs ? `?${qs}` : '');
+  cfg.apiUrl = `${_INV_API}/grn/` + (qs ? `?${qs}` : '');
   window._splitReload && window._splitReload();
 }
 function _grnOpen(id) {
@@ -871,7 +903,7 @@ async function _grnSubmitAdd() {
     return;
   }
   const payload = { ..._grnCollectHeaderPayload(), lines };
-  const res = await apiFetch(`${_INV_API}/grn`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  const res = await apiFetch(`${_INV_API}/grn/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   if (res && res.ok) { showToast('GRN saved as draft.', 'success'); await window._splitReload?.(); return; }
   if (!res) return;
   const { fieldErrors, message } = await _invParseError(res);
@@ -1147,7 +1179,7 @@ async function _invStockLoadBalances() {
   if (storeId) params.set('store_id', storeId);
   if (lowThresh) params.set('low_stock_threshold', lowThresh);
   params.set('include_zero', includeZero ? 'true' : 'false');
-  const res = await apiFetch(`${_INV_API}/stock?${params.toString()}`);
+  const res = await apiFetch(`${_INV_API}/stock/?${params.toString()}`);
   const rows = (res && res.ok) ? _toArray(await res.json()) : [];
   if (rows.length === 0) { tbody.innerHTML = `<tr><td colspan="6" class="fin-empty">No stock records found.</td></tr>`; return; }
   const threshold = lowThresh !== '' ? parseFloat(lowThresh) : null;
@@ -1269,7 +1301,7 @@ async function loadInventoryIssuesView(container) {
       { label: 'Inventory', view: 'inventory-issues' },
       { label: 'Issues' },
     ],
-    apiUrl: `${_INV_API}/issues`,
+    apiUrl: `${_INV_API}/issues/`,
     searchFields: ['issue_number', 'reason'],
     col1Label: 'Issue', col2Label: 'Status',
     col1: g => `<strong>${_invEsc(g.issue_number || '—')}</strong><br><span style="font-weight:400;font-size:12px;color:#888;">${_invEsc(_invStoreLabel(g.store_id))} &middot; ${g.issue_date || ''}</span>`,
@@ -1329,7 +1361,7 @@ function _issueReapplyFilters(cfg) {
   if (start) params.set('start_date', start);
   if (end) params.set('end_date', end);
   const qs = params.toString();
-  cfg.apiUrl = `${_INV_API}/issues` + (qs ? `?${qs}` : '');
+  cfg.apiUrl = `${_INV_API}/issues/` + (qs ? `?${qs}` : '');
   window._splitReload && window._splitReload();
 }
 
@@ -1451,7 +1483,7 @@ async function _issueSubmitAdd() {
     return;
   }
   const payload = { ..._issueCollectHeaderPayload(), lines };
-  const res = await apiFetch(`${_INV_API}/issues`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  const res = await apiFetch(`${_INV_API}/issues/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   if (res && res.ok) { showToast('Issue saved as draft.', 'success'); await window._splitReload?.(); return; }
   if (!res) return;
   const { fieldErrors, message } = await _invParseError(res);
@@ -1636,7 +1668,7 @@ async function loadInventoryTransfersView(container) {
       { label: 'Inventory', view: 'inventory-transfers' },
       { label: 'Transfers' },
     ],
-    apiUrl: `${_INV_API}/transfers`,
+    apiUrl: `${_INV_API}/transfers/`,
     searchFields: ['transfer_number', 'reason'],
     col1Label: 'Transfer', col2Label: 'Status',
     col1: t => `<strong>${_invEsc(t.transfer_number || '—')}</strong><br><span style="font-weight:400;font-size:12px;color:#888;">${_invEsc(_invStoreLabel(t.from_store_id))} <span style="color:var(--gold-500,#C9A227);">&rarr;</span> ${_invEsc(_invStoreLabel(t.to_store_id))}</span>`,
@@ -1697,7 +1729,7 @@ function _transferReapplyFilters(cfg) {
   if (start) params.set('start_date', start);
   if (end) params.set('end_date', end);
   const qs = params.toString();
-  cfg.apiUrl = `${_INV_API}/transfers` + (qs ? `?${qs}` : '');
+  cfg.apiUrl = `${_INV_API}/transfers/` + (qs ? `?${qs}` : '');
   window._splitReload && window._splitReload();
 }
 
@@ -1840,7 +1872,7 @@ async function _transferSubmitAdd() {
     return;
   }
   const payload = { ..._transferCollectHeaderPayload(), lines };
-  const res = await apiFetch(`${_INV_API}/transfers`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  const res = await apiFetch(`${_INV_API}/transfers/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   if (res && res.ok) { showToast('Transfer saved as draft.', 'success'); await window._splitReload?.(); return; }
   if (!res) return;
   const { fieldErrors, message } = await _invParseError(res);
@@ -2043,7 +2075,7 @@ async function loadInventoryAdjustmentsView(container) {
       { label: 'Inventory', view: 'inventory-adjustments' },
       { label: 'Adjustments' },
     ],
-    apiUrl: `${_INV_API}/adjustments`,
+    apiUrl: `${_INV_API}/adjustments/`,
     searchFields: ['adjustment_number', 'reason'],
     col1Label: 'Adjustment', col2Label: 'Status',
     col1: a => `<strong>${_invEsc(a.adjustment_number || '—')}</strong><br><span style="font-weight:400;font-size:12px;color:#888;">${_invEsc(_invStoreLabel(a.store_id))} &middot; ${_adjTypeLabel(a.adjustment_type)}</span>`,
@@ -2111,7 +2143,7 @@ function _adjReapplyFilters(cfg) {
   if (start) params.set('start_date', start);
   if (end) params.set('end_date', end);
   const qs = params.toString();
-  cfg.apiUrl = `${_INV_API}/adjustments` + (qs ? `?${qs}` : '');
+  cfg.apiUrl = `${_INV_API}/adjustments/` + (qs ? `?${qs}` : '');
   window._splitReload && window._splitReload();
 }
 
@@ -2298,7 +2330,7 @@ async function _adjSubmitAdd() {
     return;
   }
   const payload = { ..._adjCollectHeaderPayload(), lines };
-  const res = await apiFetch(`${_INV_API}/adjustments`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  const res = await apiFetch(`${_INV_API}/adjustments/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   if (res && res.ok) { showToast('Adjustment saved as draft.', 'success'); await window._splitReload?.(); return; }
   if (!res) return;
   const { fieldErrors, message } = await _invParseError(res);
@@ -2527,7 +2559,7 @@ async function loadInventoryStocktakesView(container) {
       { label: 'Inventory', view: 'inventory-stocktakes' },
       { label: 'Stock-Takes' },
     ],
-    apiUrl: `${_INV_API}/stocktakes`,
+    apiUrl: `${_INV_API}/stocktakes/`,
     searchFields: ['stocktake_number'],
     col1Label: 'Stock-Take', col2Label: 'Status',
     col1: s => `<strong>${_invEsc(s.stocktake_number || '—')}</strong><br><span style="font-weight:400;font-size:12px;color:#888;">${_invEsc(_invStoreLabel(s.store_id))} &middot; ${s.count_date || ''}</span>`,
@@ -2582,7 +2614,7 @@ function _stkReapplyFilters(cfg) {
   if (start) params.set('start_date', start);
   if (end) params.set('end_date', end);
   const qs = params.toString();
-  cfg.apiUrl = `${_INV_API}/stocktakes` + (qs ? `?${qs}` : '');
+  cfg.apiUrl = `${_INV_API}/stocktakes/` + (qs ? `?${qs}` : '');
   window._splitReload && window._splitReload();
 }
 
@@ -2624,7 +2656,7 @@ async function _stkSubmitAdd() {
     count_date: date || null,
     notes: (document.getElementById('stk-f-notes').value || '').trim() || null,
   };
-  const res = await apiFetch(`${_INV_API}/stocktakes`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  const res = await apiFetch(`${_INV_API}/stocktakes/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   if (res && res.ok) {
     const created = await res.json();
     showToast('Stock-take started.', 'success');
@@ -2964,7 +2996,7 @@ async function loadInventoryInternalRequisitionsView(container) {
       { label: 'Inventory', view: 'inventory-internal-requisitions' },
       { label: 'Internal Requisitions' },
     ],
-    apiUrl: `${_INV_API}/internal-requisitions`,
+    apiUrl: `${_INV_API}/internal-requisitions/`,
     searchFields: ['requisition_number', 'reason'],
     col1Label: 'Requisition', col2Label: 'Status',
     col1: r => `<strong>${_invEsc(r.requisition_number || '—')}</strong><br><span style="font-weight:400;font-size:12px;color:#888;">${_invEsc(_invStoreLabel(r.from_store_id))} <span style="color:var(--gold-500,#C9A227);">&rarr;</span> ${_invEsc(_invStoreLabel(r.to_store_id))}</span>`,
@@ -3026,7 +3058,7 @@ function _irqReapplyFilters(cfg) {
   if (start) params.set('start_date', start);
   if (end) params.set('end_date', end);
   const qs = params.toString();
-  cfg.apiUrl = `${_INV_API}/internal-requisitions` + (qs ? `?${qs}` : '');
+  cfg.apiUrl = `${_INV_API}/internal-requisitions/` + (qs ? `?${qs}` : '');
   window._splitReload && window._splitReload();
 }
 
@@ -3162,7 +3194,7 @@ async function _irqSubmitAdd() {
     return;
   }
   const payload = { ..._irqCollectHeaderPayload(), lines };
-  const res = await apiFetch(`${_INV_API}/internal-requisitions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  const res = await apiFetch(`${_INV_API}/internal-requisitions/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   if (res && res.ok) { showToast('Internal requisition saved as draft.', 'success'); await window._splitReload?.(); return; }
   if (!res) return;
   const { fieldErrors, message } = await _invParseError(res);

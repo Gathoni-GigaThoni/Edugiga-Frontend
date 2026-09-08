@@ -718,6 +718,7 @@ const LOOKUP_ACCESS_HINTS = {
   'asset-accounts':  { noun: 'asset accounts',        module: 'Finance' },
   'suppliers':       { noun: 'suppliers',             module: 'Procurement' },
   'employees':       { noun: 'employees',             module: 'Human Resource' },
+  'team-members':    { noun: 'staff user accounts',    module: 'Administration' },
 };
 
 const _lookupDenied  = new Set();
