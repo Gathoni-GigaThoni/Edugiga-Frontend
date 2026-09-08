@@ -170,16 +170,16 @@ function _invPopulateItemDatalist(listId, mapKey) {
 // form: `class` stores are auto-created 1:1 with SchoolClass records and
 // `other` is a legacy catch-all.
 const INV_STORE_TYPES = [
-  { value: 'pantry',          label: 'Dry Food Pantry',                color: 'color:#1e7e34;background:#dcf3e2;' },
-  { value: 'kitchen_grocery', label: 'Fresh Food',                     color: 'color:#8a6d00;background:var(--gold-100,#fdf3d6);' },
-  { value: 'stationery',      label: 'Stationery & Office Supplies',   color: 'color:#1B3057;background:var(--navy-100,#e4e9f3);' },
-  { value: 'uniform',         label: 'Uniform',                        color: 'color:#6a1b9a;background:#efe0f7;' },
-  { value: 'toiletries',      label: 'Toiletries & Cleaning Supplies', color: 'color:#00695c;background:#dcf0ee;' },
-  { value: 'tools_equipment', label: 'Tools & Small Equipment',        color: 'color:#37474f;background:#e3e8ea;', hint: 'Paper punches, staplers, brooms, brushes, mops, buckets.' },
+  { value: 'pantry',          label: 'Dry Food Pantry',                color: 'color:#1e7e34;background:#dcf3e2;', hint: 'Bulk non-perishables — rice, flour, sugar.' },
+  { value: 'kitchen_grocery', label: 'Fresh Food',                     color: 'color:#8a6d00;background:var(--gold-100,#fdf3d6);', hint: 'Short-cycle perishables — milk, eggs, vegetables.' },
+  { value: 'stationery',      label: 'Stationery & Office Supplies',   color: 'color:#1B3057;background:var(--navy-100,#e4e9f3);', hint: 'Pens, paper, printer cartridges.' },
+  { value: 'uniform',         label: 'Uniform',                        color: 'color:#6a1b9a;background:#efe0f7;', hint: 'School uniforms held for resale — shirts, skirts, sports kits.' },
+  { value: 'toiletries',      label: 'Toiletries & Cleaning',          color: 'color:#00695c;background:#dcf0ee;', hint: 'Soap, detergent, hand sanitiser.' },
+  { value: 'tools_equipment', label: 'Tools & Small Equipment',        color: 'color:#37474f;background:#e3e8ea;', hint: 'Paper punches, staplers, brooms, mops, buckets.' },
   { value: 'kitchenware',     label: 'Kitchenware & Utensils',         color: 'color:#b35309;background:#fdeadb;', hint: 'Pots, plates, cutlery.' },
-  { value: 'textbooks',       label: 'Textbooks & Story Books',        color: 'color:#1565c0;background:#dfeaf9;', hint: 'Reference books and library replenishment.' },
-  { value: 'class',           label: 'Class Store',                    color: 'color:#c0392b;background:#fde0de;', legacy: true },
-  { value: 'other',           label: 'Other',                          color: 'color:#666;background:#eee;', legacy: true },
+  { value: 'textbooks',       label: 'Textbooks & Story Books',        color: 'color:#1565c0;background:#dfeaf9;', hint: 'Classroom readers and library replenishment.' },
+  { value: 'class',           label: 'Class Consumables (legacy)',     color: 'color:#c0392b;background:#fde0de;', legacy: true },
+  { value: 'other',           label: 'Other (legacy)',                 color: 'color:#666;background:#eee;', legacy: true },
 ];
 // Types ops can pick when creating a store (excludes the legacy ones).
 const INV_STORE_TYPES_SELECTABLE = INV_STORE_TYPES.filter(t => !t.legacy);
@@ -285,7 +285,7 @@ function _invAccountPickerHtml(selectId, selectedId, errId) {
   const currentMissing = selectedId != null &&
     !(_invControlAccountsCache || []).some(a => String(a.id) === String(selectedId));
   return `
-    <label class="fin-form-label">Inventory Control Account</label>
+    <label class="fin-form-label">Inventory Control Account <span style="font-weight:400;color:var(--grey-600);">— override (optional)</span></label>
     <select id="${selectId}" class="fin-form-select">
       <option value="">${_invEsc(placeholder)}</option>
       ${currentMissing ? `<option value="" selected disabled>Currently #${selectedId} — no longer an active Asset/Inventory account</option>` : ''}
@@ -415,7 +415,7 @@ function _invRenderStoreAddForm(el) {
         <label class="fin-form-label">Store Type <span class="fin-required">*</span></label>
         <select id="inv-store-f-type" class="fin-form-select" onchange="_invOnStoreTypeChange()">
           <option value="">Please Select</option>
-          ${INV_STORE_TYPES_SELECTABLE.map(t => `<option value="${t.value}">${t.label}</option>`).join('')}
+          ${INV_STORE_TYPES_SELECTABLE.map(t => `<option value="${t.value}" title="${_invEsc(t.hint || '')}">${t.label}</option>`).join('')}
         </select>
         <span id="inv-store-f-type-hint" style="display:none;font-size:12px;color:var(--grey-600)"></span>
         <span class="fin-field-error" id="inv-store-f-type-err"></span>
@@ -529,6 +529,15 @@ function _invRenderStoreEditForm(item, el) {
   el.innerHTML = `
     <div style="max-width:460px;">
       <h3 class="split-right-add-title">Edit ${_invEsc(item.code || '')}</h3>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Store Type</label>
+        <input type="text" class="fin-form-input" value="${_invEsc(_invStoreTypeLabel(item.store_type))}" disabled>
+      </div>
+      ${item.store_type === 'class' ? `
+      <div class="fin-form-group">
+        <label class="fin-form-label">School Class</label>
+        <input type="text" class="fin-form-input" value="${_invEsc(_invClassLabel(item.school_class_id))}" disabled>
+      </div>` : ''}
       <div class="fin-form-group">
         <label class="fin-form-label">Name <span class="fin-required">*</span></label>
         <input type="text" id="inv-store-e-name" class="fin-form-input" maxlength="100" value="${_invEsc(item.name || '')}">
