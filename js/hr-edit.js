@@ -880,7 +880,7 @@ function toggleHrEditSpDropdown(event, idx) {
 
 function hrEditSpAdd() {
   const code = hrEditRecord.employee_code || String(hrEditRecord.id);
-  const name = ((hrEditRecord.surname || hrEditRecord.first_name || '') + ' ' + (hrEditRecord.other_names || hrEditRecord.last_name || '')).trim();
+  const name = employeeFullName(hrEditRecord);
   hrEspFormState = {
     context: 'add', sourceView: 'hr-edit',
     editSourceIdx: -1, lockedEmpCode: code, lockedEmpName: name,
@@ -892,7 +892,7 @@ function hrEditSpAdd() {
 function hrEditSpEdit(idx) {
   const sp = (hrEditRecord.service_profile || [])[idx] || {};
   const code = hrEditRecord.employee_code || String(hrEditRecord.id);
-  const name = ((hrEditRecord.surname || hrEditRecord.first_name || '') + ' ' + (hrEditRecord.other_names || hrEditRecord.last_name || '')).trim();
+  const name = employeeFullName(hrEditRecord);
   hrEspFormState = {
     context: 'edit', sourceView: 'hr-edit',
     editSourceIdx: idx, lockedEmpCode: code, lockedEmpName: name,

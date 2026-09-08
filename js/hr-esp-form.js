@@ -1,47 +1,67 @@
 // ==================== EMPLOYEE SERVICE PROFILE — SHARED FORM ====================
 
+function _hrEspEmpOptions() {
+  return (employeesData || []).map(e =>
+    `<option value="${e.employee_code}">${employeeFullName(e)} (${e.employee_code})</option>`
+  ).join('');
+}
+
 function renderHrEspFormPage(container) {
   const isEdit     = hrEspFormState.context === 'edit';
   const sp         = hrEspFormState.existingRecord || {};
   const locked     = hrEspFormState.sourceView === 'hr-edit' ||
                      (hrEspFormState.sourceView === 'payroll' && isEdit);
-  const showStrip  = hrEspFormState.sourceView === 'hr-edit';
+  // The identity strip used to be hr-edit only, so reopening a saved profile
+  // from Payroll ▸ Employee Service Profiles showed neither name nor code —
+  // the employee is fixed at that point and there was nothing else on screen
+  // naming them. Show it wherever the employee is locked.
+  const showStrip  = locked;
   const bcPrefix   = hrEspFormState.sourceView === 'payroll'
     ? 'Dashboard &rsaquo; Payroll &rsaquo;'
     : 'Dashboard &rsaquo; Human Resource &rsaquo; Employee &rsaquo;';
   const sel = (val, opt) => val === opt ? 'selected' : '';
   const pre = key  => sp[key] || '';
 
-  // Pre-compute department for locked employee
+  // Pre-compute department + identity for the locked employee. ServiceProfileRead
+  // has no employee_code/employee_name/department_id at all — only employee_id —
+  // so resolve through the shared employee cache on whichever key is available
+  // rather than on employee_code, which was always undefined on a saved record.
+  const lockedEmp = locked
+    ? (employeeFromRecord({
+        employee_id:   sp.employee_id,
+        employee_code: hrEspFormState.lockedEmpCode || sp.employee_code,
+      }))
+    : null;
   let lockedDeptId = sp.department_id;
-  if (locked && hrEspFormState.lockedEmpCode && lockedDeptId == null) {
-    const lockedEmp = employeesData.find(e => e.employee_code === hrEspFormState.lockedEmpCode);
-    if (lockedEmp) lockedDeptId = lockedEmp.department_id;
-  }
+  if (lockedDeptId == null && lockedEmp) lockedDeptId = lockedEmp.department_id;
   const lockedDept = departmentLabelFor(lockedDeptId);
+  const lockedCode = hrEspFormState.lockedEmpCode || (lockedEmp && lockedEmp.employee_code) || '';
+  const lockedName = hrEspFormState.lockedEmpName || employeeFullName(lockedEmp) || '';
+  // Keep the state in step so submit's fallbacks (empName, employee_id) see
+  // the resolved values too.
+  if (locked) {
+    hrEspFormState.lockedEmpCode = lockedCode;
+    hrEspFormState.lockedEmpName = lockedName;
+  }
 
   // §3.2: "Basic Salary" reads as "Monthly Consultancy Fee" for consultants —
   // same field/id, label text only. employeesData (EmployeeRead) already
-  // carries tax_profile, so this reuses the exact lookup-by-code pattern the
-  // department auto-populate above already relies on.
-  const espEmpCode = locked ? hrEspFormState.lockedEmpCode : (sp.employee_code || '');
-  const espEmp = employeesData.find(e => e.employee_code === espEmpCode);
+  // carries tax_profile, so this reuses the same resolved employee as the
+  // department auto-populate above.
+  const espEmp = locked ? lockedEmp : employeeFromRecord(sp);
   const basicSalaryLabel = espEmp && espEmp.tax_profile === 'consultant' ? 'Monthly Consultancy Fee' : 'Basic Salary';
 
-  const empOptions = employeesData.map(e => {
-    const name = ((e.surname || e.first_name || '') + ' ' + (e.other_names || e.last_name || '')).trim();
-    return `<option value="${e.employee_code}">${name} (${e.employee_code})</option>`;
-  }).join('');
+  const empOptions = _hrEspEmpOptions();
 
   const stripHtml = showStrip ? `
     <div class="hr-edit-info-strip">
       <div class="hr-edit-info-item">
         <span class="hr-edit-info-label">Employee Code:</span>
-        <span class="hr-edit-info-value">${hrEspFormState.lockedEmpCode}</span>
+        <span class="hr-edit-info-value" id="hr-esp-strip-code">${lockedCode || '—'}</span>
       </div>
       <div class="hr-edit-info-item">
         <span class="hr-edit-info-label">Employee Name:</span>
-        <span class="hr-edit-info-value">${hrEspFormState.lockedEmpName}</span>
+        <span class="hr-edit-info-value" id="hr-esp-strip-name">${lockedName || '—'}</span>
       </div>
     </div>` : '';
 
@@ -57,13 +77,14 @@ function renderHrEspFormPage(container) {
           <div class="hr-form-group">
             <label class="hr-form-label">Employee Code <span class="hr-required">*</span></label>
             ${locked
-              ? `<input type="text" id="hr-esp-emp-code" class="hr-form-input hr-form-readonly" value="${hrEspFormState.lockedEmpCode}" readonly>`
+              ? `<input type="text" id="hr-esp-emp-code" class="hr-form-input hr-form-readonly" value="${lockedCode}" readonly>`
               : `<input type="text" id="hr-esp-emp-code" list="hr-esp-emp-list" class="hr-form-input" placeholder="Search employee..." onchange="onHrEspEmpCodeChange()">
                  <datalist id="hr-esp-emp-list">${empOptions}</datalist>`}
           </div>
           <div class="hr-form-group">
             <label class="hr-form-label">Department</label>
-            <input type="text" id="hr-esp-department" class="hr-form-input hr-form-readonly" value="${lockedDept}" readonly placeholder="Auto-populated">
+            <input type="text" id="hr-esp-department" class="hr-form-input hr-form-readonly" value="${lockedDept === '—' ? '' : lockedDept}" readonly placeholder="Auto-populated from the employee">
+            <span style="font-size:12px;color:var(--grey-600)">Follows the employee — change it on the employee's Basic Information tab.</span>
           </div>
           <div class="hr-form-group">
             <label class="hr-form-label">Reason/Event <span class="hr-required">*</span></label>
@@ -182,10 +203,53 @@ function renderHrEspFormPage(container) {
       </div>
     </div>
   `;
-  ensureDepartmentCache().then(() => {
-    const deptEl = document.getElementById('hr-esp-department');
-    if (deptEl) deptEl.value = departmentLabelFor(lockedDeptId);
-  });
+  // This page is rendered synchronously from several call sites, and the two
+  // caches it reads (employees, departments) are only filled as a side effect
+  // of visiting other views. Arriving here first meant an empty employee
+  // datalist ("no drop down"), a blank Department box, and — on a saved
+  // profile — a blank code and name. Hydrate once the caches land.
+  _hrEspHydrateEmployeeFields(locked, sp);
+}
+
+async function _hrEspHydrateEmployeeFields(locked, sp) {
+  await Promise.all([ensureDepartmentCache(), ensureEmployeesCache()]);
+
+  // The employee picker (unlocked/add) — rebuild the datalist now that
+  // employeesData is actually populated.
+  const listEl = document.getElementById('hr-esp-emp-list');
+  if (listEl) listEl.innerHTML = _hrEspEmpOptions();
+
+  const emp = locked
+    ? employeeFromRecord({
+        employee_id:   sp.employee_id,
+        employee_code: hrEspFormState.lockedEmpCode || sp.employee_code,
+      })
+    : null;
+
+  if (locked) {
+    const code = hrEspFormState.lockedEmpCode || (emp && emp.employee_code) || '';
+    const name = hrEspFormState.lockedEmpName || employeeFullName(emp) || '';
+    hrEspFormState.lockedEmpCode = code;
+    hrEspFormState.lockedEmpName = name;
+    const codeEl = document.getElementById('hr-esp-emp-code');
+    if (codeEl) codeEl.value = code;
+    const strip = document.getElementById('hr-esp-strip-code');
+    if (strip) strip.textContent = code || '—';
+    const stripName = document.getElementById('hr-esp-strip-name');
+    if (stripName) stripName.textContent = name || '—';
+    const labelEl = document.getElementById('hr-esp-basic-salary-label');
+    if (labelEl && emp) {
+      labelEl.textContent = emp.tax_profile === 'consultant' ? 'Monthly Consultancy Fee' : 'Basic Salary';
+    }
+  }
+
+  const deptId = (sp && sp.department_id != null) ? sp.department_id
+               : (emp ? emp.department_id : null);
+  const deptEl = document.getElementById('hr-esp-department');
+  if (deptEl) {
+    const label = departmentLabelFor(deptId);
+    deptEl.value = label === '—' ? '' : label;
+  }
 }
 
 // Pay Grade options come from the real PayGrade list (/payroll/utilities/pay-grades/)
@@ -338,9 +402,12 @@ function deleteHrEspBankAccount(idx) {
 
 function onHrEspEmpCodeChange() {
   const code = (document.getElementById('hr-esp-emp-code')?.value || '').trim();
-  const emp  = employeesData.find(e => e.employee_code === code);
+  const emp  = (employeesData || []).find(e => e.employee_code === code);
   const deptEl = document.getElementById('hr-esp-department');
-  if (deptEl) deptEl.value = emp ? departmentLabelFor(emp.department_id) : '';
+  if (deptEl) {
+    const label = emp ? departmentLabelFor(emp.department_id) : '';
+    deptEl.value = label === '—' ? '' : label;
+  }
   const labelEl = document.getElementById('hr-esp-basic-salary-label');
   if (labelEl) labelEl.textContent = (emp && emp.tax_profile === 'consultant') ? 'Monthly Consultancy Fee' : 'Basic Salary';
 }
@@ -376,7 +443,7 @@ async function submitHrEspForm() {
   if (!disbursementMode) { showToast('Salary Disbursement Mode is required.', 'error'); return; }
   if (!effectiveDate)    { showToast('Effective Date is required.', 'error'); return; }
 
-  const emp     = employeesData.find(e => e.employee_code === empCode);
+  const emp     = (employeesData || []).find(e => e.employee_code === empCode);
   const isEdit  = hrEspFormState.context === 'edit';
   const espId   = hrEspFormState.existingRecord?.id;
 
@@ -389,9 +456,7 @@ async function submitHrEspForm() {
     return;
   }
 
-  const empName = emp
-    ? ((emp.first_name || emp.surname || '') + ' ' + (emp.last_name || emp.other_names || '')).trim()
-    : hrEspFormState.lockedEmpName;
+  const empName = employeeFullName(emp) || hrEspFormState.lockedEmpName;
 
   // Map internal camelCase bank account fields to snake_case for the API
   // account_details is a display-only column the API's BankAccountCreate has no

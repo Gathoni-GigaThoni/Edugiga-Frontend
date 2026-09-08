@@ -168,6 +168,48 @@ async function ensureEmployeesCache() {
   } catch (_) {}
 }
 
+// ── Shared Employee resolver for records that only carry employee_id ──────
+// ServiceProfileRead (and every other payroll sub-record built on it) comes
+// back with employee_id and nothing else — no employee_name, no
+// employee_code. The screens listing them were matching rows on
+// employee_code, a field that is never present, so Employee / Emp Code /
+// Department all rendered blank on already-saved records. Resolve through the
+// employeesData cache on employee_id instead, while still honouring a name or
+// code the record does happen to carry (locally-built records after a save
+// do). Call ensureEmployeesCache() before rendering, or these return '—'.
+function employeeFromRecord(rec) {
+  if (!rec) return null;
+  const list = employeesData || [];
+  if (rec.employee_id != null) {
+    const byId = list.find(e => String(e.id) === String(rec.employee_id));
+    if (byId) return byId;
+  }
+  if (rec.employee_code) {
+    const byCode = list.find(e => String(e.employee_code) === String(rec.employee_code));
+    if (byCode) return byCode;
+  }
+  return null;
+}
+
+function employeeFullName(e) {
+  if (!e) return '';
+  return ((e.first_name || e.surname || '') + ' ' + (e.last_name || e.other_names || '')).trim();
+}
+
+function employeeNameForRecord(rec) {
+  return (rec && rec.employee_name) || employeeFullName(employeeFromRecord(rec)) || '—';
+}
+
+function employeeCodeForRecord(rec) {
+  const e = employeeFromRecord(rec);
+  return (rec && rec.employee_code) || (e && e.employee_code) || '—';
+}
+
+function employeeDepartmentForRecord(rec) {
+  const e = employeeFromRecord(rec);
+  return e ? departmentLabelFor(e.department_id) : '—';
+}
+
 // ── Shared Pay Grade label resolver (BE/FE Contract 2026-07-15 §4.1) ───────
 // ServiceProfileRead.pay_grade_id returns an id with no label — pre-fetch
 // once per view and resolve locally rather than a lookup per row.

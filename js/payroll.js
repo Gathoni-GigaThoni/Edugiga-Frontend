@@ -31,14 +31,20 @@ function _prInfoPlaceholder(message, action, actionLabel) {
   };
 }
 
+// ServiceProfileRead carries employee_id only, so matching on employee_code
+// never found the employee and every row read '—'. employeeDepartmentForRecord
+// resolves on the id (falling back to the code for locally-built records).
 function _prEspDepartment(sp) {
-  const emp = employeesData.find(e => e.employee_code === sp.employee_code);
-  return emp ? departmentLabelFor(emp.department_id) : '—';
+  return employeeDepartmentForRecord(sp);
 }
 
 async function loadPayrollEspListingView(container) {
   await ensureDepartmentCache();
   await ensurePayGradeCache();
+  // Employee name/code/department on every row and in the ESP form's picker
+  // all come out of this cache; it is otherwise only filled as a side effect
+  // of visiting HR ▸ Employee Directory first.
+  await ensureEmployeesCache();
   await renderSplitView({
     container,
     moduleKey: 'payroll.employee_service_profiles',
@@ -49,17 +55,17 @@ async function loadPayrollEspListingView(container) {
       {label:'Service Profiles'}
     ],
     apiUrl: `${API_BASE}/payroll/employee-service-profiles/`,
-    searchFields: ['employee_name','employee_code'],
+    searchFields: [employeeNameForRecord, employeeCodeForRecord],
     col1Label: 'Employee', col2Label: 'Department',
-    col1: sp => sp.employee_name || '—',
-    col2: sp => _prEspDepartment(sp) !== '—' ? _prEspDepartment(sp) : (sp.employee_code || '—'),
-    rowLabel: sp => sp.employee_name || '—',
-    rowSub:   sp => sp.employee_code || '',
+    col1: sp => employeeNameForRecord(sp),
+    col2: sp => _prEspDepartment(sp) !== '—' ? _prEspDepartment(sp) : employeeCodeForRecord(sp),
+    rowLabel: sp => employeeNameForRecord(sp),
+    rowSub:   sp => { const c = employeeCodeForRecord(sp); return c === '—' ? '' : c; },
     idKey: 'id',
     detailFields: [
-      {label:'Employee',    key:'employee_name', fmt:v=>v||'—'},
-      {label:'Emp Code',    key:'employee_code', fmt:v=>v||'—'},
-      {label:'Department',  key:'employee_code', fmt:(_,sp)=>_prEspDepartment(sp)},
+      {label:'Employee',    key:'employee_id', fmt:(_,sp)=>employeeNameForRecord(sp)},
+      {label:'Emp Code',    key:'employee_id', fmt:(_,sp)=>employeeCodeForRecord(sp)},
+      {label:'Department',  key:'employee_id', fmt:(_,sp)=>_prEspDepartment(sp)},
       {label:'Pay Grade',   key:'pay_grade_id', fmt:v=>payGradeLabelFor(v)},
       {label:'Basic Salary',key:'basic_salary', fmt:v=>v!=null?String(v):'—'},
       {label:'Eff. Date',   key:'effective_date', fmt:v=>v||'—'},
@@ -67,9 +73,13 @@ async function loadPayrollEspListingView(container) {
     renderAdd: _prAddPlaceholder('Service Profile', 'payrollEspAdd()', 'Set up a new employee service profile.'),
     onAdd:  () => payrollEspAdd(),
     onEdit: item => {
+      const code = employeeCodeForRecord(item);
+      const name = employeeNameForRecord(item);
       hrEspFormState = {
         context: 'edit', sourceView: 'payroll',
-        editSourceIdx: -1, lockedEmpCode: item.employee_code || '', lockedEmpName: item.employee_name || '',
+        editSourceIdx: -1,
+        lockedEmpCode: code === '—' ? '' : code,
+        lockedEmpName: name === '—' ? '' : name,
         bankAccounts: [...(item.bank_accounts || [])],
         editingBankIdx: -1, existingRecord: item
       };
@@ -137,12 +147,12 @@ function renderPayrollEspTable() {
     pageData.forEach((sp, i) => {
       const idx = start + i;
       html += `<tr>
-        <td>${sp.employee_code || ''}</td>
-        <td>${sp.employee_name || ''}</td>
-        <td>${sp.department || ''}</td>
+        <td>${employeeCodeForRecord(sp)}</td>
+        <td>${employeeNameForRecord(sp)}</td>
+        <td>${sp.department || _prEspDepartment(sp)}</td>
         <td>${sp.reason_event || ''}</td>
         <td>${sp.processing_method || ''}</td>
-        <td>${sp.pay_grade || ''}</td>
+        <td>${sp.pay_grade || payGradeLabelFor(sp.pay_grade_id)}</td>
         <td>${sp.basic_salary || ''}</td>
         <td>${sp.effective_date || ''}</td>
         <td class="hr-action-cell">
@@ -189,8 +199,8 @@ function payrollEspGoToPage(page) {
 function handlePayrollEspSearch() {
   const q = (document.getElementById('payroll-esp-search')?.value || '').toLowerCase();
   payrollEspFiltered = employeeServiceProfilesData.filter(sp =>
-    (sp.employee_code || '').toLowerCase().includes(q) ||
-    (sp.employee_name || '').toLowerCase().includes(q)
+    employeeCodeForRecord(sp).toLowerCase().includes(q) ||
+    employeeNameForRecord(sp).toLowerCase().includes(q)
   );
   payrollEspPage = 1;
   renderPayrollEspTable();
@@ -219,7 +229,9 @@ function payrollEspEdit(idx) {
   if (!sp) return;
   hrEspFormState = {
     context: 'edit', sourceView: 'payroll',
-    editSourceIdx: idx, lockedEmpCode: sp.employee_code || '', lockedEmpName: sp.employee_name || '',
+    editSourceIdx: idx,
+    lockedEmpCode: employeeCodeForRecord(sp) === '—' ? '' : employeeCodeForRecord(sp),
+    lockedEmpName: employeeNameForRecord(sp) === '—' ? '' : employeeNameForRecord(sp),
     bankAccounts: [...(sp.bank_accounts || [])],
     editingBankIdx: -1, existingRecord: sp
   };
@@ -235,12 +247,10 @@ function payrollEspDelete(idx) {
   if (gi !== -1) employeeServiceProfilesData.splice(gi, 1);
 
   // Mirror delete in employee record
-  if (sp.employee_code) {
-    const emp = employeesData.find(e => e.employee_code === sp.employee_code);
-    if (emp && emp.service_profile) {
-      const si = emp.service_profile.findIndex(r => r.id === sp.id);
-      if (si !== -1) emp.service_profile.splice(si, 1);
-    }
+  const emp = employeeFromRecord(sp);
+  if (emp && emp.service_profile) {
+    const si = emp.service_profile.findIndex(r => r.id === sp.id);
+    if (si !== -1) emp.service_profile.splice(si, 1);
   }
 
   payrollEspFiltered = [...employeeServiceProfilesData];

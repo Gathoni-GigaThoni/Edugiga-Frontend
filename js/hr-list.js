@@ -205,6 +205,12 @@ function _hrMapEditRecord(full, listRecord) {
   r.identity_docs    = full.identity?.documents || [];
   r.education        = full.education || [];
   r.dependents       = full.dependents || [];
+  // EmployeeReadFull calls it service_profiles; the Edit tab (and the ESP form
+  // that writes back into it) has always read service_profile. Without this
+  // line the ESP tab reported "No records found" for every employee who
+  // already had a profile — the records were sitting on the record under the
+  // plural key the whole time.
+  r.service_profile  = full.service_profiles || full.service_profile || [];
   return r;
 }
 
