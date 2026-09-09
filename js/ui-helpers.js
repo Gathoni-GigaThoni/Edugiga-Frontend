@@ -725,6 +725,11 @@ const LOOKUP_ACCESS_HINTS = {
   // Same endpoint, same widened read gate as 'accounts' above.
   'asset-accounts':  { noun: 'asset accounts',        module: 'Finance or Asset Management' },
   'suppliers':       { noun: 'suppliers',             module: 'Procurement' },
+  'stores':          { noun: 'stores',                 module: 'Inventory Management' },
+  // The GRN/Issue/Transfer line pickers call these "items", but they are
+  // finance general items — there is no separate inventory item resource on
+  // the API, so the grant to ask for is the Finance one.
+  'general-items':   { noun: 'items',                  module: 'Finance' },
   'employees':       { noun: 'employees',             module: 'Human Resource' },
   'team-members':    { noun: 'staff user accounts',    module: 'Administration' },
 };

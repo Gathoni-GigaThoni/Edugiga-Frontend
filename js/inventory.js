@@ -52,10 +52,20 @@ async function _invParseError(res) {
   return { fieldErrors: {}, message: JSON.stringify(detail) };
 }
 
-// ── Shared cross-module lookups (suppliers, stores, stockable items, terms) ─
+// ── Shared cross-module lookups (suppliers, stores, items, terms) ──────────
 // Each new document type (GRN, Issues, Transfers, Adjustments, Stock-Takes)
 // reuses these instead of re-fetching — one prefetch per view load, never a
 // per-row lookup (§9.1 of the addendum).
+//
+// All four go through loadLookupList rather than a bare apiFetch. They used to
+// collapse every failure — a 403, a 500, a dead network — into the same empty
+// array, and an empty array here is indistinguishable from "the school has no
+// suppliers yet". That is what makes a document form look like it cannot read
+// what you typed: the Item box accepts text but resolves nothing, the Store
+// dropdown has one "Select store" row, and the only feedback is a generic
+// "add at least one line" on save. loadLookupList toasts the denial once and
+// records it, so lookupPlaceholder and the banner below can say which grant is
+// missing instead of leaving the operator to guess.
 let _invSuppliersCache = null;
 let _invStoresCache = null;
 let _invItemsCache = null;
@@ -63,8 +73,7 @@ let _invTermsCache = null;
 
 async function _invEnsureSuppliersCache() {
   if (_invSuppliersCache) return;
-  const res = await apiFetch(`${API_BASE}/suppliers/`);
-  _invSuppliersCache = (res && res.ok) ? _toArray(await res.json()) : [];
+  _invSuppliersCache = await loadLookupList(`${API_BASE}/suppliers/`, 'suppliers');
 }
 function _invSupplierLabel(id) {
   if (id == null) return '—';
@@ -78,8 +87,7 @@ function _invSupplierOptionsHtml(selectedId) {
 
 async function _invEnsureStoresCache() {
   if (_invStoresCache) return;
-  const res = await apiFetch(`${_INV_API}/stores/?is_active=true`);
-  _invStoresCache = (res && res.ok) ? _toArray(await res.json()) : [];
+  _invStoresCache = await loadLookupList(`${_INV_API}/stores/?is_active=true`, 'stores');
 }
 // The stores cache is loaded once and held for the whole session, so every
 // store picker built from it — GRN, Issues, Transfers, Adjustments,
@@ -122,13 +130,22 @@ function _invAuditOnlyBadge() {
   return `<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.72rem;font-weight:600;color:#8a6d00;background:var(--gold-100,#fdf3d6);">Approved (audit-only, no GL impact)</span>`;
 }
 
+// The line-item catalogue is finance's general items — there is no separate
+// inventory item resource on the API.
+//
+// This used to request `?is_stockable=true` and then re-filter on
+// `it.is_stockable !== false`. Neither does anything: GET
+// /finance/general-items/ takes only `type` and `is_active`, and
+// GeneralItemRead has no is_stockable field at all (verified against the live
+// openapi.json — the string does not occur anywhere in the schema). FastAPI
+// ignores the unknown query param, and `undefined !== false` passes every row,
+// so the "stockable only" guarantee the old code appeared to give was never in
+// force. Asking for is_active=true is the filter the API actually honours; the
+// client-side is_active check stays as the backstop the comment claimed.
 async function _invEnsureItemsCache() {
   if (_invItemsCache) return;
-  const res = await apiFetch(`${API_BASE}/finance/general-items/?is_stockable=true`);
-  const rows = (res && res.ok) ? _toArray(await res.json()) : [];
-  // Belt-and-suspenders client-side filter in case the backend ignores the
-  // query param — never show a non-stockable or inactive item in a picker.
-  _invItemsCache = rows.filter(it => it.is_stockable !== false && it.is_active !== false);
+  const rows = await loadLookupList(`${API_BASE}/finance/general-items/?is_active=true`, 'general-items');
+  _invItemsCache = rows.filter(it => it.is_active !== false);
 }
 function _invItemLabel(id) {
   if (id == null) return '—';
@@ -139,14 +156,42 @@ function _invItemLabel(id) {
 
 async function _invEnsureTermsCache() {
   if (_invTermsCache) return;
-  const res = await apiFetch(`${API_BASE}/terms/`);
-  _invTermsCache = (res && res.ok) ? _toArray(await res.json()) : [];
+  _invTermsCache = await loadLookupList(`${API_BASE}/terms/`, 'terms');
 }
 function _invTermLabel(id) {
   if (id == null) return '—';
   const t = (_invTermsCache || []).find(x => String(x.id) === String(id));
   if (!t) return `#${id}`;
   return t.title || t.name || `Term #${id}`;
+}
+
+// Resolves what an operator typed into a line's Item box to an item id.
+//
+// The datalist offers "Name (CODE)" labels, and the old lookup was an exact
+// key hit on that string: anything else — the name on its own, different
+// casing, a trailing space, a code pasted from a delivery note — resolved to
+// null. The row then had no item_id, _grnCollectLinesPayload filtered it out,
+// and the form answered a fully-typed line with "add at least one line", which
+// reads as the form being unable to see what was entered.
+//
+// Exact label first (the unchanged happy path), then case-insensitive label,
+// then a name-only or code-only match. Ambiguous input stays unresolved rather
+// than picking one of several matches on the operator's behalf.
+function _invItemLabelOf(it) {
+  return `${it.name || ''}${it.code ? ' (' + it.code + ')' : ''}`.trim();
+}
+function _invResolveItemInput(val) {
+  const raw = (val || '').trim();
+  if (!raw) return null;
+  const items = _invItemsCache || [];
+  const exact = items.find(it => _invItemLabelOf(it) === raw);
+  if (exact) return exact.id;
+  const lower = raw.toLowerCase();
+  const ci = items.find(it => _invItemLabelOf(it).toLowerCase() === lower);
+  if (ci) return ci.id;
+  const byField = items.filter(it =>
+    (it.name || '').trim().toLowerCase() === lower || (it.code || '').trim().toLowerCase() === lower);
+  return byField.length === 1 ? byField[0].id : null;
 }
 
 // Populates a shared <datalist> with "name (code)" options and stashes a
@@ -157,7 +202,7 @@ function _invPopulateItemDatalist(listId, mapKey) {
   if (!dl) return;
   window[mapKey] = {};
   dl.innerHTML = (_invItemsCache || []).map(it => {
-    const label = `${it.name || ''}${it.code ? ' (' + it.code + ')' : ''}`.trim();
+    const label = _invItemLabelOf(it);
     window[mapKey][label] = it.id;
     return `<option value="${_invEsc(label)}"></option>`;
   }).join('');
@@ -785,7 +830,10 @@ function _grnLineRowHtml(line, idx) {
   const net = _grnLineNet(line);
   return `
     <tr>
-      <td><input type="text" class="fin-li-input" list="grn-item-datalist" placeholder="Search item…" value="${_invEsc(line.item_label || '')}" oninput="_grnResolveLineItem(${idx}, this.value)"></td>
+      <td>
+        <input type="text" class="fin-li-input" list="grn-item-datalist" placeholder="Search item…" value="${_invEsc(line.item_label || '')}" oninput="_grnResolveLineItem(${idx}, this.value)">
+        <span class="fin-field-error" id="grn-line-item-err-${idx}" style="display:block;font-size:11px;">${(line.item_label || '').trim() && !line.item_id ? 'Not a known item — pick one from the list.' : ''}</span>
+      </td>
       <td><select class="fin-li-input" onchange="_grnUpdateLine(${idx},'store_id',this.value)">
         <option value="">Select store</option>
         ${_invStoreOptionsHtml(line.store_id)}
@@ -812,9 +860,13 @@ function _grnRemoveLine(idx) {
   _grnRenderLines();
 }
 function _grnResolveLineItem(idx, val) {
-  const id = (window._grnItemMap || {})[val];
-  _grnLines[idx].item_id = id || null;
+  _grnLines[idx].item_id = _invResolveItemInput(val);
   _grnLines[idx].item_label = val;
+  const err = document.getElementById(`grn-line-item-err-${idx}`);
+  if (err) {
+    err.textContent = (val || '').trim() && !_grnLines[idx].item_id
+      ? 'Not a known item — pick one from the list.' : '';
+  }
 }
 function _grnUpdateLine(idx, key, val) {
   _grnLines[idx][key] = val;
@@ -881,6 +933,67 @@ function _grnLinesTableHtml() {
       <div style="font-size:1.3rem;font-weight:700;margin-top:4px;" id="grn-f-total">${formatKES(0)}</div>
     </div>`;
 }
+// A line is only sent when every required field on it is usable, and that
+// filter used to be the whole story: a row with an unresolved item, or a
+// quantity of 0, simply disappeared and the operator was told "add at least
+// one line". These two helpers let the submit path say which row is wrong and
+// why, instead of denying that anything was entered.
+function _grnLineIsBlank(line) {
+  return !line.item_id
+    && !(line.item_label || '').trim()
+    && !line.store_id
+    && String(line.quantity  ?? '').trim() === ''
+    && String(line.unit_cost ?? '').trim() === ''
+    && !(line.notes || '').trim();
+}
+function _grnLineProblems(line) {
+  const problems = [];
+  if (!line.item_id) problems.push((line.item_label || '').trim() ? 'the item is not one on the list' : 'no item');
+  if (!line.store_id) problems.push('no store');
+  if (!(parseFloat(line.quantity) > 0)) problems.push('quantity must be more than 0');
+  if (String(line.unit_cost ?? '').trim() === '' || !(parseFloat(line.unit_cost) >= 0)) problems.push('no unit cost');
+  return problems;
+}
+// Returns an error string, or '' when the lines are good to send. Wholly empty
+// rows are ignored rather than reported — the form always renders one, and
+// "+ Add Line" leaves another behind whenever an operator changes their mind.
+function _grnValidateLines() {
+  const filled = _grnLines.filter(l => !_grnLineIsBlank(l));
+  if (filled.length === 0) {
+    return 'Add at least one line with an item, store, quantity and unit cost.';
+  }
+  const faults = [];
+  _grnLines.forEach((l, i) => {
+    if (_grnLineIsBlank(l)) return;
+    const problems = _grnLineProblems(l);
+    if (problems.length) faults.push(`Line ${i + 1}: ${problems.join(', ')}.`);
+  });
+  return faults.join(' ');
+}
+
+// Named after the three lookups every line depends on. When one of them came
+// back empty the pickers were simply blank, which is the other half of "the
+// form can't read what I enter" — there was nothing to enter. Says whether the
+// list is empty because access was denied or because nothing has been set up,
+// and where to go for each.
+function _grnCataloguesBannerHtml() {
+  const notes = [];
+  const check = (rows, label, emptyMsg) => {
+    if ((rows || []).length) return;
+    notes.push(lookupWasDenied(label) ? lookupDeniedMessage(label) : emptyMsg);
+  };
+  check(_invItemsCache, 'general-items',
+    'No items exist to receive yet — add them under Finance ▸ Utilities ▸ General Items, then reopen this form.');
+  check(_invStoresCache, 'stores',
+    'No active stores exist yet — create one under Inventory ▸ Stores, then reopen this form.');
+  check(_invSuppliersCache, 'suppliers',
+    'No suppliers exist yet — add one under Procurement ▸ Suppliers, then reopen this form.');
+  if (!notes.length) return '';
+  return `<div style="margin-bottom:14px;padding:12px 14px;border-radius:8px;background:#fde0de;color:#c0392b;font-size:0.82rem;line-height:1.5;">
+    ${notes.map(n => `<div>${_invEsc(n)}</div>`).join('')}
+  </div>`;
+}
+
 function _grnCollectLinesPayload() {
   return _grnLines
     .filter(l => l.item_id && l.store_id && parseFloat(l.quantity) > 0 && l.unit_cost !== '' && parseFloat(l.unit_cost) >= 0)
@@ -943,6 +1056,7 @@ function _grnRenderAddForm(el) {
   el.innerHTML = `
     <div class="fin-form-wrap" style="max-width:100%;">
       <h3 class="fin-title" style="font-size:1rem;">New Goods Received Note</h3>
+      ${_grnCataloguesBannerHtml()}
       ${_grnHeaderFieldsHtml(null, false)}
       ${_grnLinesTableHtml()}
       <div id="grn-f-msg" style="margin-top:12px;"></div>
@@ -957,11 +1071,12 @@ function _grnRenderAddForm(el) {
 async function _grnSubmitAdd() {
   document.getElementById('grn-f-msg').innerHTML = '';
   if (!_grnValidateHeader()) return;
-  const lines = _grnCollectLinesPayload();
-  if (lines.length === 0) {
-    document.getElementById('grn-f-msg').innerHTML = `<div class="fin-field-error">Add at least one line with an item, store, quantity and unit cost.</div>`;
+  const lineError = _grnValidateLines();
+  if (lineError) {
+    document.getElementById('grn-f-msg').innerHTML = `<div class="fin-field-error">${_invEsc(lineError)}</div>`;
     return;
   }
+  const lines = _grnCollectLinesPayload();
   const payload = { ..._grnCollectHeaderPayload(), lines };
   const res = await apiFetch(`${_INV_API}/grn/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   if (res && res.ok) { showToast('GRN saved as draft.', 'success'); await window._splitReload?.(); return; }
@@ -987,6 +1102,7 @@ function _grnRenderEditForm(item, el) {
         </div>
       </div>
       <div class="fin-form-wrap" style="max-width:100%;">
+        ${_grnCataloguesBannerHtml()}
         ${_grnHeaderFieldsHtml(item, true)}
         ${_grnLinesTableHtml()}
         <div id="grn-f-msg" style="margin-top:12px;"></div>
@@ -1002,11 +1118,12 @@ function _grnRenderEditForm(item, el) {
 async function _grnSubmitEdit(id) {
   document.getElementById('grn-f-msg').innerHTML = '';
   if (!_grnValidateHeader()) return;
-  const lines = _grnCollectLinesPayload();
-  if (lines.length === 0) {
-    document.getElementById('grn-f-msg').innerHTML = `<div class="fin-field-error">Add at least one line with an item, store, quantity and unit cost.</div>`;
+  const lineError = _grnValidateLines();
+  if (lineError) {
+    document.getElementById('grn-f-msg').innerHTML = `<div class="fin-field-error">${_invEsc(lineError)}</div>`;
     return;
   }
+  const lines = _grnCollectLinesPayload();
   const payload = { ..._grnCollectHeaderPayload(), lines };
   const res = await apiFetch(`${_INV_API}/grn/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   if (res && res.ok) { showToast('GRN updated.', 'success'); await window._splitRefreshSelected?.(); return; }
