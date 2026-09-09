@@ -194,6 +194,107 @@ function _invResolveItemInput(val) {
   return byField.length === 1 ? byField[0].id : null;
 }
 
+const _INV_ITEM_UNKNOWN_MSG = 'Not a known item — pick one from the list.';
+
+// The Item cell every document's line grid uses. `handler` is the module's own
+// _xResolveLineItem (the grids are built as HTML strings with inline handlers,
+// so the name has to be passed in) and `prefix` namespaces the error span so
+// two grids on screen can never collide.
+function _invItemCellHtml(line, idx, datalistId, handler, prefix) {
+  const unresolved = (line.item_label || '').trim() && !line.item_id;
+  return `
+      <td>
+        <input type="text" class="fin-li-input" list="${datalistId}" placeholder="Search item…" value="${_invEsc(line.item_label || '')}" oninput="${handler}(${idx}, this.value)">
+        <span class="fin-field-error" id="${prefix}-line-item-err-${idx}" style="display:block;font-size:11px;">${unresolved ? _INV_ITEM_UNKNOWN_MSG : ''}</span>
+      </td>`;
+}
+function _invBindLineItem(lines, idx, val, prefix) {
+  lines[idx].item_id = _invResolveItemInput(val);
+  lines[idx].item_label = val;
+  const err = document.getElementById(`${prefix}-line-item-err-${idx}`);
+  if (err) err.textContent = (val || '').trim() && !lines[idx].item_id ? _INV_ITEM_UNKNOWN_MSG : '';
+}
+
+// ── Line validation shared by GRN, Issues, Transfers, Adjustments and IRQs ──
+// Every one of these grids filtered incomplete rows out of the payload and
+// then reported "add at least one line", which reads as the form not having
+// seen the row at all. `spec` says what that document needs of a line:
+//   qtyKey / qtyLabel  — the quantity field and what to call it
+//   costKey            — cost field, if the document has one
+//   requireCost        — whether that cost is mandatory (GRN) or optional
+//                        (Adjustments default to WAC, IRQ estimates)
+//   requireStore       — per-line store (GRN only; the others carry it on the header)
+//   emptyMsg           — what to say when nothing at all has been entered
+function _invLineIsBlank(line, spec) {
+  const vals = [line.item_label, line.store_id, line[spec.qtyKey], spec.costKey ? line[spec.costKey] : '', line.notes];
+  return !line.item_id && vals.every(v => String(v ?? '').trim() === '');
+}
+function _invLineProblems(line, spec) {
+  const problems = [];
+  if (!line.item_id) problems.push((line.item_label || '').trim() ? 'the item is not one on the list' : 'no item');
+  if (spec.requireStore && !line.store_id) problems.push('no store');
+  if (!(parseFloat(line[spec.qtyKey]) > 0)) problems.push(`${spec.qtyLabel || 'quantity'} must be more than 0`);
+  if (spec.requireCost) {
+    const cost = line[spec.costKey];
+    if (String(cost ?? '').trim() === '' || !(parseFloat(cost) >= 0)) problems.push('no unit cost');
+  }
+  return problems;
+}
+// Returns an error string, or '' when the lines are good to send. Wholly empty
+// rows are ignored rather than reported — every form renders one, and
+// "+ Add Line" leaves another behind whenever an operator changes their mind.
+function _invValidateDocLines(lines, spec) {
+  if (lines.every(l => _invLineIsBlank(l, spec))) return spec.emptyMsg;
+  const faults = [];
+  lines.forEach((l, i) => {
+    if (_invLineIsBlank(l, spec)) return;
+    const problems = _invLineProblems(l, spec);
+    if (problems.length) faults.push(`Line ${i + 1}: ${problems.join(', ')}.`);
+  });
+  return faults.join(' ');
+}
+
+// A picker with nothing in it is the other half of "the form can't read what I
+// enter" — there is nothing to enter. Says, per catalogue, whether the list is
+// empty because access was denied or because nothing has been set up yet, and
+// where to go for each. Ask only for the catalogues the form actually uses.
+function _invCataloguesBannerHtml({ items = true, stores = true, suppliers = false } = {}) {
+  const notes = [];
+  const check = (on, rows, label, emptyMsg) => {
+    if (!on || (rows || []).length) return;
+    notes.push(lookupWasDenied(label) ? lookupDeniedMessage(label) : emptyMsg);
+  };
+  check(items, _invItemsCache, 'general-items',
+    'No items exist to select yet — add them under Finance ▸ Utilities ▸ General Items, then reopen this form.');
+  check(stores, _invStoresCache, 'stores',
+    'No active stores exist yet — create one under Inventory ▸ Stores, then reopen this form.');
+  check(suppliers, _invSuppliersCache, 'suppliers',
+    'No suppliers exist yet — add one under Procurement ▸ Suppliers, then reopen this form.');
+  if (!notes.length) return '';
+  return `<div style="margin-bottom:14px;padding:12px 14px;border-radius:8px;background:#fde0de;color:#c0392b;font-size:0.82rem;line-height:1.5;">
+    ${notes.map(n => `<div>${_invEsc(n)}</div>`).join('')}
+  </div>`;
+}
+
+// Omitting a blank date rather than sending null: every one of these documents
+// has the date required and non-nullable on Create but nullable on Update, so
+// an explicit null is a 422 on Add and a request to blank a column the Read
+// schema declares non-nullable on Edit — which makes that row unserialisable
+// and takes its whole list endpoint down with a 500. Verified per document
+// against the live openapi.json.
+function _invDateField(key, inputId) {
+  const v = (document.getElementById(inputId)?.value || '').trim();
+  return v ? { [key]: v } : {};
+}
+// Marks a required date field, mirroring the inline treatment every other
+// starred field on these forms already had.
+function _invValidateDateField(inputId, errId) {
+  const ok = !!(document.getElementById(inputId)?.value || '').trim();
+  const err = document.getElementById(errId);
+  if (err) err.textContent = ok ? '' : 'This field is required.';
+  return ok;
+}
+
 // Populates a shared <datalist> with "name (code)" options and stashes a
 // label->id map on window under mapKey — same convention as the Student
 // datalist pickers (js/supplies.js _suppPopulateStudentDatalist).
@@ -830,10 +931,7 @@ function _grnLineRowHtml(line, idx) {
   const net = _grnLineNet(line);
   return `
     <tr>
-      <td>
-        <input type="text" class="fin-li-input" list="grn-item-datalist" placeholder="Search item…" value="${_invEsc(line.item_label || '')}" oninput="_grnResolveLineItem(${idx}, this.value)">
-        <span class="fin-field-error" id="grn-line-item-err-${idx}" style="display:block;font-size:11px;">${(line.item_label || '').trim() && !line.item_id ? 'Not a known item — pick one from the list.' : ''}</span>
-      </td>
+      ${_invItemCellHtml(line, idx, 'grn-item-datalist', '_grnResolveLineItem', 'grn')}
       <td><select class="fin-li-input" onchange="_grnUpdateLine(${idx},'store_id',this.value)">
         <option value="">Select store</option>
         ${_invStoreOptionsHtml(line.store_id)}
@@ -859,15 +957,7 @@ function _grnRemoveLine(idx) {
   _grnLines.splice(idx, 1);
   _grnRenderLines();
 }
-function _grnResolveLineItem(idx, val) {
-  _grnLines[idx].item_id = _invResolveItemInput(val);
-  _grnLines[idx].item_label = val;
-  const err = document.getElementById(`grn-line-item-err-${idx}`);
-  if (err) {
-    err.textContent = (val || '').trim() && !_grnLines[idx].item_id
-      ? 'Not a known item — pick one from the list.' : '';
-  }
-}
+function _grnResolveLineItem(idx, val) { _invBindLineItem(_grnLines, idx, val, 'grn'); }
 function _grnUpdateLine(idx, key, val) {
   _grnLines[idx][key] = val;
   if (key === 'quantity' || key === 'unit_cost') {
@@ -933,66 +1023,13 @@ function _grnLinesTableHtml() {
       <div style="font-size:1.3rem;font-weight:700;margin-top:4px;" id="grn-f-total">${formatKES(0)}</div>
     </div>`;
 }
-// A line is only sent when every required field on it is usable, and that
-// filter used to be the whole story: a row with an unresolved item, or a
-// quantity of 0, simply disappeared and the operator was told "add at least
-// one line". These two helpers let the submit path say which row is wrong and
-// why, instead of denying that anything was entered.
-function _grnLineIsBlank(line) {
-  return !line.item_id
-    && !(line.item_label || '').trim()
-    && !line.store_id
-    && String(line.quantity  ?? '').trim() === ''
-    && String(line.unit_cost ?? '').trim() === ''
-    && !(line.notes || '').trim();
-}
-function _grnLineProblems(line) {
-  const problems = [];
-  if (!line.item_id) problems.push((line.item_label || '').trim() ? 'the item is not one on the list' : 'no item');
-  if (!line.store_id) problems.push('no store');
-  if (!(parseFloat(line.quantity) > 0)) problems.push('quantity must be more than 0');
-  if (String(line.unit_cost ?? '').trim() === '' || !(parseFloat(line.unit_cost) >= 0)) problems.push('no unit cost');
-  return problems;
-}
-// Returns an error string, or '' when the lines are good to send. Wholly empty
-// rows are ignored rather than reported — the form always renders one, and
-// "+ Add Line" leaves another behind whenever an operator changes their mind.
-function _grnValidateLines() {
-  const filled = _grnLines.filter(l => !_grnLineIsBlank(l));
-  if (filled.length === 0) {
-    return 'Add at least one line with an item, store, quantity and unit cost.';
-  }
-  const faults = [];
-  _grnLines.forEach((l, i) => {
-    if (_grnLineIsBlank(l)) return;
-    const problems = _grnLineProblems(l);
-    if (problems.length) faults.push(`Line ${i + 1}: ${problems.join(', ')}.`);
-  });
-  return faults.join(' ');
-}
-
-// Named after the three lookups every line depends on. When one of them came
-// back empty the pickers were simply blank, which is the other half of "the
-// form can't read what I enter" — there was nothing to enter. Says whether the
-// list is empty because access was denied or because nothing has been set up,
-// and where to go for each.
-function _grnCataloguesBannerHtml() {
-  const notes = [];
-  const check = (rows, label, emptyMsg) => {
-    if ((rows || []).length) return;
-    notes.push(lookupWasDenied(label) ? lookupDeniedMessage(label) : emptyMsg);
-  };
-  check(_invItemsCache, 'general-items',
-    'No items exist to receive yet — add them under Finance ▸ Utilities ▸ General Items, then reopen this form.');
-  check(_invStoresCache, 'stores',
-    'No active stores exist yet — create one under Inventory ▸ Stores, then reopen this form.');
-  check(_invSuppliersCache, 'suppliers',
-    'No suppliers exist yet — add one under Procurement ▸ Suppliers, then reopen this form.');
-  if (!notes.length) return '';
-  return `<div style="margin-bottom:14px;padding:12px 14px;border-radius:8px;background:#fde0de;color:#c0392b;font-size:0.82rem;line-height:1.5;">
-    ${notes.map(n => `<div>${_invEsc(n)}</div>`).join('')}
-  </div>`;
-}
+// GRN is the only document with a per-line store and a mandatory unit cost.
+const _GRN_LINE_SPEC = {
+  qtyKey: 'quantity', costKey: 'unit_cost', requireCost: true, requireStore: true,
+  emptyMsg: 'Add at least one line with an item, store, quantity and unit cost.',
+};
+function _grnValidateLines() { return _invValidateDocLines(_grnLines, _GRN_LINE_SPEC); }
+function _grnCataloguesBannerHtml() { return _invCataloguesBannerHtml({ items: true, stores: true, suppliers: true }); }
 
 function _grnCollectLinesPayload() {
   return _grnLines
@@ -1015,10 +1052,9 @@ function _grnCollectLinesPayload() {
 // no key at all is the only safe encoding of "the operator left it blank"; the
 // field is validated below so it never gets that far.
 function _grnCollectHeaderPayload() {
-  const receivedDate = document.getElementById('grn-f-received-date').value || '';
   return {
     supplier_id: parseInt(document.getElementById('grn-f-supplier').value),
-    ...(receivedDate ? { received_date: receivedDate } : {}),
+    ..._invDateField('received_date', 'grn-f-received-date'),
     delivery_note_ref: (document.getElementById('grn-f-delivery-ref').value || '').trim() || null,
     notes: (document.getElementById('grn-f-notes').value || '').trim() || null,
   };
@@ -1030,10 +1066,9 @@ function _grnCollectHeaderPayload() {
 // inline message every other required field on this form uses.
 function _grnValidateHeader() {
   const supplierId = document.getElementById('grn-f-supplier').value;
-  const receivedDate = document.getElementById('grn-f-received-date').value;
   document.getElementById('grn-f-supplier-err').textContent = supplierId ? '' : 'This field is required.';
-  document.getElementById('grn-f-received-date-err').textContent = receivedDate ? '' : 'This field is required.';
-  return !!supplierId && !!receivedDate;
+  const dateOk = _invValidateDateField('grn-f-received-date', 'grn-f-received-date-err');
+  return !!supplierId && dateOk;
 }
 
 // Puts a server-side 422 back on the field it belongs to. Returns whether any
@@ -1546,7 +1581,7 @@ function _issueReapplyFilters(cfg) {
 function _issueLineRowHtml(line, idx) {
   return `
     <tr>
-      <td><input type="text" class="fin-li-input" list="issue-item-datalist" placeholder="Search item…" value="${_invEsc(line.item_label || '')}" oninput="_issueResolveLineItem(${idx}, this.value)"></td>
+      ${_invItemCellHtml(line, idx, 'issue-item-datalist', '_issueResolveLineItem', 'issue')}
       <td><input type="number" class="fin-li-input" step="0.001" min="0.001" style="width:100px;" value="${line.quantity || ''}" oninput="_issueUpdateLine(${idx},'quantity',this.value)"></td>
       <td><input type="text" class="fin-li-input" placeholder="Notes" value="${_invEsc(line.notes || '')}" oninput="_issueUpdateLine(${idx},'notes',this.value)"></td>
       <td><button class="fin-btn-li-rm" ${_issueLines.length <= 1 ? 'disabled' : ''} onclick="_issueRemoveLine(${idx})">&times;</button></td>
@@ -1565,11 +1600,7 @@ function _issueRemoveLine(idx) {
   _issueLines.splice(idx, 1);
   _issueRenderLines();
 }
-function _issueResolveLineItem(idx, val) {
-  const id = (window._issueItemMap || {})[val];
-  _issueLines[idx].item_id = id || null;
-  _issueLines[idx].item_label = val;
-}
+function _issueResolveLineItem(idx, val) { _invBindLineItem(_issueLines, idx, val, 'issue'); }
 function _issueUpdateLine(idx, key, val) {
   _issueLines[idx][key] = val;
 }
@@ -1587,6 +1618,7 @@ function _issueHeaderFieldsHtml(issue) {
       <div class="fin-form-group">
         <label class="fin-form-label">Issue Date <span class="fin-required">*</span></label>
         <input type="date" id="issue-f-date" class="fin-form-input" value="${issue?.issue_date || todayStr}">
+        <span class="fin-field-error" id="issue-f-date-err"></span>
       </div>
       <div class="fin-form-group fin-span-2">
         <label class="fin-form-label">Reason <span class="fin-required">*</span></label>
@@ -1619,10 +1651,25 @@ function _issueCollectLinesPayload() {
 function _issueCollectHeaderPayload() {
   return {
     store_id: parseInt(document.getElementById('issue-f-store').value),
-    issue_date: document.getElementById('issue-f-date').value || null,
+    ..._invDateField('issue_date', 'issue-f-date'),
     reason: (document.getElementById('issue-f-reason').value || '').trim(),
     notes: (document.getElementById('issue-f-notes').value || '').trim() || null,
   };
+}
+
+const _ISSUE_LINE_SPEC = {
+  qtyKey: 'quantity',
+  emptyMsg: 'Add at least one line with an item and quantity.',
+};
+// Store, reason and date are all starred; the date was the one never checked.
+// Shared by Add and Edit, which had the same block copied into both.
+function _issueValidateHeader() {
+  const storeId = document.getElementById('issue-f-store').value;
+  const reason = (document.getElementById('issue-f-reason').value || '').trim();
+  document.getElementById('issue-f-store-err').textContent = storeId ? '' : 'This field is required.';
+  document.getElementById('issue-f-reason-err').textContent = reason ? '' : 'This field is required.';
+  const dateOk = _invValidateDateField('issue-f-date', 'issue-f-date-err');
+  return !!storeId && !!reason && dateOk;
 }
 
 // ── Add (Save Draft only — no Approve from Add) ──────────────────────────
@@ -1631,6 +1678,7 @@ function _issueRenderAddForm(el) {
   el.innerHTML = `
     <div class="fin-form-wrap" style="max-width:100%;">
       <h3 class="fin-title" style="font-size:1rem;">New Stock Issue</h3>
+      ${_invCataloguesBannerHtml()}
       ${_issueHeaderFieldsHtml(null)}
       ${_issueLinesTableHtml()}
       <div id="issue-f-msg" style="margin-top:12px;"></div>
@@ -1643,20 +1691,14 @@ function _issueRenderAddForm(el) {
   _invPopulateItemDatalist('issue-item-datalist', '_issueItemMap');
 }
 async function _issueSubmitAdd() {
-  document.getElementById('issue-f-store-err').textContent = '';
-  document.getElementById('issue-f-reason-err').textContent = '';
   document.getElementById('issue-f-msg').innerHTML = '';
-  const storeId = document.getElementById('issue-f-store').value;
-  const reason = (document.getElementById('issue-f-reason').value || '').trim();
-  let valid = true;
-  if (!storeId) { document.getElementById('issue-f-store-err').textContent = 'This field is required.'; valid = false; }
-  if (!reason) { document.getElementById('issue-f-reason-err').textContent = 'This field is required.'; valid = false; }
-  if (!valid) return;
-  const lines = _issueCollectLinesPayload();
-  if (lines.length === 0) {
-    document.getElementById('issue-f-msg').innerHTML = `<div class="fin-field-error">Add at least one line with an item and quantity.</div>`;
+  if (!_issueValidateHeader()) return;
+  const lineError = _invValidateDocLines(_issueLines, _ISSUE_LINE_SPEC);
+  if (lineError) {
+    document.getElementById('issue-f-msg').innerHTML = `<div class="fin-field-error">${_invEsc(lineError)}</div>`;
     return;
   }
+  const lines = _issueCollectLinesPayload();
   const payload = { ..._issueCollectHeaderPayload(), lines };
   const res = await apiFetch(`${_INV_API}/issues/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   if (res && res.ok) { showToast('Issue saved as draft.', 'success'); await window._splitReload?.(); return; }
@@ -1680,6 +1722,7 @@ function _issueRenderEditForm(item, el) {
         </div>
       </div>
       <div class="fin-form-wrap" style="max-width:100%;">
+        ${_invCataloguesBannerHtml()}
         ${_issueHeaderFieldsHtml(item)}
         ${_issueLinesTableHtml()}
         <div id="issue-f-msg" style="margin-top:12px;"></div>
@@ -1693,20 +1736,14 @@ function _issueRenderEditForm(item, el) {
   _invPopulateItemDatalist('issue-item-datalist', '_issueItemMap');
 }
 async function _issueSubmitEdit(id) {
-  document.getElementById('issue-f-store-err').textContent = '';
-  document.getElementById('issue-f-reason-err').textContent = '';
   document.getElementById('issue-f-msg').innerHTML = '';
-  const storeId = document.getElementById('issue-f-store').value;
-  const reason = (document.getElementById('issue-f-reason').value || '').trim();
-  let valid = true;
-  if (!storeId) { document.getElementById('issue-f-store-err').textContent = 'This field is required.'; valid = false; }
-  if (!reason) { document.getElementById('issue-f-reason-err').textContent = 'This field is required.'; valid = false; }
-  if (!valid) return;
-  const lines = _issueCollectLinesPayload();
-  if (lines.length === 0) {
-    document.getElementById('issue-f-msg').innerHTML = `<div class="fin-field-error">Add at least one line with an item and quantity.</div>`;
+  if (!_issueValidateHeader()) return;
+  const lineError = _invValidateDocLines(_issueLines, _ISSUE_LINE_SPEC);
+  if (lineError) {
+    document.getElementById('issue-f-msg').innerHTML = `<div class="fin-field-error">${_invEsc(lineError)}</div>`;
     return;
   }
+  const lines = _issueCollectLinesPayload();
   const payload = { ..._issueCollectHeaderPayload(), lines };
   const res = await apiFetch(`${_INV_API}/issues/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   if (res && res.ok) { showToast('Issue updated.', 'success'); await window._splitRefreshSelected?.(); return; }
@@ -1912,7 +1949,7 @@ function _transferReapplyFilters(cfg) {
 function _transferLineRowHtml(line, idx) {
   return `
     <tr>
-      <td><input type="text" class="fin-li-input" list="transfer-item-datalist" placeholder="Search item…" value="${_invEsc(line.item_label || '')}" oninput="_transferResolveLineItem(${idx}, this.value)"></td>
+      ${_invItemCellHtml(line, idx, 'transfer-item-datalist', '_transferResolveLineItem', 'transfer')}
       <td><input type="number" class="fin-li-input" step="0.001" min="0.001" style="width:100px;" value="${line.quantity || ''}" oninput="_transferUpdateLine(${idx},'quantity',this.value)"></td>
       <td><input type="text" class="fin-li-input" placeholder="Notes" value="${_invEsc(line.notes || '')}" oninput="_transferUpdateLine(${idx},'notes',this.value)"></td>
       <td><button class="fin-btn-li-rm" ${_transferLines.length <= 1 ? 'disabled' : ''} onclick="_transferRemoveLine(${idx})">&times;</button></td>
@@ -1931,11 +1968,7 @@ function _transferRemoveLine(idx) {
   _transferLines.splice(idx, 1);
   _transferRenderLines();
 }
-function _transferResolveLineItem(idx, val) {
-  const id = (window._transferItemMap || {})[val];
-  _transferLines[idx].item_id = id || null;
-  _transferLines[idx].item_label = val;
-}
+function _transferResolveLineItem(idx, val) { _invBindLineItem(_transferLines, idx, val, 'transfer'); }
 function _transferUpdateLine(idx, key, val) {
   _transferLines[idx][key] = val;
 }
@@ -1961,6 +1994,7 @@ function _transferHeaderFieldsHtml(t) {
       <div class="fin-form-group">
         <label class="fin-form-label">Transfer Date <span class="fin-required">*</span></label>
         <input type="date" id="transfer-f-date" class="fin-form-input" value="${t?.transfer_date || todayStr}">
+        <span class="fin-field-error" id="transfer-f-date-err"></span>
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Reason</label>
@@ -2004,7 +2038,7 @@ function _transferCollectHeaderPayload() {
   return {
     from_store_id: parseInt(document.getElementById('transfer-f-from').value),
     to_store_id: parseInt(document.getElementById('transfer-f-to').value),
-    transfer_date: document.getElementById('transfer-f-date').value || null,
+    ..._invDateField('transfer_date', 'transfer-f-date'),
     reason: (document.getElementById('transfer-f-reason').value || '').trim() || null,
     notes: (document.getElementById('transfer-f-notes').value || '').trim() || null,
   };
@@ -2016,6 +2050,7 @@ function _transferRenderAddForm(el) {
   el.innerHTML = `
     <div class="fin-form-wrap" style="max-width:100%;">
       <h3 class="fin-title" style="font-size:1rem;">New Stock Transfer</h3>
+      ${_invCataloguesBannerHtml()}
       ${_transferHeaderFieldsHtml(null)}
       ${_transferLinesTableHtml()}
       <div id="transfer-f-msg" style="margin-top:12px;"></div>
@@ -2027,12 +2062,16 @@ function _transferRenderAddForm(el) {
   _transferRenderLines();
   _invPopulateItemDatalist('transfer-item-datalist', '_transferItemMap');
 }
+const _TRANSFER_LINE_SPEC = {
+  qtyKey: 'quantity',
+  emptyMsg: 'Add at least one line with an item and quantity.',
+};
 function _transferValidateHeader() {
   document.getElementById('transfer-f-from-err').textContent = '';
   document.getElementById('transfer-f-to-err').textContent = '';
   const fromId = document.getElementById('transfer-f-from').value;
   const toId = document.getElementById('transfer-f-to').value;
-  let valid = true;
+  let valid = _invValidateDateField('transfer-f-date', 'transfer-f-date-err');
   if (!fromId) { document.getElementById('transfer-f-from-err').textContent = 'This field is required.'; valid = false; }
   if (!toId) { document.getElementById('transfer-f-to-err').textContent = 'This field is required.'; valid = false; }
   if (fromId && toId && fromId === toId) { document.getElementById('transfer-f-to-err').textContent = 'To Store must be different from From Store.'; valid = false; }
@@ -2041,11 +2080,12 @@ function _transferValidateHeader() {
 async function _transferSubmitAdd() {
   document.getElementById('transfer-f-msg').innerHTML = '';
   if (!_transferValidateHeader()) return;
-  const lines = _transferCollectLinesPayload();
-  if (lines.length === 0) {
-    document.getElementById('transfer-f-msg').innerHTML = `<div class="fin-field-error">Add at least one line with an item and quantity.</div>`;
+  const lineError = _invValidateDocLines(_transferLines, _TRANSFER_LINE_SPEC);
+  if (lineError) {
+    document.getElementById('transfer-f-msg').innerHTML = `<div class="fin-field-error">${_invEsc(lineError)}</div>`;
     return;
   }
+  const lines = _transferCollectLinesPayload();
   const payload = { ..._transferCollectHeaderPayload(), lines };
   const res = await apiFetch(`${_INV_API}/transfers/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   if (res && res.ok) { showToast('Transfer saved as draft.', 'success'); await window._splitReload?.(); return; }
@@ -2069,6 +2109,7 @@ function _transferRenderEditForm(item, el) {
         </div>
       </div>
       <div class="fin-form-wrap" style="max-width:100%;">
+        ${_invCataloguesBannerHtml()}
         ${_transferHeaderFieldsHtml(item)}
         ${_transferLinesTableHtml()}
         <div id="transfer-f-msg" style="margin-top:12px;"></div>
@@ -2085,11 +2126,12 @@ function _transferRenderEditForm(item, el) {
 async function _transferSubmitEdit(id) {
   document.getElementById('transfer-f-msg').innerHTML = '';
   if (!_transferValidateHeader()) return;
-  const lines = _transferCollectLinesPayload();
-  if (lines.length === 0) {
-    document.getElementById('transfer-f-msg').innerHTML = `<div class="fin-field-error">Add at least one line with an item and quantity.</div>`;
+  const lineError = _invValidateDocLines(_transferLines, _TRANSFER_LINE_SPEC);
+  if (lineError) {
+    document.getElementById('transfer-f-msg').innerHTML = `<div class="fin-field-error">${_invEsc(lineError)}</div>`;
     return;
   }
+  const lines = _transferCollectLinesPayload();
   const payload = { ..._transferCollectHeaderPayload(), lines };
   const res = await apiFetch(`${_INV_API}/transfers/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   if (res && res.ok) { showToast('Transfer updated.', 'success'); await window._splitRefreshSelected?.(); return; }
@@ -2341,7 +2383,7 @@ function _adjLineNetCellHtml(line) {
 function _adjLineRowHtml(line, idx) {
   return `
     <tr>
-      <td><input type="text" class="fin-li-input" list="adj-item-datalist" placeholder="Search item…" value="${_invEsc(line.item_label || '')}" oninput="_adjResolveLineItem(${idx}, this.value)"></td>
+      ${_invItemCellHtml(line, idx, 'adj-item-datalist', '_adjResolveLineItem', 'adj')}
       <td>
         <div style="display:flex;border-radius:6px;overflow:hidden;border:1px solid var(--grey-200);width:130px;">
           <button type="button" style="flex:1;border:none;padding:4px 0;font-size:11px;cursor:pointer;${line.direction !== 'shortage' ? 'background:var(--navy-700,#1B3057);color:#fff;' : 'background:var(--white);color:#444;'}" onclick="_adjSetLineDirection(${idx},'surplus')">Surplus +</button>
@@ -2369,11 +2411,7 @@ function _adjRemoveLine(idx) {
   _adjLines.splice(idx, 1);
   _adjRenderLines();
 }
-function _adjResolveLineItem(idx, val) {
-  const id = (window._adjItemMap || {})[val];
-  _adjLines[idx].item_id = id || null;
-  _adjLines[idx].item_label = val;
-}
+function _adjResolveLineItem(idx, val) { _invBindLineItem(_adjLines, idx, val, 'adj'); }
 function _adjSetLineDirection(idx, dir) {
   _adjLines[idx].direction = dir;
   _adjRenderLines();
@@ -2410,6 +2448,7 @@ function _adjHeaderFieldsHtml(adj) {
       <div class="fin-form-group">
         <label class="fin-form-label">Adjustment Date <span class="fin-required">*</span></label>
         <input type="date" id="adj-f-date" class="fin-form-input" value="${adj?.adjustment_date || todayStr}">
+        <span class="fin-field-error" id="adj-f-date-err"></span>
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Type <span class="fin-required">*</span></label>
@@ -2462,7 +2501,7 @@ function _adjCollectLinesPayload() {
 function _adjCollectHeaderPayload() {
   return {
     store_id: parseInt(document.getElementById('adj-f-store').value),
-    adjustment_date: document.getElementById('adj-f-date').value || null,
+    ..._invDateField('adjustment_date', 'adj-f-date'),
     adjustment_type: document.getElementById('adj-f-type').value,
     reason: (document.getElementById('adj-f-reason').value || '').trim(),
     notes: (document.getElementById('adj-f-notes').value || '').trim() || null,
@@ -2475,6 +2514,7 @@ function _adjRenderAddForm(el) {
   el.innerHTML = `
     <div class="fin-form-wrap" style="max-width:100%;">
       <h3 class="fin-title" style="font-size:1rem;">New Stock Adjustment</h3>
+      ${_invCataloguesBannerHtml()}
       ${_adjHeaderFieldsHtml(null)}
       ${_adjLinesTableHtml()}
       <div id="adj-f-msg" style="margin-top:12px;"></div>
@@ -2486,12 +2526,18 @@ function _adjRenderAddForm(el) {
   _adjRenderLines();
   _invPopulateItemDatalist('adj-item-datalist', '_adjItemMap');
 }
+// Unit cost is optional here — a blank one means "use the current WAC at
+// approve", which is why requireCost is off.
+const _ADJ_LINE_SPEC = {
+  qtyKey: 'quantity', costKey: 'unit_cost',
+  emptyMsg: 'Add at least one line with an item and quantity.',
+};
 function _adjValidateHeader() {
   document.getElementById('adj-f-store-err').textContent = '';
   document.getElementById('adj-f-reason-err').textContent = '';
   const storeId = document.getElementById('adj-f-store').value;
   const reason = (document.getElementById('adj-f-reason').value || '').trim();
-  let valid = true;
+  let valid = _invValidateDateField('adj-f-date', 'adj-f-date-err');
   if (!storeId) { document.getElementById('adj-f-store-err').textContent = 'This field is required.'; valid = false; }
   if (!reason) { document.getElementById('adj-f-reason-err').textContent = 'This field is required.'; valid = false; }
   return valid;
@@ -2499,11 +2545,12 @@ function _adjValidateHeader() {
 async function _adjSubmitAdd() {
   document.getElementById('adj-f-msg').innerHTML = '';
   if (!_adjValidateHeader()) return;
-  const lines = _adjCollectLinesPayload();
-  if (lines.length === 0) {
-    document.getElementById('adj-f-msg').innerHTML = `<div class="fin-field-error">Add at least one line with an item and quantity.</div>`;
+  const lineError = _invValidateDocLines(_adjLines, _ADJ_LINE_SPEC);
+  if (lineError) {
+    document.getElementById('adj-f-msg').innerHTML = `<div class="fin-field-error">${_invEsc(lineError)}</div>`;
     return;
   }
+  const lines = _adjCollectLinesPayload();
   const payload = { ..._adjCollectHeaderPayload(), lines };
   const res = await apiFetch(`${_INV_API}/adjustments/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   if (res && res.ok) { showToast('Adjustment saved as draft.', 'success'); await window._splitReload?.(); return; }
@@ -2531,6 +2578,7 @@ function _adjRenderEditForm(item, el) {
         </div>
       </div>
       <div class="fin-form-wrap" style="max-width:100%;">
+        ${_invCataloguesBannerHtml()}
         ${_adjHeaderFieldsHtml(item)}
         ${_adjLinesTableHtml()}
         <div id="adj-f-msg" style="margin-top:12px;"></div>
@@ -2546,11 +2594,12 @@ function _adjRenderEditForm(item, el) {
 async function _adjSubmitEdit(id) {
   document.getElementById('adj-f-msg').innerHTML = '';
   if (!_adjValidateHeader()) return;
-  const lines = _adjCollectLinesPayload();
-  if (lines.length === 0) {
-    document.getElementById('adj-f-msg').innerHTML = `<div class="fin-field-error">Add at least one line with an item and quantity.</div>`;
+  const lineError = _invValidateDocLines(_adjLines, _ADJ_LINE_SPEC);
+  if (lineError) {
+    document.getElementById('adj-f-msg').innerHTML = `<div class="fin-field-error">${_invEsc(lineError)}</div>`;
     return;
   }
+  const lines = _adjCollectLinesPayload();
   const payload = { ..._adjCollectHeaderPayload(), lines };
   const res = await apiFetch(`${_INV_API}/adjustments/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   if (res && res.ok) { showToast('Adjustment updated.', 'success'); await window._splitRefreshSelected?.(); return; }
@@ -2808,6 +2857,7 @@ function _stkRenderAddForm(el) {
       <div class="fin-form-group">
         <label class="fin-form-label">Count Date <span class="fin-required">*</span></label>
         <input type="date" id="stk-f-date" class="fin-form-input" value="${todayStr}">
+        <span class="fin-field-error" id="stk-f-date-err"></span>
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Notes</label>
@@ -2824,11 +2874,14 @@ async function _stkSubmitAdd() {
   document.getElementById('stk-f-store-err').textContent = '';
   document.getElementById('stk-f-msg').innerHTML = '';
   const storeId = document.getElementById('stk-f-store').value;
-  const date = document.getElementById('stk-f-date').value;
-  if (!storeId) { document.getElementById('stk-f-store-err').textContent = 'This field is required.'; return; }
+  const dateOk = _invValidateDateField('stk-f-date', 'stk-f-date-err');
+  if (!storeId) document.getElementById('stk-f-store-err').textContent = 'This field is required.';
+  if (!storeId || !dateOk) return;
+  // StockTakeCreate has count_date required and non-nullable, so the blank
+  // date is omitted rather than sent as null — see _invDateField.
   const payload = {
     store_id: parseInt(storeId),
-    count_date: date || null,
+    ..._invDateField('count_date', 'stk-f-date'),
     notes: (document.getElementById('stk-f-notes').value || '').trim() || null,
   };
   const res = await apiFetch(`${_INV_API}/stocktakes/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -3241,7 +3294,7 @@ function _irqReapplyFilters(cfg) {
 function _irqLineRowHtml(line, idx) {
   return `
     <tr>
-      <td><input type="text" class="fin-li-input" list="irq-item-datalist" placeholder="Search item…" value="${_invEsc(line.item_label || '')}" oninput="_irqResolveLineItem(${idx}, this.value)"></td>
+      ${_invItemCellHtml(line, idx, 'irq-item-datalist', '_irqResolveLineItem', 'irq')}
       <td><input type="number" class="fin-li-input" step="0.001" min="0.001" style="width:100px;" value="${line.requested_quantity || ''}" oninput="_irqUpdateLine(${idx},'requested_quantity',this.value)"></td>
       <td><input type="number" class="fin-li-input" step="0.0001" min="0" style="width:110px;" value="${line.estimated_unit_cost || ''}" oninput="_irqUpdateLine(${idx},'estimated_unit_cost',this.value)"></td>
       <td><input type="text" class="fin-li-input" placeholder="Notes" value="${_invEsc(line.notes || '')}" oninput="_irqUpdateLine(${idx},'notes',this.value)"></td>
@@ -3261,11 +3314,7 @@ function _irqRemoveLine(idx) {
   _irqLines.splice(idx, 1);
   _irqRenderLines();
 }
-function _irqResolveLineItem(idx, val) {
-  const id = (window._irqItemMap || {})[val];
-  _irqLines[idx].item_id = id || null;
-  _irqLines[idx].item_label = val;
-}
+function _irqResolveLineItem(idx, val) { _invBindLineItem(_irqLines, idx, val, 'irq'); }
 function _irqUpdateLine(idx, key, val) {
   _irqLines[idx][key] = val;
 }
@@ -3288,6 +3337,7 @@ function _irqHeaderFieldsHtml(r) {
       <div class="fin-form-group">
         <label class="fin-form-label">Request Date <span class="fin-required">*</span></label>
         <input type="date" id="irq-f-date" class="fin-form-input" value="${r?.request_date || todayStr}">
+        <span class="fin-field-error" id="irq-f-date-err"></span>
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Reason</label>
@@ -3326,17 +3376,23 @@ function _irqCollectHeaderPayload() {
   return {
     from_store_id: parseInt(document.getElementById('irq-f-from').value),
     to_store_id: parseInt(document.getElementById('irq-f-to').value),
-    request_date: document.getElementById('irq-f-date').value || null,
+    ..._invDateField('request_date', 'irq-f-date'),
     reason: (document.getElementById('irq-f-reason').value || '').trim() || null,
     notes: (document.getElementById('irq-f-notes').value || '').trim() || null,
   };
 }
+// Estimated unit cost is explicitly optional (actual cost is snapshotted from
+// the source store's moving average at post time), so requireCost stays off.
+const _IRQ_LINE_SPEC = {
+  qtyKey: 'requested_quantity', qtyLabel: 'requested quantity', costKey: 'estimated_unit_cost',
+  emptyMsg: 'Add at least one line with an item and requested quantity.',
+};
 function _irqValidateHeader() {
   document.getElementById('irq-f-from-err').textContent = '';
   document.getElementById('irq-f-to-err').textContent = '';
   const fromId = document.getElementById('irq-f-from').value;
   const toId = document.getElementById('irq-f-to').value;
-  let valid = true;
+  let valid = _invValidateDateField('irq-f-date', 'irq-f-date-err');
   if (!fromId) { document.getElementById('irq-f-from-err').textContent = 'This field is required.'; valid = false; }
   if (!toId) { document.getElementById('irq-f-to-err').textContent = 'This field is required.'; valid = false; }
   if (fromId && toId && fromId === toId) { document.getElementById('irq-f-to-err').textContent = 'To Store must be different from From Store.'; valid = false; }
@@ -3349,6 +3405,7 @@ function _irqRenderAddForm(el) {
   el.innerHTML = `
     <div class="fin-form-wrap" style="max-width:100%;">
       <h3 class="fin-title" style="font-size:1rem;">New Internal Requisition</h3>
+      ${_invCataloguesBannerHtml()}
       ${_irqHeaderFieldsHtml(null)}
       ${_irqLinesTableHtml()}
       <div id="irq-f-msg" style="margin-top:12px;"></div>
@@ -3363,11 +3420,12 @@ function _irqRenderAddForm(el) {
 async function _irqSubmitAdd() {
   document.getElementById('irq-f-msg').innerHTML = '';
   if (!_irqValidateHeader()) return;
-  const lines = _irqCollectLinesPayload();
-  if (lines.length === 0) {
-    document.getElementById('irq-f-msg').innerHTML = `<div class="fin-field-error">Add at least one line with an item and requested quantity.</div>`;
+  const lineError = _invValidateDocLines(_irqLines, _IRQ_LINE_SPEC);
+  if (lineError) {
+    document.getElementById('irq-f-msg').innerHTML = `<div class="fin-field-error">${_invEsc(lineError)}</div>`;
     return;
   }
+  const lines = _irqCollectLinesPayload();
   const payload = { ..._irqCollectHeaderPayload(), lines };
   const res = await apiFetch(`${_INV_API}/internal-requisitions/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   if (res && res.ok) { showToast('Internal requisition saved as draft.', 'success'); await window._splitReload?.(); return; }
@@ -3394,6 +3452,7 @@ function _irqRenderEditForm(item, el) {
         </div>
       </div>
       <div class="fin-form-wrap" style="max-width:100%;">
+        ${_invCataloguesBannerHtml()}
         ${_irqHeaderFieldsHtml(item)}
         ${_irqLinesTableHtml()}
         <div id="irq-f-msg" style="margin-top:12px;"></div>
@@ -3409,11 +3468,12 @@ function _irqRenderEditForm(item, el) {
 async function _irqSubmitEdit(id) {
   document.getElementById('irq-f-msg').innerHTML = '';
   if (!_irqValidateHeader()) return;
-  const lines = _irqCollectLinesPayload();
-  if (lines.length === 0) {
-    document.getElementById('irq-f-msg').innerHTML = `<div class="fin-field-error">Add at least one line with an item and requested quantity.</div>`;
+  const lineError = _invValidateDocLines(_irqLines, _IRQ_LINE_SPEC);
+  if (lineError) {
+    document.getElementById('irq-f-msg').innerHTML = `<div class="fin-field-error">${_invEsc(lineError)}</div>`;
     return;
   }
+  const lines = _irqCollectLinesPayload();
   const payload = { ..._irqCollectHeaderPayload(), lines };
   const res = await apiFetch(`${_INV_API}/internal-requisitions/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   if (res && res.ok) { showToast('Requisition updated.', 'success'); await window._splitRefreshSelected?.(); return; }
