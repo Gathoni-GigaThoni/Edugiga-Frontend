@@ -277,6 +277,17 @@ function _invClassLabel(id) {
 // it goes through loadLookupList (which toasts a denial and records it for
 // lookupPlaceholder), only a non-empty result is cached, and an empty one is
 // explained by _invDiagnoseControlAccounts below rather than left blank.
+//
+// The 403 that motivated all of that is now rare: GET /accounts/ used to be
+// gated on finance.setup at the router level, so a store manager without a
+// finance grant got a denial here every time. The backend has since split
+// reads from writes — a read passes on ANY of finance.setup,
+// inventory_management.stores, asset_management.fixed_assets or
+// asset_management.categories, and only POST/PUT/DELETE still need
+// finance.setup. Anyone who can reach this form at all holds
+// inventory_management.stores, so an empty picker here is now a Chart of
+// Accounts data problem, not a permission one. The denial branch below stays
+// for the roles that hold none of the four and somehow land on this form.
 async function _invEnsureControlAccountsCache(force = false) {
   if (_invControlAccountsCache && _invControlAccountsCache.length && !force) return;
   _invControlAccountsCache = await loadLookupList(

@@ -708,14 +708,22 @@ const LOOKUP_ACCESS_HINTS = {
   'academic-years':  { noun: 'academic years',        module: 'Student Academics' },
   'classes':         { noun: 'classes',               module: 'Student Academics' },
   'routes':          { noun: 'transport routes',      module: 'Transport Management' },
-  'accounts':        { noun: 'the chart of accounts', module: 'Finance' },
+  // GET /accounts/ is no longer finance.setup-only: reads are gated on ANY of
+  // finance.setup, inventory_management.stores, asset_management.fixed_assets
+  // or asset_management.categories (writes are still finance.setup). So a 403
+  // here means the operator holds none of the four, and "ask for Finance"
+  // alone would send a store or asset operator after the wrong grant — the
+  // view permission on their own module is the cheaper fix. `short` keeps the
+  // in-dropdown placeholder readable while the toast names the full set.
+  'accounts':        { noun: 'the chart of accounts', module: 'Finance, Inventory or Asset Management', short: 'Finance or Inventory access' },
   'ledgers':         { noun: 'ledgers',               module: 'Finance' },
   'cost-centers':    { noun: 'cost centres',          module: 'Finance' },
   'departments':     { noun: 'departments',           module: 'Finance' },
   'fee-items':       { noun: 'fee items',             module: 'Finance' },
   'fee-schedules':   { noun: 'fee schedules',         module: 'Finance' },
   'money-holding-accounts': { noun: 'bank, wallet and petty-cash accounts', module: 'Finance' },
-  'asset-accounts':  { noun: 'asset accounts',        module: 'Finance' },
+  // Same endpoint, same widened read gate as 'accounts' above.
+  'asset-accounts':  { noun: 'asset accounts',        module: 'Finance or Asset Management' },
   'suppliers':       { noun: 'suppliers',             module: 'Procurement' },
   'employees':       { noun: 'employees',             module: 'Human Resource' },
   'team-members':    { noun: 'staff user accounts',    module: 'Administration' },
@@ -737,7 +745,7 @@ function lookupDeniedMessage(label) {
 function lookupPlaceholder(label, normal) {
   if (!lookupWasDenied(label)) return normal;
   const hint = LOOKUP_ACCESS_HINTS[label];
-  return hint ? `No access — ask an admin for ${hint.module}` : 'No access';
+  return hint ? `No access — ask an admin for ${hint.short || hint.module}` : 'No access';
 }
 
 async function loadLookupList(url, label) {
