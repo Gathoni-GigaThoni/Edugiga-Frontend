@@ -3537,10 +3537,39 @@ const GI_TYPES = [
   { value: 'INCOME',  label: 'Income'  },
   { value: 'EXPENSE', label: 'Expense' },
 ];
-const GI_SUBTYPES = {
-  INCOME:  ['Sales','Donations','Grants','Rental Income','Interest','Other Income'],
-  EXPENSE: ['Utilities','Maintenance','Stationery','Salaries','Transport','Other Expense'],
-};
+// EXPENSE sub-types are grouped so the "Inventory Categories" set mirrors the
+// StoreType enum (see INV_STORE_TYPES in js/inventory.js — one label per store
+// type, legacy CLASS/OTHER included so all 10 store types are pickable). The
+// "Operating Expense" set is the historical list minus 'Stationery', which
+// moved into Inventory Categories to prevent duplication.
+//
+// INV_STORE_TYPES is resolved lazily via window because finance.js loads
+// before inventory.js; a top-level reference would ReferenceError at parse
+// time. Fallback list keeps the dropdown usable if inventory.js fails to load
+// (permission-broken bundle, network hiccup, etc.).
+const _GI_INVENTORY_FALLBACK_LABELS = [
+  'Dry Food Pantry', 'Fresh Food', 'Stationery & Office Supplies', 'Uniform',
+  'Toiletries & Cleaning', 'Tools & Small Equipment', 'Kitchenware & Utensils',
+  'Textbooks & Story Books', 'Class Consumables (legacy)', 'Other (legacy)',
+];
+function _giInventoryCategoryLabels() {
+  const src = (typeof window !== 'undefined' && Array.isArray(window.INV_STORE_TYPES))
+    ? window.INV_STORE_TYPES
+    : null;
+  if (!src || !src.length) return _GI_INVENTORY_FALLBACK_LABELS;
+  return src.map(t => t.label).filter(Boolean);
+}
+const GI_SUBTYPES_OPERATING = ['Utilities', 'Maintenance', 'Salaries', 'Transport', 'Other Expense'];
+const GI_SUBTYPES_INCOME    = ['Sales', 'Donations', 'Grants', 'Rental Income', 'Interest', 'Other Income'];
+
+function _giSubtypeGroups(type) {
+  if (type === 'INCOME')  return [{ label: null, items: GI_SUBTYPES_INCOME }];
+  if (type === 'EXPENSE') return [
+    { label: 'Inventory Categories', items: _giInventoryCategoryLabels() },
+    { label: 'Operating Expense',    items: GI_SUBTYPES_OPERATING },
+  ];
+  return [];
+}
 
 function _genGeneralItemCode() {
   const max = generalItemsData.reduce((m, g) => {
@@ -3678,8 +3707,21 @@ function _giOnSearch(v)     { _giSearch=v.trim().toLowerCase(); _giPage=1; _rend
 function _giGoPage(p)       { _giPage=p; _renderGiTable(); }
 
 function _giSubtypeOpts(selectedType, selectedVal) {
-  const opts = GI_SUBTYPES[selectedType] || [];
-  return opts.map(s=>`<option value="${s}" ${selectedVal===s?'selected':''}>${s}</option>`).join('');
+  const groups = _giSubtypeGroups(selectedType);
+  // Preserve legacy values: if the row's sub_type isn't in any current group,
+  // keep it selectable so edit doesn't silently blank the field.
+  const known = new Set(groups.flatMap(g => g.items));
+  const final = (selectedVal && !known.has(selectedVal))
+    ? [...groups, { label: 'Legacy value', items: [selectedVal] }]
+    : groups;
+  return final.map(g => {
+    const options = g.items.map(s =>
+      `<option value="${_finEsc(s)}"${selectedVal===s?' selected':''}>${_finEsc(s)}</option>`
+    ).join('');
+    return g.label
+      ? `<optgroup label="${_finEsc(g.label)}">${options}</optgroup>`
+      : options;
+  }).join('');
 }
 
 async function renderGeneralItemForm(container, item) {
@@ -3765,8 +3807,7 @@ async function renderGeneralItemForm(container, item) {
 function _giTypeChange(type) {
   const sel = document.getElementById('gi-f-subtype');
   if (!sel) return;
-  const opts = GI_SUBTYPES[type] || [];
-  sel.innerHTML = `<option value="">Please Select</option>` + opts.map(s=>`<option value="${s}">${s}</option>`).join('');
+  sel.innerHTML = `<option value="">Please Select</option>` + _giSubtypeOpts(type, '');
 }
 
 function _giPayload() {
