@@ -106,8 +106,13 @@ const REPORT_DEFS = {
   'reports-cash-book': { title: 'Cash Book', api: 'cash-book', dateMode: 'range',
     extra: [{ key: 'gl_account_id', label: 'Cash / Bank Account', type: 'money_holding' }],
     columns: [['date','DATE'],['description','DESCRIPTION'],['reference','REFERENCE'],['debit','DEBIT'],['credit','CREDIT'],['balance','BALANCE']] },
+  // PettyCashRow (openapi.json) is { application_id, applicant_id, purpose,
+  // requested_amount, status, disbursed_amount, disbursement_date,
+  // running_float }. The old column guess named date/applicant/amount/type,
+  // none of which exist, so four of six columns rendered "—" on every row
+  // while the float header and replenishments[] were dropped entirely.
   'reports-petty-cash-report': { title: 'Petty Cash Report', api: 'petty-cash-report', dateMode: 'range',
-    columns: [['date','DATE'],['applicant','APPLICANT'],['purpose','PURPOSE'],['amount','AMOUNT'],['type','TYPE'],['status','STATUS']] },
+    columns: [['disbursement_date','DATE'],['applicant','APPLICANT'],['purpose','PURPOSE'],['requested_amount','REQUESTED'],['disbursed_amount','DISBURSED'],['status','STATUS'],['running_float','RUNNING FLOAT']] },
   // SupplierStatementRow (openapi.json) has no "type" field — every row is an
   // AP invoice — and uses invoice_date/invoice_number, not date/reference.
   'reports-supplier-statements': { title: 'Supplier Statements', api: 'supplier-statements', dateMode: 'range', pathParam: 'supplier_id',
@@ -145,8 +150,13 @@ const REPORT_DEFS = {
     columns: [['jv_number','JV NUMBER'],['date','DATE'],['reference','REFERENCE'],['ledger','LEDGER'],['status','STATUS'],['debit_account','DEBIT ACCOUNT'],['credit_account','CREDIT ACCOUNT'],['amount','AMOUNT']], groupBy: 'jv_number',
     docRefKeys: ['jv_number'] },
 
+  // AccountBalanceLine (openapi.json) is
+  // { account_id, number, account_name, account_type, balance } and the rows
+  // are nested under `balances` — hence rowsKey. `number` was missing from the
+  // column list entirely.
   'reports-balances-report': { title: 'Balances Report', api: 'balances-report', dateMode: 'asof',
-    columns: [['account_name','ACCOUNT NAME'],['account_type','ACCOUNT TYPE'],['balance','BALANCE']] },
+    rowsKey: 'balances', accountLinkKeys: ['number', 'account_name'],
+    columns: [['number','NUMBER'],['account_name','ACCOUNT NAME'],['account_type','ACCOUNT TYPE'],['balance','BALANCE']] },
   // Same wrapper-object trap as the two per-GL-account reports above:
   // FeeReminderReport is { as_of_date, days_overdue_threshold, reminders: [...],
   // total_outstanding } and the rows are FeeReminderRow
@@ -407,6 +417,7 @@ async function _repGenerate(routeKey) {
     else if (routeKey === 'reports-trial-balance') _repRenderTrialBalance(def, data);
     else if (routeKey === 'reports-cash-book' || routeKey === 'reports-general-ledger') _repRenderLedgerLines(def, data);
     else if (routeKey === 'reports-daily-cash-return') _repRenderDailyCashReturn(def, data);
+    else if (routeKey === 'reports-petty-cash-report') _repRenderPettyCash(def, data);
     else if (routeKey === 'reports-tax-schedules') _repRenderTaxSchedules(def, data);
     else if (routeKey === 'reports-tendepay-transaction-history') _repRenderTendepayHistory(def, data);
     else _repRenderTable(def, data);
@@ -433,7 +444,13 @@ async function _repExport(routeKey, format) {
 
 // ── Table layout (most reports) ─────────────────────────────────────────────
 function _repRenderTable(def, data) {
-  const rows = Array.isArray(data) ? data : (data.data || data.items || data.results || data.rows || data.lines || []);
+  // def.rowsKey names the wrapper field for reports whose rows sit under a
+  // report-specific key (BalancesReport nests them under `balances`, which
+  // none of the generic names below reach — the report rendered "No data" on
+  // every run until this was added).
+  const rows = Array.isArray(data)
+    ? data
+    : ((def.rowsKey && data[def.rowsKey]) || data.data || data.items || data.results || data.rows || data.lines || []);
   const out = document.getElementById('rep-output');
   if (!rows.length) { out.innerHTML = '<div class="fin-table-wrap"><table class="fin-table"><tbody><tr><td class="fin-empty">No data for the selected criteria.</td></tr></tbody></table></div>'; return; }
 
@@ -447,11 +464,17 @@ function _repRenderTable(def, data) {
   // payload. Non-listed columns and rows without doc_ref render as
   // plain text via _repCell (no BE/FE deploy skew guard needed).
   const docRefKeys = def.docRefKeys || [];
+  // def.accountLinkKeys marks columns on an account-balance row that should
+  // drill into the General Ledger, the same hop the Trial Balance uses. These
+  // rows aggregate many JEs, so they carry account_id rather than a doc_ref.
+  const acctLinkKeys = def.accountLinkKeys || [];
+  const asOf = data.as_of_date || document.getElementById('rep-asof-date')?.value || '';
   const renderCell = (r, k) => {
     if (docRefKeys.includes(k) && r.doc_ref) {
       const link = _repDocLink(r.doc_ref);
       if (link) return link;
     }
+    if (acctLinkKeys.includes(k) && r.account_id) return _repAccountLedgerLink(r.account_id, asOf, r[k]);
     return _repCell(r[k]);
   };
 
@@ -693,6 +716,71 @@ function _repRenderDailyCashReturn(def, data) {
         ['DISBURSEMENT', 'AMOUNT'],
         pettyRows, 'No petty cash disbursements on this date.', null);
 }
+
+// Petty Cash Report — PettyCashReport carries a float header (opening /
+// closing / shortfall / ceiling) and a second replenishments[] table beside
+// the application rows, neither of which the generic table can express. The
+// float box is the point of the report: it answers "is the tin short?".
+function _repRenderPettyCash(def, data) {
+  const out = document.getElementById('rep-output');
+  if (!data || typeof data !== 'object') { out.innerHTML = '<p class="fin-empty">No data for the selected criteria.</p>'; return; }
+  const rows = Array.isArray(data.rows) ? data.rows : [];
+  const reps = Array.isArray(data.replenishments) ? data.replenishments : [];
+
+  // A school that has never set a float account gets zeroes for every figure
+  // in the box below, which reads as "the tin is empty" rather than "petty
+  // cash is not configured yet". Say which it is.
+  let html = '';
+  if (data.float_account_configured === false) {
+    html += `<div style="padding:12px 18px;border-radius:6px;border-left:3px solid var(--coral-500);background:var(--coral-100);color:var(--coral-600);font-size:0.88rem;margin-bottom:14px;">
+      No petty cash float account is configured, so the float figures below are not meaningful. Set one under Finance &rsaquo; Setup before relying on this report.
+    </div>`;
+  }
+
+  const shortfall = parseFloat(data.shortfall || 0) || 0;
+  const line = (label, value, opts = {}) => `<div style="display:flex;justify-content:space-between;padding:${opts.strong ? '6px' : '4px'} 0;${opts.strong ? 'font-weight:bold;border-top:2px solid #2c3e50;' : ''}${opts.color ? `color:${opts.color};` : ''}"><span>${label}</span><span>${_pvMoney(value)}</span></div>`;
+  html += `<div class="fin-form-wrap" style="max-width:520px;margin-bottom:14px;">
+      ${line('Opening Float', data.opening_float)}
+      ${line('Total Requested', data.total_requested)}
+      ${line('Total Disbursed', data.total_disbursed)}
+      ${line('Total Replenished', data.total_replenished)}
+      ${line('Closing Float', data.closing_float, { strong: true })}
+      ${data.float_ceiling != null ? line('Float Ceiling', data.float_ceiling) : ''}
+      ${line('Shortfall', data.shortfall, { color: shortfall > 0 ? 'var(--coral-600)' : '#1e7e34' })}
+    </div>`;
+
+  const cols = def.columns;
+  if (!rows.length) {
+    html += '<div class="fin-table-wrap"><table class="fin-table"><tbody><tr><td class="fin-empty">No petty cash applications in the selected period.</td></tr></tbody></table></div>';
+  } else {
+    // `applicant` is not a field on the row — PettyCashRow ships applicant_id
+    // only, resolved against the employee register _pvLoadLookups already
+    // fetched for this view.
+    const cell = (r, k) => k === 'applicant' ? _finEsc(_pvEmployeeName(r.applicant_id)) : _repCell(r[k]);
+    const body = rows.map(r => `<tr>${cols.map(([k]) => `<td>${cell(r, k)}</td>`).join('')}</tr>`).join('');
+    html += `<div class="fin-table-wrap"><table class="fin-table">
+      <thead><tr>${cols.map(([, label]) => `<th>${_finEsc(label)}</th>`).join('')}</tr></thead>
+      <tbody>${body}</tbody>
+    </table></div>`;
+  }
+
+  if (reps.length) {
+    const repBody = reps.map(r => `<tr>
+      <td>${_pvDate(r.replenishment_date)}</td>
+      <td>${_pvMoney(r.amount)}</td>
+      <td>${_finEsc(_pvAccountName(r.source_bank_account_id))}</td>
+      <td>${_repCell(r.notes)}</td>
+    </tr>`).join('');
+    html += `<h4 style="margin:22px 0 8px;color:#2c3e50;">Replenishments</h4>
+      <div class="fin-table-wrap"><table class="fin-table">
+        <thead><tr><th>DATE</th><th>AMOUNT</th><th>SOURCE ACCOUNT</th><th>NOTES</th></tr></thead>
+        <tbody>${repBody}</tbody>
+      </table></div>`;
+  }
+
+  out.innerHTML = html;
+}
+
 
 // ── Tax Schedules ──────────────────────────────────────────────────────────
 // Grouped by tax_type; each group has (tax_vouchers, wht_certificates,
