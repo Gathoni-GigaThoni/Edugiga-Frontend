@@ -378,11 +378,65 @@ function renderHrEspBankSection() {
   `;
 }
 
-function buildHrEspBankOptions() {
-  return financialInstitutionsData
-    .filter(fi => !(fi.is_inactive || fi.isInactive))
-    .map(fi => `<option value="${fi.id}">${fi.institution}</option>`)
+// The bank list is the Financial Institutions register (Payroll ▸ Utilities ▸
+// Financial Institutions) — whatever is registered there is what an ESP can be
+// paid into, so there is no hard-coded list of Kenyan banks to keep in step.
+//
+// This dropdown used to read `financialInstitutionsData`, the array declared in
+// js/config.js. Nothing anywhere writes to it: the Financial Institutions
+// screen was converted to renderSplitView, which fetches into its own closure,
+// and the paginator left behind in payroll.js (renderFiTable and friends) only
+// ever reads the same empty const. So the array stayed [] for the life of every
+// session and this picker was empty for every user on every visit — it was
+// never a seeding or permissions problem, and no amount of registering banks
+// would have filled it.
+//
+// It now loads the register itself, exactly the way the Pay Grade picker above
+// does: a null cache means "not fetched yet", the first call kicks the fetch
+// off and renders a placeholder, and the fetch refills the live <select>.
+let _espBanksCache = null;
+
+function _espBankLabel(fi) {
+  const name = fi.institution || fi.name || fi.bank_name || '';
+  const code = fi.code ? ` (${fi.code})` : '';
+  return `${name}${code}`.trim() || `#${fi.id}`;
+}
+
+// Mirrors _renderEspPayGradeOptions: never returns a bare empty string, so an
+// empty dropdown always carries its own explanation.
+function buildHrEspBankOptions(selected) {
+  if (_espBanksCache === null) {
+    _loadEspBanks(selected);
+    return `<option value="" disabled>Loading&#8230;</option>`;
+  }
+  const active = _espBanksCache.filter(fi => !(fi.is_inactive || fi.isInactive));
+  if (!active.length) {
+    const why = lookupWasDenied('financial-institutions')
+      ? lookupDeniedMessage('financial-institutions')
+      : 'No banks registered yet — add them under Payroll ▸ Utilities ▸ Financial Institutions.';
+    return `<option value="" disabled>${_dashEsc(why)}</option>`;
+  }
+  return active
+    .map(fi => `<option value="${fi.id}" ${String(selected ?? '') === String(fi.id) ? 'selected' : ''}>${_dashEsc(_espBankLabel(fi))}</option>`)
     .join('');
+}
+
+async function _loadEspBanks(selected) {
+  // for-bank-dropdown is the endpoint the backend publishes for exactly this
+  // picker; the full register is the fallback. The first goes through a plain
+  // apiFetch so a denial on it stays quiet — the fallback's loadLookupList is
+  // what reports a real access problem, and toasting twice over one empty
+  // dropdown would only be noise. Field names differ between the two shapes,
+  // which is why _espBankLabel normalises instead of assuming one.
+  const res = await apiFetch(`${API_BASE}/payroll/utilities/financial-institutions/for-bank-dropdown`);
+  _espBanksCache = (res && res.ok)
+    ? _toArray(await res.json())
+    : await loadLookupList(`${API_BASE}/payroll/utilities/financial-institutions/`, 'financial-institutions');
+  const sel = document.getElementById('hr-esp-bank-select');
+  if (sel) {
+    sel.innerHTML = `<option value="">Please Select</option>${buildHrEspBankOptions(selected)}`;
+    if (selected != null && selected !== '') sel.value = selected;
+  }
 }
 
 function toggleHrEspBankDropdown(event, idx) {
@@ -414,7 +468,7 @@ function openHrEspBankModalEdit(idx) {
   setv('hr-esp-bank-acct-name', b.accountName);
   setv('hr-esp-bank-gateway-name', b.gatewayDisplayName);
   const sel = document.getElementById('hr-esp-bank-select');
-  if (sel) { sel.innerHTML = `<option value="">Please Select</option>${buildHrEspBankOptions()}`; sel.value = b.bankId || ''; }
+  if (sel) { sel.innerHTML = `<option value="">Please Select</option>${buildHrEspBankOptions(b.bankId)}`; sel.value = b.bankId || ''; }
   const ov = document.getElementById('hr-esp-bank-overlay'); if (ov) ov.style.display = 'flex';
 }
 

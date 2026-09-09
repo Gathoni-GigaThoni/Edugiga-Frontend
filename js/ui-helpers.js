@@ -732,6 +732,8 @@ const LOOKUP_ACCESS_HINTS = {
   'general-items':   { noun: 'items',                  module: 'Finance' },
   'employees':       { noun: 'employees',             module: 'Human Resource' },
   'team-members':    { noun: 'staff user accounts',    module: 'Administration' },
+  // The ESP bank picker's source — the Financial Institutions register.
+  'financial-institutions': { noun: 'the bank register', module: 'Payroll' },
 };
 
 const _lookupDenied  = new Set();
