@@ -42,7 +42,6 @@ if (token) {
 // ── In-memory data stores ─────────────────────────────────────────────────────
 const employeesData = [];
 const employeeServiceProfilesData = [];
-const financialInstitutionsData = [];
 
 // Finance
 let sessionData                    = [];

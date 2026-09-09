@@ -3,6 +3,11 @@ let payrollEspPage = 1;
 let payrollEspPerPage = 10;
 let payrollEspFiltered = [];
 
+// `payroll-esp-dd-*` are the ESP row action dropdowns below; `fi-dd-*` used
+// to be Financial Institutions' row action dropdowns but the FI paginator
+// was replaced by renderSplitView and its dead handlers deleted. The prefix
+// is now Fee Items' (js/finance.js:3313) — this outside-click closer keeps
+// Fee Items' action menus dismissible from anywhere on the page.
 document.addEventListener('click', () => {
   document.querySelectorAll('[id^="payroll-esp-dd-"],[id^="fi-dd-"]').forEach(d => d.style.display = 'none');
 });
@@ -283,8 +288,15 @@ function payrollEspDelete(idx) {
 }
 
 // ==================== PAYROLL — FINANCIAL INSTITUTIONS ====================
-let fiCurrentPage = 1;
-let fiPerPage = 10;
+// Listing/edit/add all go through renderSplitView, which fetches into its
+// own closure. The old paginator (renderFiTable + fiCurrentPage/fiPerPage +
+// changeFiPerPage/fiGoToPage/toggleFiDropdown/toggleFiStatus/deleteFi) and
+// the `financialInstitutionsData` global they mutated are gone — there was
+// no writer to that array anywhere in the tree, so every read returned [].
+// Deleting them also unblocks Fee Items' per-page dropdown: both modules had
+// defined a `changeFiPerPage`, and load order (finance.js before payroll.js)
+// meant payroll's dead version won the global — which then blanked Fee Items
+// into "No records found" whenever an operator changed the page size.
 
 function openPayrollDropdowns() {
   const pd = document.getElementById('payroll-dropdown');
@@ -320,105 +332,8 @@ async function loadPayrollFiListingView(container) {
     ],
     renderAdd: _prAddPlaceholder('Financial Institution', "loadPayrollFiAddView(document.getElementById('main-content'))", 'Add a bank or financial institution for salary disbursement.'),
     onAdd:  () => loadPayrollFiAddView(document.getElementById('main-content')),
-    onEdit: item => loadPayrollFiEditView(document.getElementById('main-content'), item.id),
+    onEdit: item => loadPayrollFiEditView(document.getElementById('main-content'), item),
   });
-}
-
-function renderFiTable() {
-  const totalEl = document.getElementById('fi-total-count');
-  if (totalEl) totalEl.textContent = financialInstitutionsData.length;
-
-  const start    = (fiCurrentPage - 1) * fiPerPage;
-  const pageData = financialInstitutionsData.slice(start, start + fiPerPage);
-
-  let html = `<table class="fi-table"><thead><tr>
-    <th>CODE</th><th>INSTITUTION</th><th>IS DEFAULT?</th><th>STATUS</th><th>ACTION</th>
-  </tr></thead><tbody>`;
-
-  if (pageData.length === 0) {
-    html += `<tr><td colspan="6" class="hr-empty">No records found</td></tr>`;
-  } else {
-    pageData.forEach(rec => {
-      html += `<tr>
-        <td>${rec.code || ''}</td>
-        <td>${rec.institution || ''}</td>
-        <td>${(rec.is_default || rec.isDefault) ? 'Yes' : 'No'}</td>
-        <td>
-          <div class="fi-status-pill ${(rec.is_inactive || rec.isInactive) ? 'fi-pill-inactive' : 'fi-pill-active'}">
-            <span>${(rec.is_inactive || rec.isInactive) ? 'Inactive' : 'Active'}</span>
-            <button class="fi-pill-toggle" onclick="toggleFiStatus('${rec.id}')" title="Toggle status">&#9660;</button>
-          </div>
-        </td>
-        <td class="hr-action-cell">
-          <div class="hr-action-wrap">
-            <button class="hr-action-btn" onclick="toggleFiDropdown(event,'${rec.id}')">&#8230;</button>
-            <div id="fi-dd-${rec.id}" class="hr-action-dropdown" style="display:none;">
-              <a href="#" onclick="loadPayrollFiEditView(document.getElementById('main-content'),'${rec.id}');return false;">&#9998; Edit</a>
-              <a href="#" onclick="deleteFi('${rec.id}');return false;">&#128465; Delete</a>
-            </div>
-          </div>
-        </td>
-      </tr>`;
-    });
-  }
-
-  html += `</tbody></table>`;
-  document.getElementById('fi-table-container').innerHTML = html;
-
-  const totalPages = Math.ceil(financialInstitutionsData.length / fiPerPage);
-  let pagHtml = '';
-  if (totalPages > 1) {
-    pagHtml = '<div class="hr-pagination">';
-    pagHtml += `<button onclick="fiGoToPage(1)" ${fiCurrentPage === 1 ? 'disabled' : ''}>&laquo;</button>`;
-    for (let i = 1; i <= totalPages; i++) {
-      pagHtml += `<button onclick="fiGoToPage(${i})" ${i === fiCurrentPage ? 'class="hr-page-active"' : ''}>${i}</button>`;
-    }
-    pagHtml += `<button onclick="fiGoToPage(${totalPages})" ${fiCurrentPage === totalPages ? 'disabled' : ''}>&raquo;</button>`;
-    pagHtml += '</div>';
-  }
-  document.getElementById('fi-pagination').innerHTML = pagHtml;
-}
-
-function changeFiPerPage(val) {
-  fiPerPage = parseInt(val);
-  fiCurrentPage = 1;
-  renderFiTable();
-}
-
-function fiGoToPage(page) {
-  fiCurrentPage = page;
-  renderFiTable();
-}
-
-function toggleFiDropdown(event, id) {
-  event.stopPropagation();
-  document.querySelectorAll('[id^="fi-dd-"]').forEach(d => {
-    if (d.id !== `fi-dd-${id}`) d.style.display = 'none';
-  });
-  const dd = document.getElementById(`fi-dd-${id}`);
-  if (dd) dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
-}
-
-async function toggleFiStatus(id) {
-  const rec = financialInstitutionsData.find(r => r.id === id);
-  if (!rec) return;
-  rec.is_inactive = !(rec.is_inactive || rec.isInactive);
-  rec.isInactive  = rec.is_inactive;   // keep legacy field in sync for any display that still reads it
-  renderFiTable();
-  await apiFetch(`${API_BASE}/payroll/utilities/financial-institutions/${id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(rec)
-  });
-}
-
-async function deleteFi(id) {
-  if (!confirm('Delete this financial institution?')) return;
-  const res = await apiFetch(`${API_BASE}/payroll/utilities/financial-institutions/${id}`, { method: 'DELETE' });
-  if (!(res && res.ok)) { showToast('Could not delete record.', 'error'); return; }
-  const idx = financialInstitutionsData.findIndex(r => r.id === id);
-  if (idx !== -1) financialInstitutionsData.splice(idx, 1);
-  renderFiTable();
 }
 
 // ---- Shared form fields renderer ----
@@ -512,11 +427,15 @@ async function submitFiAdd() {
 }
 
 // ---- Edit ----
-function loadPayrollFiEditView(container, id) {
+// `rec` comes in from renderSplitView's onEdit callback (payroll.js:335),
+// which passes the full row selected in the list. Previously this function
+// took an id and looked the row up in `financialInstitutionsData` — that
+// global has been retired (nothing wrote to it), so the lookup was always
+// empty and every Edit click silently redirected back to the listing.
+function loadPayrollFiEditView(container, rec) {
   setActiveSidebarItem('sidebar-payroll-fi');
   openPayrollDropdowns();
-  const rec = financialInstitutionsData.find(r => r.id === id);
-  if (!rec) { loadPayrollFiListingView(container); return; }
+  if (!rec || rec.id == null) { loadPayrollFiListingView(container); return; }
   container.innerHTML = `
     <div class="fi-page">
       <div class="hr-header-row">
@@ -530,7 +449,7 @@ function loadPayrollFiEditView(container, id) {
       <div class="hr-tab-body">
         ${renderFiFormFields(rec)}
         <div class="hr-form-actions">
-          <button class="hr-btn-form-submit" onclick="submitFiEdit('${id}')">Update</button>
+          <button class="hr-btn-form-submit" onclick="submitFiEdit('${rec.id}')">Update</button>
           <button class="hr-btn-form-cancel" onclick="loadPayrollFiListingView(document.getElementById('main-content'))">Cancel</button>
         </div>
       </div>

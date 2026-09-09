@@ -350,33 +350,32 @@ let _invClassesCache = null;
 let _invControlAccountsCache = null;
 let _invControlAccountsDiag = null;
 
-// Custodian is `inv_store.custodian_employee_id`, but the FK it is checked
-// against is `team` — the staff *user account* table — not `hr_employee`,
-// despite the column name. This picker used to be filled from /hr/employees,
-// which meant it offered Employee ids: the database rejected them
-// ("Key (custodian_employee_id)=(2) is not present in table \"team\"", a 400
-// the user saw as the unhelpful "Referenced record does not exist"), and any
-// store that *did* have a custodian was mislabelled everywhere it rendered —
-// the id was resolved against the employee list, naming whichever employee
-// happened to hold that number. /api/team/ is the id space the constraint
-// actually enforces, so it is the only correct source for both.
+// Custodian is `inv_store.custodian_employee_id`. The FK now points at
+// `hr_employee` (migration a1c2d3e4f5b6, 2026-09-08) — a custodian is an HR
+// employee, whether or not they hold a Team login. That was the interim
+// diagnosis's stated destination and it's what the API expects today, so
+// this picker fetches the HR employee register directly.
 //
-// INTERIM — a store custodian is *meant* to be an HR employee (confirmed with
-// the product owner 2026-09-08), not a user account. Today's FK cannot express
-// that: it can only name staff who happen to have a login, so a storekeeper
-// with no user account cannot be recorded as custodian at all. Reverting this
-// picker to /hr/employees ahead of the backend is not an option — the database
-// rejects Employee ids outright. When the BE repoints the constraint at
-// `hr_employee` (and ideally renames nothing, since the column name already
-// says employee), the change here is: swap this fetch back to
-// `${API_BASE}/hr/employees`, and read `first_name`/`last_name` off the
-// Employee rows, which _invCustodianName already does. Nothing else moves —
-// the picker, the label resolver and the edit-diff guard are all id-space
-// agnostic. Until then this stays on /api/team/ and stores can only be handed
-// to staff who have logins.
+// Endpoint returns `EmployeeListResponse` = { total, page, per_page, items };
+// _toArray reads `items` off it. per_page is capped at 100 on the API — for
+// Seven Oaks kindergarten headcount that's the whole staff. If the school
+// ever grows past that this picker becomes truncated and we page through.
+//
+// Active filter uses `employee_status`, not `is_active` — Employee has no
+// is_active column. Suspended and terminated employees are dropped from the
+// choices but kept selectable when they are the store's current custodian,
+// so opening the edit form on a store whose custodian has since left doesn't
+// silently re-point it at nobody.
+const _INV_CUSTODIAN_INACTIVE_STATUSES = new Set(['suspended', 'terminated']);
+function _invCustodianIsPickable(e) {
+  return !_INV_CUSTODIAN_INACTIVE_STATUSES.has((e.employee_status || '').toLowerCase());
+}
 async function _invEnsureCustodianCache() {
   if (_invCustodianCache && _invCustodianCache.length) return;
-  _invCustodianCache = await loadLookupList(`${API_BASE}/team/?skip=0&limit=1000`, 'team-members');
+  _invCustodianCache = await loadLookupList(
+    `${API_BASE}/hr/employees?page=1&per_page=100`,
+    'employees',
+  );
 }
 function _invCustodianName(m) {
   return `${m.first_name || ''} ${m.last_name || ''}`.trim() || m.email || `#${m.id}`;
@@ -386,21 +385,18 @@ function _invCustodianLabel(id) {
   const m = (_invCustodianCache || []).find(x => String(x.id) === String(id));
   return m ? _invCustodianName(m) : `#${id}`;
 }
-// Inactive members are dropped from the choices but kept selectable when they
-// are the store's current custodian, so opening the edit form on a store whose
-// custodian has since been deactivated doesn't silently re-point it at nobody.
 function _invCustodianPickerHtml(selectId, selectedId) {
   const rows = (_invCustodianCache || []).filter(m =>
-    m.is_active !== false || String(m.id) === String(selectedId));
+    _invCustodianIsPickable(m) || String(m.id) === String(selectedId));
   const known = rows.some(m => String(m.id) === String(selectedId));
   return `
-    <label class="fin-form-label">Custodian (Staff)</label>
+    <label class="fin-form-label">Custodian (Employee)</label>
     <select id="${selectId}" class="fin-form-select">
-      <option value="">${_invEsc(lookupPlaceholder('team-members', 'Please Select'))}</option>
+      <option value="">${_invEsc(lookupPlaceholder('employees', 'Please Select'))}</option>
       ${selectedId != null && !known
-        ? `<option value="${selectedId}" selected>Currently #${selectedId} — ${lookupWasDenied('team-members') ? 'staff list unavailable' : 'no longer in the staff list'}</option>`
+        ? `<option value="${selectedId}" selected>Currently #${selectedId} — ${lookupWasDenied('employees') ? 'employee list unavailable' : 'no longer on the employee register'}</option>`
         : ''}
-      ${rows.map(m => `<option value="${m.id}" ${String(m.id) === String(selectedId) ? 'selected' : ''}>${_invEsc(_invCustodianName(m))}${m.is_active === false ? ' (inactive)' : ''}</option>`).join('')}
+      ${rows.map(m => `<option value="${m.id}" ${String(m.id) === String(selectedId) ? 'selected' : ''}>${_invEsc(_invCustodianName(m))}${!_invCustodianIsPickable(m) ? ' (inactive)' : ''}</option>`).join('')}
     </select>`;
 }
 
