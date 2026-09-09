@@ -846,6 +846,7 @@ function _grnHeaderFieldsHtml(grn, isEdit) {
       <div class="fin-form-group">
         <label class="fin-form-label">Received Date <span class="fin-required">*</span></label>
         <input type="date" id="grn-f-received-date" class="fin-form-input" value="${grn?.received_date || todayStr}"${isEdit ? ' oninput="_grnShowTermRederiveHint()"' : ''}>
+        <span class="fin-field-error" id="grn-f-received-date-err"></span>
         ${isEdit
           ? `<div id="grn-f-term-hint" style="display:none;padding:8px 10px;border-radius:6px;background:var(--gold-100,#fdf3d6);color:#8a6d00;font-size:0.8rem;margin-top:6px;">Changing the received date will re-derive the term.</div>`
           : `<span style="font-size:12px;color:var(--grey-600)">Term is derived from this date.</span>`}
@@ -891,13 +892,49 @@ function _grnCollectLinesPayload() {
       notes: (l.notes || '').trim() || null,
     }));
 }
+// received_date is deliberately omitted rather than sent as null when blank.
+// The two GRN schemas disagree about it: GRNCreate has it required and
+// non-nullable, while GRNUpdate accepts null — so an explicit null is a 422 on
+// Add and, on Edit, a request to blank a column GRNRead declares non-nullable.
+// A GRN whose received_date (or the term_id derived from it) is NULL cannot be
+// serialised into the list response at all, which takes GET /inventory/grn/
+// down with a 500 for every user and cannot be undone from this app. Sending
+// no key at all is the only safe encoding of "the operator left it blank"; the
+// field is validated below so it never gets that far.
 function _grnCollectHeaderPayload() {
+  const receivedDate = document.getElementById('grn-f-received-date').value || '';
   return {
     supplier_id: parseInt(document.getElementById('grn-f-supplier').value),
-    received_date: document.getElementById('grn-f-received-date').value || null,
+    ...(receivedDate ? { received_date: receivedDate } : {}),
     delivery_note_ref: (document.getElementById('grn-f-delivery-ref').value || '').trim() || null,
     notes: (document.getElementById('grn-f-notes').value || '').trim() || null,
   };
+}
+
+// Shared by Add and Edit: supplier and received date are both starred in the
+// form, but only supplier was ever checked, so clearing the date got you a raw
+// "received_date: Input should be a valid date" from the server instead of the
+// inline message every other required field on this form uses.
+function _grnValidateHeader() {
+  const supplierId = document.getElementById('grn-f-supplier').value;
+  const receivedDate = document.getElementById('grn-f-received-date').value;
+  document.getElementById('grn-f-supplier-err').textContent = supplierId ? '' : 'This field is required.';
+  document.getElementById('grn-f-received-date-err').textContent = receivedDate ? '' : 'This field is required.';
+  return !!supplierId && !!receivedDate;
+}
+
+// Puts a server-side 422 back on the field it belongs to. Returns whether any
+// field claimed it, so the caller still has somewhere to put the ones that
+// don't map to a header field (line errors, business-rule rejections).
+function _grnRouteFieldErrors(fieldErrors) {
+  const map = { supplier_id: 'grn-f-supplier-err', received_date: 'grn-f-received-date-err' };
+  let routed = false;
+  Object.entries(map).forEach(([field, elId]) => {
+    if (!fieldErrors[field]) return;
+    const el = document.getElementById(elId);
+    if (el) { el.textContent = fieldErrors[field]; routed = true; }
+  });
+  return routed;
 }
 
 // ── Add (Save Draft only — no Approve from Add, §3.5) ───────────────────
@@ -918,10 +955,8 @@ function _grnRenderAddForm(el) {
   _invPopulateItemDatalist('grn-item-datalist', '_grnItemMap');
 }
 async function _grnSubmitAdd() {
-  document.getElementById('grn-f-supplier-err').textContent = '';
   document.getElementById('grn-f-msg').innerHTML = '';
-  const supplierId = document.getElementById('grn-f-supplier').value;
-  if (!supplierId) { document.getElementById('grn-f-supplier-err').textContent = 'This field is required.'; return; }
+  if (!_grnValidateHeader()) return;
   const lines = _grnCollectLinesPayload();
   if (lines.length === 0) {
     document.getElementById('grn-f-msg').innerHTML = `<div class="fin-field-error">Add at least one line with an item, store, quantity and unit cost.</div>`;
@@ -932,8 +967,8 @@ async function _grnSubmitAdd() {
   if (res && res.ok) { showToast('GRN saved as draft.', 'success'); await window._splitReload?.(); return; }
   if (!res) return;
   const { fieldErrors, message } = await _invParseError(res);
-  if (fieldErrors.supplier_id) document.getElementById('grn-f-supplier-err').textContent = fieldErrors.supplier_id;
-  else document.getElementById('grn-f-msg').innerHTML = `<div class="fin-field-error">${_invEsc(message)}</div>`;
+  const routed = _grnRouteFieldErrors(fieldErrors);
+  if (!routed) document.getElementById('grn-f-msg').innerHTML = `<div class="fin-field-error">${_invEsc(message)}</div>`;
 }
 
 // ── Edit — draft-only, PATCH lines is a full replacement (§3.7, §9.6) ──────
@@ -965,10 +1000,8 @@ function _grnRenderEditForm(item, el) {
   _invPopulateItemDatalist('grn-item-datalist', '_grnItemMap');
 }
 async function _grnSubmitEdit(id) {
-  document.getElementById('grn-f-supplier-err').textContent = '';
   document.getElementById('grn-f-msg').innerHTML = '';
-  const supplierId = document.getElementById('grn-f-supplier').value;
-  if (!supplierId) { document.getElementById('grn-f-supplier-err').textContent = 'This field is required.'; return; }
+  if (!_grnValidateHeader()) return;
   const lines = _grnCollectLinesPayload();
   if (lines.length === 0) {
     document.getElementById('grn-f-msg').innerHTML = `<div class="fin-field-error">Add at least one line with an item, store, quantity and unit cost.</div>`;
@@ -979,8 +1012,8 @@ async function _grnSubmitEdit(id) {
   if (res && res.ok) { showToast('GRN updated.', 'success'); await window._splitRefreshSelected?.(); return; }
   if (!res) return;
   const { fieldErrors, message } = await _invParseError(res);
-  if (fieldErrors.supplier_id) document.getElementById('grn-f-supplier-err').textContent = fieldErrors.supplier_id;
-  else document.getElementById('grn-f-msg').innerHTML = `<div class="fin-field-error">${_invEsc(message)}</div>`;
+  const routed = _grnRouteFieldErrors(fieldErrors);
+  if (!routed) document.getElementById('grn-f-msg').innerHTML = `<div class="fin-field-error">${_invEsc(message)}</div>`;
 }
 
 // ── Detail actions — status-conditional (§3.6) ──────────────────────────

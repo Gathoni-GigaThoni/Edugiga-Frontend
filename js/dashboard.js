@@ -922,15 +922,31 @@ async function renderSplitView(cfg) {
       // Surface the API's actual reason (e.g. "Insufficient permissions") instead
       // of a generic message — a 403 on a role's permission gap looks identical
       // to a dead network otherwise, which made the real cause invisible.
+      //
+      // The status code goes on screen next to it because the reason alone
+      // still can't be acted on: "Insufficient permissions" (403, ask an admin
+      // for the grant) and an unhandled server fault (500, report it) read the
+      // same to an operator, and the person they report it to can't tell which
+      // one happened either. The URL only goes to the console — it is for
+      // whoever opens devtools, not for the screen.
       const msg = await parseApiError(resp);
-      container.innerHTML = `<p style="color:var(--color-danger);padding:20px">Failed to load data: ${_dashEsc(msg)}</p>`;
+      console.error('renderSplitView list fetch failed:', resp.status, cfg.apiUrl, msg);
+      const hint = resp.status === 403
+        ? ' — your role does not have view access to this list; ask an admin for it.'
+        : (resp.status >= 500 ? ' — this is a server-side fault, not a permission problem. Please report it.' : '');
+      container.innerHTML = `<p style="color:var(--color-danger);padding:20px">Failed to load data (HTTP ${resp.status}): ${_dashEsc(msg)}${_dashEsc(hint)}</p>`;
       return;
     }
     const data = await resp.json();
     allItems = _toArray(data);
     if (typeof cfg.onFetched === 'function') cfg.onFetched(data);
-  } catch (_) {
-    container.innerHTML = `<p style="color:var(--color-danger);padding:20px">Failed to load data.</p>`;
+  } catch (err) {
+    // Distinct copy from the !resp.ok branch above: reaching here means the
+    // request never produced a readable response at all (apiFetch exhausted its
+    // retries, or the body wasn't the JSON list the caller expected), so there
+    // is no status to show and "check your connection" is the right advice.
+    console.error('renderSplitView list fetch threw:', cfg.apiUrl, err);
+    container.innerHTML = `<p style="color:var(--color-danger);padding:20px">Failed to load data — the server could not be reached, or it answered with something other than a list. Check your connection and try again.</p>`;
     return;
   }
 
