@@ -70,6 +70,31 @@ function _repDocLink(docRef) {
   return `<a href="${_finEsc(docRef.url)}" target="_blank" rel="noopener">${_finEsc(docRef.number)}</a>`;
 }
 
+// Trial Balance rows carry no doc_ref, and shouldn't: DocRef addresses one
+// document by id, while a TB row is an aggregate over many JEs. Their
+// drill-down is a report-to-report hop instead — open the General Ledger
+// filtered to that account, in a new tab, the same way a doc_ref link does.
+// From there each jv_number is already a doc_ref link to the JE itself, so
+// the trail is TB account -> GL -> JE.
+//
+// The range starts at inception rather than the fiscal-year start because the
+// GL report ships no opening balance (only Cash Book does — see
+// _repRenderLedgerLines). Over a FY-to-date range a balance-sheet account's
+// running_balance would start from zero and disagree with the very TB figure
+// the user clicked, which is worse than no drill-down at all.
+const _REP_INCEPTION_DATE = '2000-01-01';
+
+function _repAccountLedgerLink(accountId, asOfDate, label) {
+  const text = _finEsc(label == null || label === '' ? '—' : label);
+  if (!accountId || !asOfDate) return text;
+  const qs = new URLSearchParams({
+    account_id: String(accountId),
+    start_date: _REP_INCEPTION_DATE,
+    end_date: asOfDate,
+  });
+  return `<a href="#reports-general-ledger?${_finEsc(qs.toString())}" target="_blank" rel="noopener">${text}</a>`;
+}
+
 // ── Report definitions ──────────────────────────────────────────────────────
 // dateMode: 'range' (start_date/end_date), 'asof' (as_of_date[+compare_to_date]), 'single' (report_date)
 const REPORT_DEFS = {
@@ -264,6 +289,26 @@ async function loadFinanceReportView(container, routeKey) {
       </div>
       <div id="rep-output"></div>
     </div>`;
+
+  _repApplyPrefill(def, routeKey);
+}
+
+// Consumes window._repPrefill, set by a report-to-report drill-down link
+// (see _repAccountLedgerLink and _maybeOpenDocFromHash in js/dashboard.js).
+// Fills the filter inputs from the link's query string and runs the report
+// immediately, so the new tab lands on results instead of an empty form the
+// user has to re-submit with the values they already chose.
+function _repApplyPrefill(def, routeKey) {
+  const pre = window._repPrefill;
+  window._repPrefill = null;
+  if (!pre) return;
+  const set = (id, v) => { const el = document.getElementById(id); if (el && v) el.value = v; };
+  set('rep-start-date',  pre.start_date);
+  set('rep-end-date',    pre.end_date);
+  set('rep-asof-date',   pre[def.dateParam || 'as_of_date'] || pre.as_of_date);
+  set('rep-single-date', pre[def.dateParam || 'report_date'] || pre.report_date);
+  (def.extra || []).forEach(f => set(`rep-x-${f.key}`, pre[f.key]));
+  _repGenerate(routeKey);
 }
 
 // Every dated report endpoint declares its date param as REQUIRED with no
@@ -475,7 +520,13 @@ function _repRenderTrialBalance(def, data) {
   if (!rows.length) { out.innerHTML = '<div class="fin-table-wrap"><table class="fin-table"><tbody><tr><td class="fin-empty">No data for the selected criteria.</td></tr></tbody></table></div>'; return; }
 
   const cols = def.columns;
-  const bodyRows = rows.map(r => `<tr>${cols.map(([k]) => `<td>${_repCell(r[k])}</td>`).join('')}</tr>`).join('');
+  // as_of_date comes back on the payload; fall back to the filter box in case
+  // an older BE build omits it, since the link is useless without an end date.
+  const asOf = data.as_of_date || document.getElementById('rep-asof-date')?.value || '';
+  const bodyRows = rows.map(r => `<tr>${cols.map(([k]) => {
+    if (k === 'number' || k === 'account_name') return `<td>${_repAccountLedgerLink(r.account_id, asOf, r[k])}</td>`;
+    return `<td>${_repCell(r[k])}</td>`;
+  }).join('')}</tr>`).join('');
   const totalsRow = cols.map(([k], i) => {
     if (i === 0) return `<td><strong>TOTAL</strong></td>`;
     if (k === 'debit_balance') return `<td><strong>${_pvMoney(data.total_debits)}</strong></td>`;

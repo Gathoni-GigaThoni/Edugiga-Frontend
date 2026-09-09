@@ -601,10 +601,11 @@ function showDashboard() {
     if (activeModule !== null) closeFlyout();
   });
 
-  // Deep-link handoff: when a new tab boots at #<route>?open=<id> (from a
-  // clickable doc_ref anchor in a report), skip the dashboard home and open
-  // the requested document instead. Unrecognised hashes are ignored and the
-  // dashboard renders normally.
+  // Deep-link handoff: when a new tab boots at #<route>?<query>, skip the
+  // dashboard home and go straight to the target. Two shapes are understood:
+  // ?open=<id> from a clickable doc_ref anchor (opens that document), and a
+  // report route with filter params (opens that report, pre-run). Unrecognised
+  // hashes are ignored and the dashboard renders normally.
   _maybeOpenDocFromHash();
 }
 
@@ -639,8 +640,20 @@ function _maybeOpenDocFromHash() {
   const qIdx = raw.indexOf('?');
   if (qIdx < 0) return;
   const route = raw.slice(0, qIdx);
-  const query = raw.slice(qIdx + 1);
-  const openId = parseInt(new URLSearchParams(query).get('open'), 10);
+  const qp = new URLSearchParams(raw.slice(qIdx + 1));
+
+  // Report-to-report drill-down (Trial Balance account -> General Ledger).
+  // These links carry no `open` id — a report has no single document to
+  // preselect — so the whole query string is handed to the report view as
+  // prefilled filters, which then runs itself. See _repApplyPrefill in
+  // js/finance-reports.js.
+  if (typeof REPORT_DEFS !== 'undefined' && REPORT_DEFS[route]) {
+    window._repPrefill = Object.fromEntries(qp.entries());
+    loadView(route);
+    return;
+  }
+
+  const openId = parseInt(qp.get('open'), 10);
   if (!openId) return;
   const varName = _DOC_ROUTE_TO_PRESELECT[route];
   if (!varName) return;
