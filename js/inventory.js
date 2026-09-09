@@ -314,11 +314,17 @@ function _invPopulateItemDatalist(listId, mapKey) {
 
 // ==================== STORES (§2) ====================
 
-// Single source of truth for store types. `legacy: true` types are still
-// rendered everywhere (badge, detail, filter) but are not offered on the Add
-// form. Only `class` is legacy in that sense: those stores are auto-created
-// 1:1 with SchoolClass records, and the Add form has no school_class_id
-// picker, so hand-creating one would post an unlinked class store.
+// Single source of truth for store types — every one of the ten is offered on
+// the Add form. `class` was held back while the form had no school_class_id
+// field; it now has one (revealed by _invOnStoreTypeChange), so ops can create
+// a classroom's store by hand when the 1:1 auto-creation against SchoolClass
+// hasn't produced it.
+//
+// A `class` store holds school-provided classroom items — the school buys
+// them, receives them into a main store, then issues them out to a classroom.
+// It is NOT where parent-brought student supplies live: those are
+// /api/supplies/ (StudentSupply — keyed by student_id, free-text quantity, no
+// store_id and no GL), a separate subsystem that never touches inventory.
 const INV_STORE_TYPES = [
   { value: 'pantry',          label: 'Dry Food Pantry',                color: 'color:#1e7e34;background:#dcf3e2;', hint: 'Bulk non-perishables — rice, flour, sugar.' },
   { value: 'kitchen_grocery', label: 'Fresh Food',                     color: 'color:#8a6d00;background:var(--gold-100,#fdf3d6);', hint: 'Short-cycle perishables — milk, eggs, vegetables.' },
@@ -328,11 +334,9 @@ const INV_STORE_TYPES = [
   { value: 'tools_equipment', label: 'Tools & Small Equipment',        color: 'color:#37474f;background:#e3e8ea;', hint: 'Paper punches, staplers, brooms, mops, buckets.' },
   { value: 'kitchenware',     label: 'Kitchenware & Utensils',         color: 'color:#b35309;background:#fdeadb;', hint: 'Pots, plates, cutlery.' },
   { value: 'textbooks',       label: 'Textbooks & Story Books',        color: 'color:#1565c0;background:#dfeaf9;', hint: 'Classroom readers and library replenishment.' },
-  { value: 'class',           label: 'Class Materials',                color: 'color:#ad1457;background:#fce4ec;', hint: 'Consumables held by a classroom — auto-created one per school class.', legacy: true },
+  { value: 'class',           label: 'Class Materials',                color: 'color:#ad1457;background:#fce4ec;', hint: 'School-provided items issued to one classroom — chalk, dusters, wall charts.' },
   { value: 'other',           label: 'Other',                          color: 'color:#555;background:#eaeaea;', hint: 'Anything that does not fit the categories above.' },
 ];
-// Types ops can pick when creating a store (excludes the legacy ones).
-const INV_STORE_TYPES_SELECTABLE = INV_STORE_TYPES.filter(t => !t.legacy);
 function _invStoreTypeLabel(v) {
   return (INV_STORE_TYPES.find(t => t.value === v) || {}).label || v || '—';
 }
@@ -401,10 +405,29 @@ function _invCustodianPickerHtml(selectId, selectedId) {
     </select>`;
 }
 
+// Only shown for store_type 'class', where school_class_id is required —
+// see _invOnStoreTypeChange. _invEnsureClassesCache has already resolved by
+// the time the Add form renders (loadInventoryStoresView awaits it), so this
+// can build synchronously like the custodian and account pickers.
+function _invClassPickerHtml(selectId, selectedId) {
+  const rows = _invClassesCache || [];
+  return `
+    <label class="fin-form-label">School Class <span class="fin-required">*</span></label>
+    <select id="${selectId}" class="fin-form-select">
+      <option value="">${_invEsc(lookupPlaceholder('classes', 'Please Select'))}</option>
+      ${rows.map(c => `<option value="${c.id}" ${String(c.id) === String(selectedId) ? 'selected' : ''}>${_invEsc(c.name || c.class_code || ('#' + c.id))}</option>`).join('')}
+    </select>
+    <span class="fin-field-error" id="${selectId}-err"></span>`;
+}
+
 async function _invEnsureClassesCache() {
   if (_invClassesCache) return;
-  const res = await apiFetch(`${API_BASE}/classes/`);
-  const rows = (res && res.ok) ? _toArray(await res.json()) : [];
+  // Via loadLookupList, not a bare apiFetch: a clerk without Student Academics
+  // view access would otherwise get a silently empty School Class picker and no
+  // way to tell that from "this school has no classes". loadLookupList is the
+  // lookup chokepoint that turns that 403 into a toast plus the "No access"
+  // placeholder _invClassPickerHtml asks for.
+  const rows = await loadLookupList(`${API_BASE}/classes/`, 'classes');
   _invClassesCache = rows.filter(c => c.is_active !== false);
 }
 function _invClassLabel(id) {
@@ -609,10 +632,13 @@ function _invRenderStoreAddForm(el) {
         <label class="fin-form-label">Store Type <span class="fin-required">*</span></label>
         <select id="inv-store-f-type" class="fin-form-select" onchange="_invOnStoreTypeChange()">
           <option value="">Please Select</option>
-          ${INV_STORE_TYPES_SELECTABLE.map(t => `<option value="${t.value}" title="${_invEsc(t.hint || '')}">${t.label}</option>`).join('')}
+          ${INV_STORE_TYPES.map(t => `<option value="${t.value}" title="${_invEsc(t.hint || '')}">${t.label}</option>`).join('')}
         </select>
         <span id="inv-store-f-type-hint" style="display:none;font-size:12px;color:var(--grey-600)"></span>
         <span class="fin-field-error" id="inv-store-f-type-err"></span>
+      </div>
+      <div class="fin-form-group" id="inv-store-f-class-wrap" style="display:none;">
+        ${_invClassPickerHtml('inv-store-f-class', null)}
       </div>
       <div class="fin-form-group">
         ${_invCustodianPickerHtml('inv-store-f-custodian', null)}
@@ -631,6 +657,8 @@ function _invRenderStoreAddForm(el) {
       </div>
     </div>`;
 }
+function _invSetErr(id, msg) { const e = document.getElementById(id); if (e) e.textContent = msg || ''; }
+
 function _invOnStoreTypeChange() {
   const type = document.getElementById('inv-store-f-type')?.value;
   const hintEl = document.getElementById('inv-store-f-type-hint');
@@ -639,6 +667,13 @@ function _invOnStoreTypeChange() {
     hintEl.textContent = hint;
     hintEl.style.display = hint ? '' : 'none';
   }
+  // school_class_id is meaningful only for 'class' stores. Clear it when the
+  // type moves away, so switching Class Materials -> Pantry can't smuggle a
+  // stale class link into the payload.
+  const wrap = document.getElementById('inv-store-f-class-wrap');
+  const sel = document.getElementById('inv-store-f-class');
+  if (wrap) wrap.style.display = type === 'class' ? '' : 'none';
+  if (sel && type !== 'class') { sel.value = ''; _invSetErr('inv-store-f-class-err', ''); }
 }
 function _invShowStoreConflict(message, existingId) {
   const banner = document.getElementById('inv-store-conflict-banner');
@@ -654,12 +689,13 @@ async function _invSubmitStoreAdd() {
   const code = (document.getElementById('inv-store-f-code').value || '').trim();
   const name = (document.getElementById('inv-store-f-name').value || '').trim();
   const type = document.getElementById('inv-store-f-type').value;
+  const classId = document.getElementById('inv-store-f-class')?.value || '';
   const custId = document.getElementById('inv-store-f-custodian').value;
   const acctId = document.getElementById('inv-store-f-account').value;
   const active = document.getElementById('inv-store-f-active').checked;
 
-  const setErr = (id, msg) => { const e = document.getElementById(id); if (e) e.textContent = msg || ''; };
-  ['inv-store-f-code-err', 'inv-store-f-name-err', 'inv-store-f-type-err', 'inv-store-f-account-err'].forEach(id => setErr(id, ''));
+  const setErr = _invSetErr;
+  ['inv-store-f-code-err', 'inv-store-f-name-err', 'inv-store-f-type-err', 'inv-store-f-account-err', 'inv-store-f-class-err'].forEach(id => setErr(id, ''));
   const banner = document.getElementById('inv-store-conflict-banner');
   if (banner) banner.style.display = 'none';
 
@@ -667,10 +703,12 @@ async function _invSubmitStoreAdd() {
   if (!code) { setErr('inv-store-f-code-err', 'This field is required.'); valid = false; }
   if (!name) { setErr('inv-store-f-name-err', 'This field is required.'); valid = false; }
   if (!type) { setErr('inv-store-f-type-err', 'This field is required.'); valid = false; }
+  if (type === 'class' && !classId) { setErr('inv-store-f-class-err', 'This field is required for a Class Materials store.'); valid = false; }
   if (!valid) return;
 
   const payload = {
     code, name, store_type: type,
+    school_class_id: type === 'class' && classId ? parseInt(classId) : null,
     custodian_employee_id: custId ? parseInt(custId) : null,
     inventory_control_account_id: acctId ? parseInt(acctId) : null,
     is_active: active,
@@ -708,7 +746,7 @@ async function _invSubmitStoreAdd() {
   }
   if (res.status === 422) {
     const { fieldErrors, message } = await _invParseError(res);
-    const map = { code: 'inv-store-f-code-err', name: 'inv-store-f-name-err', store_type: 'inv-store-f-type-err', inventory_control_account_id: 'inv-store-f-account-err' };
+    const map = { code: 'inv-store-f-code-err', name: 'inv-store-f-name-err', store_type: 'inv-store-f-type-err', inventory_control_account_id: 'inv-store-f-account-err', school_class_id: 'inv-store-f-class-err' };
     let matched = false;
     Object.entries(fieldErrors).forEach(([k, v]) => { if (map[k]) { setErr(map[k], v); matched = true; } });
     if (!matched) showToast('Error: ' + message, 'error');
