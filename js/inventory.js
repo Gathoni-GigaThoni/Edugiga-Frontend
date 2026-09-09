@@ -131,21 +131,24 @@ function _invAuditOnlyBadge() {
 }
 
 // The line-item catalogue is finance's general items — there is no separate
-// inventory item resource on the API.
+// inventory item resource on the API. `is_stockable`, `unit_of_measure`, and
+// `default_store_id` are columns on GeneralItem (inventory-phase-1 migration
+// h5w6x7y8z9a0); GET /finance/general-items/ honours ?is_stockable=<bool> and
+// GeneralItemRead now exposes the three fields.
 //
-// This used to request `?is_stockable=true` and then re-filter on
-// `it.is_stockable !== false`. Neither does anything: GET
-// /finance/general-items/ takes only `type` and `is_active`, and
-// GeneralItemRead has no is_stockable field at all (verified against the live
-// openapi.json — the string does not occur anywhere in the schema). FastAPI
-// ignores the unknown query param, and `undefined !== false` passes every row,
-// so the "stockable only" guarantee the old code appeared to give was never in
-// force. Asking for is_active=true is the filter the API actually honours; the
-// client-side is_active check stays as the backstop the comment claimed.
+// Every inventory document router (GRN, Issues, Transfers, Adjustments,
+// Internal Requisitions) rejects a line whose item has is_stockable=false with
+// a 422 at write time. Filtering server-side here keeps fee items out of the
+// picker entirely so operators cannot pick something the backend will refuse.
+// The client-side re-filter on `is_stockable !== false` stays as a backstop
+// against a mislabelled row slipping through.
 async function _invEnsureItemsCache() {
   if (_invItemsCache) return;
-  const rows = await loadLookupList(`${API_BASE}/finance/general-items/?is_active=true`, 'general-items');
-  _invItemsCache = rows.filter(it => it.is_active !== false);
+  const rows = await loadLookupList(
+    `${API_BASE}/finance/general-items/?is_active=true&is_stockable=true`,
+    'general-items',
+  );
+  _invItemsCache = rows.filter(it => it.is_active !== false && it.is_stockable !== false);
 }
 function _invItemLabel(id) {
   if (id == null) return '—';

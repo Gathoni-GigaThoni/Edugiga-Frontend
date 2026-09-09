@@ -3520,7 +3520,15 @@ async function deleteFeeItem(id) {
 // Backend: GET/POST /finance/general-items/  |  GET/PATCH/DELETE /finance/general-items/{id}
 // Model: GeneralItem  |  Schemas: GeneralItemCreate, GeneralItemRead, GeneralItemUpdate
 // Fields: id, code, name, type(INCOME|EXPENSE), sub_type, account_id, default_amount,
-//         description, is_active
+//         description, is_active, is_stockable, unit_of_measure, default_store_id
+//
+// is_stockable / unit_of_measure / default_store_id were added in inventory
+// phase 1 (backend mig h5w6x7y8z9a0). Every inventory document (GRN, Issues,
+// Transfers, Adjustments, Internal Requisitions) 422s a line whose item has
+// is_stockable=false, so a fee item slotted into an inventory picker fails at
+// write time. Set is_stockable=true here to have the item show up in those
+// pickers. default_store_id needs an inventory-stores lookup this form does
+// not yet request; leave it null and it will be set from Inventory later.
 
 let generalItemsData = [];
 let _giPerPage = 10, _giPage = 1, _giSearch = '';
@@ -3579,6 +3587,8 @@ async function loadGeneralItemsView(container) {
       {label:'Sub-Type',       key:'sub_type', fmt:v=>v||'—'},
       {label:'Default Amount', key:'default_amount', fmt:v=>_finFmt(parseFloat(v)||0)},
       {label:'Status',         key:'is_active', fmt:v=>v===false?'Inactive':'Active'},
+      {label:'Stockable',      key:'is_stockable', fmt:v=>v===true?'Yes':'No'},
+      {label:'Unit of Measure',key:'unit_of_measure', fmt:v=>v||'—'},
     ],
     renderAdd: _finAddPlaceholder('General Item', "renderGeneralItemForm(document.getElementById('main-content'))", 'Add a new general (non-fee) item.'),
     onAdd:  () => renderGeneralItemForm(document.getElementById('main-content')),
@@ -3633,7 +3643,7 @@ function _renderGiTable() {
     : paged.map(g=>`<tr>
         <td>${_finEsc(g.code||'')}</td>
         <td>${_finEsc(g.name||'')}</td>
-        <td><span style="padding:2px 8px;border-radius:10px;font-size:0.78rem;font-weight:600;${g.type==='INCOME'?'color:#276a3f;background:#d4edda;':'color:#842029;background:#f8d7da;'}">${_finEsc(g.type||'-')}</span></td>
+        <td><span style="padding:2px 8px;border-radius:10px;font-size:0.78rem;font-weight:600;${g.type==='INCOME'?'color:#276a3f;background:#d4edda;':'color:#842029;background:#f8d7da;'}">${_finEsc(g.type||'-')}</span>${g.is_stockable ? '<span title="Trackable in inventory" style="margin-left:6px;padding:2px 8px;border-radius:10px;font-size:0.72rem;font-weight:600;color:#0c4a6e;background:#e0f2fe;">Stock</span>' : ''}</td>
         <td>${_finEsc(g.sub_type||'-')}</td>
         <td>${_finEsc(g.account_id ? _giAccountName(g.account_id) : '-')}</td>
         <td>${_finFmt(parseFloat(g.default_amount)||0)}</td>
@@ -3728,6 +3738,17 @@ async function renderGeneralItemForm(container, item) {
           <label class="fin-form-label">Description</label>
           <textarea id="gi-f-desc" class="fin-form-textarea" rows="3">${_finEsc(item?.description||'')}</textarea>
         </div>
+        <div class="fin-form-group" style="margin-bottom:16px;">
+          <label class="fin-form-label">Unit of Measure</label>
+          <input type="text" id="gi-f-uom" class="fin-form-input" placeholder="e.g. piece, kg, packet, litre" maxlength="20" value="${_finEsc(item?.unit_of_measure||'')}">
+          <div style="font-size:0.78rem;color:#666;margin-top:4px;">Advisory. Displayed on inventory lines but not enforced in quantity math.</div>
+        </div>
+        <div class="fin-form-group" style="margin-bottom:12px;">
+          <label style="display:flex;align-items:center;gap:8px;font-size:0.9rem;cursor:pointer;">
+            <input type="checkbox" id="gi-f-stockable" class="fin-cb" ${item?.is_stockable===true ? 'checked' : ''}> Stockable — track in inventory (GRN, Issues, Transfers, Adjustments, Internal Requisitions)
+          </label>
+          <div style="font-size:0.78rem;color:#666;margin-top:4px;margin-left:24px;">Leave unchecked for fee/reference items. Only stockable items appear in inventory pickers.</div>
+        </div>
         <div class="fin-form-group" style="margin-bottom:20px;">
           <label style="display:flex;align-items:center;gap:8px;font-size:0.9rem;cursor:pointer;">
             <input type="checkbox" id="gi-f-active" class="fin-cb" ${item ? (item.is_active!==false?'checked':'') : 'checked'}> Active
@@ -3750,14 +3771,16 @@ function _giTypeChange(type) {
 
 function _giPayload() {
   return {
-    code:           document.getElementById('gi-f-code').value,
-    name:           (document.getElementById('gi-f-name').value||'').trim(),
-    type:           document.getElementById('gi-f-type').value,
-    sub_type:       document.getElementById('gi-f-subtype').value || null,
-    account_id:     document.getElementById('gi-f-account').value ? parseInt(document.getElementById('gi-f-account').value, 10) : null,
-    default_amount: document.getElementById('gi-f-amount').value ? parseFloat(document.getElementById('gi-f-amount').value) : null,
-    description:    document.getElementById('gi-f-desc').value.trim() || null,
-    is_active:      document.getElementById('gi-f-active').checked,
+    code:            document.getElementById('gi-f-code').value,
+    name:            (document.getElementById('gi-f-name').value||'').trim(),
+    type:            document.getElementById('gi-f-type').value,
+    sub_type:        document.getElementById('gi-f-subtype').value || null,
+    account_id:      document.getElementById('gi-f-account').value ? parseInt(document.getElementById('gi-f-account').value, 10) : null,
+    default_amount:  document.getElementById('gi-f-amount').value ? parseFloat(document.getElementById('gi-f-amount').value) : null,
+    description:     document.getElementById('gi-f-desc').value.trim() || null,
+    is_active:       document.getElementById('gi-f-active').checked,
+    is_stockable:    document.getElementById('gi-f-stockable').checked,
+    unit_of_measure: (document.getElementById('gi-f-uom').value||'').trim() || null,
   };
 }
 
