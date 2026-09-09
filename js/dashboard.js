@@ -45,9 +45,14 @@ function _computeRailAccess() {
 // every module is emitted into the DOM once at showDashboard time regardless
 // of role — so without a per-item gate the caller sees every sub-nav the
 // module has. _applyFlyoutPermissions runs after showDashboard renders and
-// hides every id in this map whose module_key returns canView===false.
-// Items not listed here are legacy nav rows without a dedicated permission
-// key; the backend endpoint they call still enforces its own gate.
+// hides every id in this map whose module_key returns canView===false, then
+// cascades the same hide up through empty dropdown groups, empty module
+// bodies, and finally the matching rail button — so a user with view on
+// only some Finance sub-modules never sees (or can click into) the ones
+// they don't, and the "Insufficient permissions" toast is unreachable from
+// nav. Items not listed here are legacy nav rows without a dedicated
+// permission key; the backend endpoint they call still enforces its own
+// gate.
 const _SIDEBAR_ITEM_MODULE_KEYS = {
   // Student Management
   'sidebar-stu-list':                     'student_management.students',
@@ -189,59 +194,50 @@ const _SIDEBAR_ITEM_MODULE_KEYS = {
   'sidebar-com-parent-docs':              'communication',
 };
 
-// Dropdown group <ul> id -> module_key (or dot-prefix). When no descendant
-// of the prefix is viewable (hasModuleAccess returns false), the whole
-// `<li class="dropdown">` wrapper containing the ul is hidden, so an empty
-// group header doesn't linger after all its children have been gated away.
-const _FLYOUT_GROUP_MODULE_PREFIXES = {
-  'stu-admissions-dropdown':      'student_management.admissions',
-  'stu-utilities-dropdown':       'student_management.students',
-  'stu-reports-dropdown':         'student_management.students',
-  'att-reports-dropdown':         'student_academics.attendance_register',
-  'transport-reports-dropdown':   'transport_management',
-  'transport-utilities-dropdown': 'transport_management',
-  'fin-sf-dropdown':              'finance.student_finance',
-  'fin-bankcash-dropdown':        'finance.cash_bank_management',
-  'fin-tendepay-dropdown':        'finance.cash_bank_management',
-  'fin-payables-dropdown':        'finance.payables',
-  'fin-audit-dropdown':           'finance.reports',
-  'fin-receivables-dropdown':     'finance.receivables',
-  'fin-utilities-dropdown':       'finance.setup',
-  'fin-budgeting-dropdown':       'finance.budgeting',
-  'fin-setup-dropdown':           'finance.setup',
-  'fin-reports-dropdown':         'finance.reports',
-  'hr-utilities-dropdown':        'payroll.utilities.pay_grades',
-  'payroll-utilities-dropdown':   'payroll.utilities',
-};
-
 function _applyFlyoutPermissions() {
-  // Belt-and-suspenders: hide the whole flyout-module-body wrapper for every
-  // module the caller has zero descendant access on. The rail button for
-  // such a module is already never rendered (_computeRailAccess above), but
-  // this makes the flyout panel itself vanish too so a stray openFlyout()
-  // call — from the console, a legacy shortcut, whatever — has nothing to
-  // reveal.
-  Object.entries(RAIL_MODULE_KEYS).forEach(([railKey, moduleKey]) => {
-    if (!hasModuleAccess(moduleKey)) {
-      const body = document.getElementById('flyout-body-' + railKey);
-      if (body) body.style.display = 'none';
-    }
-  });
-  // Per-<li> gate: strict canView on the specific module_key. A sibling
-  // sub-module having view access does NOT rescue this one — each row is
-  // judged on its own key, and view-only permission still counts as view.
+  // Phase 1 — per-<li> permission gate. Strict canView on the specific
+  // module_key: a sibling sub-module having view access does NOT rescue
+  // this one, and view-only permission still counts as view.
   Object.entries(_SIDEBAR_ITEM_MODULE_KEYS).forEach(([elId, key]) => {
     const el = document.getElementById(elId);
     if (el && !canView(key)) el.style.display = 'none';
   });
-  // Group-header gate: hide the whole <li class="dropdown"> wrapping the
-  // ul when nothing under the prefix is viewable, so an empty group header
-  // doesn't linger after all its children have been gated away.
-  Object.entries(_FLYOUT_GROUP_MODULE_PREFIXES).forEach(([ulId, prefix]) => {
-    if (!hasModuleAccess(prefix)) {
-      const ul = document.getElementById(ulId);
-      const li = ul?.closest('li.dropdown');
-      if (li) li.style.display = 'none';
+
+  // Phase 2 — cascade the hides up through empty dropdown groups. Runs
+  // DOM-driven rather than permission-driven so a group whose children
+  // straddle multiple module keys (e.g. Finance > Utilities holds both
+  // finance.setup and finance.utilities items) collapses on the actual
+  // visibility of its rendered children, not on a single prefix guess.
+  // Any `<li class="dropdown">` whose child <li>s are ALL hidden hides
+  // itself, so an empty group header never lingers.
+  document.querySelectorAll('.flyout-module-body li.dropdown').forEach(groupLi => {
+    const ul = groupLi.querySelector(':scope > ul');
+    if (!ul) return;
+    const hasVisibleChild = Array.from(ul.children).some(child =>
+      child.tagName === 'LI' && child.style.display !== 'none'
+    );
+    if (!hasVisibleChild) groupLi.style.display = 'none';
+  });
+
+  // Phase 3 — for each flyout body, if no visible top-level <li> remains,
+  // hide the body AND the matching rail button. Defensive against
+  // _computeRailAccess showing a rail whose granted key isn't backed by
+  // any sidebar item (the rail would open onto an empty flyout), and
+  // covers the belt-and-suspenders case where openFlyout() is invoked
+  // from outside the rail (console, stray shortcut) on a module the
+  // caller has zero visible sub-nav for.
+  Object.keys(RAIL_MODULE_KEYS).forEach(railKey => {
+    const body = document.getElementById('flyout-body-' + railKey);
+    if (!body) return;
+    const topUl = body.querySelector(':scope > ul');
+    if (!topUl) return;
+    const anyVisible = Array.from(topUl.children).some(child =>
+      child.tagName === 'LI' && child.style.display !== 'none'
+    );
+    if (!anyVisible) {
+      body.style.display = 'none';
+      const railBtn = document.querySelector('.rail-item[data-module="' + railKey + '"]');
+      if (railBtn) railBtn.style.display = 'none';
     }
   });
 }
