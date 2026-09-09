@@ -3539,7 +3539,8 @@ const GI_TYPES = [
 ];
 // EXPENSE sub-types are grouped so the "Inventory Categories" set mirrors the
 // StoreType enum (see INV_STORE_TYPES in js/inventory.js — one label per store
-// type, legacy CLASS/OTHER included so all 10 store types are pickable). The
+// type, the Add-form-hidden CLASS included so all 10 store types are
+// pickable). The
 // "Operating Expense" set is the historical list minus 'Stationery', which
 // moved into Inventory Categories to prevent duplication.
 //
@@ -3550,7 +3551,7 @@ const GI_TYPES = [
 const _GI_INVENTORY_FALLBACK_LABELS = [
   'Dry Food Pantry', 'Fresh Food', 'Stationery & Office Supplies', 'Uniform',
   'Toiletries & Cleaning', 'Tools & Small Equipment', 'Kitchenware & Utensils',
-  'Textbooks & Story Books', 'Class Consumables (legacy)', 'Other (legacy)',
+  'Textbooks & Story Books', 'Class Materials', 'Other',
 ];
 function _giInventoryCategoryLabels() {
   const src = (typeof window !== 'undefined' && Array.isArray(window.INV_STORE_TYPES))

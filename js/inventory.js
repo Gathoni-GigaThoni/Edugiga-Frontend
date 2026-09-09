@@ -316,8 +316,9 @@ function _invPopulateItemDatalist(listId, mapKey) {
 
 // Single source of truth for store types. `legacy: true` types are still
 // rendered everywhere (badge, detail, filter) but are not offered on the Add
-// form: `class` stores are auto-created 1:1 with SchoolClass records and
-// `other` is a legacy catch-all.
+// form. Only `class` is legacy in that sense: those stores are auto-created
+// 1:1 with SchoolClass records, and the Add form has no school_class_id
+// picker, so hand-creating one would post an unlinked class store.
 const INV_STORE_TYPES = [
   { value: 'pantry',          label: 'Dry Food Pantry',                color: 'color:#1e7e34;background:#dcf3e2;', hint: 'Bulk non-perishables — rice, flour, sugar.' },
   { value: 'kitchen_grocery', label: 'Fresh Food',                     color: 'color:#8a6d00;background:var(--gold-100,#fdf3d6);', hint: 'Short-cycle perishables — milk, eggs, vegetables.' },
@@ -327,8 +328,8 @@ const INV_STORE_TYPES = [
   { value: 'tools_equipment', label: 'Tools & Small Equipment',        color: 'color:#37474f;background:#e3e8ea;', hint: 'Paper punches, staplers, brooms, mops, buckets.' },
   { value: 'kitchenware',     label: 'Kitchenware & Utensils',         color: 'color:#b35309;background:#fdeadb;', hint: 'Pots, plates, cutlery.' },
   { value: 'textbooks',       label: 'Textbooks & Story Books',        color: 'color:#1565c0;background:#dfeaf9;', hint: 'Classroom readers and library replenishment.' },
-  { value: 'class',           label: 'Class Consumables (legacy)',     color: 'color:#c0392b;background:#fde0de;', legacy: true },
-  { value: 'other',           label: 'Other (legacy)',                 color: 'color:#666;background:#eee;', legacy: true },
+  { value: 'class',           label: 'Class Materials',                color: 'color:#ad1457;background:#fce4ec;', hint: 'Consumables held by a classroom — auto-created one per school class.', legacy: true },
+  { value: 'other',           label: 'Other',                          color: 'color:#555;background:#eaeaea;', hint: 'Anything that does not fit the categories above.' },
 ];
 // Types ops can pick when creating a store (excludes the legacy ones).
 const INV_STORE_TYPES_SELECTABLE = INV_STORE_TYPES.filter(t => !t.legacy);
