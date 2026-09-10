@@ -116,8 +116,151 @@ function _faGlActionsHtml(item) {
       <button class="fin-btn-outline" onclick="_faOpenMarkGlPostedModal(${item.id})">Mark GL Posted</button>`;
 }
 
+// ── Physical placement + movement log ────────────────────────────────────
+// Location and custodian are tracked apart from the GL: a movement is a
+// physical event with no journal entry. current_school_class_id /
+// current_location_text / current_custodian_employee_id on the asset row are
+// the cached placement and the source of truth for any list — the movement
+// log is only fetched to show an asset's history.
+//
+// Class and custodian names come from inventory.js's shared lookups (the same
+// HR-employee custodian picker and class list the Stores form uses), loaded
+// once with the register.
+function _faEnsurePlacementLookups() {
+  return Promise.all([_invEnsureCustodianCache(), _invEnsureClassesCache()]);
+}
+
+// Enum order is deliberate (roughly by frequency) — don't re-sort.
+const _FA_MOVEMENT_TYPES = [
+  { key: 'initial_placement',    label: 'Initial placement',    pill: 'color:#555;background:#eee;' },
+  { key: 'transfer',             label: 'Transfer',             pill: 'color:#1e7e34;background:#dcf3e2;' },
+  { key: 'custodian_change',     label: 'Custodian change',     pill: 'color:#6a3fb5;background:#ece4f8;' },
+  { key: 'sent_for_repair',      label: 'Sent for repair',      pill: 'color:#8a6100;background:#fdf3d0;' },
+  { key: 'returned_from_repair', label: 'Returned from repair', pill: 'color:#1e7e34;background:transparent;box-shadow:inset 0 0 0 1px #1e7e34;' },
+  { key: 'verification',         label: 'Verification',         pill: 'color:#1a5fb4;background:#dce8fb;' },
+  { key: 'pre_disposal_hold',    label: 'Pre-disposal hold',    pill: 'color:#c0392b;background:#fde0de;' },
+];
+function _faMovementType(key) {
+  return _FA_MOVEMENT_TYPES.find(t => t.key === key)
+    || { key, label: String(key || '').replace(/_/g, ' '), pill: 'color:#555;background:#eee;' };
+}
+function _faMovementPill(key) {
+  const t = _faMovementType(key);
+  return `<span style="display:inline-block;padding:2px 9px;border-radius:10px;font-size:0.74rem;font-weight:600;white-space:nowrap;${t.pill}">${_finEsc(t.label)}</span>`;
+}
+
+// Truncates for display and keeps the full text in a tooltip.
+function _faTrunc(text, max, tip = text) {
+  const s = String(text ?? '');
+  if (s.length <= max) return `<span title="${_finEsc(tip)}">${_finEsc(s)}</span>`;
+  return `<span title="${_finEsc(tip)}">${_finEsc(s.slice(0, max - 1))}&hellip;</span>`;
+}
+const _FA_MUTED_DASH = '<span style="color:var(--grey-400,#aaa);">—</span>';
+// A class id wins over free text; the backend never sets both.
+function _faPlacementName(classId, text) {
+  if (classId != null) return _invClassLabel(classId);
+  return text || '';
+}
+function _faPlacementCell(classId, text, max = 40) {
+  const name = _faPlacementName(classId, text);
+  return name ? _faTrunc(name, max) : _FA_MUTED_DASH;
+}
+function _faCustodianName(id) {
+  return id == null ? '' : _invCustodianLabel(id);
+}
+
+// supporting_document_url is only length-checked server-side, so only an
+// http(s) URL becomes a link. One on the API's own /uploads/ path is
+// auth-gated and a plain link would open a 401, so it goes through
+// authBlobDownload instead.
+function _faDocLinkHtml(url) {
+  if (!url) return '';
+  const icon = '&#128206;';
+  if (!/^https?:\/\//i.test(url)) return `<span title="${_finEsc(url)}" style="margin-left:6px;">${icon}</span>`;
+  const apiOrigin = API_BASE.replace(/\/api\/?$/, '');
+  if (url.startsWith(`${apiOrigin}/uploads/`)) {
+    return `<a href="#" data-url="${_finEsc(url)}" title="Supporting document" style="margin-left:6px;text-decoration:none;"
+      onclick="authBlobDownload(this.dataset.url, 'supporting-document', { openInline: true });return false;">${icon}</a>`;
+  }
+  return `<a href="${_finEsc(url)}" target="_blank" rel="noopener noreferrer" title="Supporting document" style="margin-left:6px;text-decoration:none;">${icon}</a>`;
+}
+
+// GET /{id}/movements, newest first. Cached per asset so re-selecting a row
+// doesn't refetch; a failed read isn't cached, and _faInvalidateMovements
+// drops an asset's entry after a movement is recorded against it.
+const _faMovementsCache = {};    // asset id -> Promise<{ok, rows, error}>
+function _faLoadMovements(assetId) {
+  if (!_faMovementsCache[assetId]) {
+    _faMovementsCache[assetId] = apiFetch(`${_FA_API}/${assetId}/movements`)
+      .then(async res => {
+        if (res && res.ok) return { ok: true, rows: _toArray(await res.json()) };
+        return { ok: false, error: res ? await parseApiError(res) : 'Network error.' };
+      })
+      .catch(() => ({ ok: false, error: 'Network error.' }))
+      .then(result => { if (!result.ok) delete _faMovementsCache[assetId]; return result; });
+  }
+  return _faMovementsCache[assetId];
+}
+function _faInvalidateMovements(assetIds) {
+  (Array.isArray(assetIds) ? assetIds : [assetIds]).forEach(id => { delete _faMovementsCache[id]; });
+}
+
+function _faCurrentPlacementCardHtml(item) {
+  const place = _faPlacementName(item.current_school_class_id, item.current_location_text);
+  const custodian = _faCustodianName(item.current_custodian_employee_id);
+  const muted = s => `<span style="color:var(--grey-500,#888);font-weight:600;">${s}</span>`;
+  return `<div style="padding:10px 14px;border-radius:6px;background:var(--navy-50,#EEF3FA);border-left:3px solid var(--navy-700,#1B3057);font-size:0.88rem;margin-bottom:10px;">
+    Currently: ${place ? `<strong>${_finEsc(place)}</strong>` : muted('Unplaced')}
+    &middot; Custodian: ${custodian ? `<strong>${_finEsc(custodian)}</strong>` : muted('Unassigned')}
+  </div>`;
+}
+function _faMovementRowsHtml(rows) {
+  return rows.map(m => {
+    const fromC = _faCustodianName(m.from_custodian_employee_id);
+    const toC = _faCustodianName(m.to_custodian_employee_id);
+    const custodianCell = (fromC || toC)
+      ? `${fromC ? _finEsc(fromC) : _FA_MUTED_DASH} &rarr; ${toC ? _finEsc(toC) : _FA_MUTED_DASH}`
+      : _FA_MUTED_DASH;
+    const tip = m.notes ? `${m.reason}\n\nNotes: ${m.notes}` : m.reason;
+    return `<tr>
+      <td style="white-space:nowrap;">${_pvDate(m.moved_at)}</td>
+      <td>${_faMovementPill(m.movement_type)}</td>
+      <td>${_faPlacementCell(m.from_school_class_id, m.from_location_text)}</td>
+      <td>${_faPlacementCell(m.to_school_class_id, m.to_location_text)}</td>
+      <td>${custodianCell}</td>
+      <td>${_faTrunc(m.reason, 60, tip)}${_faDocLinkHtml(m.supporting_document_url)}</td>
+      <td style="white-space:nowrap;">Staff #${_finEsc(m.created_by)}</td>
+    </tr>`;
+  }).join('');
+}
+function _faMovementHistoryBodyHtml(item, result) {
+  if (!result.ok) {
+    return `<div style="padding:10px 12px;border-radius:6px;background:var(--coral-100);color:var(--coral-600);font-size:0.85rem;">Could not load movement history: ${_finEsc(result.error)}</div>`;
+  }
+  if (!result.rows.length) {
+    return `<div style="padding:18px 12px;text-align:center;color:var(--grey-600,#666);font-size:0.88rem;">No movements recorded yet. Log the first placement to start the audit trail.</div>`;
+  }
+  return `<div class="fin-table-wrap"><table class="fin-table">
+    <thead><tr><th>DATE</th><th>TYPE</th><th>FROM</th><th>TO</th><th>CUSTODIAN CHANGE</th><th>REASON</th><th>RECORDED BY</th></tr></thead>
+    <tbody>${_faMovementRowsHtml(result.rows)}</tbody>
+  </table></div>`;
+}
+// Rendered synchronously into the detail grid with a slot the history fills
+// once loaded (same slot pattern as _faJeLinkHtml).
+function _faMovementPanelHtml(item) {
+  const slot = `fa-mv-panel-${item.id}-${Math.random().toString(36).slice(2, 8)}`;
+  _faLoadMovements(item.id).then(result => {
+    const el = document.getElementById(slot);
+    if (el) el.innerHTML = _faMovementHistoryBodyHtml(item, result);
+  });
+  return `<div style="width:100%;">
+    ${_faCurrentPlacementCardHtml(item)}
+    <div id="${slot}"><p style="color:#888;font-size:0.85rem;margin:6px 0;">Loading movement history&#8230;</p></div>
+  </div>`;
+}
+
 async function loadFixedAssetsView(container) {
-  await _pvLoadLookups();
+  await Promise.all([_pvLoadLookups(), _faEnsurePlacementLookups()]);
   await _acLoadCategories();
   container.innerHTML = `
     <div class="fin-page">
@@ -306,6 +449,9 @@ function _faDetailFields() {
     {label:'Disposal Amount', key:'disposal_amount', hideWhen: item=>!item.is_disposed, fmt:v=>_faMoney(v)},
     {label:'Disposal JE', key:'disposal_journal_entry_id', hideWhen: item=>!item.is_disposed, fmt:v=>v?`<a href="#" onclick="_jeOpenDetail(${v});return false;">View JE</a>`:'—'},
     {label:'Notes', key:'notes', fmt:v=>v||'—'},
+    // Rejected assets were never physical items — the backend refuses any
+    // movement against them, so there is no placement or history to show.
+    {label:'Movement History', key:'current_school_class_id', fullWidth:true, hideWhen: item=>item.status==='rejected', fmt:(v,item)=>_faMovementPanelHtml(item)},
   ];
 }
 

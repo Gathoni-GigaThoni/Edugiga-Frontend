@@ -420,19 +420,25 @@ function _invClassPickerHtml(selectId, selectedId) {
     <span class="fin-field-error" id="${selectId}-err"></span>`;
 }
 
+// _invClassesCache is the pickable (active) set; _invClassesAll keeps inactive
+// classes too, so a label for a record pointing at a since-closed class still
+// resolves to its name instead of "#id". Fixed Assets shares both — its
+// movement history names classes that may no longer be active.
+let _invClassesAll = [];
 async function _invEnsureClassesCache() {
-  if (_invClassesCache) return;
+  // Guard on length: a denied fetch yields [], which must not stick as a hit.
+  if (_invClassesAll.length) return;
   // Via loadLookupList, not a bare apiFetch: a clerk without Student Academics
   // view access would otherwise get a silently empty School Class picker and no
   // way to tell that from "this school has no classes". loadLookupList is the
   // lookup chokepoint that turns that 403 into a toast plus the "No access"
   // placeholder _invClassPickerHtml asks for.
-  const rows = await loadLookupList(`${API_BASE}/classes/`, 'classes');
-  _invClassesCache = rows.filter(c => c.is_active !== false);
+  _invClassesAll = await loadLookupList(`${API_BASE}/classes/`, 'classes');
+  _invClassesCache = _invClassesAll.filter(c => c.is_active !== false);
 }
 function _invClassLabel(id) {
   if (id == null) return '—';
-  const c = (_invClassesCache || []).find(x => String(x.id) === String(id));
+  const c = _invClassesAll.find(x => String(x.id) === String(id));
   if (!c) return `#${id}`;
   return c.name || c.class_code || `#${id}`;
 }
