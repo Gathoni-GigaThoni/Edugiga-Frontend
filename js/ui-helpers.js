@@ -734,6 +734,8 @@ const LOOKUP_ACCESS_HINTS = {
   'team-members':    { noun: 'staff user accounts',    module: 'Administration' },
   // The ESP bank picker's source — the Financial Institutions register.
   'financial-institutions': { noun: 'the bank register', module: 'Payroll' },
+  // The Fixed Asset capitalisation-JE picker (posted entries only).
+  'journal-entries': { noun: 'journal entries',        module: 'Finance (Journal Entries)' },
 };
 
 const _lookupDenied  = new Set();

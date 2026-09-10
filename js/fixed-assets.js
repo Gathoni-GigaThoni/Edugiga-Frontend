@@ -36,6 +36,86 @@ function _faMethodBadge(item) {
   return `<span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:0.68rem;font-weight:700;color:#555;background:#eee;margin-left:6px;" title="${_finEsc(item.depreciation_method)}">${label}</span>`;
 }
 
+// ── GL proof (register-first, prove-GL-later) ────────────────────────────
+// A confirmed asset with is_gl_posted=false is a valid state: the register
+// holds the physical asset, but the debit to its cost account hasn't been
+// traced to the GL yet. It's a drift warning, not an error. The GL side is
+// proved one of three ways — a supplier invoice line (its accrual JE is the
+// proof), a linked capitalisation JE, or a dated attestation.
+//
+// The pill renders only when is_gl_posted is actually on the wire, so a
+// backend that predates the field doesn't paint every row "GL Pending".
+// Rejected assets never reach the GL, so they carry no pill either.
+let _faGlPendingOnly = false;
+function _faGlPill(item, compact = false) {
+  if (typeof item.is_gl_posted !== 'boolean' || item.status === 'rejected') return '';
+  const shape = compact
+    ? 'padding:1px 7px;border-radius:9px;font-size:0.68rem;margin-right:6px;'
+    : 'padding:3px 10px;border-radius:12px;font-size:0.78rem;margin-left:8px;';
+  const [label, colors, tip] = item.is_gl_posted
+    ? ['GL Posted', 'color:#1e7e34;background:#dcf3e2;', 'The GL side of this asset is proved.']
+    : ['GL Pending', 'color:#8a6100;background:#fdf3d0;', 'In the register, but the debit to its cost account has not been traced to the GL yet.'];
+  return `<span style="display:inline-block;${shape}font-weight:700;vertical-align:middle;${colors}" title="${tip}">${label}</span>`;
+}
+function _faGlFilter(item) {
+  return !_faGlPendingOnly || (item.is_gl_posted === false && item.status !== 'rejected');
+}
+// GET /fixed-assets/ takes only category_id/is_disposed/status, so this
+// filters the fetched list client-side.
+function _faGlPendingChipHtml() {
+  const on = _faGlPendingOnly;
+  return `<button type="button" class="fin-btn-outline" aria-pressed="${on}" onclick="_faToggleGlPendingOnly()"
+    style="padding:4px 11px;font-size:0.78rem;${on ? 'background:var(--navy-700,#1B3057);color:#fff;border-color:var(--navy-700,#1B3057);' : ''}">${on ? '&#10003; ' : ''}Show GL Pending only</button>`;
+}
+function _faToggleGlPendingOnly() {
+  _faGlPendingOnly = !_faGlPendingOnly;
+  _faRenderTab();
+}
+
+// FixedAssetRead carries capitalisation_journal_entry_id but not the JV
+// number, so the number is resolved with a GET on the entry. A failed read
+// isn't cached (the next render retries), and the link still works as
+// "JE #id" for a reader without journal-entry access.
+const _faJeCache = {};     // je id -> Promise<JournalEntryRead | null>
+const _faJeResolved = {};  // je id -> JournalEntryRead, once loaded
+function _faFetchJe(jeId) {
+  if (!_faJeCache[jeId]) {
+    _faJeCache[jeId] = apiFetch(`${_JE_API}${jeId}`)
+      .then(res => (res && res.ok) ? res.json() : null)
+      .catch(() => null)
+      .then(je => {
+        if (je) _faJeResolved[jeId] = je;
+        else delete _faJeCache[jeId];
+        return je;
+      });
+  }
+  return _faJeCache[jeId];
+}
+function _faJeLinkHtml(jeId) {
+  const link = je => `<a href="#" onclick="_jeOpenDetail(${jeId});return false;">${_finEsc(je?.jv_number || `JE #${jeId}`)}</a>`;
+  if (_faJeResolved[jeId]) return link(_faJeResolved[jeId]);
+  const slot = `fa-je-link-${jeId}-${Math.random().toString(36).slice(2, 8)}`;
+  _faFetchJe(jeId).then(je => { const el = document.getElementById(slot); if (el) el.outerHTML = link(je); });
+  return `<span id="${slot}">${link(null)}</span>`;
+}
+function _faGlProofHtml(item) {
+  if (item.capitalisation_journal_entry_id) return `Capitalisation JV: ${_faJeLinkHtml(item.capitalisation_journal_entry_id)}`;
+  if (item.supplier_invoice_line_id) return `Source: Supplier Invoice Line #${item.supplier_invoice_line_id} — the invoice's accrual journal entry is the proof.`;
+  if (item.is_gl_posted) return 'Recorded in the GL without a specific journal entry link — any attestation reason is stamped in Notes.';
+  return `<span style="color:#8a6100;">Not yet traced to the GL. Link the journal entry that capitalised it, or attest that the GL side is already recorded.</span>`;
+}
+// Offered only on live (confirmed, not disposed) assets where nothing else
+// proves the GL side: an invoice-linked asset is proved by the accrual JE,
+// the server refuses both actions on rejected or disposed assets (409), and a
+// draft gets confirmed before its GL side is proved.
+function _faGlActionsHtml(item) {
+  if (item.is_gl_posted !== false || item.capitalisation_journal_entry_id || item.supplier_invoice_line_id) return '';
+  if (item.status !== 'confirmed' || item.is_disposed) return '';
+  return `
+      <button class="fin-btn-outline" onclick="_faOpenLinkJeModal(${item.id})">Link Journal Entry</button>
+      <button class="fin-btn-outline" onclick="_faOpenMarkGlPostedModal(${item.id})">Mark GL Posted</button>`;
+}
+
 async function loadFixedAssetsView(container) {
   await _pvLoadLookups();
   await _acLoadCategories();
@@ -79,6 +159,7 @@ async function _faRenderRegisterSplitView(container) {
       <option value="">All Categories</option>
       ${_acCategories.map(c => `<option value="${c.id}" ${String(_faCategoryFilter)===String(c.id)?'selected':''}>${_finEsc(c.code)} — ${_finEsc(c.name)}</option>`).join('')}
     </select>
+    ${_faGlPendingChipHtml()}
     ${_faTab === 'live' ? `<button class="fin-btn-outline" onclick="_faOpenDepreciationRunModal()">Run monthly depreciation</button>
       <button class="fin-btn-outline" onclick="_faOpenBulkFromLineModal()">+ Bulk Create from Invoice Line</button>` : ''}
   `;
@@ -103,9 +184,12 @@ async function _faRenderRegisterSplitView(container) {
     breadcrumb: [],
     apiUrl: `${_FA_API}/?${params.toString()}`,
     searchFields: ['asset_tag', 'description'],
-    col1Label: 'Asset Tag', col2Label: 'Category / NBV',
+    listFilterFn: _faGlFilter,
+    // The GL pill leads col2 rather than trailing col1: both columns clip with
+    // an ellipsis, and a long asset tag would push the pill out of view.
+    col1Label: 'Asset Tag', col2Label: 'GL · Category / NBV',
     col1: a => `<strong>${_finEsc(a.asset_tag || '—')}</strong>${_faMethodBadge(a)}`,
-    col2: a => `${_finEsc(_acCategoryName(a.category_id))} · ${_faMoney(a.net_book_value ?? a.acquisition_cost)}`,
+    col2: a => `${_faGlPill(a, true)}${_finEsc(_acCategoryName(a.category_id))} · ${_faMoney(a.net_book_value ?? a.acquisition_cost)}`,
     rowLabel: a => a.asset_tag || '—',
     rowSub: a => _acCategoryName(a.category_id),
     idKey: 'id',
@@ -148,10 +232,11 @@ async function _faRenderArchivedTab(container) {
         <option value="">All Categories</option>
         ${_acCategories.map(c => `<option value="${c.id}" ${String(_faCategoryFilter)===String(c.id)?'selected':''}>${_finEsc(c.code)} — ${_finEsc(c.name)}</option>`).join('')}
       </select>
+      ${_faGlPendingChipHtml()}
     </div>
     <div class="split-layout">
       <div class="split-left">
-        <div class="split-left-header"><span class="split-left-title">Archived</span><span class="split-left-count">${_faArchivedItems.length}</span></div>
+        <div class="split-left-header"><span class="split-left-title">Archived</span><span class="split-left-count">${_faArchivedItems.filter(_faGlFilter).length}</span></div>
         <div class="split-left-col-headers"><span>Asset Tag</span><span>Status</span></div>
         <div class="split-list" id="fa-archived-list"></div>
       </div>
@@ -166,11 +251,11 @@ async function _faRenderArchivedTab(container) {
 function _faRenderArchivedList() {
   const listEl = document.getElementById('fa-archived-list');
   if (!listEl) return;
-  listEl.innerHTML = _faArchivedItems.map(item => {
+  listEl.innerHTML = _faArchivedItems.filter(_faGlFilter).map(item => {
     const isSel = _faArchivedSelected && String(_faArchivedSelected.id) === String(item.id);
     return `<div class="split-list-row${isSel ? ' active' : ''}" data-id="${item.id}">
       <div class="split-col1">${_finEsc(item.asset_tag || '—')}</div>
-      <div class="split-col2">${item.is_disposed ? 'Disposed' : 'Rejected'}</div>
+      <div class="split-col2">${_faGlPill(item, true)}${item.is_disposed ? 'Disposed' : 'Rejected'}</div>
     </div>`;
   }).join('') || `<p style="padding:24px;text-align:center;color:var(--grey-400);font-style:italic;font-size:13px">No records found</p>`;
   listEl.onclick = (e) => {
@@ -202,7 +287,8 @@ function _faDetailFields() {
   return [
     {label:'Asset Tag', key:'asset_tag'},
     {label:'Category', key:'category_id', fmt:v=>_acCategoryName(v)},
-    {label:'Status', key:'status', fmt:(v,item)=>_faStatusBadge(item)},
+    {label:'Status', key:'status', fmt:(v,item)=>_faStatusBadge(item) + _faGlPill(item)},
+    {label:'GL Proof', key:'capitalisation_journal_entry_id', fullWidth:true, hideWhen: item=>typeof item.is_gl_posted!=='boolean' || item.status==='rejected', fmt:(v,item)=>_faGlProofHtml(item)},
     {label:'Description', key:'description', fmt:v=>v||'—'},
     {label:'Acquisition Date', key:'acquisition_date', fmt:v=>_pvDate(v)},
     {label:'Depreciation Start Date', key:'depreciation_start_date', fmt:v=>_pvDate(v)},
@@ -231,7 +317,7 @@ function _faDetailActions(item) {
       <button class="fin-btn-cancel" style="background:var(--coral-500,#D94040);color:#fff;" onclick="_faOpenRejectModal(${item.id})">Reject</button>`;
   }
   if (item.status === 'confirmed' && !item.is_disposed) {
-    return `
+    return `${_faGlActionsHtml(item)}
       <button class="fin-btn-outline" onclick="_faOpenDisposeModal(${item.id})">Dispose</button>
       <button class="fin-btn-cancel" onclick="_faConfirmDelete(${item.id})">Delete</button>`;
   }
@@ -253,7 +339,7 @@ async function _faRenderAddForm(el) {
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Category <span class="fin-required">*</span></label>
-        <select id="fa-f-category" class="fin-form-select">
+        <select id="fa-f-category" class="fin-form-select" onchange="_faJePickerRenderCapacity('fa-f-capje')">
           <option value="">Please Select</option>
           ${_acCategoryOptions(null)}
         </select>
@@ -271,15 +357,20 @@ async function _faRenderAddForm(el) {
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Acquisition Cost <span class="fin-required">*</span></label>
-        <input type="number" id="fa-f-acq-cost" class="fin-form-input" min="0.01" step="0.01">
+        <input type="number" id="fa-f-acq-cost" class="fin-form-input" min="0.01" step="0.01" oninput="_faJePickerRenderCapacity('fa-f-capje')">
         <span class="fin-field-error" id="fa-f-acq-cost-err"></span>
       </div>
       <div class="fin-form-group">
         <label class="fin-form-label">Supplier Invoice Line</label>
-        <select id="fa-f-si-line" class="fin-form-select">
+        <select id="fa-f-si-line" class="fin-form-select" onchange="_faAddGlSourceChanged()">
           <option value="">None (not linked to an invoice)</option>
           ${_faEligibleLines.map(l => `<option value="${l.line_id}">${_finEsc(l.invoice_number)} — ${_finEsc(l.description)} (${l.available_slots} slot${l.available_slots===1?'':'s'} left)</option>`).join('')}
         </select>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Capitalisation Journal Entry (optional)</label>
+        <div id="fa-f-capje-na" style="display:none;font-size:12.5px;color:var(--grey-600,#666);cursor:help;" title="GL proof already comes from the linked supplier invoice.">&#9432; Not applicable — GL proof already comes from the linked supplier invoice.</div>
+        <div id="fa-f-capje-picker">${_faJePickerHtml('fa-f-capje')}</div>
       </div>
       <details style="margin:12px 0;">
         <summary style="cursor:pointer;font-size:12.5px;color:var(--grey-600,#666);">Override category defaults (optional)</summary>
@@ -314,11 +405,35 @@ async function _faRenderAddForm(el) {
         <label class="fin-form-label">Notes</label>
         <textarea id="fa-f-notes" class="fin-form-textarea" rows="3"></textarea>
       </div>
+      <div id="fa-f-nogl-warn" style="margin-top:12px;padding:10px 14px;border-radius:6px;border-left:3px solid var(--gold-500);background:var(--gold-100);color:#7a6110;font-size:0.85rem;">
+        This asset will be registered without a GL link. You can attach a Journal Entry or attest later from the asset detail page.
+      </div>
+      <div id="fa-f-submit-msg"></div>
       <div style="display:flex;gap:12px;margin-top:20px;">
         <button class="fin-btn-teal" onclick="submitFaAdd()">Save</button>
         <button class="fin-btn-cancel" onclick="window._splitGoAdd?.()">Cancel</button>
       </div>
     </div>`;
+  // Capacity is previewed against the chosen category's cost account — that
+  // is where the asset's cost account comes from on create.
+  _faAllAssetsPromise = null;
+  _faJePickers['fa-f-capje'] = {
+    assetId: null,
+    costAccountId: () => (_acCategories.find(c => String(c.id) === document.getElementById('fa-f-category')?.value) || {}).cost_account_id,
+    assetCost: () => document.getElementById('fa-f-acq-cost')?.value,
+    onChange: _faAddGlSourceChanged,
+  };
+}
+// A supplier invoice line and a capitalisation JE are mutually exclusive
+// (422 if both are sent): choosing a line clears and hides the JE picker.
+function _faAddGlSourceChanged() {
+  const siLine = document.getElementById('fa-f-si-line')?.value;
+  if (siLine && _faJePickerValue('fa-f-capje')) { _faJePickerClear('fa-f-capje'); return; } // re-enters via onChange
+  const picker = document.getElementById('fa-f-capje-picker');
+  if (!picker) return;
+  picker.style.display = siLine ? 'none' : '';
+  document.getElementById('fa-f-capje-na').style.display = siLine ? '' : 'none';
+  document.getElementById('fa-f-nogl-warn').style.display = (!siLine && !_faJePickerValue('fa-f-capje')) ? '' : 'none';
 }
 function _faAddMethodChanged() {
   document.getElementById('fa-f-rbr-wrap').style.display = document.getElementById('fa-f-method').value === 'reducing_balance' ? '' : 'none';
@@ -346,6 +461,8 @@ async function submitFaAdd() {
   };
   const siLine = document.getElementById('fa-f-si-line').value;
   if (siLine) payload.supplier_invoice_line_id = parseInt(siLine, 10);
+  const capJe = _faJePickerValue('fa-f-capje');
+  if (capJe) payload.capitalisation_journal_entry_id = capJe;
   const life = document.getElementById('fa-f-life').value;
   if (life) payload.useful_life_years = parseInt(life, 10);
   const salvage = document.getElementById('fa-f-salvage').value;
@@ -357,9 +474,13 @@ async function submitFaAdd() {
   const deprStart = document.getElementById('fa-f-depr-start').value;
   if (deprStart) payload.depreciation_start_date = deprStart;
 
+  const msgEl = document.getElementById('fa-f-submit-msg');
+  if (msgEl) msgEl.innerHTML = '';
   const res = await apiFetch(`${_FA_API}/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   if (res && res.ok) { showToast('Fixed asset added.', 'success'); await window._splitReload?.(); }
-  else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+  // Inline rather than a toast: a 422 (e.g. both an invoice line and a JE
+  // sent) can run long, and the operator needs it while fixing the form.
+  else if (res) _pvShowCoralMsg(msgEl, await parseApiError(res));
 }
 
 // ── Edit (descriptive fields only — PATCH surface is fixed by the backend
@@ -693,6 +814,246 @@ async function _faSubmitDispose(id) {
     errEl.textContent = await parseApiError(res);
     errEl.style.display = 'block';
   }
+}
+
+// ── Posted-JE picker (Link Journal Entry modal + Add form) ───────────────
+// Lists POSTED entries only — link-journal-entry 422s on anything else.
+// JournalEntryListItem has no lines[], so the capacity preview reads the
+// single entry, and only for the one actually picked.
+let _faPostedJes = [];
+const _faJePickers = {};  // picker prefix -> { assetId, costAccountId(), assetCost(), onChange() }
+async function _faLoadPostedJes() {
+  // A failed or 403'd load leaves [] — guard on length so the next open retries.
+  if (!_faPostedJes.length) _faPostedJes = await loadLookupList(`${_JE_API}?status=posted`, 'journal-entries');
+  return _faPostedJes;
+}
+// The list endpoint has no capitalisation_journal_entry_id filter, so claims
+// on an entry are summed from the whole register, fetched once per picker.
+let _faAllAssetsPromise = null;
+function _faLoadAllAssets() {
+  if (!_faAllAssetsPromise) {
+    _faAllAssetsPromise = apiFetch(`${_FA_API}/`)
+      .then(async res => (res && res.ok) ? _toArray(await res.json()) : [])
+      .catch(() => []);
+  }
+  return _faAllAssetsPromise;
+}
+
+function _faJePickerHtml(p) {
+  return `
+    <input type="hidden" id="${p}-id" value="">
+    <div id="${p}-selected" style="display:none;"></div>
+    <div id="${p}-search-wrap">
+      <input type="text" id="${p}-search" class="fin-form-input" autocomplete="off"
+        placeholder="Search posted entries by JV number or reference&#8230;"
+        onfocus="_faJePickerOpen('${p}')" oninput="_faJePickerSearch('${p}', this.value)">
+      <div id="${p}-results" style="max-height:220px;overflow:auto;margin-top:6px;"></div>
+    </div>
+    <div id="${p}-capacity"></div>`;
+}
+async function _faJePickerOpen(p) {
+  const el = document.getElementById(`${p}-results`);
+  if (!_faPostedJes.length && el) el.innerHTML = `<div style="padding:10px 12px;color:#888;font-size:0.85rem;">Loading posted journal entries&#8230;</div>`;
+  await _faLoadPostedJes();
+  _faJePickerSearch(p, document.getElementById(`${p}-search`)?.value || '');
+}
+function _faJePickerSearch(p, term) {
+  const el = document.getElementById(`${p}-results`);
+  if (!el) return;
+  const t = (term || '').toLowerCase().trim();
+  const matches = _faPostedJes.filter(je => !t
+    || (je.jv_number || '').toLowerCase().includes(t)
+    || (je.reference || '').toLowerCase().includes(t));
+  if (!matches.length) {
+    const why = lookupWasDenied('journal-entries') ? lookupDeniedMessage('journal-entries')
+      : (t ? 'No posted journal entries match.' : 'No posted journal entries found.');
+    el.innerHTML = `<div style="padding:10px 12px;color:#888;font-size:0.85rem;">${_finEsc(why)}</div>`;
+    return;
+  }
+  const shown = matches.slice(0, 50);
+  el.innerHTML = `<div style="border:1px solid var(--grey-100,#eee);border-radius:6px;">
+    ${shown.map(je => `
+      <div style="padding:8px 12px;border-bottom:1px solid #f0f0f0;cursor:pointer;font-size:0.88rem;" onclick="_faJePickerSelect('${p}', ${je.id})">
+        <strong>${_finEsc(je.jv_number || '#' + je.id)}</strong> — ${_finEsc(je.reference || '')}
+        <span style="float:right;color:#888;">${_pvDate(je.entry_date)} · ${_faMoney(je.total_amount)}</span>
+      </div>`).join('')}
+    ${matches.length > shown.length ? `<div style="padding:6px 12px;color:#888;font-size:0.78rem;">Showing ${shown.length} of ${matches.length} — refine the search to narrow it.</div>` : ''}
+  </div>`;
+}
+function _faJePickerSelect(p, jeId) {
+  const je = _faPostedJes.find(j => String(j.id) === String(jeId));
+  document.getElementById(`${p}-id`).value = jeId;
+  document.getElementById(`${p}-search-wrap`).style.display = 'none';
+  const sel = document.getElementById(`${p}-selected`);
+  sel.style.display = '';
+  sel.innerHTML = `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border:1px solid var(--grey-200,#ddd);border-radius:6px;font-size:0.88rem;">
+    <span style="flex:1;"><strong>${_finEsc(je?.jv_number || '#' + jeId)}</strong> — ${_finEsc(je?.reference || '')} <span style="color:#888;">${_pvDate(je?.entry_date)}</span></span>
+    <button type="button" class="fin-btn-outline" style="padding:3px 10px;font-size:0.78rem;" onclick="_faJePickerClear('${p}')">Change</button>
+  </div>`;
+  _faJePickers[p]?.onChange?.();
+  _faJePickerRenderCapacity(p);
+}
+function _faJePickerClear(p) {
+  const idEl = document.getElementById(`${p}-id`);
+  if (!idEl) return;
+  idEl.value = '';
+  document.getElementById(`${p}-selected`).style.display = 'none';
+  document.getElementById(`${p}-search-wrap`).style.display = '';
+  document.getElementById(`${p}-capacity`).innerHTML = '';
+  _faJePickers[p]?.onChange?.();
+}
+function _faJePickerValue(p) {
+  const v = document.getElementById(`${p}-id`)?.value;
+  return v ? parseInt(v, 10) : null;
+}
+// Advisory preview of link-journal-entry's capacity check: the entry's debit
+// to the cost account, less what other non-rejected assets already claim on
+// it. The server's check on submit is the authority and its 422 is shown
+// verbatim — this only saves a round trip on an obviously wrong pick.
+async function _faJePickerRenderCapacity(p) {
+  const el = document.getElementById(`${p}-capacity`);
+  const cfg = _faJePickers[p] || {};
+  const jeId = _faJePickerValue(p);
+  if (!el) return;
+  if (!jeId) { el.innerHTML = ''; return; }
+  const box = (body, warn = false) => `<div style="margin-top:8px;padding:10px 12px;border-radius:6px;font-size:0.82rem;line-height:1.55;${warn ? 'border-left:3px solid var(--gold-500);background:var(--gold-100);color:#7a6110;' : 'background:var(--navy-50,#f5f7fa);color:var(--grey-800,#333);'}">${body}</div>`;
+  const costAccountId = cfg.costAccountId?.();
+  if (!costAccountId) { el.innerHTML = box('Pick a Category to preview this entry\'s debit against its cost account.'); return; }
+  el.innerHTML = box('Checking debit capacity&#8230;');
+  const [je, assets] = await Promise.all([_faFetchJe(jeId), _faLoadAllAssets()]);
+  if (_faJePickerValue(p) !== jeId) return; // re-picked while loading
+  if (!je || !Array.isArray(je.lines)) { el.innerHTML = box('Could not load this entry\'s lines to preview capacity. The server still checks it when you submit.'); return; }
+  const debit = je.lines
+    .filter(l => l.line_type === 'debit' && String(l.account_id) === String(costAccountId))
+    .reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+  const claimants = assets.filter(a => String(a.capitalisation_journal_entry_id) === String(jeId)
+    && String(a.id) !== String(cfg.assetId) && a.status !== 'rejected');
+  const claimed = claimants.reduce((s, a) => s + (parseFloat(a.acquisition_cost) || 0), 0);
+  const remaining = Math.round((debit - claimed) * 100) / 100;
+  const cost = parseFloat(cfg.assetCost?.()) || 0;
+  const acct = _finEsc(_pvAccountName(costAccountId));
+  let warn = '';
+  if (debit <= 0) warn = `This entry has no debit to ${acct}, so the server will refuse it.`;
+  else if (cost > 0 && remaining < cost) warn = `Remaining debit (${_faMoney(remaining)}) is less than this asset's cost (${_faMoney(cost)}).`;
+  el.innerHTML = box(`
+    Debit to ${acct}: <strong>${_faMoney(debit)}</strong><br>
+    Already claimed by ${claimants.length} other asset${claimants.length === 1 ? '' : 's'}: <strong>${_faMoney(claimed)}</strong><br>
+    Remaining: <strong>${_faMoney(remaining)}</strong>${cost > 0 ? ` &middot; this asset: <strong>${_faMoney(cost)}</strong>` : ''}
+    ${warn ? `<div style="margin-top:6px;font-weight:600;">${warn}</div>` : ''}
+    <div style="margin-top:6px;color:#888;">Preview only — the server re-checks capacity when you submit.</div>`, !!warn);
+}
+
+// ── Link Journal Entry (POST /{id}/link-journal-entry) ───────────────────
+function _faOpenLinkJeModal(id) {
+  const asset = window._faPendingAsset;
+  _faAllAssetsPromise = null;
+  _faJePickers.falj = {
+    assetId: id,
+    costAccountId: () => asset.cost_account_id,
+    assetCost: () => asset.acquisition_cost,
+    // A server message is about the previous pick — don't leave it beside a new one.
+    onChange: () => { const m = document.getElementById('falj-msg'); if (m) m.innerHTML = ''; },
+  };
+  const wrap = document.createElement('div');
+  wrap.id = 'fa-link-je-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;overflow:auto;padding:24px;';
+  wrap.innerHTML = `
+    <div style="background:var(--white);border-radius:8px;padding:24px;width:560px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 8px;font-size:1.05rem;color:var(--navy-700,#2c3e50);">Link Journal Entry</h3>
+      <p style="margin:0 0 14px;font-size:0.85rem;color:var(--grey-600,#666);">
+        Pick the posted journal entry that debited <strong>${_finEsc(_pvAccountName(asset.cost_account_id))}</strong>
+        for <strong>${_finEsc(asset.asset_tag || '')}</strong> (${_faMoney(asset.acquisition_cost)}).
+      </p>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Posted Journal Entry <span class="fin-required">*</span></label>
+        ${_faJePickerHtml('falj')}
+      </div>
+      <div id="falj-msg"></div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="_coaCloseModal('fa-link-je-modal-overlay')">Cancel</button>
+        <button class="fin-btn-teal" id="falj-submit" onclick="_faSubmitLinkJe(${id})">Link</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  _faJePickerOpen('falj');
+}
+async function _faSubmitLinkJe(id) {
+  const msgEl = document.getElementById('falj-msg');
+  msgEl.innerHTML = '';
+  const jeId = _faJePickerValue('falj');
+  if (!jeId) { _pvShowCoralMsg(msgEl, 'Pick a posted journal entry to link.'); return; }
+  const btn = document.getElementById('falj-submit');
+  if (btn) btn.disabled = true;
+  const res = await apiFetch(`${_FA_API}/${id}/link-journal-entry`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ journal_entry_id: jeId }),
+  });
+  if (btn) btn.disabled = false;
+  if (res && res.ok) {
+    _coaCloseModal('fa-link-je-modal-overlay');
+    showToast('Journal entry linked — asset is now GL Posted.', 'success');
+    await window._splitRefreshSelected?.();
+    return;
+  }
+  // 404/409/422 details are written for the operator — the capacity 422 names
+  // the remaining debit — so they're shown verbatim, not reworded.
+  _pvShowCoralMsg(msgEl, res ? await parseApiError(res) : 'Network error — the link was not saved.');
+}
+
+// ── Mark GL Posted (POST /{id}/mark-gl-posted) ───────────────────────────
+function _faOpenMarkGlPostedModal(id) {
+  const asset = window._faPendingAsset;
+  const wrap = document.createElement('div');
+  wrap.id = 'fa-mark-gl-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  wrap.innerHTML = `
+    <div style="background:var(--white);border-radius:8px;padding:24px;width:480px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 8px;font-size:1.05rem;color:var(--navy-700,#2c3e50);">Mark GL Posted${asset?.asset_tag ? ` — ${_finEsc(asset.asset_tag)}` : ''}</h3>
+      <div style="padding:10px 12px;border-radius:6px;background:var(--gold-100);color:#6b5400;font-size:0.82rem;margin-bottom:14px;">
+        This attests the GL side of this asset is already recorded but not tied to a specific JE. Reason will be appended to the asset notes with today's date for audit.
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Reason (audit note) <span class="fin-required">*</span></label>
+        <textarea id="famg-f-reason" class="fin-form-textarea" rows="3" maxlength="500" oninput="_faMarkGlReasonInput()"></textarea>
+        <span id="famg-f-count" style="font-size:11px;color:var(--grey-500,#888);">0/500 · at least 3 characters</span>
+        <span class="fin-field-error" id="famg-f-reason-err"></span>
+      </div>
+      <div id="famg-msg"></div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="_coaCloseModal('fa-mark-gl-modal-overlay')">Cancel</button>
+        <button class="fin-btn-teal" id="famg-submit" onclick="_faSubmitMarkGlPosted(${id})">Mark GL Posted</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  document.getElementById('famg-f-reason').focus();
+}
+function _faMarkGlReasonInput() {
+  const raw = document.getElementById('famg-f-reason').value;
+  const short = raw.trim().length < 3;
+  const countEl = document.getElementById('famg-f-count');
+  countEl.textContent = `${raw.length}/500${short ? ' · at least 3 characters' : ''}`;
+  countEl.style.color = short && raw.length ? 'var(--coral-600,#c0392b)' : 'var(--grey-500,#888)';
+  document.getElementById('famg-f-reason-err').textContent = '';
+}
+async function _faSubmitMarkGlPosted(id) {
+  const reason = document.getElementById('famg-f-reason').value.trim();
+  const errEl = document.getElementById('famg-f-reason-err');
+  const msgEl = document.getElementById('famg-msg');
+  errEl.textContent = '';
+  msgEl.innerHTML = '';
+  if (reason.length < 3) { errEl.textContent = 'Reason must be at least 3 characters.'; return; }
+  const btn = document.getElementById('famg-submit');
+  if (btn) btn.disabled = true;
+  const res = await apiFetch(`${_FA_API}/${id}/mark-gl-posted`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }),
+  });
+  if (btn) btn.disabled = false;
+  if (res && res.ok) {
+    _coaCloseModal('fa-mark-gl-modal-overlay');
+    showToast('Asset marked GL Posted — reason stamped in its notes.', 'success');
+    await window._splitRefreshSelected?.();
+    return;
+  }
+  _pvShowCoralMsg(msgEl, res ? await parseApiError(res) : 'Network error — nothing was saved.');
 }
 
 // ── Run monthly depreciation (idempotent per asset+period) ──────────────
