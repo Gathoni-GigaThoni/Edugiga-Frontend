@@ -964,10 +964,8 @@ async function loadFixedAssetsView(container) {
         <div class="fin-breadcrumb">Dashboard &rsaquo; Assets &rsaquo; Fixed Asset Register</div>
       </div>
       <div style="display:flex;gap:8px;margin-bottom:14px;">
-        ${_FA_TABS
-          .filter(t => t.key !== 'reconciliation' || canView('asset_management.reconciliation'))
-          .map(t => `<button class="${_faTab===t.key?'fin-btn-teal':'fin-btn-outline'}" onclick="_faSwitchTab('${t.key}')">${t.label}</button>`).join('')}
-        ${canView('asset_management.locations') ? `<button class="fin-btn-outline" style="margin-left:auto!important;" onclick="loadView('assets-by-location')">Assets by Location &rarr;</button>` : ''}
+        ${_FA_TABS.map(t => `<button class="${_faTab===t.key?'fin-btn-teal':'fin-btn-outline'}" onclick="_faSwitchTab('${t.key}')">${t.label}</button>`).join('')}
+        <button class="fin-btn-outline" style="margin-left:auto!important;" onclick="loadView('assets-by-location')">Assets by Location &rarr;</button>
       </div>
       <div id="fa-tab-container"></div>
     </div>`;
@@ -1007,7 +1005,7 @@ async function _faRenderRegisterSplitView(container) {
       ${_acCategories.map(c => `<option value="${c.id}" ${String(_faCategoryFilter)===String(c.id)?'selected':''}>${_finEsc(c.code)} — ${_finEsc(c.name)}</option>`).join('')}
     </select>
     ${_faGlPendingChipHtml()}
-    ${_faTab === 'live' ? `${canAdd('asset_management.depreciation') ? `<button class="fin-btn-outline" onclick="_faOpenDepreciationRunModal()">Run monthly depreciation</button>` : ''}
+    ${_faTab === 'live' ? `<button class="fin-btn-outline" onclick="_faOpenDepreciationRunModal()">Run monthly depreciation</button>
       <button class="fin-btn-outline" onclick="_faOpenBulkFromLineModal()">+ Bulk Create from Invoice Line</button>` : ''}
   `;
   container.innerHTML = '';
@@ -1177,7 +1175,7 @@ function _faDetailActions(item) {
   }
   if (item.status === 'confirmed' && !item.is_disposed) {
     return `${_faGlActionsHtml(item)}${_faMovementActionsHtml(item)}
-      ${canAdd('asset_management.disposal') ? `<button class="fin-btn-outline" onclick="_faOpenDisposeModal(${item.id})">Dispose</button>` : ''}
+      <button class="fin-btn-outline" onclick="_faOpenDisposeModal(${item.id})">Dispose</button>
       <button class="fin-btn-cancel" onclick="_faConfirmDelete(${item.id})">Delete</button>`;
   }
   return '';

@@ -188,7 +188,7 @@ const _SIDEBAR_ITEM_MODULE_KEYS = {
 
   // Assets
   'sidebar-asset-fixed-assets':           'asset_management.fixed_assets',
-  'sidebar-asset-by-location':            'asset_management.fixed_assets',
+  'sidebar-asset-by-location':            'asset_management.locations',
   'sidebar-asset-categories':             'asset_management.categories',
 
   // Communication
