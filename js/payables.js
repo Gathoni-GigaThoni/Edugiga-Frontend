@@ -304,6 +304,10 @@ async function loadPayablesPaymentVouchersView(container) {
       {label:'Payment Account',  key:'tendepay_wallet_account_id', fmt:v=>v?_pvAccountName(v):'—'},
       {label:'Status',           key:'status', fmt:v=>_pvBadge(v)},
       {label:'Date',             key:'created_at', fmt:v=>_pvDate(v)},
+      {label:'Settled Via',      key:'settlement_method', hideWhen:item=>!item.settlement_method, fmt:v=>_finEsc(_PV_SETTLE_METHOD_LABEL[v] || v)},
+      {label:'Settled From',     key:'settlement_account_id', hideWhen:item=>!item.settlement_account_id, fmt:v=>_finEsc(_pvAccountName(v))},
+      {label:'Settled On',       key:'settled_at', hideWhen:item=>!item.settled_at, fmt:v=>_pvDate(v)},
+      {label:'Journal Entry',    key:'journal_entry_id', hideWhen:item=>!item.journal_entry_id, fmt:v=>`<a href="#" onclick="_jeOpenDetail(${parseInt(v, 10)});return false;">JE #${parseInt(v, 10)}</a>`},
     ],
     renderAdd: _pvAddPlaceholder('Payment Voucher', 'payables-payment-vouchers-add', 'Set up the payee, ledger, cost center and amount.'),
     onAdd:  () => loadView('payables-payment-vouchers-add'),
@@ -385,6 +389,10 @@ function _pvPvDetailActions(v) {
     } else {
       html += `<div style="color:var(--grey-500,#666);font-size:0.9rem;">Queued for Tendepay. Payment will post automatically on the next Tendepay import.</div>`;
     }
+  }
+  if (_pvPvCanSettle(v)) {
+    window._pvPvSettlePending = v;
+    html += `<button class="btn" onclick="_pvPvOpenSettleModal(${v.id})">Settle</button>`;
   }
   html += `<button class="fin-btn-outline" onclick="_pvPvPrint(${v.id})">View / Print</button>`;
   html += `<div id="pv-link-msg" style="width:100%;"></div>`;
@@ -580,6 +588,163 @@ async function _pvPvPrint(id) {
     openInline: true,
     errorPrefix: 'Could not open print view: ',
   });
+}
+
+// ── Direct settle: bank / petty cash / owner's capital ──────────────────────
+// POST {voucher}/settle is the non-Tendepay rail (BE 6c5875c), so the "only a
+// Tendepay import can settle a voucher" note above _pvPaymentAccountKind no
+// longer holds for anyone who can reach this button. Built to the live
+// openapi.json (2026-09-11) rather than the handover text: the route accepts
+// approved and awaiting_tendepay vouchers (there is no awaiting_payment
+// status), and answers 200 with a flat VoucherSettleResponse — journal_entry_id,
+// jv_number, paid_payroll_run_ids, warnings — not { voucher, journal_entry_id }.
+// The server chooses the debit leg (AP control for an invoice-linked voucher,
+// debit_account_id otherwise, plus a WHT liability credit when tax is
+// withheld), so the form only asks for the credit side.
+const _PV_SETTLE_METHODS = [
+  { key: 'bank',           label: 'Bank',            lookup: 'money-holding-accounts',
+    hint: 'The bank account the payment left.',
+    empty: 'No active bank accounts in the Cash and Bank register.' },
+  { key: 'petty_cash',     label: 'Petty Cash',      lookup: 'money-holding-accounts',
+    hint: 'The petty cash float the payment was made from.',
+    empty: 'No petty cash float account is configured.' },
+  { key: 'owners_capital', label: "Owner's Capital", lookup: 'owners-capital-accounts',
+    hint: "The partner's capital account — for an expense paid from a partner's personal funds.",
+    empty: 'No active Shareholder Funds accounts — add one in the Chart of Accounts.' },
+];
+const _PV_SETTLE_METHOD_LABEL = { tendepay: 'Tendepay', ...Object.fromEntries(_PV_SETTLE_METHODS.map(m => [m.key, m.label])) };
+
+// PaymentVoucherRead has no Tendepay run link; tendepay_transaction_id is the
+// one marker that an import has already matched the voucher, and that path
+// posts its own settlement, so the button stays off for it.
+function _pvPvCanSettle(v) {
+  return (v.status === 'approved' || v.status === 'awaiting_tendepay')
+    && !v.tendepay_transaction_id
+    && canAdd('finance.payables');
+}
+
+// Not toISOString(): that is UTC, so between midnight and 03:00 EAT it names
+// yesterday — a settlement dated into the previous, possibly closed, period.
+function _pvLocalToday() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function _pvPvOpenSettleModal(id) {
+  const v = window._pvPvSettlePending;
+  if (!v || String(v.id) !== String(id)) return;
+  const wht = v.requires_wht && parseFloat(v.wht_amount) > 0;
+  const wrap = document.createElement('div');
+  wrap.id = 'pv-settle-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;overflow:auto;padding:24px;';
+  wrap.innerHTML = `
+    <div style="background:var(--white);border-radius:8px;padding:24px;width:440px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 8px;font-size:1.05rem;color:var(--navy-700,#2c3e50);">Settle Payment Voucher</h3>
+      <div style="padding:10px 12px;border-radius:6px;background:var(--coral-100);color:var(--coral-600);font-size:0.82rem;margin-bottom:14px;">
+        Settling marks <strong>${_finEsc(v.voucher_no || ('#' + v.id))}</strong> paid and posts its journal entry${v.linked_supplier_invoice_id ? ', clearing the linked supplier invoice' : ''}. This cannot be undone from here.
+      </div>
+      <div style="font-size:0.85rem;color:var(--grey-600);margin-bottom:14px;">
+        Amount <strong>${_pvMoney(v.amount)}</strong>${wht ? ` &middot; WHT ${_pvMoney(v.wht_amount)} &middot; Net payable <strong>${_pvMoney(v.net_payable)}</strong>` : ''}
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Paid Through <span class="fin-required">*</span></label>
+        <div style="display:flex;gap:18px;flex-wrap:wrap;">
+          ${_PV_SETTLE_METHODS.map((m, i) => `<label style="display:inline-flex;align-items:center;white-space:nowrap;font-size:0.9rem;cursor:pointer;">
+            <input type="radio" name="pv-settle-method" value="${m.key}" style="width:auto;max-width:none;margin:0 6px 0 0;padding:0;display:inline-block;vertical-align:middle;cursor:pointer;accent-color:var(--navy-700);" ${i === 0 ? 'checked' : ''} onchange="_pvPvSettleLoadAccounts(this.value)">${_finEsc(m.label)}
+          </label>`).join('')}
+        </div>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Credit Account <span class="fin-required">*</span></label>
+        <select id="pv-settle-account" class="fin-form-select" disabled><option value="">Loading&#8230;</option></select>
+        <span id="pv-settle-account-hint" style="font-size:12px;color:var(--grey-600)"></span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Settlement Date</label>
+        <input type="date" id="pv-settle-date" class="fin-form-input" value="${_pvLocalToday()}">
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Notes</label>
+        <textarea id="pv-settle-notes" class="fin-form-textarea" rows="3" placeholder="Cheque number, transfer reference&#8230; (optional)"></textarea>
+      </div>
+      <div id="pv-settle-error" style="display:none;padding:10px 12px;border-radius:6px;border-left:3px solid var(--coral-500);background:var(--coral-100);color:var(--coral-600);font-size:0.82rem;margin-top:6px;"></div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="_coaCloseModal('pv-settle-modal-overlay')">Cancel</button>
+        <button class="fin-btn-teal" id="pv-settle-submit" onclick="_pvPvSubmitSettle(${v.id})">Settle</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  _pvPvSettleLoadAccounts(_PV_SETTLE_METHODS[0].key);
+}
+
+// Re-fetched on every method change rather than served from _pvLoadLookups'
+// cache: the picker is the credit leg of a posted JE, so it should reflect the
+// register as it stands now. The sequence guard drops a slow response that
+// lands after the user has already switched method again.
+let _pvSettleLoadSeq = 0;
+async function _pvPvSettleLoadAccounts(methodKey) {
+  const m = _PV_SETTLE_METHODS.find(x => x.key === methodKey);
+  const sel = document.getElementById('pv-settle-account');
+  const hint = document.getElementById('pv-settle-account-hint');
+  if (!m || !sel) return;
+  const seq = ++_pvSettleLoadSeq;
+  sel.disabled = true;
+  sel.innerHTML = '<option value="">Loading&#8230;</option>';
+  hint.textContent = '';
+  const rows = await loadLookupList(`${API_BASE}/lookups/${m.lookup}`, m.lookup);
+  if (seq !== _pvSettleLoadSeq || !document.getElementById('pv-settle-account')) return;
+  // money-holding-accounts mixes banks, the float and wallets — keep only this
+  // method's kind. Owners-capital rows carry no kind and need no filter.
+  const scoped = m.lookup === 'money-holding-accounts' ? rows.filter(a => a.kind === m.key) : rows;
+  const list = _pvMoneyHoldingPostable(scoped, null);
+  sel.innerHTML = `<option value="">${_finEsc(lookupPlaceholder(m.lookup, list.length ? 'Please Select' : 'No accounts available'))}</option>`
+    + list.map(a => {
+      const label = `${a.number ? a.number + ' - ' : ''}${a.account_name}${a.bank_name ? ` (${a.bank_name})` : ''}`;
+      return `<option value="${a.gl_account_id}">${_finEsc(label)}</option>`;
+    }).join('');
+  if (list.length === 1) sel.value = String(list[0].gl_account_id);
+  sel.disabled = !list.length;
+  hint.textContent = lookupWasDenied(m.lookup) ? '' : (list.length ? m.hint : m.empty);
+}
+
+async function _pvPvSubmitSettle(id) {
+  const errEl = document.getElementById('pv-settle-error');
+  const btn = document.getElementById('pv-settle-submit');
+  const fail = text => { errEl.textContent = text; errEl.style.display = 'block'; };
+  errEl.style.display = 'none';
+  const method = document.querySelector('input[name="pv-settle-method"]:checked')?.value;
+  const accountId = document.getElementById('pv-settle-account').value;
+  const date = document.getElementById('pv-settle-date').value;
+  const notes = document.getElementById('pv-settle-notes').value.trim();
+  if (!method) return fail('Choose how this voucher was paid.');
+  if (!accountId) return fail('Choose the account being credited.');
+  const payload = { settlement_method: method, credit_account_id: parseInt(accountId, 10) };
+  if (date) payload.settlement_date = date;
+  if (notes) payload.notes = notes;
+  btn.disabled = true;
+  let res;
+  try {
+    res = await apiFetch(`${_PV_PV_API}${id}/settle`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch (_) {
+    fail('Could not reach the server. Refresh the voucher before retrying — the settlement may have gone through.');
+    return;
+  } finally {
+    btn.disabled = false;
+  }
+  if (res && res.ok) {
+    const body = await res.json().catch(() => ({}));
+    _coaCloseModal('pv-settle-modal-overlay');
+    showToast(`Payment voucher settled — JE #${body.journal_entry_id} posted`, 'success');
+    const runs = body.paid_payroll_run_ids || [];
+    if (runs.length) showToast(`Payroll run${runs.length > 1 ? 's' : ''} #${runs.join(', #')} marked paid.`, 'info');
+    (body.warnings || []).forEach(w => showToast(w, 'info'));
+    await window._splitRefreshSelected?.();
+  } else if (res) {
+    fail(await parseApiError(res));
+  }
 }
 
 // ── Add / Edit form ──────────────────────────────────────────────────────────

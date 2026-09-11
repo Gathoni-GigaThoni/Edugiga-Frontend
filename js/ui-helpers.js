@@ -722,6 +722,8 @@ const LOOKUP_ACCESS_HINTS = {
   'fee-items':       { noun: 'fee items',             module: 'Finance' },
   'fee-schedules':   { noun: 'fee schedules',         module: 'Finance' },
   'money-holding-accounts': { noun: 'bank, wallet and petty-cash accounts', module: 'Finance' },
+  // The Payment Voucher direct-settle picker when the method is Owner's Capital.
+  'owners-capital-accounts': { noun: "owners' capital accounts", module: 'Finance' },
   // Same endpoint, same widened read gate as 'accounts' above.
   'asset-accounts':  { noun: 'asset accounts',        module: 'Finance or Asset Management' },
   'suppliers':       { noun: 'suppliers',             module: 'Procurement' },
