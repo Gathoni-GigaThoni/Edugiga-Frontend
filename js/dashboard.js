@@ -188,6 +188,7 @@ const _SIDEBAR_ITEM_MODULE_KEYS = {
 
   // Assets
   'sidebar-asset-fixed-assets':           'asset_management.fixed_assets',
+  'sidebar-asset-by-location':            'asset_management.fixed_assets',
   'sidebar-asset-categories':             'asset_management.categories',
 
   // Communication
@@ -569,6 +570,7 @@ function showDashboard() {
           <div class="flyout-module-body" id="flyout-body-asset-management" data-label="Assets" hidden>
             <ul id="asset-management-dropdown" class="dropdown-menu">
               <li id="sidebar-asset-fixed-assets" onclick="loadView('finance-fixed-assets')">Fixed Asset Register</li>
+              <li id="sidebar-asset-by-location" onclick="loadView('assets-by-location')">Assets by Location</li>
               <li id="sidebar-asset-categories" onclick="loadView('assets-categories')">Categories</li>
             </ul>
           </div>
@@ -1567,6 +1569,9 @@ async function loadView(view) {
     case 'finance-fixed-assets':
       setActiveSidebarItem('sidebar-asset-fixed-assets');
       await loadFixedAssetsView(main); break;
+    case 'assets-by-location':
+      setActiveSidebarItem('sidebar-asset-by-location');
+      await loadAssetsByLocationView(main); break;
     case 'assets-categories':
       setActiveSidebarItem('sidebar-asset-categories');
       await loadAssetCategoriesView(main); break;

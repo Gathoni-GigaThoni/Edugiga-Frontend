@@ -718,6 +718,12 @@ async function _faSubmitMovement() {
 // refetched rather than patched locally.
 async function _faAfterMovementRecorded(assetIds) {
   _faInvalidateMovements(assetIds);
+  // Assets by Location (fixed-asset-locations.js) re-runs its query, since a
+  // move can take the asset off that list.
+  if (document.getElementById('fal-results')) {
+    await _falLoad();
+    return;
+  }
   if (_faTab === 'live' && _faView === 'table') {
     await _faRenderTab();
     return;
@@ -768,6 +774,25 @@ async function _faOpenAssetDetails(id, toHistory = false) {
   _faPreselectId = id;
   try { await _faRenderTab(); } finally { _faPreselectId = null; }
   if (toHistory) document.querySelector('#split-right-panel [id^="fa-mv-panel-"]')?.parentElement?.scrollIntoView({ block: 'start' });
+}
+// Opens an asset in the register from outside it (Assets by Location), on the
+// tab that holds it, with any filter that could hide the row cleared.
+async function _faOpenInRegister(id) {
+  const item = _faKnownAssets[id];
+  if (!item) return;
+  _faTab = item.is_disposed || item.status === 'rejected' ? 'archived' : item.status === 'draft' ? 'pending' : 'live';
+  _faView = 'list';
+  _faCategoryFilter = '';
+  _faGlPendingOnly = false;
+  _faTableSelected.clear();
+  _faTableSearch = '';
+  _faPreselectId = id;
+  try { await loadView('finance-fixed-assets'); } finally { _faPreselectId = null; }
+  if (_faTab === 'archived') {
+    _faArchivedSelected = _faArchivedItems.find(i => String(i.id) === String(id)) || null;
+    _faRenderArchivedList();
+    _faRenderArchivedDetail();
+  }
 }
 
 function _faTableVisibleItems() {
@@ -940,6 +965,7 @@ async function loadFixedAssetsView(container) {
       </div>
       <div style="display:flex;gap:8px;margin-bottom:14px;">
         ${_FA_TABS.map(t => `<button class="${_faTab===t.key?'fin-btn-teal':'fin-btn-outline'}" onclick="_faSwitchTab('${t.key}')">${t.label}</button>`).join('')}
+        <button class="fin-btn-outline" style="margin-left:auto!important;" onclick="loadView('assets-by-location')">Assets by Location &rarr;</button>
       </div>
       <div id="fa-tab-container"></div>
     </div>`;

@@ -5009,6 +5009,12 @@ async function loadStudentClassesView(container) {
     ],
     renderAdd:  el => _clsSplitForm(null, el),
     renderEdit: (item, el) => _clsSplitForm(item, el),
+    // Printable asset summary for the term-open hand-over
+    // (fixed-asset-locations.js). Left unset without fixed-asset access, so
+    // the pane doesn't grow an empty actions row.
+    detailActions: canView('asset_management.fixed_assets')
+      ? c => `<button class="fin-btn-outline" onclick="openClassAssetSummary(${Number(c.id)})">Print Asset Summary</button>`
+      : undefined,
   });
 }
 
