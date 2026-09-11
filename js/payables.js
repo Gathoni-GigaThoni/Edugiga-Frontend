@@ -316,16 +316,17 @@ async function loadPayablesPaymentVouchersView(container) {
   });
 }
 
-// Only a Tendepay wallet can actually settle a voucher. The whole API has no
-// mark-paid / settle / record-payment route on payment-vouchers — the single
-// thing that writes `paid` is POST /tendepay/import/{batch}/confirm ("create
-// journal entries, settle invoices, mark vouchers paid"), and /mark-paid was
-// deleted from the backend on purpose (see _pvPvQueueForTendepay below).
+// Two routes write `paid` on a voucher: POST /tendepay/import/{batch}/confirm
+// ("create journal entries, settle invoices, mark vouchers paid"), which
+// matches imported wallet rows to vouchers queued at awaiting_tendepay, and
+// POST {voucher}/settle for bank, petty cash and owner's-capital payments (see
+// _pvPvOpenSettleModal). /mark-paid was deleted from the backend on purpose
+// (see _pvPvQueueForTendepay below).
 //
-// So a voucher whose Payment Account is a bank or the petty cash float has no
-// settlement path at all: queueing it parks it at awaiting_tendepay waiting
-// for an import row that never arrives. Rather than let the button imply
-// otherwise, say so and name the rails that do post a payment.
+// Queueing only means something when the Payment Account is a Tendepay
+// wallet: a voucher paid from a bank or the petty cash float would sit at
+// awaiting_tendepay waiting for an import row that never arrives. So the
+// Queue button is withheld for those, and the banner points at Settle instead.
 //
 // wallet_role is the authoritative Tendepay marker (main/mini/suspense/
 // charges). main and mini are the two a payment can legitimately come out of;
@@ -343,20 +344,28 @@ function _pvPaymentAccountKind(accountId) {
   return 'non_wallet';
 }
 
-function _pvNonTendepayRailsHtml(accountName) {
+// What to do instead of queueing when the money did not go through Tendepay.
+// Settle only renders for users with add access on Payables, so everyone else
+// is told who can do it; a voucher an import has already matched gets no
+// advice, since the server refuses to settle it directly.
+function _pvSettleInsteadHtml(v) {
+  if (v.tendepay_transaction_id) return '';
+  const lead = "If it was paid by bank, from petty cash or out of a partner's own funds,";
+  return `<div style="margin-top:5px;">${_pvPvCanSettle(v)
+    ? `${lead} use <strong>Settle</strong> to record the payment and post its journal entry.`
+    : `${lead} someone with add access on Payables can settle it directly.`}</div>`;
+}
+
+function _pvNonTendepayRailsHtml(v) {
   return `<div style="width:100%;margin-top:8px;padding:10px 14px;background:#FBEAEA;border-left:3px solid var(--coral-500,#D94040);border-radius:6px;font-size:0.85rem;color:#7a2020;line-height:1.5;">
-    <strong>${_finEsc(accountName)} is not a Tendepay wallet, so this voucher cannot be paid from here.</strong>
-    <div style="margin-top:5px;">Payment Vouchers settle only through a Tendepay import &mdash; there is no other route that marks one paid. Queueing this would park it at Awaiting Tendepay for a payment that never arrives.</div>
-    <div style="margin-top:5px;">To pay outside Tendepay, use the document type built for that rail:
-      <strong>Expense Claims</strong> &rarr; Expense Claim Disbursements (cash, bank transfer or M-Pesa, against any bank account);
-      <strong>Petty Cash Applications</strong> &rarr; Petty Cash Disbursements (off the float);
-      or <strong>Imprest Warrants</strong> &rarr; Imprest Disbursements (names its own credit bank).
-    </div>
-    <div style="margin-top:5px;">Otherwise set the Payment Account to the Tendepay wallet this will be paid from.</div>
+    <strong>${_finEsc(_pvAccountName(v.tendepay_wallet_account_id))} is not a Tendepay wallet, so Queue for Tendepay would never settle this voucher.</strong>
+    <div style="margin-top:5px;">A Tendepay import only matches vouchers paid out of a Tendepay wallet. Queueing this would park it at Awaiting Tendepay for a payment that never arrives.</div>
+    ${_pvSettleInsteadHtml(v)}
+    <div style="margin-top:5px;">If it is to be paid through Tendepay, set the Payment Account to the wallet it will come from.</div>
   </div>`;
 }
 
-// ── Detail-pane lifecycle actions (draft → submitted → approved → awaiting_tendepay → paid) ──
+// ── Detail-pane lifecycle actions (draft → submitted → approved → [awaiting_tendepay →] paid) ──
 function _pvPvDetailActions(v) {
   const isCreator = currentUser && v.personnel_id && String(currentUser.id) === String(v.personnel_id);
   let html = '';
@@ -370,7 +379,7 @@ function _pvPvDetailActions(v) {
     // Withhold the button entirely when the account cannot settle: offering it
     // next to an explanation of why it will not work just invites the click.
     if (kind === 'non_wallet' || kind === 'wallet_internal') {
-      html += _pvNonTendepayRailsHtml(_pvAccountName(v.tendepay_wallet_account_id));
+      html += _pvNonTendepayRailsHtml(v);
     } else {
       html += `<button class="btn" onclick="_pvPvQueueForTendepay(${v.id}, ${v.debit_account_id || 'null'}, ${v.tendepay_wallet_account_id || 'null'})">Queue for Tendepay</button>`;
       if (!v.debit_account_id || !v.tendepay_wallet_account_id) {
@@ -383,8 +392,10 @@ function _pvPvDetailActions(v) {
     const kind = _pvPaymentAccountKind(v.tendepay_wallet_account_id);
     if (kind === 'non_wallet' || kind === 'wallet_internal' || kind === 'unset') {
       html += `<div style="width:100%;padding:10px 14px;background:#FBEAEA;border-left:3px solid var(--coral-500,#D94040);border-radius:6px;font-size:0.85rem;color:#7a2020;line-height:1.5;">
-        <strong>Queued, but nothing will settle it.</strong>
-        <div style="margin-top:5px;">The Payment Account is ${v.tendepay_wallet_account_id ? `<em>${_finEsc(_pvAccountName(v.tendepay_wallet_account_id))}</em>, which is not a Tendepay wallet` : 'not set'}, so no Tendepay import row will match this voucher. Ask Finance to correct the wallet on this voucher, or reject it and raise the payment on the rail that fits &mdash; Expense Claim, Petty Cash or Imprest.</div>
+        <strong>Queued, but no Tendepay import will settle it.</strong>
+        <div style="margin-top:5px;">The Payment Account is ${v.tendepay_wallet_account_id ? `<em>${_finEsc(_pvAccountName(v.tendepay_wallet_account_id))}</em>, which is not a Tendepay wallet` : 'not set'}, so no Tendepay import row will match this voucher.</div>
+        ${_pvSettleInsteadHtml(v)}
+        <div style="margin-top:5px;">If it is to be paid through Tendepay, ask Finance to correct the wallet on this voucher.</div>
       </div>`;
     } else {
       html += `<div style="color:var(--grey-500,#666);font-size:0.9rem;">Queued for Tendepay. Payment will post automatically on the next Tendepay import.</div>`;
@@ -563,8 +574,9 @@ function _pvShowNotesModal(title, onConfirm) {
     onConfirm(notes || null);
   };
 }
-// Replaces the deleted /mark-paid action — vouchers now settle exclusively
-// through a Tendepay statement import (see js/finance.js Tendepay module).
+// Replaces the deleted /mark-paid action for vouchers paid out of a Tendepay
+// wallet — they settle through a Tendepay statement import (see js/finance.js
+// Tendepay module). Every other rail goes through Settle (_pvPvSubmitSettle).
 async function _pvPvQueueForTendepay(id, debitAccountId, tendepayWalletAccountId) {
   if (!debitAccountId || !tendepayWalletAccountId) {
     showToast('Set the Debit Account and Payment Account before queueing this voucher for payment.', 'error');
@@ -591,9 +603,7 @@ async function _pvPvPrint(id) {
 }
 
 // ── Direct settle: bank / petty cash / owner's capital ──────────────────────
-// POST {voucher}/settle is the non-Tendepay rail (BE 6c5875c), so the "only a
-// Tendepay import can settle a voucher" note above _pvPaymentAccountKind no
-// longer holds for anyone who can reach this button. Built to the live
+// POST {voucher}/settle is the non-Tendepay rail (BE 6c5875c). Built to the live
 // openapi.json (2026-09-11) rather than the handover text: the route accepts
 // approved and awaiting_tendepay vouchers (there is no awaiting_payment
 // status), and answers 200 with a flat VoucherSettleResponse — journal_entry_id,

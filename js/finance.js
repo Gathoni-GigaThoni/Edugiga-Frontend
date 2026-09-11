@@ -3871,9 +3871,11 @@ async function _giDelete(id) {
 }
 
 // ==================== TENDEPAY MODULE ====================
-// Payment Vouchers now settle exclusively through a Tendepay statement
+// Payment Vouchers paid out of a Tendepay wallet settle through a statement
 // import (js/payables.js "Queue for Tendepay" moves a voucher to
 // awaiting_tendepay; confirming a batch here marks it paid + posts JEs).
+// Bank, petty cash and owner's-capital payments skip this module and use the
+// voucher's own Settle action in js/payables.js.
 // Route prefix confirmed live: single /api prefix (unlike Payables/Reports,
 // which are double-prefixed on this backend).
 const _TP_BASE = `${API_BASE}/tendepay`;
