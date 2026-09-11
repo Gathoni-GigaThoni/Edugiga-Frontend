@@ -218,9 +218,15 @@ function _faMovementRowsHtml(rows) {
   return rows.map(m => {
     const fromC = _faCustodianName(m.from_custodian_employee_id);
     const toC = _faCustodianName(m.to_custodian_employee_id);
-    const custodianCell = (fromC || toC)
-      ? `${fromC ? _finEsc(fromC) : _FA_MUTED_DASH} &rarr; ${toC ? _finEsc(toC) : _FA_MUTED_DASH}`
-      : _FA_MUTED_DASH;
+    // A placement move keeps the current custodian on both sides — that's no
+    // change, not a hand-over.
+    const unchanged = m.from_custodian_employee_id != null
+      && String(m.from_custodian_employee_id) === String(m.to_custodian_employee_id);
+    const custodianCell = unchanged
+      ? `<span style="color:var(--grey-500,#888);" title="Custodian unchanged">${_finEsc(toC)} (unchanged)</span>`
+      : (fromC || toC)
+        ? `${fromC ? _finEsc(fromC) : _FA_MUTED_DASH} &rarr; ${toC ? _finEsc(toC) : _FA_MUTED_DASH}`
+        : _FA_MUTED_DASH;
     const tip = m.notes ? `${m.reason}\n\nNotes: ${m.notes}` : m.reason;
     return `<tr>
       <td style="white-space:nowrap;">${_pvDate(m.moved_at)}</td>
@@ -238,7 +244,10 @@ function _faMovementHistoryBodyHtml(item, result) {
     return `<div style="padding:10px 12px;border-radius:6px;background:var(--coral-100);color:var(--coral-600);font-size:0.85rem;">Could not load movement history: ${_finEsc(result.error)}</div>`;
   }
   if (!result.rows.length) {
-    return `<div style="padding:18px 12px;text-align:center;color:var(--grey-600,#666);font-size:0.88rem;">No movements recorded yet. Log the first placement to start the audit trail.</div>`;
+    const cta = !item.is_disposed && _faCanMove(item)
+      ? `<div style="margin-top:10px;"><button class="fin-btn-teal" onclick="_faOpenMovementModal(${item.id}, 'initial_placement')">+ Log Initial Placement</button></div>`
+      : '';
+    return `<div style="padding:18px 12px;text-align:center;color:var(--grey-600,#666);font-size:0.88rem;">No movements recorded yet. Log the first placement to start the audit trail.${cta}</div>`;
   }
   return `<div class="fin-table-wrap"><table class="fin-table">
     <thead><tr><th>DATE</th><th>TYPE</th><th>FROM</th><th>TO</th><th>CUSTODIAN CHANGE</th><th>REASON</th><th>RECORDED BY</th></tr></thead>
@@ -248,6 +257,7 @@ function _faMovementHistoryBodyHtml(item, result) {
 // Rendered synchronously into the detail grid with a slot the history fills
 // once loaded (same slot pattern as _faJeLinkHtml).
 function _faMovementPanelHtml(item) {
+  _faRememberAsset(item);
   const slot = `fa-mv-panel-${item.id}-${Math.random().toString(36).slice(2, 8)}`;
   _faLoadMovements(item.id).then(result => {
     const el = document.getElementById(slot);
@@ -257,6 +267,666 @@ function _faMovementPanelHtml(item) {
     ${_faCurrentPlacementCardHtml(item)}
     <div id="${slot}"><p style="color:#888;font-size:0.85rem;margin:6px 0;">Loading movement history&#8230;</p></div>
   </div>`;
+}
+
+// ── Record a movement (POST /{id}/movements) ─────────────────────────────
+// The per-type field rules mirror the backend's validation, so the form can't
+// assemble a combination the server would 422:
+//   to   'any'  = exactly one of classroom / free text; 'text' = free text only
+//   from whether from_* (location and custodian) may be sent at all
+//   cust to_custodian_employee_id — 'required', 'optional', or not allowed
+// Everything else the server checks (status, date order, duplicates, target
+// equal to current custodian) comes back as a detail shown verbatim.
+const _FA_MV_RULES = {
+  initial_placement:    { to: 'any',  from: false, cust: 'optional' },
+  transfer:             { to: 'any',  from: true,  cust: 'optional' },
+  custodian_change:     { to: null,   from: false, cust: 'required' },
+  sent_for_repair:      { to: 'text', from: true,  cust: 'optional' },
+  returned_from_repair: { to: 'any',  from: true,  cust: 'optional' },
+  verification:         { to: null,   from: false, cust: null },
+  pre_disposal_hold:    { to: 'any',  from: true,  cust: 'optional' },
+};
+const _FA_MV_HINTS = {
+  initial_placement:    'First placement of this asset. It can only be logged once.',
+  transfer:             'A full physical move from one location to another.',
+  custodian_change:     'Same location, new accountable staff member.',
+  sent_for_repair:      'Temporary hand-off to an external repair provider.',
+  returned_from_repair: 'Back from repair. The destination may differ from where it left.',
+  verification:         'Confirms the asset is where the register says. Reason should identify the verifier (e.g. <code>Term 2 audit walk — HoF</code>).',
+  pre_disposal_hold:    'Physically removed from use but not yet financially disposed.',
+};
+
+// Action handlers get an asset id from inline onclick; this keeps the latest
+// row seen for each so the modal doesn't refetch it.
+const _faKnownAssets = {};
+function _faRememberAsset(item) {
+  if (item && item.id != null) _faKnownAssets[item.id] = item;
+  return item;
+}
+// Same gate as editing the asset. Rejected assets were never physical items
+// (409), and a disposed one accepts verification only.
+function _faCanMove(item) {
+  return !!item && item.status !== 'rejected' && canEdit('asset_management.fixed_assets');
+}
+function _faMovementActionsHtml(item) {
+  if (!_faCanMove(item)) return '';
+  _faRememberAsset(item);
+  const verify = `<button class="fin-btn-outline" onclick="_faOpenMovementModal(${item.id}, 'verification')">Verify</button>`;
+  if (item.is_disposed) return verify;
+  return `
+      <button class="fin-btn-outline" onclick="_faOpenMovementModal(${item.id}, 'transfer')">+ Log Movement</button>
+      <button class="fin-btn-outline" onclick="_faOpenMovementModal(${item.id}, 'custodian_change')">Change Custodian</button>
+      ${verify}`;
+}
+
+// Local calendar date — toISOString() is UTC and reads as yesterday in the
+// first hours of the day in Nairobi.
+function _faLocalToday() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Classroom | Free-text segmented control. Switching segments keeps what was
+// entered in the other one, so both can end up filled — submit refuses that
+// (XOR) rather than silently dropping one.
+function _faMvLocationFieldsHtml(p) {
+  const seg = (mode, label, radius) => `<button type="button" id="${p}-seg-${mode}" class="fin-btn-outline" aria-pressed="false"
+    style="padding:3px 12px;font-size:0.78rem;border-radius:${radius};" onclick="_faMvSetMode('${p}','${mode}')">${label}</button>`;
+  return `
+    <div id="${p}-seg" style="display:inline-flex;margin-bottom:6px;">${seg('class', 'Classroom', '6px 0 0 6px')}${seg('text', 'Free-text', '0 6px 6px 0')}</div>
+    <input type="hidden" id="${p}-mode" value="class">
+    <div id="${p}-class-wrap">${_invClassPickerHtml(`${p}-class`, null)}</div>
+    <div id="${p}-text-wrap" style="display:none;"><input type="text" id="${p}-text" class="fin-form-input" maxlength="120" placeholder="e.g. Head Office, Storage B"></div>
+    <span class="fin-field-error" id="${p}-err"></span>`;
+}
+function _faMvSetMode(p, mode) {
+  document.getElementById(`${p}-mode`).value = mode;
+  document.getElementById(`${p}-class-wrap`).style.display = mode === 'class' ? '' : 'none';
+  document.getElementById(`${p}-text-wrap`).style.display = mode === 'text' ? '' : 'none';
+  // .fin-btn-outline sets background/color/border with !important, so the
+  // selected segment has to override at the same priority.
+  const pressed = { background: 'var(--navy-700,#1B3057)', color: '#fff', 'border-color': 'var(--navy-700,#1B3057)' };
+  ['class', 'text'].forEach(m => {
+    const b = document.getElementById(`${p}-seg-${m}`);
+    const on = m === mode;
+    b.setAttribute('aria-pressed', String(on));
+    Object.entries(pressed).forEach(([prop, val]) => on ? b.style.setProperty(prop, val, 'important') : b.style.removeProperty(prop));
+  });
+}
+// The class picker lists active classes only; an asset can still sit in one
+// that has since been closed, so its from-location keeps that option.
+function _faMvSelectClass(selectId, classId) {
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  if (classId == null) { sel.value = ''; return; }
+  if (![...sel.options].some(o => o.value === String(classId))) sel.add(new Option(`${_invClassLabel(classId)} (inactive)`, classId));
+  sel.value = String(classId);
+}
+
+let _faMv = null;  // open movement form: { assets, bulk, cur, acquired, rows, loaded, submitting, fromEditing, fromTouched, lastType, fromSelection }
+
+// The value every asset in the list has for key, or undefined when they differ.
+function _faSharedValue(assets, key) {
+  const first = assets[0]?.[key] ?? null;
+  return assets.every(a => String(a[key] ?? null) === String(first)) ? first : undefined;
+}
+
+// Top of the form: the asset's current placement, or for a bulk movement the
+// assets it will be recorded against (the first five, then a count).
+function _faMvAssetsHeaderHtml(state) {
+  if (!state.bulk) return _faCurrentPlacementCardHtml(state.assets[0]);
+  const n = state.assets.length;
+  const items = state.assets.slice(0, 5).map(a => {
+    const place = _faPlacementName(a.current_school_class_id, a.current_location_text);
+    return `<li><strong>${_finEsc(a.asset_tag || '—')}</strong>${a.description ? ` — ${_faTrunc(a.description, 50)}` : ''}
+      <span style="color:var(--grey-500,#888);">&middot; ${place ? _finEsc(place) : 'Unplaced'}</span></li>`;
+  }).join('');
+  return `<div style="padding:10px 14px;border-radius:6px;background:var(--navy-50,#EEF3FA);border-left:3px solid var(--navy-700,#1B3057);font-size:0.85rem;margin-bottom:10px;">
+    <div style="font-weight:700;margin-bottom:4px;">Assets (${n})</div>
+    <ul style="margin:0;padding-left:18px;">${items}</ul>
+    ${n > 5 ? `<div style="margin-top:4px;color:var(--grey-600,#666);">&hellip; and ${n - 5} more</div>` : ''}
+  </div>`;
+}
+
+function _faOpenMovementModal(assetId, presetType = 'transfer', opts = {}) {
+  const asset = _faKnownAssets[assetId];
+  if (!_faCanMove(asset)) return;
+  return _faOpenMovementForm([asset], presetType, opts);
+}
+
+// One form for a single asset and for a bulk selection. With several assets
+// every field applies to all of them, so whatever is read from the register
+// (From, the current custodian, date limits) uses the value they share, and is
+// left to the operator when they differ.
+async function _faOpenMovementForm(assets, presetType = 'transfer', opts = {}) {
+  _coaCloseModal('fa-mv-modal-overlay');
+  const bulk = assets.length > 1;
+  const n = assets.length;
+  const asset = assets[0];
+  const disposed = !bulk && !!asset.is_disposed;
+  const sharedClass = _faSharedValue(assets, 'current_school_class_id');
+  const sharedText = _faSharedValue(assets, 'current_location_text');
+  const cur = {
+    samePlace: sharedClass !== undefined && sharedText !== undefined,
+    classId: sharedClass ?? null,
+    text: sharedText || '',
+    custodian: _faSharedValue(assets, 'current_custodian_employee_id'),  // undefined = they differ
+  };
+  const acquired = assets.reduce((max, a) => (a.acquisition_date || '') > max ? a.acquisition_date : max, '');
+  // A single asset's history is fetched below. A bulk form doesn't fetch N
+  // histories: it's ready at once and leaves each asset's latest-movement date
+  // to the server. With no shared placement there is nothing to prefill, so
+  // From starts editable.
+  const mixedFrom = bulk && !cur.samePlace;
+  const state = _faMv = { assets, bulk, cur, acquired, rows: [], loaded: bulk, submitting: false, fromEditing: mixedFrom, fromTouched: mixedFrom, lastType: null, fromSelection: !!opts.fromSelection };
+  // "Move" on assets that were never placed means their first placement. A
+  // selection is judged by its cached placement, a single asset by its history.
+  if (bulk && presetType === 'transfer' && cur.samePlace && cur.classId == null && !cur.text) presetType = 'initial_placement';
+  const today = _faLocalToday();
+  const curCust = cur.custodian ?? null;
+  const hint = 'font-size:11px;color:var(--grey-500,#888);';
+  const fromHint = !bulk ? "Filled from the register. Click Edit only if the asset wasn't actually there."
+    : cur.samePlace ? `Filled from the register — all ${n} assets are there. Click Edit only if they weren't.`
+    : "The selected assets aren't all in the same place, so From can't come from the register. A transfer needs one: enter where they all came from, or select assets from a single location.";
+  const wrap = document.createElement('div');
+  wrap.id = 'fa-mv-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;overflow:auto;padding:24px;';
+  wrap.innerHTML = `
+    <div style="background:var(--white);border-radius:8px;padding:24px;width:600px;max-width:100%;max-height:92vh;overflow:auto;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 ${bulk ? 12 : 4}px;font-size:1.05rem;color:var(--navy-700,#2c3e50);">Log Movement — ${bulk ? `${n} assets` : _finEsc(asset.asset_tag || '')}</h3>
+      ${bulk ? '' : `<div style="font-size:0.85rem;color:var(--grey-600,#666);margin-bottom:12px;">${_finEsc(asset.description || '')}</div>`}
+      ${opts.intro ? `<div style="margin-bottom:12px;padding:10px 14px;border-radius:6px;border-left:3px solid var(--gold-500);background:var(--gold-100);color:#7a6110;font-size:0.85rem;">${_finEsc(opts.intro)}</div>` : ''}
+      ${_faMvAssetsHeaderHtml(state)}
+      <div class="fin-form-group">
+        <label class="fin-form-label">Movement Type <span class="fin-required">*</span></label>
+        <select id="famv-type" class="fin-form-select" onchange="_faMvApplyType()" ${disposed ? 'disabled' : ''}>
+          ${_FA_MOVEMENT_TYPES.map(t => `<option value="${t.key}" ${t.key === (disposed ? 'verification' : presetType) ? 'selected' : ''}>${_finEsc(t.label)}</option>`).join('')}
+        </select>
+        ${disposed ? `<span style="${hint}">Disposed assets accept verification only.</span>` : ''}
+        <div id="famv-type-hint" style="margin-top:6px;font-size:0.82rem;color:var(--grey-600,#666);"></div>
+      </div>
+      <div id="famv-from-block" class="fin-form-group" style="padding:10px 12px;border:1px solid var(--grey-100,#ECEEF2);border-radius:6px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+          <label class="fin-form-label" style="margin:0;">From Location</label>
+          <button type="button" id="famv-from-edit" class="fin-btn-outline" style="padding:2px 10px;font-size:0.76rem;" onclick="_faMvToggleFromEdit()">Edit</button>
+        </div>
+        ${_faMvLocationFieldsHtml('famv-from')}
+        <div style="margin-top:8px;">${_invCustodianPickerHtml('famv-from-cust', curCust)}</div>
+        <span style="${hint}">${fromHint}</span>
+      </div>
+      <div id="famv-to-block" class="fin-form-group">
+        <label class="fin-form-label" id="famv-to-label">To Location <span class="fin-required">*</span></label>
+        ${_faMvLocationFieldsHtml('famv-to')}
+      </div>
+      <div id="famv-cust-block" class="fin-form-group">
+        <div id="famv-cust-current" style="font-size:0.82rem;color:var(--grey-600,#666);margin-bottom:4px;"></div>
+        <div id="famv-to-cust-wrap">${_invCustodianPickerHtml('famv-to-cust', curCust)}</div>
+        <span class="fin-field-error" id="famv-to-cust-err"></span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Moved At <span class="fin-required">*</span></label>
+        <input type="date" id="famv-date" class="fin-form-input" value="${today}" max="${today}" min="${_finEsc(acquired)}">
+        <span id="famv-date-hint" style="${hint}"></span>
+        <span class="fin-field-error" id="famv-date-err"></span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Reason <span class="fin-required">*</span></label>
+        <textarea id="famv-reason" class="fin-form-textarea" rows="2" maxlength="500" oninput="_faMvCount('famv-reason', 500, 3);_faMvUpdateSubmit()"></textarea>
+        <span id="famv-reason-count" style="${hint}">0/500 · at least 3 characters</span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Notes</label>
+        <textarea id="famv-notes" class="fin-form-textarea" rows="2" maxlength="1000" oninput="_faMvCount('famv-notes', 1000, 0)"></textarea>
+        <span id="famv-notes-count" style="${hint}">0/1000</span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Supporting Document URL</label>
+        <input type="url" id="famv-url" class="fin-form-input" maxlength="500" placeholder="https://">
+        <span class="fin-field-error" id="famv-url-err"></span>
+      </div>
+      ${bulk ? `<div style="margin-top:4px;padding:10px 14px;border-radius:6px;border-left:3px solid var(--gold-500);background:var(--gold-100);color:#7a6110;font-size:0.85rem;">This will record the same movement against all ${n} assets. If any asset fails validation, the whole batch is rolled back.</div>` : ''}
+      <div id="famv-msg"></div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="_coaCloseModal('fa-mv-modal-overlay')">${_finEsc(opts.cancelLabel || 'Cancel')}</button>
+        <button class="fin-btn-teal" id="famv-submit" onclick="_faSubmitMovement()" disabled>${bulk ? `Record for ${n} Assets` : 'Record Movement'}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  // The reused pickers carry their own labels; the segmented control and the
+  // block headings already say what these are.
+  wrap.querySelectorAll('#famv-from-class-wrap > label, #famv-to-class-wrap > label').forEach(l => l.remove());
+  wrap.querySelectorAll('#famv-from-cust, #famv-to-cust').forEach(sel => {
+    const cur = [...sel.options].find(o => o.value !== '' && o.value === String(curCust));
+    if (cur) cur.textContent += ' (current)';
+  });
+  wrap.querySelector('#famv-from-cust').previousElementSibling.textContent = 'From Custodian';
+  _faMvApplyFromLock();
+  if (mixedFrom) _faMvSetMode('famv-from', 'class');
+  _faMvApplyDateBounds();
+  _faMvApplyType();
+  if (bulk) return;
+
+  // Refetched rather than read from the panel cache: date limits and the
+  // repair-return prefill must reflect movements another operator just logged.
+  _faInvalidateMovements(asset.id);
+  const result = await _faLoadMovements(asset.id);
+  if (_faMv !== state || !document.getElementById('fa-mv-modal-overlay')) return;
+  state.loaded = true;
+  if (result.ok) {
+    state.rows = result.rows;
+    // "Move" on an asset that was never placed means its first placement.
+    const typeEl = document.getElementById('famv-type');
+    if (presetType === 'transfer' && !disposed && !result.rows.length) typeEl.value = 'initial_placement';
+  } else {
+    _pvShowCoralMsg(document.getElementById('famv-msg'), `Could not load this asset's movement history, so the date check below only covers the acquisition date: ${result.error}`);
+  }
+  _faMvApplyDateBounds();
+  _faMvApplyType();
+}
+
+function _faMvToggleFromEdit() {
+  if (!_faMv) return;
+  _faMv.fromEditing = !_faMv.fromEditing;
+  _faMv.fromTouched = true;
+  _faMvApplyFromLock();
+}
+function _faMvApplyFromLock() {
+  const locked = !_faMv.fromEditing;
+  ['famv-from-class', 'famv-from-text', 'famv-from-cust', 'famv-from-seg-class', 'famv-from-seg-text']
+    .forEach(id => { const el = document.getElementById(id); if (el) el.disabled = locked; });
+  document.getElementById('famv-from-edit').textContent = locked ? 'Edit' : 'Done';
+}
+// From = the register's current placement (shared by every asset in a bulk
+// form), except a return from repair, which starts where the last
+// sent_for_repair movement left it.
+function _faMvPrefillFrom() {
+  let { classId, text } = _faMv.cur;
+  if (document.getElementById('famv-type').value === 'returned_from_repair') {
+    const out = _faMv.rows.find(m => m.movement_type === 'sent_for_repair');  // rows are newest first
+    if (out && out.to_location_text) { classId = null; text = out.to_location_text; }
+  }
+  _faMvSelectClass('famv-from-class', classId);
+  document.getElementById('famv-from-text').value = classId != null ? '' : text;
+  _faMvSetMode('famv-from', classId != null ? 'class' : 'text');
+  document.getElementById('famv-from-cust').value = _faMv.cur.custodian ?? '';
+}
+
+function _faMvApplyType() {
+  if (!_faMv) return;
+  const type = document.getElementById('famv-type').value;
+  const rule = _FA_MV_RULES[type] || {};
+  const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
+  const typeChanged = type !== _faMv.lastType;
+  document.getElementById('famv-type-hint').innerHTML = _FA_MV_HINTS[type] || '';
+
+  show('famv-from-block', rule.from);
+  if (!_faMv.fromTouched) _faMvPrefillFrom();
+
+  show('famv-to-block', !!rule.to);
+  show('famv-to-seg', rule.to === 'any');
+  document.getElementById('famv-to-label').innerHTML = `${rule.to === 'text' ? 'Repair Provider' : 'To Location'} <span class="fin-required">*</span>`;
+  if (rule.to === 'text') _faMvSetMode('famv-to', 'text');
+  else if (rule.to === 'any' && typeChanged) _faMvSetMode('famv-to', type === 'pre_disposal_hold' ? 'text' : 'class');
+
+  // A custodian change must name someone other than the current custodian, so
+  // that option is disabled. Other types keep the current custodian unless
+  // the operator picks someone else. Assets with different custodians have no
+  // single current one to keep or disable.
+  show('famv-cust-block', !!rule.cust);
+  const cur = _faMv.cur.custodian;
+  const sel = document.getElementById('famv-to-cust');
+  sel.previousElementSibling.innerHTML = rule.cust === 'required' ? 'New Custodian <span class="fin-required">*</span>' : 'Custodian';
+  [...sel.options].forEach(o => { if (o.value !== '' && o.value === String(cur)) o.disabled = type === 'custodian_change'; });
+  if (type === 'custodian_change') { if (sel.value === String(cur)) sel.value = ''; }
+  else if (typeChanged && sel.value === '' && cur != null) sel.value = String(cur);
+  const curName = _faCustodianName(cur);
+  document.getElementById('famv-cust-current').innerHTML = cur === undefined
+    ? `The selected assets have different custodians${type === 'custodian_change' ? '' : ` — pick someone only to hand all ${_faMv.assets.length} to that person`}.`
+    : type === 'custodian_change' ? `Current custodian: <strong>${curName ? _finEsc(curName) : 'Unassigned'}</strong>` : '';
+
+  _faMv.lastType = type;
+  _faMvClearErrors();
+  _faMvUpdateSubmit();
+}
+
+// A bulk form has no movement history loaded (latest stays ''), so its lower
+// bound is the latest acquisition date among the selected assets.
+function _faMvDateBounds() {
+  const latest = _faMv.rows[0]?.moved_at || '';
+  const acquired = _faMv.acquired;
+  return { min: latest > acquired ? latest : acquired, max: _faLocalToday(), latest, acquired };
+}
+function _faMvApplyDateBounds() {
+  const { min, max, latest, acquired } = _faMvDateBounds();
+  const el = document.getElementById('famv-date');
+  el.min = min;
+  el.max = max;
+  if (el.value && min && el.value < min) el.value = min;
+  document.getElementById('famv-date-hint').textContent = !min ? ''
+    : _faMv.bulk ? `Earliest allowed: ${_pvDate(min)} (latest acquisition date among the selected assets). Latest: today. The server also refuses a date before any asset's latest movement.`
+    : `Earliest allowed: ${_pvDate(min)} (${latest && latest >= acquired ? 'latest recorded movement' : 'acquisition date'}). Latest: today.`;
+}
+
+function _faMvCount(id, max, min) {
+  const raw = document.getElementById(id).value;
+  const short = min > 0 && raw.trim().length < min;
+  const el = document.getElementById(`${id}-count`);
+  el.textContent = `${raw.length}/${max}${short ? ` · at least ${min} characters` : ''}`;
+  el.style.color = short && raw.length ? 'var(--coral-600,#c0392b)' : 'var(--grey-500,#888)';
+}
+function _faMvUpdateSubmit() {
+  const btn = document.getElementById('famv-submit');
+  if (!btn || !_faMv) return;
+  btn.disabled = !_faMv.loaded || _faMv.submitting || document.getElementById('famv-reason').value.trim().length < 3;
+}
+function _faMvClearErrors() {
+  document.querySelectorAll('#fa-mv-modal-overlay .fin-field-error').forEach(e => { e.textContent = ''; });
+  const msg = document.getElementById('famv-msg');
+  if (msg) msg.innerHTML = '';
+}
+// Reads a location widget. Returns { classId, text } with at most one set, or
+// { error } when both are filled.
+function _faMvReadLocation(p, rule) {
+  const text = document.getElementById(`${p}-text`).value.trim();
+  if (rule === 'text') return { classId: null, text };
+  const classVal = document.getElementById(`${p}-class`).value;
+  if (classVal && text) return { error: 'Choose either a classroom or a free-text location, not both. Clear one of them.' };
+  return { classId: classVal ? parseInt(classVal, 10) : null, text: classVal ? '' : text };
+}
+
+async function _faSubmitMovement() {
+  if (!_faMv || _faMv.submitting) return;
+  const state = _faMv;
+  const { assets, bulk } = state;
+  const type = document.getElementById('famv-type').value;
+  const rule = _FA_MV_RULES[type] || {};
+  _faMvClearErrors();
+  let valid = true;
+  const fail = (id, text) => { document.getElementById(id).textContent = text; valid = false; };
+
+  const reason = document.getElementById('famv-reason').value.trim();
+  const movedAt = document.getElementById('famv-date').value;
+  const payload = { movement_type: type, moved_at: movedAt, reason };
+
+  const { min, max, latest, acquired } = _faMvDateBounds();
+  if (!movedAt) fail('famv-date-err', 'Moved At is required.');
+  else if (movedAt > max) fail('famv-date-err', 'Moved At cannot be in the future.');
+  else if (min && movedAt < min) {
+    fail('famv-date-err', latest && latest >= acquired
+      ? `Moved At cannot be before the latest recorded movement (${_pvDate(latest)}).`
+      : `Moved At cannot be before the ${bulk ? 'latest acquisition date among the selected assets' : 'acquisition date'} (${_pvDate(acquired)}).`);
+  }
+
+  if (rule.to) {
+    const to = _faMvReadLocation('famv-to', rule.to);
+    if (to.error) fail('famv-to-err', to.error);
+    else if (to.classId == null && !to.text) fail('famv-to-err', rule.to === 'text' ? 'Enter the repair provider.' : 'Pick a classroom or enter a location.');
+    else if (to.classId != null) payload.to_school_class_id = to.classId;
+    else payload.to_location_text = to.text;
+  }
+  if (rule.from) {
+    const from = _faMvReadLocation('famv-from', 'any');
+    if (from.error) fail('famv-from-err', from.error);
+    else if (from.classId != null) payload.from_school_class_id = from.classId;
+    else if (from.text) payload.from_location_text = from.text;
+    const fromCust = document.getElementById('famv-from-cust').value;
+    if (fromCust) payload.from_custodian_employee_id = parseInt(fromCust, 10);
+  }
+  if (rule.cust) {
+    const toCust = document.getElementById('famv-to-cust').value;
+    if (toCust) payload.to_custodian_employee_id = parseInt(toCust, 10);
+    else if (rule.cust === 'required') fail('famv-to-cust-err', 'Pick the new custodian.');
+  }
+
+  const notes = document.getElementById('famv-notes').value.trim();
+  if (notes) payload.notes = notes;
+  const url = document.getElementById('famv-url').value.trim();
+  if (url && !/^https?:\/\//i.test(url)) fail('famv-url-err', 'Must start with http:// or https://');
+  else if (url) payload.supporting_document_url = url;
+
+  if (reason.length < 3 || !valid) return;
+
+  state.submitting = true;
+  _faMvUpdateSubmit();
+  // Bulk is one transactional call: every asset gets the same movement, or
+  // none does.
+  const ids = assets.map(a => a.id);
+  const res = await apiFetch(bulk ? `${_FA_API}/movements/bulk` : `${_FA_API}/${ids[0]}/movements`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(bulk ? { asset_ids: ids, ...payload } : payload),
+  });
+  state.submitting = false;
+  if (_faMv !== state) return;
+  _faMvUpdateSubmit();
+  if (res && res.ok) {
+    _coaCloseModal('fa-mv-modal-overlay');
+    _faMv = null;
+    if (state.fromSelection) _faTableSelected.clear();
+    showToast(`${_faMovementType(type).label} recorded for ${bulk ? `${ids.length} assets` : (assets[0].asset_tag || 'the asset')}.`, 'success');
+    await _faAfterMovementRecorded(ids);
+    return;
+  }
+  // 404 / 409 / 422 details are written for the operator: shown verbatim, and
+  // the form stays as they left it. The bulk detail is shown as sent too — which
+  // asset failed is whatever the server's wording says, never parsed out of it.
+  const msgEl = document.getElementById('famv-msg');
+  _pvShowCoralMsg(msgEl, res ? await parseApiError(res) : 'Network error. Nothing was saved.');
+  msgEl?.scrollIntoView({ block: 'nearest' });
+}
+
+// A movement changes the asset's cached current_* fields, so the row is
+// refetched rather than patched locally.
+async function _faAfterMovementRecorded(assetIds) {
+  _faInvalidateMovements(assetIds);
+  if (_faTab === 'live' && _faView === 'table') {
+    await _faRenderTab();
+    return;
+  }
+  if (_faTab === 'archived') {
+    const container = document.getElementById('fa-tab-container');
+    if (!container) return;
+    const selId = _faArchivedSelected?.id;
+    await _faRenderArchivedTab(container);
+    _faArchivedSelected = _faArchivedItems.find(i => String(i.id) === String(selId)) || null;
+    _faRenderArchivedList();
+    _faRenderArchivedDetail();
+    return;
+  }
+  await window._splitRefreshSelected?.();
+}
+
+// ── Table view + bulk movements (Live tab) ───────────────────────────────
+// The split list only has room for two columns, so Location, Custodian, row
+// checkboxes and the per-row menu live in a Table view toggled beside it.
+// Clicking a row opens the usual details pane in List view. Both views read
+// the list endpoint's cached current_* fields; nothing is fetched per row.
+let _faView = 'list';                // Live tab: 'list' | 'table'
+let _faTableItems = [];
+let _faTableSearch = '';
+const _faTableSelected = new Set();  // asset ids
+let _faPreselectId = null;           // asset the List view opens on when reached from the table
+
+// .fin-btn-outline sets background/colour/border/padding with !important, so
+// the pressed segment overrides inline at the same priority.
+function _faViewToggleHtml() {
+  const pressed = 'background:var(--navy-700,#1B3057)!important;color:#fff!important;border-color:var(--navy-700,#1B3057)!important;';
+  const seg = (view, label, radius) => `<button type="button" class="fin-btn-outline" aria-pressed="${_faView === view}" onclick="_faSetView('${view}')"
+    style="padding:4px 14px!important;font-size:0.8rem;border-radius:${radius};${_faView === view ? pressed : ''}">${label}</button>`;
+  return `<div style="display:inline-flex;" role="group" aria-label="Register view">${seg('list', 'List', '6px 0 0 6px')}${seg('table', 'Table', '0 6px 6px 0')}</div>`;
+}
+async function _faSetView(view) {
+  if (_faView === view) return;
+  _faCloseRowMenu();
+  _faView = view;
+  await _faRenderTab();
+}
+// Opens an asset's details pane in List view, optionally scrolled to its
+// movement history. The table selection is kept for switching back.
+async function _faOpenAssetDetails(id, toHistory = false) {
+  _faCloseRowMenu();
+  _faView = 'list';
+  _faPreselectId = id;
+  try { await _faRenderTab(); } finally { _faPreselectId = null; }
+  if (toHistory) document.querySelector('#split-right-panel [id^="fa-mv-panel-"]')?.parentElement?.scrollIntoView({ block: 'start' });
+}
+
+function _faTableVisibleItems() {
+  const q = _faTableSearch.trim().toLowerCase();
+  return _faTableItems.filter(_faGlFilter).filter(a => !q
+    || String(a.asset_tag ?? '').toLowerCase().includes(q)
+    || String(a.description ?? '').toLowerCase().includes(q));
+}
+
+async function _faRenderRegisterTable(el, apiUrl) {
+  el.innerHTML = `<p style="color:#888;padding:12px 0;">Loading&#8230;</p>`;
+  const res = await apiFetch(apiUrl);
+  if (!res || !res.ok) {
+    _faTableItems = [];
+    el.innerHTML = `<p style="color:var(--color-danger);padding:20px">Failed to load data${res ? ` (HTTP ${res.status}): ${_finEsc(await parseApiError(res))}` : ' — the server could not be reached. Check your connection and try again.'}</p>`;
+    return;
+  }
+  _faTableItems = _toArray(await res.json());
+  _faTableItems.forEach(_faRememberAsset);
+  el.innerHTML = `
+    <div id="fa-bulk-bar" style="display:none;background:var(--navy-900,#0D2137);color:#fff;border-radius:6px;padding:10px 16px;margin-bottom:12px;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;"></div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+      <input type="text" class="fin-search-input" placeholder="Search tag or description…" value="${_finEsc(_faTableSearch)}" oninput="_faTableSearchChanged(this.value)">
+      <span id="fa-table-count" style="font-size:0.82rem;color:var(--grey-600,#666);"></span>
+    </div>
+    <div id="fa-table-body"></div>`;
+  _faRenderTableRows();
+}
+function _faTableSearchChanged(value) {
+  _faTableSearch = value;
+  _faRenderTableRows();
+}
+
+function _faRenderTableRows() {
+  const wrap = document.getElementById('fa-table-body');
+  if (!wrap) return;
+  _faCloseRowMenu();
+  const rows = _faTableVisibleItems();
+  // The selection never reaches past what's listed: a bulk movement only goes
+  // to assets the operator can see ticked, so rows hidden by the search or a
+  // filter drop out of it.
+  const shown = new Set(rows.map(a => a.id));
+  [..._faTableSelected].forEach(id => { if (!shown.has(id)) _faTableSelected.delete(id); });
+  const selectable = canEdit('asset_management.fixed_assets');
+  // The global input rule would make each checkbox a full-width block.
+  const cbStyle = 'width:auto;max-width:none;margin:0;padding:0;display:inline-block;cursor:pointer;accent-color:var(--navy-700);';
+  const body = rows.map(a => {
+    const tag = _finEsc(a.asset_tag || '—');
+    const custodian = _faCustodianName(a.current_custodian_employee_id);
+    return `<tr data-id="${a.id}" style="cursor:pointer;" onclick="_faOpenAssetDetails(${a.id})">
+      ${selectable ? `<td style="width:36px;" onclick="event.stopPropagation()"><input type="checkbox" class="fa-table-cb" style="${cbStyle}" aria-label="Select ${tag}" ${_faTableSelected.has(a.id) ? 'checked' : ''} onchange="_faTableToggle(${a.id}, this.checked)"></td>` : ''}
+      <td style="white-space:nowrap;">${_faGlPill(a, true)}<strong>${tag}</strong>${_faMethodBadge(a)}</td>
+      <td>${a.description ? _faTrunc(a.description, 50) : _FA_MUTED_DASH}</td>
+      <td>${_finEsc(_acCategoryName(a.category_id))}</td>
+      <td>${_faPlacementCell(a.current_school_class_id, a.current_location_text)}</td>
+      <td>${custodian ? _finEsc(custodian) : _FA_MUTED_DASH}</td>
+      <td style="text-align:right;white-space:nowrap;">${_faMoney(a.net_book_value ?? a.acquisition_cost)}</td>
+      <td style="width:40px;text-align:right;" onclick="event.stopPropagation()"><button type="button" class="split-left-menu-btn" style="margin:0;" aria-haspopup="menu" aria-label="Actions for ${tag}" onclick="_faToggleRowMenu(this, ${a.id})">&#8942;</button></td>
+    </tr>`;
+  }).join('');
+  wrap.innerHTML = `<div class="fin-table-wrap"><table class="fin-table">
+    <thead><tr>
+      ${selectable ? `<th style="width:36px;"><input type="checkbox" id="fa-table-select-all" style="${cbStyle}" title="Select all shown" aria-label="Select all shown" onchange="_faTableToggleAll(this.checked)"></th>` : ''}
+      <th>ASSET TAG</th><th>DESCRIPTION</th><th>CATEGORY</th><th>LOCATION</th><th>CUSTODIAN</th><th style="text-align:right;">NBV</th><th></th>
+    </tr></thead>
+    <tbody>${body || `<tr><td colspan="${selectable ? 8 : 7}" class="fin-empty">No records found</td></tr>`}</tbody>
+  </table></div>`;
+  const count = document.getElementById('fa-table-count');
+  if (count) count.textContent = `${rows.length} asset${rows.length === 1 ? '' : 's'}`;
+  _faTableSyncSelection();
+}
+
+function _faTableToggle(id, on) {
+  if (on) _faTableSelected.add(id); else _faTableSelected.delete(id);
+  _faTableSyncSelection();
+}
+function _faTableToggleAll(on) {
+  _faTableVisibleItems().forEach(a => { if (on) _faTableSelected.add(a.id); else _faTableSelected.delete(a.id); });
+  document.querySelectorAll('.fa-table-cb').forEach(cb => { cb.checked = on; });
+  _faTableSyncSelection();
+}
+function _faTableClearSelection() {
+  _faTableSelected.clear();
+  document.querySelectorAll('.fa-table-cb').forEach(cb => { cb.checked = false; });
+  _faTableSyncSelection();
+}
+// Keeps the select-all box and the Bulk Actions bar in step with the selection.
+function _faTableSyncSelection() {
+  const n = _faTableSelected.size;
+  const shown = _faTableVisibleItems().length;
+  const master = document.getElementById('fa-table-select-all');
+  if (master) {
+    master.checked = n > 0 && n === shown;
+    master.indeterminate = n > 0 && n < shown;
+  }
+  const bar = document.getElementById('fa-bulk-bar');
+  if (!bar) return;
+  bar.style.display = n ? 'flex' : 'none';
+  bar.innerHTML = n ? `
+    <span><strong>Bulk Actions</strong> &middot; ${n} selected &middot; <a href="#" style="color:#fff;text-decoration:underline;" onclick="_faTableClearSelection();return false;">Clear</a></span>
+    <span style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="fin-btn-outline" onclick="_faOpenBulkMovementModal('transfer')">Transfer</button>
+      <button class="fin-btn-outline" onclick="_faOpenBulkMovementModal('custodian_change')">Change Custodian</button>
+      <button class="fin-btn-outline" onclick="_faOpenBulkMovementModal('verification')">Verify</button>
+    </span>` : '';
+}
+// The Live tab holds no rejected or disposed assets; the filter guards against
+// that changing. One ticked asset gets the single-asset form, with its
+// history-based date limit.
+function _faOpenBulkMovementModal(presetType) {
+  const assets = _faTableVisibleItems().filter(a => _faTableSelected.has(a.id) && _faCanMove(a) && !a.is_disposed);
+  if (assets.length) _faOpenMovementForm(assets, presetType, { fromSelection: true });
+}
+
+// Per-row ⋮ menu. Movement entries follow the details pane's gate; View
+// Movement History is open to anyone who can see the register.
+function _faToggleRowMenu(btn, id) {
+  const wasOpen = document.getElementById('fa-row-menu')?.dataset.id === String(id);
+  _faCloseRowMenu();
+  const item = _faKnownAssets[id];
+  if (wasOpen || !item) return;
+  const movable = _faCanMove(item);
+  const entries = [
+    movable && !item.is_disposed && ['Move', `_faOpenMovementModal(${id}, 'transfer')`],
+    movable && !item.is_disposed && ['Change Custodian', `_faOpenMovementModal(${id}, 'custodian_change')`],
+    movable && ['Verify', `_faOpenMovementModal(${id}, 'verification')`],
+    ['View Movement History', `_faOpenAssetDetails(${id}, true)`],
+  ].filter(Boolean);
+  const menu = document.createElement('div');
+  menu.id = 'fa-row-menu';
+  menu.dataset.id = String(id);
+  menu.setAttribute('role', 'menu');
+  menu.style.cssText = 'position:fixed;z-index:9000;min-width:190px;padding:4px 0;background:var(--white,#fff);border:1px solid var(--grey-200,#ddd);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.15);';
+  // Styled inline: the global button rule would otherwise paint each item navy.
+  menu.innerHTML = entries.map(([label, call]) => `<button type="button" role="menuitem" onclick="_faCloseRowMenu();${call}"
+    onmouseenter="this.style.background='var(--navy-50,#EEF3FA)'" onmouseleave="this.style.background='transparent'"
+    style="display:block;width:100%;margin:0;padding:8px 14px;border:none;border-radius:0;background:transparent;color:var(--grey-800,#333);font-size:0.86rem;text-align:left;">${label}</button>`).join('');
+  document.body.appendChild(menu);
+  const r = btn.getBoundingClientRect();
+  const h = menu.offsetHeight;
+  menu.style.left = `${Math.max(8, r.right - menu.offsetWidth)}px`;
+  menu.style.top = `${r.bottom + 4 + h > window.innerHeight ? Math.max(8, r.top - h - 4) : r.bottom + 4}px`;
+  menu.querySelector('button')?.focus({ preventScroll: true });
+  document.addEventListener('mousedown', _faRowMenuDismiss, true);
+  document.addEventListener('keydown', _faRowMenuDismiss, true);
+  window.addEventListener('scroll', _faCloseRowMenu, true);
+  window.addEventListener('resize', _faCloseRowMenu);
+}
+// Escape or a press outside closes the menu. A press on a row's ⋮ button is
+// left to its own toggle, so clicking the open row's button again closes it.
+function _faRowMenuDismiss(e) {
+  if (e.type === 'keydown' ? e.key === 'Escape' : !e.target.closest?.('#fa-row-menu, #fa-table-body [aria-haspopup="menu"]')) _faCloseRowMenu();
+}
+function _faCloseRowMenu() {
+  document.getElementById('fa-row-menu')?.remove();
+  document.removeEventListener('mousedown', _faRowMenuDismiss, true);
+  document.removeEventListener('keydown', _faRowMenuDismiss, true);
+  window.removeEventListener('scroll', _faCloseRowMenu, true);
+  window.removeEventListener('resize', _faCloseRowMenu);
 }
 
 async function loadFixedAssetsView(container) {
@@ -278,6 +948,9 @@ async function loadFixedAssetsView(container) {
 
 async function _faSwitchTab(tab) {
   _faTab = tab;
+  _faCloseRowMenu();
+  _faTableSelected.clear();
+  _faTableSearch = '';
   await loadFixedAssetsView(document.getElementById('main-content'));
 }
 
@@ -294,10 +967,13 @@ async function _faRenderTab() {
 }
 
 // ── Live / Pending — renderSplitView with tab-scoped query ─────────────────
+// The Live tab can swap the split view for the Table view (see
+// _faRenderRegisterTable); both share this filter row and query.
 async function _faRenderRegisterSplitView(container) {
   const filterRow = document.createElement('div');
   filterRow.style.cssText = 'display:flex;gap:10px;align-items:center;margin-bottom:10px;';
   filterRow.innerHTML = `
+    ${_faTab === 'live' ? _faViewToggleHtml() : ''}
     <select id="fa-filter-category" class="fin-form-select" style="max-width:260px;">
       <option value="">All Categories</option>
       ${_acCategories.map(c => `<option value="${c.id}" ${String(_faCategoryFilter)===String(c.id)?'selected':''}>${_finEsc(c.code)} — ${_finEsc(c.name)}</option>`).join('')}
@@ -319,13 +995,20 @@ async function _faRenderRegisterSplitView(container) {
   if (_faTab === 'live') { params.set('status', 'confirmed'); params.set('is_disposed', 'false'); }
   else if (_faTab === 'pending') { params.set('status', 'draft'); }
   if (_faCategoryFilter) params.set('category_id', _faCategoryFilter);
+  const apiUrl = `${_FA_API}/?${params.toString()}`;
+
+  if (_faTab === 'live' && _faView === 'table') {
+    await _faRenderRegisterTable(listWrap, apiUrl);
+    return;
+  }
 
   const cfg = {
     container: listWrap,
     moduleKey: 'asset_management.fixed_assets',
     title: 'Fixed Assets',
     breadcrumb: [],
-    apiUrl: `${_FA_API}/?${params.toString()}`,
+    apiUrl,
+    preselectId: _faPreselectId,
     searchFields: ['asset_tag', 'description'],
     listFilterFn: _faGlFilter,
     // The GL pill leads col2 rather than trailing col1: both columns clip with
@@ -423,6 +1106,7 @@ function _faRenderArchivedDetail() {
     </div>
     <div class="detail-info-card">
       <div class="detail-fields-grid">${buildDetailFields(item, _faDetailFields())}</div>
+      ${_faMovementActionsHtml(item) ? `<div class="detail-actions-row" style="margin-top:16px;padding-top:16px;border-top:1px solid var(--grey-100)">${_faMovementActionsHtml(item)}</div>` : ''}
     </div>`;
 }
 
@@ -460,10 +1144,11 @@ function _faDetailActions(item) {
   if (item.status === 'draft') {
     return `
       <button class="fin-btn-teal" onclick="_faOpenConfirmModal(${item.id})">Confirm Asset</button>
-      <button class="fin-btn-cancel" style="background:var(--coral-500,#D94040);color:#fff;" onclick="_faOpenRejectModal(${item.id})">Reject</button>`;
+      <button class="fin-btn-cancel" style="background:var(--coral-500,#D94040);color:#fff;" onclick="_faOpenRejectModal(${item.id})">Reject</button>
+      ${_faMovementActionsHtml(item)}`;
   }
   if (item.status === 'confirmed' && !item.is_disposed) {
-    return `${_faGlActionsHtml(item)}
+    return `${_faGlActionsHtml(item)}${_faMovementActionsHtml(item)}
       <button class="fin-btn-outline" onclick="_faOpenDisposeModal(${item.id})">Dispose</button>
       <button class="fin-btn-cancel" onclick="_faConfirmDelete(${item.id})">Delete</button>`;
   }
@@ -623,7 +1308,20 @@ async function submitFaAdd() {
   const msgEl = document.getElementById('fa-f-submit-msg');
   if (msgEl) msgEl.innerHTML = '';
   const res = await apiFetch(`${_FA_API}/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-  if (res && res.ok) { showToast('Fixed asset added.', 'success'); await window._splitReload?.(); }
+  if (res && res.ok) {
+    const created = await res.json().catch(() => null);
+    showToast('Fixed asset added.', 'success');
+    await window._splitReload?.();
+    // New assets are registered unplaced, so go straight to logging where this
+    // one is going. Skipping leaves every current_* field null.
+    if (created && created.id != null && _faCanMove(created)) {
+      _faRememberAsset(created);
+      _faOpenMovementModal(created.id, 'initial_placement', {
+        intro: "New assets are registered without a physical placement. Log where this asset is going now — you'll be able to move it later without touching the GL.",
+        cancelLabel: 'Log placement later',
+      });
+    }
+  }
   // Inline rather than a toast: a 422 (e.g. both an invoice line and a JE
   // sent) can run long, and the operator needs it while fixing the form.
   else if (res) _pvShowCoralMsg(msgEl, await parseApiError(res));
