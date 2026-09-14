@@ -575,9 +575,13 @@ function ppChildTabs(active) {
 }
 
 const PP_STATEMENT_TYPES = {
-  invoice:     { label: 'Invoice',     cls: 'pp-type-invoice' },
-  receipt:     { label: 'Receipt',     cls: 'pp-type-receipt' },
-  credit_note: { label: 'Credit Note', cls: 'pp-type-credit' },
+  invoice:          { label: 'Invoice',           cls: 'pp-type-invoice' },
+  receipt:          { label: 'Receipt',           cls: 'pp-type-receipt' },
+  credit_note:      { label: 'Credit Note',       cls: 'pp-type-credit' },
+  // Founder's discount retroactive apply — BE emits this as its own credit
+  // line (StudentStatementLine.entry_type='founder_discount'). No .pp-type-*
+  // CSS class exists yet, so the generic .pp-type-pill styling applies.
+  founder_discount: { label: "Founder's Discount", cls: 'pp-type-credit' },
 };
 // entry_type gained "credit_note" in this addendum and may gain more later,
 // so an unrecognised value still renders its row — with the raw type as a
@@ -648,6 +652,17 @@ async function ppLoadStatement() {
   ppRenderStatementResult(await res.json());
 }
 
+// StudentStatementLine.founder_discount_amount: the AT_ISSUANCE founder's
+// discount already baked into an invoice row's debit (retroactive applies are
+// their own 'founder_discount' rows instead). Not on live openapi.json as of
+// 2026-09-14 — it is in the BE staging working tree (fin_reports.py, not yet
+// committed) — so the note stays silent until a line arrives carrying it.
+function ppFounderDiscountNote(l) {
+  const amt = Number(l.founder_discount_amount || 0);
+  if (!amt) return '';
+  return `<div style="font-size:0.8rem;color:var(--grey-600,#666);margin-top:2px;">Founder's discount: KES ${ppMoney(amt)}</div>`;
+}
+
 function ppRenderStatementResult(data) {
   const contentEl = document.getElementById('pp-stmt-content');
   if (!contentEl) return;
@@ -672,7 +687,7 @@ function ppRenderStatementResult(data) {
       <td>${ppDate(l.entry_date)}</td>
       <td>${ppTypePill(l.entry_type)}</td>
       <td>${ppEsc(l.reference || '—')}</td>
-      <td class="pp-cell-desc">${ppEsc(l.description || '')}</td>
+      <td class="pp-cell-desc">${ppEsc(l.description || '')}${ppFounderDiscountNote(l)}</td>
       <td class="pp-debit">${Number(l.debit || 0) ? ppMoney(l.debit) : '—'}</td>
       <td class="pp-credit">${Number(l.credit || 0) ? ppMoney(l.credit) : '—'}</td>
       <td class="pp-running">${ppMoney(l.running_balance)}</td>

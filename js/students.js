@@ -2901,6 +2901,10 @@ function _stuSoaLineTypePill(type) {
   if (type === 'invoice') return '<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.75rem;font-weight:600;color:var(--white);background:var(--navy-700);">Invoice</span>';
   if (type === 'receipt') return '<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.75rem;font-weight:600;color:#1e7e34;background:#d1fae5;">Receipt</span>';
   if (type === 'credit_note') return '<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.75rem;font-weight:600;color:#7a6110;background:var(--gold-100);">Credit Note</span>';
+  // Founder's discount retroactive apply — same accounting effect as a CN
+  // (DR income / CR AR) but sourced from FounderDiscountApplication, not
+  // the credit_notes table. Distinguished with a purple pill.
+  if (type === 'founder_discount') return '<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.75rem;font-weight:600;color:#5b21b6;background:#ede9fe;">Founder\'s Discount</span>';
   return `<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.75rem;font-weight:600;color:#555;background:#eee;">${_esc(String(type || '—').replace(/_/g, ' '))}</span>`;
 }
 
@@ -2917,7 +2921,27 @@ function _stuSoaLineRef(l) {
   if (l.entry_type === 'credit_note' && l.credit_note_id) {
     return `<a href="#" onclick="loadView('fin-credit-notes');return false;" title="Credit note #${l.credit_note_id}">${ref}</a>`;
   }
+  // Founder's discount RETROACTIVE — BE emits doc_ref pointing at the
+  // Receivables → Setup → Founder's Discounts page. Fall through to plain
+  // text if the FE hasn't shipped that route yet (loadView will bounce
+  // back to the dashboard rather than 404).
+  if (l.entry_type === 'founder_discount' && l.founder_discount_application_id) {
+    return `<a href="#" onclick="loadView('fin-founder-discounts');return false;" title="Founder's discount application #${l.founder_discount_application_id}">${ref}</a>`;
+  }
   return ref;
+}
+
+
+// Founder's Discount AT_ISSUANCE hint — BE stamps
+// StudentStatementLine.founder_discount_amount on invoice rows when the
+// invoice's amount_due had at least one AT_ISSUANCE grant baked in at
+// generation time. Renders as a per-line hint so a parent (or bursar)
+// looking at a reduced invoice knows why the number is lower than the
+// fee schedule; RETROACTIVE apps show as their own credit line instead.
+function _stuSoaFounderHint(l) {
+  const amt = Number(l.founder_discount_amount || 0);
+  if (!amt) return '';
+  return `<div style="font-size:0.75rem;color:#666;margin-top:2px;">Founder's discount: ${formatKES(amt)}</div>`;
 }
 
 function _stuRenderSoaResult(data, startDate) {
@@ -2940,7 +2964,7 @@ function _stuRenderSoaResult(data, startDate) {
     <td>${_esc(l.entry_date || '')}</td>
     <td>${_stuSoaLineTypePill(l.entry_type)}</td>
     <td>${_stuSoaLineRef(l)}</td>
-    <td>${_esc(l.description || '')}</td>
+    <td>${_esc(l.description || '')}${_stuSoaFounderHint(l)}</td>
     <td>${l.debit ? formatKES(l.debit) : '—'}</td>
     <td>${l.credit ? formatKES(l.credit) : '—'}</td>
     <td>${formatKES(l.running_balance)}</td>

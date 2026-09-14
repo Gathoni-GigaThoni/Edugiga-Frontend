@@ -304,7 +304,7 @@ async function loadPayablesPaymentVouchersView(container) {
       {label:'Payment Account',  key:'tendepay_wallet_account_id', fmt:v=>v?_pvAccountName(v):'—'},
       {label:'Status',           key:'status', fmt:v=>_pvBadge(v)},
       {label:'Date',             key:'created_at', fmt:v=>_pvDate(v)},
-      {label:'Settled Via',      key:'settlement_method', hideWhen:item=>!item.settlement_method, fmt:v=>_finEsc(_PV_SETTLE_METHOD_LABEL[v] || v)},
+      {label:'Settled Via',      key:'settlement_method', hideWhen:item=>!item.settlement_method, fmt:v=>_pvSettledViaBadge(v)},
       {label:'Settled From',     key:'settlement_account_id', hideWhen:item=>!item.settlement_account_id, fmt:v=>_finEsc(_pvAccountName(v))},
       {label:'Settled On',       key:'settled_at', hideWhen:item=>!item.settled_at, fmt:v=>_pvDate(v)},
       {label:'Journal Entry',    key:'journal_entry_id', hideWhen:item=>!item.journal_entry_id, fmt:v=>`<a href="#" onclick="_jeOpenDetail(${parseInt(v, 10)});return false;">JE #${parseInt(v, 10)}</a>`},
@@ -404,7 +404,10 @@ function _pvPvDetailActions(v) {
   if (_pvPvCanSettle(v)) {
     window._pvPvSettlePending = v;
     html += `<button class="btn" onclick="_pvPvOpenSettleModal(${v.id})">Settle</button>`;
-    html += `<button class="fin-btn-outline" onclick="_pvPvOpenLinkJeModal(${v.id})">Link Existing JE</button>`;
+  }
+  if (_pvPvCanLinkJe(v)) {
+    window._pvPvSettlePending = v;
+    html += `<button class="fin-btn-outline" onclick="_pvPvOpenLinkJeModal(${v.id})">${_pvPvIsRelink(v) ? 'Re-link to a Different JE' : 'Link Existing JE'}</button>`;
   }
   html += `<button class="fin-btn-outline" onclick="_pvPvPrint(${v.id})">View / Print</button>`;
   html += `<div id="pv-link-msg" style="width:100%;"></div>`;
@@ -635,6 +638,27 @@ function _pvPvCanSettle(v) {
     && canAdd('finance.payables');
 }
 
+// link-journal-entry takes everything Settle does, plus a voucher already PAID
+// through an earlier link, so a mispicked JE can be swapped. Vouchers paid by
+// bank, petty cash, owner's capital or Tendepay stay locked — checked against
+// link_voucher_to_journal_entry on BE staging 9dbbdc0, 2026-09-14.
+function _pvPvIsRelink(v) {
+  return v.status === 'paid' && v.settlement_method === 'linked';
+}
+function _pvPvCanLinkJe(v) {
+  return _pvPvCanSettle(v)
+    || (_pvPvIsRelink(v) && !v.tendepay_transaction_id && canAdd('finance.payables'));
+}
+
+// Every rail except 'linked' posted the voucher's own JE; a linked voucher
+// adopted one somebody else posted, so it reads differently on the detail.
+function _pvSettledViaBadge(method) {
+  const linked = method === 'linked';
+  const style = linked ? 'background:#EEF3FA;color:#1B3057;' : 'background:#d1fae5;color:#065f46;';
+  const label = linked ? 'Linked to JE' : `Paid via ${_PV_SETTLE_METHOD_LABEL[method] || method}`;
+  return `<span style="display:inline-block;padding:2px 9px;border-radius:10px;font-size:0.78rem;font-weight:600;${style}">${_finEsc(label)}</span>`;
+}
+
 // Not toISOString(): that is UTC, so between midnight and 03:00 EAT it names
 // yesterday — a settlement dated into the previous, possibly closed, period.
 function _pvLocalToday() {
@@ -788,7 +812,16 @@ function _pvPvOpenLinkJeModal(id) {
     <div style="background:var(--white);border-radius:8px;padding:24px;width:820px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
       <h3 style="margin:0 0 8px;font-size:1.05rem;color:var(--navy-700,#2c3e50);">Link Existing Journal Entry</h3>
       <div style="padding:10px 12px;border-radius:6px;background:#eef4fb;color:#243c56;font-size:0.82rem;margin-bottom:14px;line-height:1.5;">
-        Adopt a <strong>POSTED</strong> journal entry that already represents the payment. No new JE is created. Guards: debit total equals PV amount, right DR account (AP control for invoice-linked PVs, otherwise the PV expense account), single credit leg on a Cash/Bank or Shareholder-Funds account${wht ? ', plus a WHT liability leg matching ' + _pvMoney(v.wht_amount) : ''}.
+        Adopt a journal entry that already represents the payment. No new JE is created. The entry must:
+        <!-- One bullet per check in _evaluate_je_against_voucher (BE fin_payables.py, staging 9dbbdc0). -->
+        <ul style="margin:6px 0 0 18px;padding:0;">
+          <li>be <strong>POSTED</strong>;</li>
+          <li>have debits totalling the voucher amount, ${_pvMoney(v.amount)} (±0.01);</li>
+          <li>include a debit on ${v.linked_supplier_invoice_id ? 'the AP control account, since this voucher settles a supplier invoice' : `the voucher's Debit Account${v.debit_account_id ? `, <strong>${_finEsc(_pvAccountName(v.debit_account_id))}</strong>` : ''}`};</li>
+          <li>credit exactly one Cash-and-Bank or Shareholder-Funds account that is not a Tendepay wallet, with no other credit legs${wht ? ' except WHT liability' : ''};</li>
+          ${wht ? `<li>credit WHT liability with a total equal to the voucher's WHT, ${_pvMoney(v.wht_amount)} (±0.01);</li>` : ''}
+          <li>not already be linked to another payment voucher.</li>
+        </ul>
       </div>
       <div style="font-size:0.85rem;color:var(--grey-600);margin-bottom:14px;">
         Voucher <strong>${_finEsc(v.voucher_no || ('#' + v.id))}</strong> &middot; Amount <strong>${_pvMoney(v.amount)}</strong>${wht ? ' &middot; WHT ' + _pvMoney(v.wht_amount) + ' &middot; Net ' + _pvMoney(v.net_payable) : ''}
@@ -850,7 +883,13 @@ async function _pvPvLinkJeFetch(id) {
   if (stale()) return;
   if (!res || !res.ok) {
     const msg = res ? await parseApiError(res) : 'Unknown error';
-    if (!stale()) list.innerHTML = `<div style="padding:16px;color:var(--coral-600);">${_finEsc(msg)}</div>`;
+    // BE staging 9dbbdc0: link accepts a re-link on a paid/linked voucher, but
+    // candidate-journal-entries still 400s on anything not approved or
+    // awaiting_tendepay, so a re-link has no list to pick from yet.
+    const relink = res && res.status === 400 && _pvPvIsRelink(window._pvPvSettlePending || {});
+    if (!stale()) list.innerHTML = `<div style="padding:16px;color:var(--coral-600);">${_finEsc(msg)}${relink
+      ? '<div style="margin-top:6px;color:var(--grey-700);">The server accepts a re-link on this voucher but does not yet list candidate entries for a voucher that is already paid. Nothing on this voucher has changed.</div>'
+      : ''}</div>`;
     return;
   }
   const rows = await res.json().catch(() => []);
@@ -933,10 +972,13 @@ async function _pvPvLinkJeSubmit(id) {
   btn.disabled = false;
   if (!res) return;
   const msg = await parseApiError(res);
-  // 409: another voucher took this JE after the list loaded. Reload so it drops
-  // out, then say why the pick vanished.
-  if (res.status === 409) await _pvPvLinkJeFetch(id);
-  fail(msg);
+  if (res.status !== 409) return fail(msg);
+  // 409 is only ever "JE … is already linked to PV VN0042 (id=…)." Picking a
+  // different JE doesn't free that one, so point at the voucher holding it.
+  // Reload first so the taken entry drops out of the list.
+  await _pvPvLinkJeFetch(id);
+  const holder = /already linked to PV (\S+)/.exec(msg)?.[1] || 'the other voucher';
+  fail(`${msg} Unlink it from ${holder} first, then link it here. If ${holder} was linked to it by mistake, re-link ${holder} to its correct JE; a voucher settled directly by bank, petty cash or owner's capital keeps the JE it posted.`);
 }
 
 

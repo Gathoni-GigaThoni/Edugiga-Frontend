@@ -144,6 +144,7 @@ const _SIDEBAR_ITEM_MODULE_KEYS = {
   'sidebar-fin-budgets':                  'finance.budgeting.budgets',
   'sidebar-fin-setup-main':               'finance.setup',
   'sidebar-fin-discount-setup':           'finance.setup',
+  'sidebar-fin-founder-discounts':        'finance.setup',
   'sidebar-fin-sibling-groups':           'finance.student_finance',
 
   // Document Approvals
@@ -461,6 +462,7 @@ function showDashboard() {
                 <ul id="fin-setup-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('fin-setup-dropdown')}">
                   <li id="sidebar-fin-setup-main"     class="sidebar-sub-sub" onclick="loadView('finance-setup')">Main Settings</li>
                   <li id="sidebar-fin-discount-setup" class="sidebar-sub-sub" onclick="loadView('finance-discount-setup')">Discount Setup</li>
+                  <li id="sidebar-fin-founder-discounts" class="sidebar-sub-sub" onclick="loadView('finance-founder-discounts')">Founder's Discounts</li>
                   <li id="sidebar-fin-sibling-groups"  class="sidebar-sub-sub" onclick="loadView('finance-sibling-groups')">Sibling Groups</li>
                 </ul>
               </li>
@@ -1185,7 +1187,7 @@ const FORM_VIEWS = new Set([
   'fin-receive-payments',
   'fin-fee-schedules', 'fin-fee-setup-class', 'fin-fee-assignments',
   'fin-fee-invoices', 'fin-invoice-detail', 'fin-invoice-generate', 'fin-invoices-bulk',
-  'fin-chart-of-accounts', 'fin-fee-accounts', 'fin-fee-items', 'fin-general-items', 'finance-discount-setup',
+  'fin-chart-of-accounts', 'fin-fee-accounts', 'fin-fee-items', 'fin-general-items', 'finance-discount-setup', 'finance-founder-discounts',
   'finance-fixed-assets',
   'finance-sibling-groups-add',
   // Payables
@@ -1588,6 +1590,9 @@ async function loadView(view) {
     case 'finance-discount-setup':
       setActiveSidebarItem('sidebar-fin-discount-setup'); openFinSetupDropdown();
       await renderFinanceDiscountSetup(main); break;
+    case 'finance-founder-discounts':
+      setActiveSidebarItem('sidebar-fin-founder-discounts'); openFinSetupDropdown();
+      await loadFounderDiscountsView(main); break;
     case 'finance-sibling-groups':
       setActiveSidebarItem('sidebar-fin-sibling-groups'); openFinSetupDropdown();
       await loadSiblingGroupsView(main); break;

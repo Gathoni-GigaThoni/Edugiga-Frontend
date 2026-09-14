@@ -1439,6 +1439,13 @@ async function loadInvoiceDetailView(container, invoiceId) {
   const credited = creditedForInvoice(inv.id);
   const bal  = invoiceBalance(inv, credited);
   const hasFull = lineItems.some(li => li.base_unit_price!=null);
+  // Founder's Discount (BE 4f191b4) splits a line's discount into
+  // sibling_discount_amount + founder_discount_amount, keeping discount_amount
+  // as their sum. The columns exist on the line model, but neither live
+  // openapi.json nor FeeInvoiceLineItemRead on BE staging exposes them (checked
+  // 2026-09-14), so the split renders only once the payload carries them.
+  const hasSplit = hasFull && lineItems.some(li => li.sibling_discount_amount !== undefined || li.founder_discount_amount !== undefined);
+  const discCell = v => { const n = parseFloat(v || 0); return n > 0 ? `−KES ${_finFmt(n)}` : '—'; };
   const lineRows = lineItems.length ? lineItems.map(li => {
     const acctName = _rcvLineItemAccountName(li);
     if (hasFull && li.base_unit_price!=null) {
@@ -1453,6 +1460,7 @@ async function loadInvoiceDetailView(container, invoiceId) {
         <td>${_finEsc(acctName)}</td>
         <td>KES ${_finFmt(base)}</td>
         <td>×${factor.toFixed(4)} → KES ${_finFmt(prorated)} <small style="color:#888;">(${pct}%)</small></td>
+        ${hasSplit ? `<td>${discCell(li.sibling_discount_amount)}</td><td>${discCell(li.founder_discount_amount)}</td>` : ''}
         <td>${disc>0?`−KES ${_finFmt(disc)}`:'—'}</td>
         <td>KES ${_finFmt(net)}</td>
       </tr>`;
@@ -1460,7 +1468,7 @@ async function loadInvoiceDetailView(container, invoiceId) {
     return `<tr>
         <td>${_finEsc(li.description||'')}</td>
         <td>${_finEsc(acctName)}</td>
-        ${hasFull?'<td colspan="3" style="color:#888;">—</td>':''}
+        ${hasFull?`<td colspan="${hasSplit ? 5 : 3}" style="color:#888;">—</td>`:''}
         <td>KES ${_finFmt(parseFloat(li.amount||0))}</td>
       </tr>`;
   }).join('') : '<tr><td colspan="6" class="fin-empty">No line items.</td></tr>';
@@ -1524,7 +1532,7 @@ async function loadInvoiceDetailView(container, invoiceId) {
           <thead><tr>
             <th>DESCRIPTION</th>
             <th>ACCOUNT</th>
-            ${hasFull?'<th>BASE</th><th>PRORATION</th><th>DISCOUNT</th>':''}
+            ${hasFull?`<th>BASE</th><th>PRORATION</th>${hasSplit ? '<th>SIBLING</th><th>FOUNDER</th><th>DISCOUNT (TOTAL)</th>' : '<th>DISCOUNT</th>'}`:''}
             <th>NET</th>
           </tr></thead>
           <tbody>${lineRows}</tbody>
