@@ -2922,11 +2922,9 @@ function _stuSoaLineRef(l) {
     return `<a href="#" onclick="loadView('fin-credit-notes');return false;" title="Credit note #${l.credit_note_id}">${ref}</a>`;
   }
   // Founder's discount RETROACTIVE — BE emits doc_ref pointing at the
-  // Receivables → Setup → Founder's Discounts page. Fall through to plain
-  // text if the FE hasn't shipped that route yet (loadView will bounce
-  // back to the dashboard rather than 404).
+  // Finance ▸ Set-up ▸ Founder's Discounts page (js/founder-discounts.js).
   if (l.entry_type === 'founder_discount' && l.founder_discount_application_id) {
-    return `<a href="#" onclick="loadView('fin-founder-discounts');return false;" title="Founder's discount application #${l.founder_discount_application_id}">${ref}</a>`;
+    return `<a href="#" onclick="loadView('finance-founder-discounts');return false;" title="Founder's discount application #${l.founder_discount_application_id}">${ref}</a>`;
   }
   return ref;
 }
