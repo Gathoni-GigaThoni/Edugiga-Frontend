@@ -824,23 +824,16 @@ async function ppRenderDocuments() {
   `;
 }
 
-// file_path may come back as either an absolute URL or a path relative to the
-// API's own origin (not the frontend's) — normalize before fetching either way.
-function ppResolveFileUrl(filePath) {
-  if (/^https?:\/\//i.test(filePath)) return filePath;
-  const origin = PP_API_BASE.replace(/\/api\/?$/, '');
-  return filePath.startsWith('/') ? origin + filePath : `${origin}/${filePath}`;
-}
-
-// Authenticated blob download (not a raw <a href>) — a plain anchor sends no
-// Authorization header, so an auth-gated file route would 401 on click.
+// Authenticated blob download via the parent-scoped endpoint. The generic
+// /uploads/{filename} route is gated by staff auth, so a parent token 401s
+// on it — /parent/documents/{id}/download does the same visibility check
+// as the list endpoint and serves the file to the authenticated parent.
 async function ppDownloadDocument(id) {
   const doc = (window._ppDocMap || {})[id];
   if (!doc) return;
-  const fileUrl = ppResolveFileUrl(doc.file_path);
+  const res = await ppApiFetch(`/parent/documents/${id}/download`);
+  if (!res || !res.ok) { showToast('Could not download this document.', 'error'); return; }
   try {
-    const res = await fetch(fileUrl, { headers: { Authorization: `Bearer ${ppToken}` } });
-    if (!res.ok) { showToast('Could not download this document.', 'error'); return; }
     const blob = await res.blob();
     const cd = res.headers.get('Content-Disposition') || '';
     const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
