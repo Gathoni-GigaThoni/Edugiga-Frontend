@@ -677,6 +677,24 @@ function creditedForInvoice(invoiceId) {
   return _finAppliedCreditsByInvoice[invoiceId] || 0;
 }
 
+
+// Preferred credited resolver — reads FeeInvoiceRead.amount_credited when
+// the server sent it (added 2026-09-14 after retroactive founder-discount
+// credits started landing on invoices without a matching CreditNote row),
+// falls back to the applied-CN index only for older responses that predate
+// the field. Every invoice-detail / list / picker screen should call this
+// rather than creditedForInvoice() directly — it makes the transition
+// idempotent whether the server sent the field or not.
+//
+// After a 2-3 deploy stabilisation window the fallback can go, along with
+// loadAppliedCreditIndex() / creditedForInvoice() themselves. Keep the
+// wrapper until then so the two-source race can't reintroduce the bug.
+function resolveCredited(inv) {
+  if (!inv) return 0;
+  if (inv.amount_credited != null) return parseFloat(inv.amount_credited) || 0;
+  return creditedForInvoice(inv.id);
+}
+
 // ── Lookup fetches: a 403 must never read as "there is no data" ──────────────
 // Every picker in the app is filled from a lookup cache built the same way:
 //

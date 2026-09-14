@@ -144,7 +144,8 @@ const _SIDEBAR_ITEM_MODULE_KEYS = {
   'sidebar-fin-budgets':                  'finance.budgeting.budgets',
   'sidebar-fin-setup-main':               'finance.setup',
   'sidebar-fin-discount-setup':           'finance.setup',
-  'sidebar-fin-founder-discounts':        'finance.setup',
+  // Either key: setup builds grants, cancellations approves and applies them.
+  'sidebar-fin-founder-discounts':        ['finance.setup', 'finance.cancellations'],
   'sidebar-fin-sibling-groups':           'finance.student_finance',
 
   // Document Approvals
@@ -199,10 +200,12 @@ const _SIDEBAR_ITEM_MODULE_KEYS = {
 function _applyFlyoutPermissions() {
   // Phase 1 — per-<li> permission gate. Strict canView on the specific
   // module_key: a sibling sub-module having view access does NOT rescue
-  // this one, and view-only permission still counts as view.
+  // this one, and view-only permission still counts as view. An array value
+  // shows the item when any one of its keys is viewable.
   Object.entries(_SIDEBAR_ITEM_MODULE_KEYS).forEach(([elId, key]) => {
     const el = document.getElementById(elId);
-    if (el && !canView(key)) el.style.display = 'none';
+    const visible = Array.isArray(key) ? key.some(k => canView(k)) : canView(key);
+    if (el && !visible) el.style.display = 'none';
   });
 
   // Phase 2 — cascade the hides up through empty dropdown groups. Runs

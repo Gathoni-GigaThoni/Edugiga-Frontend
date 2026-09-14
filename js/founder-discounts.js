@@ -5,23 +5,29 @@
 // checked against live openapi.json and app/routers/fin_founder_discounts.py
 // on 2026-09-14:
 //
-//   * CRUD and /applications need finance.setup; /pending-approval, /approve,
-//     /reject and /apply-to-invoice need finance.cancellations
-//     (require_permission maps GET→can_view, POST→can_add, PATCH→can_edit,
-//     DELETE→can_delete).
-//   * A new grant is saved DRAFT, or PENDING when its KES value passes
-//     FOUNDER_DISCOUNT_APPROVAL_THRESHOLD. Either way it fires only once
-//     APPROVED, and approve/reject answer 403 when the caller created it.
+//   * Create, edit and cancel need finance.setup; /pending-approval, /approve,
+//     /reject and /apply-to-invoice need finance.cancellations; the list,
+//     detail, /applications and /config take either (require_permission maps
+//     GET→can_view, POST→can_add, PATCH→can_edit, DELETE→can_delete).
+//   * Above FOUNDER_DISCOUNT_APPROVAL_THRESHOLD a grant is PENDING until
+//     someone other than its creator approves it (approve/reject 403 for the
+//     creator). At or below it, the BE working tree of 2026-09-14 approves on
+//     save with the creator as approver of record and re-runs the check when an
+//     edit changes the amount; the BE deployed that day still saved DRAFT.
+//     /config shipped in the same change, so whether it answers is how this
+//     module tells the two apart (_founderConfig.fromServer).
 //   * DELETE is a soft cancel (status=cancelled, is_active=false); discounts
 //     already on invoices stay where they are.
 //   * Invoice generation picks up an APPROVED grant by itself. Apply to Invoice
 //     is for invoices issued before the grant was approved.
 
 const _FOUNDER_API = `${API_BASE}/receivables/setup/founder-discounts`;
-// The threshold is a BE env var (default 5000) that no endpoint exposes, so the
-// form previews against the default. The status the server returns on create
-// is what actually decides, and the toast reports that.
-const _FOUNDER_THRESHOLD_KES = 5000;
+// GET /config ({approval_threshold, currency}) is in the BE working tree but not
+// on live openapi.json (checked 2026-09-14). Until it answers, the form previews
+// against the env default and the older draft-on-save rules. The status the
+// server returns on save is what actually decides, and the toast reports that.
+const _FOUNDER_DEFAULT_CONFIG = { threshold: 5000, currency: 'KES', fromServer: false };
+let _founderConfig = null;
 const _FOUNDER_STATUS_STYLES = {
   draft:     'background:#f3f4f6;color:#374151',
   pending:   'background:#fef3c7;color:#92400e',
@@ -94,6 +100,26 @@ function _founderProxyKes({ amount, percent, feeItemId }) {
   const base = f ? parseFloat(f.default_amount) : NaN;
   return isNaN(base) ? null : Math.round(base * percent) / 100;
 }
+// Fetched on each page load until it succeeds. A BE without the route answers
+// 422 (it falls through to /{grant_id}); that, a 403 or a network failure keeps
+// the defaults rather than blocking the page.
+async function _founderLoadConfig() {
+  if (_founderConfig?.fromServer) return _founderConfig;
+  const res = await apiFetch(`${_FOUNDER_API}/config`);
+  const body = res && res.ok ? await res.json().catch(() => null) : null;
+  const threshold = parseFloat(body?.approval_threshold);
+  _founderConfig = isNaN(threshold)
+    ? { ..._FOUNDER_DEFAULT_CONFIG }
+    : { threshold, currency: body.currency || 'KES', fromServer: true };
+  return _founderConfig;
+}
+// Draft and pending grants are editable on any BE. An approved grant takes
+// amount, percent and notes edits only where the BE re-runs the threshold check.
+function _founderCanEdit(g) {
+  if (!g.is_active) return false;
+  if (g.status === 'draft' || g.status === 'pending') return true;
+  return g.status === 'approved' && !!_founderConfig?.fromServer;
+}
 function _founderInfoBox(html, tone = 'navy') {
   const tones = {
     navy: 'background:var(--navy-50,#EEF3FA);border-left:3px solid var(--navy-400,#4A6FA5);color:var(--navy-900,#0D2137);',
@@ -105,7 +131,7 @@ function _founderInfoBox(html, tone = 'navy') {
 // ── Page ─────────────────────────────────────────────────────────────────
 async function loadFounderDiscountsView(container) {
   container.innerHTML = `<div class="fin-page"><p style="color:#888;padding:20px 0;">Loading&#8230;</p></div>`;
-  await _rcvLoadLookups({ items: true, students: true, academicYears: true });
+  await Promise.all([_rcvLoadLookups({ items: true, students: true, academicYears: true }), _founderLoadConfig()]);
   if (_founderTab === 'inbox' && !canView('finance.cancellations')) _founderTab = 'grants';
   container.innerHTML = `
     <div class="fin-page">
@@ -238,8 +264,8 @@ function _founderRowActions(g) {
       : btn('Approve', `_founderApprove(${g.id})`, 'fin-btn-teal') + btn('Reject', `_founderOpenReject(${g.id})`));
   }
   if (g.status === 'approved' && g.is_active && canAdd('finance.cancellations')) out.push(btn('Apply to Invoice', `_founderOpenApply(${g.id})`, 'fin-btn-teal'));
-  if (open && canEdit('finance.setup')) out.push(btn('Edit', `_founderOpenForm(${g.id})`));
-  if (canView('finance.setup')) out.push(btn('History', `_founderOpenHistory(${g.id})`));
+  if (_founderCanEdit(g) && canEdit('finance.setup')) out.push(btn('Edit', `_founderOpenForm(${g.id})`));
+  if (canView('finance.setup') || canView('finance.cancellations')) out.push(btn('History', `_founderOpenHistory(${g.id})`));
   if (g.is_active && (open || g.status === 'approved') && canDelete('finance.setup')) out.push(btn('Cancel', `_founderCancel(${g.id})`));
   return out.join('');
 }
@@ -374,7 +400,8 @@ async function _founderCancel(id) {
 
 // ── Create / Edit form ───────────────────────────────────────────────────
 // Student, fee item and year are fixed once saved (FounderDiscountUpdate has no
-// such fields); only draft and pending grants are editable from here.
+// such fields). An approved grant also keeps its reason: the BE refuses any
+// field on it but amount, percent, notes and is_active (see _founderCanEdit).
 function _founderOpenForm(id = null) {
   const g = id != null ? _founderGrantById(id) : null;
   if (id != null && !g) return;
@@ -425,7 +452,7 @@ function _founderOpenForm(id = null) {
       <div id="founder-threshold-banner"></div>
       <div class="fin-form-group">
         <label class="fin-form-label">Reason <span class="fin-required">*</span></label>
-        <textarea id="founder-form-reason" class="fin-form-textarea" rows="2" maxlength="500" oninput="_founderFormRecompute()">${_finEsc(g?.reason || '')}</textarea>
+        <textarea id="founder-form-reason" class="fin-form-textarea" rows="2" maxlength="500" oninput="_founderFormRecompute()" ${g?.status === 'approved' ? 'disabled title="An approved grant keeps its reason."' : ''}>${_finEsc(g?.reason || '')}</textarea>
         <div style="display:flex;justify-content:space-between;">
           <span class="fin-field-error" id="founder-form-reason-err"></span>
           <span style="font-size:0.75rem;color:#888;"><span id="founder-form-reason-count">0</span>/500</span>
@@ -458,10 +485,12 @@ function _founderFormRecompute() {
   document.getElementById('founder-form-reason-count').textContent = document.getElementById('founder-form-reason').value.length;
   document.getElementById('founder-form-notes-count').textContent = document.getElementById('founder-form-notes').value.length;
 
+  const cfg = _founderConfig || _FOUNDER_DEFAULT_CONFIG;
+  const money = v => cfg.currency === 'KES' ? _pvMoney(v) : `${_finEsc(cfg.currency)} ${_finFmt(v)}`;
   const g = _founderFormGrant;
-  if (g) {
-    // update_founder_discount doesn't re-run the threshold check, so an edit
-    // never moves a grant between Draft and Pending.
+  if (g && !cfg.fromServer) {
+    // Older BE: update_founder_discount doesn't re-run the threshold check, so
+    // an edit never moves a grant between Draft and Pending.
     banner.innerHTML = _founderInfoBox(`Saving keeps this grant <strong>${_finEsc(g.status)}</strong>. The approval threshold is only checked when a grant is created; for a different threshold outcome, cancel this grant and create a new one.`);
     return;
   }
@@ -471,11 +500,23 @@ function _founderFormRecompute() {
     banner.innerHTML = _founderInfoBox("Pick the fee item to see whether this grant needs a second approver — a percent grant is sized against the fee item's default amount.");
     return;
   }
-  const threshold = _pvMoney(_FOUNDER_THRESHOLD_KES);
-  const sized = isPct ? ` (about ${_pvMoney(proxy)} on the fee item's default amount)` : '';
-  banner.innerHTML = proxy > _FOUNDER_THRESHOLD_KES
-    ? _founderInfoBox(`<strong>This grant needs a second approver.</strong> It is above the ${threshold} approval threshold${sized}, so it is saved as <strong>Pending</strong> and waits in the Approvals Inbox for someone other than you.`, 'gold')
-    : _founderInfoBox(`At or below the ${threshold} approval threshold${sized}, so it is saved as a <strong>Draft</strong>. It still has to be approved, by someone other than you, before invoices pick it up.`);
+  const threshold = money(cfg.threshold);
+  const sized = isPct ? ` (about ${money(proxy)} on the fee item's default amount)` : '';
+  if (proxy > cfg.threshold) {
+    const lands = !g ? 'it is saved as <strong>Pending</strong>'
+      : g.status === 'pending' ? 'it stays <strong>Pending</strong>'
+      : 'saving sends it back to <strong>Pending</strong>';
+    banner.innerHTML = _founderInfoBox(`<strong>This grant needs a second approver.</strong> ${g ? 'With this amount it' : 'It'} is above the ${threshold} approval threshold${sized}, so ${lands} and waits in the Approvals Inbox for someone other than you.`, 'gold');
+    return;
+  }
+  if (!cfg.fromServer) {
+    banner.innerHTML = _founderInfoBox(`At or below the ${threshold} approval threshold${sized}, so it is saved as a <strong>Draft</strong>. It still has to be approved, by someone other than you, before invoices pick it up.`);
+    return;
+  }
+  const lands = !g || g.status !== 'approved'
+    ? 'saving approves it, with you as the approver of record'
+    : 'it stays <strong>Approved</strong>';
+  banner.innerHTML = _founderInfoBox(`At or below the ${threshold} approval threshold${sized}, so ${lands}. Invoices generated from then on pick it up; no second approver is needed.`);
 }
 
 async function _founderSubmitForm() {
@@ -506,8 +547,13 @@ async function _founderSubmitForm() {
   // Exactly one of the two is non-null; sending the other as null also clears
   // it on PATCH when an edit switches between amount and percent.
   const discount = isPct ? { discount_amount: null, discount_percent: num } : { discount_amount: num, discount_percent: null };
+  // On edit the discount goes out only when it changed: the BE re-runs the
+  // threshold check whenever discount_* is in the body, which would send an
+  // approved above-threshold grant back to Pending over a notes edit. An
+  // approved grant's reason is locked, so it isn't sent either.
+  const amountChanged = !!g && (isPct !== (g.discount_percent != null) || num !== parseFloat(isPct ? g.discount_percent : g.discount_amount));
   const payload = g
-    ? { ...discount, reason, notes: notes || null }
+    ? { ...(amountChanged ? discount : {}), ...(g.status === 'approved' ? {} : { reason }), notes: notes || null }
     : { student_id: studentId, fee_item_id: feeItemId, academic_year_id: yearId, ...discount, reason, ...(notes ? { notes } : {}) };
   const btn = document.getElementById('founder-form-submit');
   btn.disabled = true;
@@ -518,10 +564,15 @@ async function _founderSubmitForm() {
   if (res && res.ok) {
     const saved = await res.json().catch(() => ({}));
     _coaCloseModal('founder-form-modal-overlay');
-    showToast(g ? 'Grant updated.'
-      : saved.status === 'pending'
-        ? 'Grant saved as Pending: it is above the approval threshold and waits in the Approvals Inbox.'
-        : 'Grant saved as Draft: someone other than you has to approve it before invoices pick it up.', 'success');
+    const why = {
+      pending: 'it is above the approval threshold and waits in the Approvals Inbox for someone other than you.',
+      approved: 'it is at or below the approval threshold, so invoices generated from now on pick it up.',
+      draft: 'someone other than you has to approve it before invoices pick it up.',
+    }[saved.status];
+    const label = saved.status ? saved.status[0].toUpperCase() + saved.status.slice(1) : '';
+    showToast(!label ? (g ? 'Grant updated.' : 'Grant saved.')
+      : g ? `Grant updated. It is now ${label}${why ? `: ${why}` : '.'}`
+      : `Grant saved as ${label}${why ? `: ${why}` : '.'}`, 'success');
     await _founderAfterChange();
     return;
   }
@@ -543,12 +594,14 @@ function _founderEstimate(g, line) {
   if (g.discount_amount != null) return parseFloat(g.discount_amount);
   return Math.round(parseFloat(line?.amount || 0) * parseFloat(g.discount_percent || 0)) / 100;
 }
-// FeeInvoiceRead carries no amount_credited, so outstanding nets off applied
-// credit notes only (the same index every invoice screen uses). Earlier
-// retroactive founder discounts also raise amount_credited and are invisible
-// here; the server re-checks the real outstanding on submit.
+// FeeInvoiceRead.amount_credited (applied credit notes + retroactive founder
+// discounts) is in the BE working tree but not on live openapi.json (checked
+// 2026-09-14). When the payload carries it, outstanding is amount_due −
+// amount_paid − amount_credited. Without it this falls back to the applied-CN
+// index, which misses earlier retroactive founder discounts. The server
+// re-checks the real outstanding on submit either way.
 function _founderInvoiceOutstanding(inv) {
-  return invoiceBalance(inv, creditedForInvoice(inv.id));
+  return inv.amount_credited != null ? invoiceBalance(inv) : invoiceBalance(inv, creditedForInvoice(inv.id));
 }
 
 async function _founderOpenApply(id) {
@@ -556,7 +609,14 @@ async function _founderOpenApply(id) {
   if (!g) return;
   document.getElementById('founder-apply-modal-overlay')?.remove();
   const seq = ++_founderApplySeq;
-  _founderApply = { grant: g, invoices: [], selectedId: null };
+  _founderApply = {
+    grant: g, invoices: [], selectedId: null,
+    // Line ids where THIS grant is already applied (status='applied'). The
+    // server refuses a re-apply with 409, so the modal disables those lines
+    // and — when every matching line on an invoice is exhausted — disables
+    // the whole invoice row.
+    appliedLineItemIds: new Set(),
+  };
   const wrap = document.createElement('div');
   wrap.id = 'founder-apply-modal-overlay';
   wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;overflow:auto;padding:24px;';
@@ -585,9 +645,20 @@ async function _founderOpenApply(id) {
     </div>`;
   document.body.appendChild(wrap);
 
-  const [res] = await Promise.all([
+  const [res, appsRes] = await Promise.all([
     apiFetch(`${API_BASE}/receivables/fee-invoices?student_id=${parseInt(g.student_id, 10)}`),
     loadAppliedCreditIndex(true),
+    apiFetch(`${API_BASE}/receivables/setup/founder-discounts/${parseInt(g.id, 10)}/applications`).then(r => {
+      if (!r || !r.ok) return null;
+      return r.json().catch(() => null);
+    }).then(rows => {
+      if (!Array.isArray(rows)) return;   // silent — worst case the modal reverts to server-side 409
+      rows.forEach(a => {
+        if (a && a.status === 'applied' && a.fee_invoice_line_item_id != null) {
+          _founderApply.appliedLineItemIds.add(parseInt(a.fee_invoice_line_item_id, 10));
+        }
+      });
+    }),
   ]);
   const listEl = document.getElementById('founder-apply-list');
   if (seq !== _founderApplySeq || !listEl) return;
@@ -618,10 +689,19 @@ function _founderRenderApplyList() {
       const lines = _founderMatchingLines(inv, g);
       const outstanding = _founderInvoiceOutstanding(inv);
       const settled = outstanding <= 0.005;
-      const est = _founderEstimate(g, lines[0]);
-      return `<tr>
+      // A line is unavailable if this grant is already applied to it.
+      // The whole invoice row goes dark once every matching line is taken.
+      const availableLines = lines.filter(li => !ctx.appliedLineItemIds.has(parseInt(li.id, 10)));
+      const allApplied = lines.length > 0 && availableLines.length === 0;
+      const disableReason = settled
+        ? 'Nothing outstanding on this invoice.'
+        : allApplied
+          ? "This grant is already applied to every matching line on this invoice."
+          : null;
+      const est = _founderEstimate(g, availableLines[0] || lines[0]);
+      return `<tr${disableReason ? ' style="opacity:0.55;"' : ''}>
         <td><input type="radio" name="founder-apply-invoice" value="${inv.id}" style="width:auto;margin:0;accent-color:var(--navy-700);"
-          ${settled ? 'disabled title="Nothing outstanding on this invoice."' : ''} onchange="_founderApplySelect(${parseInt(inv.id, 10)})"></td>
+          ${disableReason ? `disabled title="${_finEsc(disableReason)}"` : ''} onchange="_founderApplySelect(${parseInt(inv.id, 10)})"></td>
         <td>${_finEsc(inv.invoice_number || `#${inv.id}`)}</td>
         <td>${_rcvInvStatusBadge(inv.status)}</td>
         <td>${lines.map(li => _pvMoney(li.amount)).join('<br>')}</td>
@@ -636,7 +716,11 @@ function _founderApplySelect(invoiceId) {
   if (!ctx) return;
   ctx.selectedId = invoiceId;
   const inv = ctx.invoices.find(i => String(i.id) === String(invoiceId));
-  const lines = inv ? _founderMatchingLines(inv, ctx.grant) : [];
+  const allLines = inv ? _founderMatchingLines(inv, ctx.grant) : [];
+  // Filter to lines this grant isn't already applied to — the row was
+  // disabled in the outer table when this filter would return empty, so we
+  // don't expect to hit that branch here, but guard defensively.
+  const lines = allLines.filter(li => !ctx.appliedLineItemIds.has(parseInt(li.id, 10)));
   const lineWrap = document.getElementById('founder-apply-line-wrap');
   const lineSel = document.getElementById('founder-apply-line');
   // Without line_item_id the server takes the first positive matching line, so

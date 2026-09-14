@@ -45,7 +45,7 @@ async function _cnFetchAllInvoices() {
 }
 // Shared by all three invoice-balance renderings in this module (§1.2).
 function _cnInvoiceBalance(inv) {
-  return invoiceBalance(inv, creditedForInvoice(inv.id));
+  return invoiceBalance(inv, resolveCredited(inv));
 }
 function _cnInvoiceById(id) {
   return (_cnInvoicesCache || []).find(inv => String(inv.id) === String(id)) || null;

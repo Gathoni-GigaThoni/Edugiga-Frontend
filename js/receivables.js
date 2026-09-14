@@ -1193,11 +1193,11 @@ function _rcvRenderInvTable() {
   // The CREDITED column is suppressed entirely when no invoice on this page
   // has one (§1.3) — most operators never issue credit notes and shouldn't
   // pay a column of zeroes for it.
-  const anyCredited = paged.some(inv => (creditedForInvoice(inv.id) || 0) > 0);
+  const anyCredited = paged.some(inv => (resolveCredited(inv) || 0) > 0);
   const rows=paged.map(inv=>{
     const due=parseFloat(inv.amount_due||0);
     const paid=parseFloat(inv.amount_paid||0);
-    const credited=creditedForInvoice(inv.id);
+    const credited=resolveCredited(inv);
     const bal=invoiceBalance(inv, credited);
     return `<tr style="cursor:pointer;" onclick="loadInvoiceDetailView(document.getElementById('main-content'),${inv.id})">
       <td><a href="#" onclick="loadInvoiceDetailView(document.getElementById('main-content'),${inv.id});return false;">${_finEsc(inv.invoice_number||`#${inv.id}`)}</a></td>
@@ -1436,7 +1436,7 @@ async function loadInvoiceDetailView(container, invoiceId) {
   await loadAppliedCreditIndex(true);
   const due  = parseFloat(inv.amount_due||0);
   const paid = parseFloat(inv.amount_paid||0);
-  const credited = creditedForInvoice(inv.id);
+  const credited = resolveCredited(inv);
   const bal  = invoiceBalance(inv, credited);
   const hasFull = lineItems.some(li => li.base_unit_price!=null);
   // Founder's Discount (BE 4f191b4) splits a line's discount into
