@@ -43,7 +43,8 @@ let _founderTab = 'grants';            // 'grants' | 'inbox'
 let _founderGrants = [];
 let _founderInbox = [];
 let _founderInboxCount = null;
-let _founderFilter = { status: '', academic_year_id: '', search: '' };
+const _FOUNDER_EMPTY_FILTER = { status: '', academic_year_id: '', student_id: '', fee_item_id: '', search: '' };
+let _founderFilter = { ..._FOUNDER_EMPTY_FILTER };
 let _founderFormGrant = null;          // grant being edited; null on create
 let _founderApply = null;              // { grant, invoices, selectedId }
 // Sequence guards: a response that lands after a later tab switch, filter
@@ -52,6 +53,8 @@ let _founderListSeq = 0;
 let _founderInboxCountSeq = 0;
 let _founderApplySeq = 0;
 let _founderHistorySeq = 0;
+let _founderOpenSeq = 0;               // statement-link resolution (_founderOpenFromHash)
+let _founderRenew = null;              // { grant } while the Renew modal is open
 
 // ── Small helpers ────────────────────────────────────────────────────────
 function _founderStatusBadge(g) {
@@ -132,6 +135,11 @@ function _founderInfoBox(html, tone = 'navy') {
 async function loadFounderDiscountsView(container) {
   container.innerHTML = `<div class="fin-page"><p style="color:#888;padding:20px 0;">Loading&#8230;</p></div>`;
   await Promise.all([_rcvLoadLookups({ items: true, students: true, academicYears: true }), _founderLoadConfig()]);
+  // A statement link opens one grant, so it starts from the unfiltered list.
+  if (window._founderOpenGrantId || window._founderOpenApplicationId) {
+    _founderFilter = { ..._FOUNDER_EMPTY_FILTER };
+    _founderTab = 'grants';
+  }
   if (_founderTab === 'inbox' && !canView('finance.cancellations')) _founderTab = 'grants';
   container.innerHTML = `
     <div class="fin-page">
@@ -149,6 +157,42 @@ async function loadFounderDiscountsView(container) {
     </div>`;
   _founderRefreshInboxCount();
   await _founderRenderTab();
+  await _founderOpenFromHash();
+}
+
+// Statement doc_ref clickthrough, via dashboard.js _DOC_ROUTE_TO_PRESELECT.
+// Deployed BE (checked 2026-09-14) emits #fin-founder-discounts?open=
+// {application_id}; its working tree (§Q.13, uncommitted that day) moves to
+// #finance-founder-discounts?open={grant_id}. Both arrive here as one-shot
+// vars. An application has no GET of its own, so it is resolved by walking the
+// listed grants' /applications. The sequence guard drops the walk when the
+// user navigates away or the page reloads.
+async function _founderOpenFromHash() {
+  const grantId = window._founderOpenGrantId;
+  const appId = window._founderOpenApplicationId;
+  window._founderOpenGrantId = null;
+  window._founderOpenApplicationId = null;
+  if (!grantId && !appId) return;
+  const seq = ++_founderOpenSeq;
+  const stale = () => seq !== _founderOpenSeq || !document.getElementById('founder-tab-body');
+  if (grantId) {
+    let g = _founderGrantById(grantId);
+    if (!g) {
+      const res = await apiFetch(`${_FOUNDER_API}/${parseInt(grantId, 10)}`);
+      g = res && res.ok ? await res.json().catch(() => null) : null;
+    }
+    if (stale()) return;
+    if (g) await _founderOpenHistory(g.id, g);
+    else showToast(`Founder's discount grant #${grantId} was not found.`, 'error');
+    return;
+  }
+  for (const g of _founderGrants) {
+    const res = await apiFetch(`${_FOUNDER_API}/${g.id}/applications`);
+    const apps = res && res.ok ? _toArray(await res.json().catch(() => [])) : [];
+    if (stale()) return;
+    if (apps.some(a => String(a.id) === String(appId))) { await _founderOpenHistory(g.id, g); return; }
+  }
+  showToast(`Couldn't find the grant behind founder's discount application #${appId}.`, 'error');
 }
 
 // .fin-btn-outline sets its colours with !important, so the pressed tab
@@ -188,6 +232,17 @@ async function _founderRenderTab() {
           <option value="">All years</option>${_founderYearOptions(_founderFilter.academic_year_id)}
         </select>
       </div>
+      <div style="width:220px;">
+        <label class="fin-form-label">Student</label>
+        <select id="founder-f-student" class="fin-form-select" onchange="_founderFilterChanged()">${_rcvStudentOptions('All students', _founderFilter.student_id)}</select>
+      </div>
+      <div style="width:190px;">
+        <label class="fin-form-label">Fee Item</label>
+        <select id="founder-f-fee-item" class="fin-form-select" onchange="_founderFilterChanged()">
+          <option value="">All fee items</option>
+          ${(_rcvFeeItemsCache || []).map(f => `<option value="${f.id}" ${String(f.id) === String(_founderFilter.fee_item_id) ? 'selected' : ''}>${_finEsc(f.name || `#${f.id}`)}</option>`).join('')}
+        </select>
+      </div>
       <div style="flex:1;min-width:200px;">
         <label class="fin-form-label">Search</label>
         <input id="founder-f-search" class="fin-form-input" placeholder="Student or fee item" value="${_finEsc(_founderFilter.search)}"
@@ -209,6 +264,8 @@ async function _founderLoadGrants() {
   const qs = new URLSearchParams();
   if (_founderFilter.status) qs.set('status', _founderFilter.status);
   if (_founderFilter.academic_year_id) qs.set('academic_year_id', _founderFilter.academic_year_id);
+  if (_founderFilter.student_id) qs.set('student_id', _founderFilter.student_id);
+  if (_founderFilter.fee_item_id) qs.set('fee_item_id', _founderFilter.fee_item_id);
   const res = await apiFetch(`${_FOUNDER_API}${qs.toString() ? `?${qs}` : ''}`);
   if (seq !== _founderListSeq || !el.isConnected) return;
   if (!res || !res.ok) {
@@ -225,6 +282,8 @@ async function _founderLoadGrants() {
 function _founderFilterChanged() {
   _founderFilter.status = document.getElementById('founder-f-status')?.value || '';
   _founderFilter.academic_year_id = document.getElementById('founder-f-year')?.value || '';
+  _founderFilter.student_id = document.getElementById('founder-f-student')?.value || '';
+  _founderFilter.fee_item_id = document.getElementById('founder-f-fee-item')?.value || '';
   _founderLoadGrants();
 }
 function _founderRenderGrantsTable() {
@@ -519,6 +578,25 @@ function _founderFormRecompute() {
   banner.innerHTML = _founderInfoBox(`At or below the ${threshold} approval threshold${sized}, so ${lands}. Invoices generated from then on pick it up; no second approver is needed.`);
 }
 
+// Toast for a saved grant, read from the status the server returned (§Q.2/Q.3).
+// A create or renew that comes back APPROVED has already taken effect, so it
+// says "Grant applied" rather than anything about awaiting approval. After an
+// edit the status is re-read too: PATCH can move an approved grant to Pending
+// and a pending one to Approved.
+function _founderOutcomeText(saved, { edited = false, target = '' } = {}) {
+  const status = saved?.status;
+  const why = {
+    pending: 'it is above the approval threshold and waits in the Approvals Inbox for someone other than you.',
+    approved: 'it is at or below the approval threshold, so invoices generated from now on pick it up.',
+    draft: 'someone other than you has to approve it before invoices pick it up.',
+  }[status];
+  const label = status ? status[0].toUpperCase() + status.slice(1) : '';
+  if (!label) return edited ? 'Grant updated.' : 'Grant saved.';
+  if (edited) return `Grant updated. It is now ${label}${why ? `: ${why}` : '.'}`;
+  if (status === 'approved') return `Grant applied${target}: ${why}`;
+  return `Grant saved${target} as ${label}${why ? `: ${why}` : '.'}`;
+}
+
 async function _founderSubmitForm() {
   const g = _founderFormGrant;
   const msgEl = document.getElementById('founder-form-msg');
@@ -564,15 +642,7 @@ async function _founderSubmitForm() {
   if (res && res.ok) {
     const saved = await res.json().catch(() => ({}));
     _coaCloseModal('founder-form-modal-overlay');
-    const why = {
-      pending: 'it is above the approval threshold and waits in the Approvals Inbox for someone other than you.',
-      approved: 'it is at or below the approval threshold, so invoices generated from now on pick it up.',
-      draft: 'someone other than you has to approve it before invoices pick it up.',
-    }[saved.status];
-    const label = saved.status ? saved.status[0].toUpperCase() + saved.status.slice(1) : '';
-    showToast(!label ? (g ? 'Grant updated.' : 'Grant saved.')
-      : g ? `Grant updated. It is now ${label}${why ? `: ${why}` : '.'}`
-      : `Grant saved as ${label}${why ? `: ${why}` : '.'}`, 'success');
+    showToast(_founderOutcomeText(saved, { edited: !!g }), 'success');
     await _founderAfterChange();
     return;
   }
@@ -786,13 +856,93 @@ async function _founderSubmitApply() {
   _pvShowCoralMsg(msgEl, res ? await parseApiError(res) : 'Network error. Refresh the invoice before retrying; the discount may have been applied.');
 }
 
-// ── History drawer ───────────────────────────────────────────────────────
-async function _founderOpenHistory(id) {
+// ── Renew for another academic year (POST /{id}/clone-to-ay/{ay_id}) ─────
+// §Q.10: copies amount or percent, reason and notes into a fresh grant for the
+// target year and re-runs the threshold decision, so a clone at or below it is
+// applied at once and one above it waits for a second approver. The source
+// grant is not changed. 409 means a live grant already covers the target year;
+// 400 means the target is the grant's own year.
+function _founderOpenRenew(id) {
   const g = _founderGrantById(id);
   if (!g) return;
+  _founderRenew = { grant: g };
+  const years = _rcvAcademicYearsCache || [];
+  const own = years.find(y => String(y.id) === String(g.academic_year_id));
+  // Preselect the first year that starts after the grant's own.
+  const next = years
+    .filter(y => String(y.id) !== String(g.academic_year_id) && (!own || String(y.start_date || '') > String(own.start_date || '')))
+    .sort((a, b) => String(a.start_date || '').localeCompare(String(b.start_date || '')))[0];
+  document.getElementById('founder-renew-modal-overlay')?.remove();
+  const wrap = document.createElement('div');
+  wrap.id = 'founder-renew-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;overflow:auto;padding:24px;';
+  wrap.innerHTML = `
+    <div style="background:var(--white);border-radius:8px;padding:24px;width:500px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 6px;font-size:1.05rem;color:var(--navy-700,#2c3e50);">Renew Grant for Another Year</h3>
+      <p style="margin:0 0 10px;font-size:0.86rem;color:var(--grey-600,#666);">
+        <strong>${_finEsc(_rcvStudentName(g.student_id))}</strong> &middot; ${_finEsc(_rcvFeeItemName(g.fee_item_id))} &middot; <strong>${_founderDiscountLabel(g)}</strong> &middot; currently ${_finEsc(_founderYearName(g.academic_year_id))}
+      </p>
+      ${_founderInfoBox('Creates a new grant for the year you pick, with the same amount, reason and notes. It goes through the approval decision again: at or below the threshold it applies straight away, above it it waits for a second approver. This grant is not changed.')}
+      <div class="fin-form-group">
+        <label class="fin-form-label">Target Academic Year <span class="fin-required">*</span></label>
+        <select id="founder-renew-year" class="fin-form-select" onchange="document.getElementById('founder-renew-year-err').textContent='';document.getElementById('founder-renew-msg').innerHTML='';">
+          <option value="">${_finEsc(lookupPlaceholder('academic-years', 'Please Select'))}</option>
+          ${_founderYearOptions(next?.id)}
+        </select>
+        <span class="fin-field-error" id="founder-renew-year-err"></span>
+      </div>
+      <div id="founder-renew-msg"></div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="_coaCloseModal('founder-renew-modal-overlay')">Cancel</button>
+        <button class="fin-btn-teal" id="founder-renew-submit" onclick="_founderSubmitRenew()">Renew Grant</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+
+async function _founderSubmitRenew() {
+  const g = _founderRenew?.grant;
+  if (!g) return;
+  const errEl = document.getElementById('founder-renew-year-err');
+  const msgEl = document.getElementById('founder-renew-msg');
+  errEl.textContent = '';
+  msgEl.innerHTML = '';
+  const ayId = parseInt(document.getElementById('founder-renew-year').value, 10);
+  if (!ayId) { errEl.textContent = 'Pick the academic year to renew into.'; return; }
+  if (String(ayId) === String(g.academic_year_id)) { errEl.textContent = `Pick a different AY — this grant is already for ${_founderYearName(ayId)}.`; return; }
+  const btn = document.getElementById('founder-renew-submit');
+  btn.disabled = true;
+  const res = await apiFetch(`${_FOUNDER_API}/${g.id}/clone-to-ay/${ayId}`, { method: 'POST' });
+  btn.disabled = false;
+  if (res && res.ok) {
+    const clone = await res.json().catch(() => null);
+    _coaCloseModal('founder-renew-modal-overlay');
+    _founderRenew = null;
+    showToast(_founderOutcomeText(clone, { target: ` for ${_founderYearName(ayId)}` }), 'success');
+    await _founderAfterChange();
+    if (clone?.id) await _founderOpenHistory(clone.id, clone);
+    return;
+  }
+  if (!res) { _pvShowCoralMsg(msgEl, 'Network error. Refresh before retrying; the grant may already have been renewed.'); return; }
+  const detail = await parseApiError(res);
+  const lead = res.status === 409 ? 'A live grant already exists for the target year — cancel it first.'
+    : res.status === 400 ? 'Pick a different AY.'
+    : '';
+  _pvShowCoralMsg(msgEl, lead ? `${lead} ${detail}` : detail);
+}
+
+// ── History drawer ───────────────────────────────────────────────────────
+// `grant` is passed when the grant may not be in the current list (a statement
+// link, or a renew whose clone the filters hide); it is added so the drawer's
+// own actions can find it.
+async function _founderOpenHistory(id, grant = null) {
+  const g = grant || _founderGrantById(id);
+  if (!g) return;
+  if (grant && !_founderGrantById(grant.id)) _founderGrants.push(grant);
   document.getElementById('founder-history-drawer')?.remove();
   const field = (label, html, full = false) => `<div style="${full ? 'grid-column:1 / -1;' : ''}"><div style="color:#888;font-size:0.76rem;">${label}</div><div>${html}</div></div>`;
   const canApply = g.status === 'approved' && g.is_active && canAdd('finance.cancellations');
+  const canRenew = g.status !== 'rejected' && canAdd('finance.setup');
   const wrap = document.createElement('div');
   wrap.id = 'founder-history-drawer';
   wrap.dataset.grantId = g.id;
@@ -817,7 +967,10 @@ async function _founderOpenHistory(id) {
         ${g.notes ? field('Notes', _finEsc(g.notes), true) : ''}
         ${g.status === 'rejected' && g.rejection_reason ? field('Rejection Reason', `<span style="color:var(--coral-600);">${_finEsc(g.rejection_reason)}</span>`, true) : ''}
       </div>
-      ${canApply ? `<button class="fin-btn-teal" onclick="_founderOpenApply(${g.id})">Apply to Invoice</button>` : ''}
+      ${canApply || canRenew ? `<div style="display:flex;gap:8px;flex-wrap:wrap;">
+        ${canApply ? `<button class="fin-btn-teal" onclick="_founderOpenApply(${g.id})">Apply to Invoice</button>` : ''}
+        ${canRenew ? `<button class="fin-btn-outline" onclick="_founderOpenRenew(${g.id})">Renew for Next Year</button>` : ''}
+      </div>` : ''}
       <h4 style="margin:20px 0 8px;font-size:0.95rem;color:var(--navy-700,#2c3e50);">Applications</h4>
       <div id="founder-history-list"><p style="color:#888;">Loading&#8230;</p></div>
     </aside>`;

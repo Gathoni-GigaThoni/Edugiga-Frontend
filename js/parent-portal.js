@@ -717,7 +717,7 @@ function ppRenderStatementResult(data) {
       </div>
       <div class="pp-summary-tile">
         <p class="pp-summary-label">Total Paid</p>
-        <p class="pp-summary-value${closing > 0 ? ' pp-balance-due' : ''}">${ppMoney(paid)}</p>
+        <p class="pp-summary-value">${ppMoney(paid)}</p>
       </div>
       <div class="pp-summary-tile">
         <p class="pp-summary-label">Total Credited</p>

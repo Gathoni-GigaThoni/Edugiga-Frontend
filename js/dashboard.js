@@ -639,6 +639,10 @@ const _DOC_ROUTE_TO_PRESELECT = {
   // into those variables before rendering.
   'payroll-runs':                '_prOpenId',
   'payroll-consultant-runs':     '_crOpenId',
+  // Founder's Discounts statement links. The two spellings carry different ids
+  // (grant vs application); see _founderOpenFromHash in founder-discounts.js.
+  'finance-founder-discounts':   '_founderOpenGrantId',
+  'fin-founder-discounts':       '_founderOpenApplicationId',
 };
 
 function _maybeOpenDocFromHash() {
@@ -1594,6 +1598,7 @@ async function loadView(view) {
       setActiveSidebarItem('sidebar-fin-discount-setup'); openFinSetupDropdown();
       await renderFinanceDiscountSetup(main); break;
     case 'finance-founder-discounts':
+    case 'fin-founder-discounts':
       setActiveSidebarItem('sidebar-fin-founder-discounts'); openFinSetupDropdown();
       await loadFounderDiscountsView(main); break;
     case 'finance-sibling-groups':

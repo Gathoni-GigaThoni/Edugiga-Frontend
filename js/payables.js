@@ -409,6 +409,10 @@ function _pvPvDetailActions(v) {
     window._pvPvSettlePending = v;
     html += `<button class="fin-btn-outline" onclick="_pvPvOpenLinkJeModal(${v.id})">${_pvPvIsRelink(v) ? 'Re-link to a Different JE' : 'Link Existing JE'}</button>`;
   }
+  if (_pvPvCanUnlinkJe(v)) {
+    window._pvPvSettlePending = v;
+    html += `<button class="fin-btn-outline" onclick="_pvPvOpenUnlinkJeModal(${v.id})">Unlink JE</button>`;
+  }
   html += `<button class="fin-btn-outline" onclick="_pvPvPrint(${v.id})">View / Print</button>`;
   html += `<div id="pv-link-msg" style="width:100%;"></div>`;
   html += _pvPvLinkedInvoiceHtml(v);
@@ -649,6 +653,11 @@ function _pvPvCanLinkJe(v) {
   return _pvPvCanSettle(v)
     || (_pvPvIsRelink(v) && !v.tendepay_transaction_id && canAdd('finance.payables'));
 }
+// POST {voucher}/unlink-journal-entry (§Q.9) is the LINKED rail only; the BE
+// 400s, naming the method, for bank, petty cash, owner's capital or Tendepay.
+function _pvPvCanUnlinkJe(v) {
+  return v.status === 'paid' && v.settlement_method === 'linked' && canAdd('finance.payables');
+}
 
 // Every rail except 'linked' posted the voucher's own JE; a linked voucher
 // adopted one somebody else posted, so it reads differently on the detail.
@@ -883,12 +892,13 @@ async function _pvPvLinkJeFetch(id) {
   if (stale()) return;
   if (!res || !res.ok) {
     const msg = res ? await parseApiError(res) : 'Unknown error';
-    // BE staging 9dbbdc0: link accepts a re-link on a paid/linked voucher, but
-    // candidate-journal-entries still 400s on anything not approved or
-    // awaiting_tendepay, so a re-link has no list to pick from yet.
+    // Link accepts a re-link on a paid/linked voucher, but
+    // candidate-journal-entries 400s on anything not approved or
+    // awaiting_tendepay (checked 2026-09-14), so a re-link has no list to pick
+    // from. Unlink (§Q.9) puts the voucher back to Approved, which has one.
     const relink = res && res.status === 400 && _pvPvIsRelink(window._pvPvSettlePending || {});
     if (!stale()) list.innerHTML = `<div style="padding:16px;color:var(--coral-600);">${_finEsc(msg)}${relink
-      ? '<div style="margin-top:6px;color:var(--grey-700);">The server accepts a re-link on this voucher but does not yet list candidate entries for a voucher that is already paid. Nothing on this voucher has changed.</div>'
+      ? '<div style="margin-top:6px;color:var(--grey-700);">Candidate entries are only listed for a voucher that is not yet paid. Use <strong>Unlink JE</strong> on this voucher first — it goes back to Approved and the JE stays posted — then Link Existing JE to the right one.</div>'
       : ''}</div>`;
     return;
   }
@@ -978,7 +988,73 @@ async function _pvPvLinkJeSubmit(id) {
   // Reload first so the taken entry drops out of the list.
   await _pvPvLinkJeFetch(id);
   const holder = /already linked to PV (\S+)/.exec(msg)?.[1] || 'the other voucher';
-  fail(`${msg} Unlink it from ${holder} first, then link it here. If ${holder} was linked to it by mistake, re-link ${holder} to its correct JE; a voucher settled directly by bank, petty cash or owner's capital keeps the JE it posted.`);
+  fail(`${msg} Unlink it from ${holder} first (open that voucher and use Unlink JE), then link it here. A voucher settled directly by bank, petty cash or owner's capital can't release the JE it posted.`);
+}
+
+
+// ── Unlink a linked JE (POST {voucher}/unlink-journal-entry, §Q.9) ──────────
+// Undoes /link-journal-entry after a mispick: the voucher drops to APPROVED and
+// its settlement fields clear, while the JE stays POSTED and unreferenced. The
+// GL is unchanged, so supplier-invoice status, payroll runs and employee
+// advances are deliberately left as they are.
+function _pvPvOpenUnlinkJeModal(id) {
+  const v = window._pvPvSettlePending;
+  if (!v || String(v.id) !== String(id)) return;
+  const voucherNo = _finEsc(v.voucher_no || ('#' + v.id));
+  const wrap = document.createElement('div');
+  wrap.id = 'pv-unlinkje-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;overflow:auto;padding:24px;';
+  wrap.innerHTML = `
+    <div style="background:var(--white);border-radius:8px;padding:24px;width:480px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 8px;font-size:1.05rem;color:var(--navy-700,#2c3e50);">Unlink Journal Entry</h3>
+      <p style="margin:0 0 12px;font-size:0.9rem;color:var(--grey-700,#444);line-height:1.5;">
+        Release this JE from voucher <strong>${voucherNo}</strong>? The JE stays posted; only the voucher's link is removed. Use this when you picked the wrong JE.
+      </p>
+      ${v.journal_entry_id ? `<div style="font-size:0.85rem;color:var(--grey-600);margin-bottom:12px;">Linked entry: <strong>JE #${parseInt(v.journal_entry_id, 10)}</strong> &middot; the voucher goes back to <strong>Approved</strong>.</div>` : ''}
+      <div class="fin-form-group">
+        <label class="fin-form-label">Notes (optional)</label>
+        <textarea id="pv-unlinkje-notes" class="fin-form-textarea" rows="2" placeholder="Why it is being released — stamped on the voucher for the audit trail"></textarea>
+      </div>
+      <div id="pv-unlinkje-error" style="display:none;padding:10px 12px;border-radius:6px;border-left:3px solid var(--coral-500);background:var(--coral-100);color:var(--coral-600);font-size:0.82rem;margin-top:6px;"></div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="_coaCloseModal('pv-unlinkje-modal-overlay')">Cancel</button>
+        <button id="pv-unlinkje-submit" class="fin-btn-teal" onclick="_pvPvUnlinkJeSubmit(${parseInt(v.id, 10)})">Unlink JE</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+
+async function _pvPvUnlinkJeSubmit(id) {
+  const v = window._pvPvSettlePending || {};
+  const errEl = document.getElementById('pv-unlinkje-error');
+  const btn = document.getElementById('pv-unlinkje-submit');
+  const fail = text => { errEl.textContent = text; errEl.style.display = 'block'; };
+  errEl.style.display = 'none';
+  const notes = document.getElementById('pv-unlinkje-notes').value.trim();
+  btn.disabled = true;
+  let res;
+  try {
+    res = await apiFetch(`${_PV_PV_API}${id}/unlink-journal-entry`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(notes ? { notes } : {}),
+    });
+  } catch (_) {
+    btn.disabled = false;
+    fail('Could not reach the server. Refresh the voucher before retrying — the JE may already have been released.');
+    return;
+  }
+  btn.disabled = false;
+  if (res && res.ok) {
+    const body = await res.json().catch(() => ({}));
+    _coaCloseModal('pv-unlinkje-modal-overlay');
+    const released = body.released_jv_number || (body.released_journal_entry_id ? `JE #${body.released_journal_entry_id}` : 'its JE');
+    showToast(`Voucher ${body.voucher_no || v.voucher_no || `#${id}`} released from ${released} — back to Approved.`, 'success');
+    (body.warnings || []).forEach(w => showToast(w, 'info'));
+    await window._splitRefreshSelected?.();
+    return;
+  }
+  // 400 names the refusal (not paid, or a settlement method other than linked).
+  if (res) fail(await parseApiError(res));
 }
 
 

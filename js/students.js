@@ -2924,7 +2924,7 @@ function _stuSoaLineRef(l) {
   // Founder's discount RETROACTIVE — BE emits doc_ref pointing at the
   // Finance ▸ Set-up ▸ Founder's Discounts page (js/founder-discounts.js).
   if (l.entry_type === 'founder_discount' && l.founder_discount_application_id) {
-    return `<a href="#" onclick="loadView('finance-founder-discounts');return false;" title="Founder's discount application #${l.founder_discount_application_id}">${ref}</a>`;
+    return `<a href="#" onclick="window._founderOpenApplicationId=${parseInt(l.founder_discount_application_id, 10)};loadView('finance-founder-discounts');return false;" title="Open the grant behind founder's discount application #${l.founder_discount_application_id}">${ref}</a>`;
   }
   return ref;
 }
