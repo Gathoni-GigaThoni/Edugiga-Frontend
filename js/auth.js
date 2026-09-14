@@ -37,17 +37,9 @@ async function login() {
   showDashboard();
 }
 
+// See _normaliseTokenPayload in config.js (id from sub, clearance, role).
 function _decodeAndNormalise(jwt) {
-  const payload = JSON.parse(atob(jwt.split('.')[1]));
-  // Normalise clearance_level: accept clearance_level or clearance
-  if (payload.clearance_level == null && payload.clearance != null) {
-    payload.clearance_level = Number(payload.clearance);
-  }
-  // Normalise role: accept role or user_role
-  if (!payload.role && payload.user_role) {
-    payload.role = payload.user_role;
-  }
-  return payload;
+  return _normaliseTokenPayload(JSON.parse(atob(jwt.split('.')[1])));
 }
 
 function logout() {

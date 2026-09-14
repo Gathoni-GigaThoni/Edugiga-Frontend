@@ -28,11 +28,33 @@ function knownSiblingGroupIds() {
 }
 
 // ── Token & user – restored from sessionStorage on page load ──────────────────
+// One shape for currentUser whether it comes from this restore or from login
+// (auth.js _decodeAndNormalise calls the same function).
+//
+// Staff JWTs carry the team id only as `sub`, a string, with no `id` claim.
+// Every creator/submitter check compares currentUser.id against a team.id FK
+// (PV/TV personnel_id, DocumentApproval.submitted_by, payroll run, consultant
+// run and advance created_by), so without this they never matched anyone.
+function _normaliseTokenPayload(payload) {
+  if (payload.id == null && /^\d+$/.test(String(payload.sub ?? ''))) {
+    payload.id = Number(payload.sub);
+  }
+  // Accept clearance_level or clearance
+  if (payload.clearance_level == null && payload.clearance != null) {
+    payload.clearance_level = Number(payload.clearance);
+  }
+  // Accept role or user_role
+  if (!payload.role && payload.user_role) {
+    payload.role = payload.user_role;
+  }
+  return payload;
+}
+
 let token = sessionStorage.getItem('edugiga_token') || '';
 let currentUser = null;
 if (token) {
   try {
-    currentUser = JSON.parse(atob(token.split('.')[1]));
+    currentUser = _normaliseTokenPayload(JSON.parse(atob(token.split('.')[1])));
   } catch (_) {
     token = '';
     sessionStorage.removeItem('edugiga_token');
