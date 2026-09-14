@@ -105,9 +105,10 @@ function _faGlProofHtml(item) {
   return `<span style="color:#8a6100;">Not yet traced to the GL. Link the journal entry that capitalised it, or attest that the GL side is already recorded.</span>`;
 }
 // Offered only on live (confirmed, not disposed) assets where nothing else
-// proves the GL side: an invoice-linked asset is proved by the accrual JE,
-// the server refuses both actions on rejected or disposed assets (409), and a
-// draft gets confirmed before its GL side is proved.
+// proves the GL side. link-journal-entry 409s on rejected, disposed and
+// invoice-linked assets (the accrual JE is their proof); mark-gl-posted 409s
+// only on rejected or already-posted ones, so withholding it from drafts
+// (confirm first) and disposed assets is this screen's choice, not the server's.
 function _faGlActionsHtml(item) {
   if (item.is_gl_posted !== false || item.capitalisation_journal_entry_id || item.supplier_invoice_line_id) return '';
   if (item.status !== 'confirmed' || item.is_disposed) return '';

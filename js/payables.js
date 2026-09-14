@@ -404,6 +404,7 @@ function _pvPvDetailActions(v) {
   if (_pvPvCanSettle(v)) {
     window._pvPvSettlePending = v;
     html += `<button class="btn" onclick="_pvPvOpenSettleModal(${v.id})">Settle</button>`;
+    html += `<button class="fin-btn-outline" onclick="_pvPvOpenLinkJeModal(${v.id})">Link Existing JE</button>`;
   }
   html += `<button class="fin-btn-outline" onclick="_pvPvPrint(${v.id})">View / Print</button>`;
   html += `<div id="pv-link-msg" style="width:100%;"></div>`;
@@ -622,7 +623,8 @@ const _PV_SETTLE_METHODS = [
     hint: "The partner's capital account — for an expense paid from a partner's personal funds.",
     empty: 'No active Shareholder Funds accounts — add one in the Chart of Accounts.' },
 ];
-const _PV_SETTLE_METHOD_LABEL = { tendepay: 'Tendepay', ...Object.fromEntries(_PV_SETTLE_METHODS.map(m => [m.key, m.label])) };
+// 'linked' is set by link-journal-entry, not chosen in the Settle modal.
+const _PV_SETTLE_METHOD_LABEL = { tendepay: 'Tendepay', linked: 'Linked Journal Entry', ...Object.fromEntries(_PV_SETTLE_METHODS.map(m => [m.key, m.label])) };
 
 // PaymentVoucherRead has no Tendepay run link; tendepay_transaction_id is the
 // one marker that an import has already matched the voucher, and that path
@@ -756,6 +758,187 @@ async function _pvPvSubmitSettle(id) {
     fail(await parseApiError(res));
   }
 }
+
+// ── Link an existing JE to a PV (adopt-not-create, non-Tendepay rail) ───────
+// For a payment already booked by hand: POST {voucher}/link-journal-entry
+// adopts a POSTED JE as the settlement instead of posting a new one, so the
+// money is not recorded twice. GET {voucher}/candidate-journal-entries lists
+// the entries that should pass the guards the link re-checks on submit.
+//
+// Built to the live openapi.json (2026-09-14): candidates are
+// CandidateJournalEntry rows, newest first and capped at 200 (`days` 1–730,
+// default 180); the body is VoucherLinkBody; the reply is the same
+// VoucherSettleResponse /settle returns, with settlement_method 'linked'. A JE
+// already linked to another voucher answers 409, any other guard failure 400.
+
+const _PV_LINK_CANDIDATE_CAP = 200;
+let _pvLinkSelectedJeId = null;
+let _pvLinkCandidates   = [];
+let _pvLinkLoadSeq      = 0;
+
+function _pvPvOpenLinkJeModal(id) {
+  const v = window._pvPvSettlePending;
+  if (!v || String(v.id) !== String(id)) return;
+
+  const wht = v.requires_wht && parseFloat(v.wht_amount) > 0;
+  const wrap = document.createElement('div');
+  wrap.id = 'pv-linkje-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;overflow:auto;padding:24px;';
+  wrap.innerHTML = `
+    <div style="background:var(--white);border-radius:8px;padding:24px;width:820px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 8px;font-size:1.05rem;color:var(--navy-700,#2c3e50);">Link Existing Journal Entry</h3>
+      <div style="padding:10px 12px;border-radius:6px;background:#eef4fb;color:#243c56;font-size:0.82rem;margin-bottom:14px;line-height:1.5;">
+        Adopt a <strong>POSTED</strong> journal entry that already represents the payment. No new JE is created. Guards: debit total equals PV amount, right DR account (AP control for invoice-linked PVs, otherwise the PV expense account), single credit leg on a Cash/Bank or Shareholder-Funds account${wht ? ', plus a WHT liability leg matching ' + _pvMoney(v.wht_amount) : ''}.
+      </div>
+      <div style="font-size:0.85rem;color:var(--grey-600);margin-bottom:14px;">
+        Voucher <strong>${_finEsc(v.voucher_no || ('#' + v.id))}</strong> &middot; Amount <strong>${_pvMoney(v.amount)}</strong>${wht ? ' &middot; WHT ' + _pvMoney(v.wht_amount) + ' &middot; Net ' + _pvMoney(v.net_payable) : ''}
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;">
+        <label class="fin-form-label" style="margin:0;white-space:nowrap;">Look-back window</label>
+        <!-- .fin-form-select is width:100% !important, so the box sets the width -->
+        <div style="width:180px;flex:none;">
+          <select id="pv-linkje-days" class="fin-form-select" onchange="_pvPvLinkJeFetch(${v.id})">
+            <option value="90">Last 90 days</option>
+            <option value="180" selected>Last 180 days</option>
+            <option value="365">Last 365 days</option>
+            <option value="730">Last 2 years</option>
+          </select>
+        </div>
+        <span id="pv-linkje-count" style="font-size:0.85rem;color:var(--grey-600);white-space:nowrap;"></span>
+      </div>
+      <div id="pv-linkje-list" style="max-height:340px;overflow-y:auto;border:1px solid var(--grey-200,#ddd);border-radius:6px;">
+        <div style="padding:16px;text-align:center;color:var(--grey-600);">Loading candidates…</div>
+      </div>
+      <div class="fin-form-group" style="margin-top:14px;">
+        <label class="fin-form-label">Notes (optional)</label>
+        <textarea id="pv-linkje-notes" class="fin-form-textarea" rows="2" placeholder="Why this JE — for the audit trail"></textarea>
+      </div>
+      <div id="pv-linkje-error" style="display:none;padding:10px 12px;border-radius:6px;border-left:3px solid var(--coral-500);background:var(--coral-100);color:var(--coral-600);font-size:0.82rem;margin-top:6px;"></div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="_coaCloseModal('pv-linkje-modal-overlay')">Cancel</button>
+        <button id="pv-linkje-submit" class="fin-btn-teal" onclick="_pvPvLinkJeSubmit(${v.id})" disabled>Link JE</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  _pvPvLinkJeFetch(v.id);
+}
+
+// Re-run whenever the window changes. The sequence guard drops a slow response
+// that lands after the user has picked another window or closed the modal —
+// otherwise it would repaint the list under a different window's heading.
+async function _pvPvLinkJeFetch(id) {
+  const seq = ++_pvLinkLoadSeq;
+  _pvLinkSelectedJeId = null;
+  _pvLinkCandidates   = [];
+  const list = document.getElementById('pv-linkje-list');
+  if (!list) return;
+  const days   = parseInt(document.getElementById('pv-linkje-days').value, 10) || 180;
+  const count  = document.getElementById('pv-linkje-count');
+  const submit = document.getElementById('pv-linkje-submit');
+  const stale  = () => seq !== _pvLinkLoadSeq || !document.getElementById('pv-linkje-list');
+  submit.disabled = true;
+  count.textContent = '';
+  list.innerHTML = `<div style="padding:16px;text-align:center;color:var(--grey-600);">Loading candidates…</div>`;
+
+  let res;
+  try {
+    res = await apiFetch(`${_PV_PV_API}${id}/candidate-journal-entries?days=${days}`);
+  } catch (_) {
+    if (!stale()) list.innerHTML = `<div style="padding:16px;color:var(--coral-600);">Could not reach the server.</div>`;
+    return;
+  }
+  if (stale()) return;
+  if (!res || !res.ok) {
+    const msg = res ? await parseApiError(res) : 'Unknown error';
+    if (!stale()) list.innerHTML = `<div style="padding:16px;color:var(--coral-600);">${_finEsc(msg)}</div>`;
+    return;
+  }
+  const rows = await res.json().catch(() => []);
+  if (stale()) return;
+  _pvLinkCandidates = Array.isArray(rows) ? rows : [];
+  const n = _pvLinkCandidates.length;
+  // At the cap the older matches are cut off, not absent.
+  count.textContent = n === 1 ? '1 candidate'
+    : `${n} candidates${n >= _PV_LINK_CANDIDATE_CAP ? ' (server limit — older ones not shown)' : ''}`;
+  if (_pvLinkCandidates.length === 0) {
+    list.innerHTML = `<div style="padding:20px;text-align:center;color:var(--grey-600);">No candidate JEs matched. Broaden the window above, or use <em>Settle</em> to post a fresh JE.</div>`;
+    return;
+  }
+  list.innerHTML = _pvLinkCandidates.map(_pvLinkJeRowHtml).join('');
+}
+
+// The handler sits on the radio's change, not the wrapping <label>: a click on
+// a label also dispatches a click to its input, so a label onclick fires twice.
+function _pvLinkJeRowHtml(je) {
+  const jeId = parseInt(je.id, 10);
+  const primary = (je.credit_legs || []).find(l => l.account_id === je.primary_credit_account_id);
+  const warnings = (je.warnings || []).join(' · ');
+  const drSummary = (je.debit_legs || []).map(l => `${_finEsc(l.account_code)} ${_pvMoney(l.amount)}`).join(' + ');
+  const crSummary = (je.credit_legs || []).map(l => `${_finEsc(l.account_code)} ${_pvMoney(l.amount)}`).join(' + ');
+  return `
+    <label style="display:block;padding:10px 12px;border-bottom:1px solid var(--grey-100,#eee);cursor:pointer;" title="${_finEsc(warnings)}">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <input type="radio" name="pv-linkje-row" value="${jeId}" onchange="_pvPvLinkJeSelect(${jeId})" style="margin:0;width:auto;accent-color:var(--navy-700);">
+        <div style="flex:1;">
+          <div style="font-weight:600;color:var(--navy-700,#2c3e50);">${_finEsc(je.jv_number)} &middot; ${_pvDate(je.entry_date)}</div>
+          <div style="font-size:0.8rem;color:var(--grey-600);">${_finEsc(je.reference || '')}</div>
+          <div style="font-size:0.8rem;color:var(--grey-700);margin-top:2px;">DR: ${drSummary} &nbsp;&mdash;&nbsp; CR: ${crSummary}</div>
+          ${primary ? `<div style="font-size:0.78rem;color:var(--grey-600);margin-top:2px;">Credits <strong>${_finEsc(primary.account_name)}</strong>${primary.subtype ? ` (${_finEsc(primary.subtype)})` : ''}</div>` : ''}
+          ${warnings ? `<div style="font-size:0.78rem;color:var(--coral-600);margin-top:2px;">&#9888; ${_finEsc(warnings)}</div>` : ''}
+        </div>
+        <div style="font-weight:600;color:var(--navy-700,#2c3e50);">${_pvMoney(je.total_debit)}</div>
+      </div>
+    </label>`;
+}
+
+function _pvPvLinkJeSelect(jeId) {
+  _pvLinkSelectedJeId = jeId;
+  document.getElementById('pv-linkje-submit').disabled = false;
+  // A server refusal is about the previous pick — don't leave it beside a new one.
+  document.getElementById('pv-linkje-error').style.display = 'none';
+}
+
+async function _pvPvLinkJeSubmit(id) {
+  const errEl = document.getElementById('pv-linkje-error');
+  const btn = document.getElementById('pv-linkje-submit');
+  const fail = text => { errEl.textContent = text; errEl.style.display = 'block'; };
+  errEl.style.display = 'none';
+  const jeId = _pvLinkSelectedJeId;
+  if (!jeId) return fail('Pick a journal entry from the list first.');
+  const notes = document.getElementById('pv-linkje-notes').value.trim();
+  const payload = { journal_entry_id: jeId };
+  if (notes) payload.notes = notes;
+  btn.disabled = true;
+  let res;
+  try {
+    res = await apiFetch(`${_PV_PV_API}${id}/link-journal-entry`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch (_) {
+    btn.disabled = false;
+    fail('Could not reach the server. Refresh the voucher before retrying — the link may have gone through.');
+    return;
+  }
+  if (res && res.ok) {
+    const body = await res.json().catch(() => ({}));
+    _coaCloseModal('pv-linkje-modal-overlay');
+    showToast(`Payment voucher linked to ${body.jv_number || `JE #${body.journal_entry_id || jeId}`}`, 'success');
+    const runs = body.paid_payroll_run_ids || [];
+    if (runs.length) showToast(`Payroll run${runs.length > 1 ? 's' : ''} #${runs.join(', #')} marked paid.`, 'info');
+    (body.warnings || []).forEach(w => showToast(w, 'info'));
+    await window._splitRefreshSelected?.();
+    return;
+  }
+  btn.disabled = false;
+  if (!res) return;
+  const msg = await parseApiError(res);
+  // 409: another voucher took this JE after the list loaded. Reload so it drops
+  // out, then say why the pick vanished.
+  if (res.status === 409) await _pvPvLinkJeFetch(id);
+  fail(msg);
+}
+
 
 // ── Add / Edit form ──────────────────────────────────────────────────────────
 // lockedTaxType — set when this PV backs a TaxVoucher (§D.3): the backend
