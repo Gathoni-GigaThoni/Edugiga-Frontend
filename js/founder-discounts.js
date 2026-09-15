@@ -793,7 +793,7 @@ async function _founderOpenApply(id) {
       <p style="margin:0 0 10px;font-size:0.86rem;color:var(--grey-600,#666);">
         <strong>${_finEsc(_rcvStudentName(g.student_id))}</strong> &middot; ${_finEsc(_rcvFeeItemName(g.fee_item_id))} &middot; ${_finEsc(_founderYearName(g.academic_year_id))} &middot; <strong>${_founderDiscountLabel(g)}</strong>
       </p>
-      ${_founderInfoBox("Posts a reversing entry (DR income, CR AR control) and reduces the invoice's balance; the invoice's amount due is not changed. A grant can be applied to each invoice line only once.")}
+      ${_founderInfoBox("Posts a reversing entry (DR income, CR AR control) and reduces the invoice's balance; the invoice's amount due is not changed. A grant can be applied to each invoice line only once. When the discount is more than the invoice still owes (a paid invoice, say), the excess becomes a credit on the student's account.")}
       <div id="founder-apply-list"><p style="color:#888;padding:10px 0;">Loading invoices&#8230;</p></div>
       <div id="founder-apply-line-wrap" class="fin-form-group" style="display:none;margin-top:12px;">
         <label class="fin-form-label">Invoice Line</label>
@@ -804,6 +804,21 @@ async function _founderOpenApply(id) {
         <input type="number" id="founder-apply-override" class="fin-form-input" min="0" step="0.01" placeholder="Use the grant's value" oninput="_founderApplyRecompute()">
       </div>
       <div id="founder-apply-preview"></div>
+      <div id="founder-apply-overcredit-wrap" style="display:none;margin-top:12px;border-top:1px solid #eee;padding-top:12px;">
+        <label style="display:flex;align-items:flex-start;gap:8px;font-size:0.88rem;cursor:pointer;">
+          <input type="checkbox" id="founder-apply-overcredit" onchange="_founderApplyRecompute()" style="width:auto;max-width:none;margin:3px 0 0;">
+          <span>Allow over-credit <span style="color:#888;">(the discount can exceed what this invoice still owes)</span></span>
+        </label>
+        <div id="founder-apply-reason-wrap" style="display:none;margin-top:10px;">
+          <label class="fin-form-label">Reason for over-credit <span class="fin-required">*</span></label>
+          <textarea id="founder-apply-reason" class="fin-form-textarea" rows="2" maxlength="500" oninput="_founderApplyRecompute()"
+            placeholder="e.g. Term fees were paid in full before the grant was approved"></textarea>
+          <div style="display:flex;justify-content:space-between;">
+            <span class="fin-field-error" id="founder-apply-reason-err"></span>
+            <span style="font-size:0.75rem;color:#888;"><span id="founder-apply-reason-count">0</span>/500</span>
+          </div>
+        </div>
+      </div>
       <div id="founder-apply-msg"></div>
       <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
         <button class="fin-btn-cancel" onclick="_coaCloseModal('founder-apply-modal-overlay')">Cancel</button>
@@ -837,8 +852,43 @@ async function _founderOpenApply(id) {
   }
   const all = _toArray(await res.json().catch(() => []));
   if (seq !== _founderApplySeq || !listEl.isConnected) return;
-  _founderApply.invoices = all.filter(inv => _FOUNDER_APPLIABLE_INVOICE_STATUSES.includes(inv.status) && _founderMatchingLines(inv, g).length);
+  // Every invoice the student has, not only the ones that can take the grant.
+  // Filtering here used to hide drafts, cancelled invoices and invoices without
+  // a line on the grant's fee item, so the modal claimed the student had no
+  // invoice at all. Each row now says why it can't be picked.
+  _founderApply.invoices = all;
   _founderRenderApplyList();
+}
+
+// Why apply_founder_discount_retroactive would refuse this invoice for this
+// grant, or null when it can take it. Same order as the server's guards:
+// invoice status, a positive line on the grant's fee item, and a line this
+// grant isn't already applied to. The outstanding balance is not a blocker:
+// a discount above it goes through as an over-credit (see _founderApplyRecompute).
+// A draft that also has no matching line gets both reasons, so issuing it
+// doesn't just lead to the next refusal.
+function _founderApplyBlocker(inv, g, appliedLineItemIds) {
+  const reasons = [];
+  if (!_FOUNDER_APPLIABLE_INVOICE_STATUSES.includes(inv.status)) {
+    if (inv.status === 'cancelled') return 'Cancelled. A cancelled invoice has nothing left to discount.';
+    reasons.push(inv.status === 'draft'
+      ? 'Draft. Issue the invoice before applying a discount to it.'
+      : `Status "${inv.status}". Only issued, partially paid, paid or overdue invoices can take a discount.`);
+  }
+  const feeItemName = _rcvFeeItemName(g.fee_item_id);
+  const lines = _founderMatchingLines(inv, g);
+  if (!lines.length) {
+    const allLines = inv.line_items || [];
+    if (allLines.length && allLines.every(li => li.fee_item_id == null)) {
+      reasons.push(`None of its lines is linked to a fee item, so there is no ${feeItemName} line for the grant to discount. Bulk uploads link a line through the template's fee_item_id column.`);
+    } else {
+      const billed = [...new Set(allLines.filter(li => li.fee_item_id != null).map(li => _rcvFeeItemName(li.fee_item_id)))];
+      reasons.push(`No ${feeItemName} line${billed.length ? `; it bills ${billed.join(', ')}` : ''}. The grant only discounts ${feeItemName}.`);
+    }
+  }
+  if (reasons.length) return reasons.join(' ');
+  if (lines.every(li => appliedLineItemIds.has(parseInt(li.id, 10)))) return 'This grant is already applied to every matching line on this invoice.';
+  return null;
 }
 
 function _founderRenderApplyList() {
@@ -847,33 +897,30 @@ function _founderRenderApplyList() {
   if (!ctx || !listEl) return;
   const g = ctx.grant;
   if (!ctx.invoices.length) {
-    listEl.innerHTML = `<p style="color:var(--grey-600,#666);font-size:0.88rem;padding:6px 0;">No issued invoice for ${_finEsc(_rcvStudentName(g.student_id))} has a ${_finEsc(_rcvFeeItemName(g.fee_item_id))} line. Invoices generated after this grant was approved already carry the discount.</p>`;
+    listEl.innerHTML = `<p style="color:var(--grey-600,#666);font-size:0.88rem;padding:6px 0;">${_finEsc(_rcvStudentName(g.student_id))} has no invoices yet. Invoices generated after this grant was approved already carry the discount.</p>`;
     return;
   }
-  listEl.innerHTML = `<div class="fin-table-wrap" style="max-height:260px;overflow:auto;"><table class="fin-table">
+  const rows = ctx.invoices.map(inv => ({ inv, blocker: _founderApplyBlocker(inv, g, ctx.appliedLineItemIds) }));
+  const open = rows.filter(r => !r.blocker).length;
+  listEl.innerHTML = `
+    <p style="margin:0 0 6px;font-size:0.82rem;color:var(--grey-600,#666);">${open} of ${rows.length} invoice${rows.length === 1 ? '' : 's'} for ${_finEsc(_rcvStudentName(g.student_id))} can take this grant.</p>
+    <div class="fin-table-wrap" style="max-height:300px;overflow:auto;"><table class="fin-table">
     <thead><tr><th></th><th>INVOICE</th><th>STATUS</th><th>LINE AMOUNT</th><th>OUTSTANDING</th><th>DISCOUNT</th></tr></thead>
-    <tbody>${ctx.invoices.map(inv => {
+    <tbody>${rows.map(({ inv, blocker }) => {
       const lines = _founderMatchingLines(inv, g);
       const outstanding = _founderInvoiceOutstanding(inv);
-      const settled = outstanding <= 0.005;
-      // A line is unavailable if this grant is already applied to it.
-      // The whole invoice row goes dark once every matching line is taken.
       const availableLines = lines.filter(li => !ctx.appliedLineItemIds.has(parseInt(li.id, 10)));
-      const allApplied = lines.length > 0 && availableLines.length === 0;
-      const disableReason = settled
-        ? 'Nothing outstanding on this invoice.'
-        : allApplied
-          ? "This grant is already applied to every matching line on this invoice."
-          : null;
-      const est = _founderEstimate(g, availableLines[0] || lines[0]);
-      return `<tr${disableReason ? ' style="opacity:0.55;"' : ''}>
+      const est = lines.length ? _founderEstimate(g, availableLines[0] || lines[0]) : null;
+      return `<tr>
         <td><input type="radio" name="founder-apply-invoice" value="${inv.id}" style="width:auto;margin:0;accent-color:var(--navy-700);"
-          ${disableReason ? `disabled title="${_finEsc(disableReason)}"` : ''} onchange="_founderApplySelect(${parseInt(inv.id, 10)})"></td>
-        <td>${_finEsc(inv.invoice_number || `#${inv.id}`)}</td>
+          ${blocker ? `disabled title="${_finEsc(blocker)}"` : ''} onchange="_founderApplySelect(${parseInt(inv.id, 10)})"></td>
+        <td>${_finEsc(inv.invoice_number || `#${inv.id}`)}${blocker
+          ? `<div style="font-size:0.76rem;color:var(--grey-600,#666);max-width:260px;white-space:normal;">${_finEsc(blocker)}</div>`
+          : outstanding <= 0.005 ? `<div style="font-size:0.76rem;color:#7a6110;max-width:260px;white-space:normal;">Nothing outstanding. The whole discount becomes a credit on the student's account.</div>` : ''}</td>
         <td>${_rcvInvStatusBadge(inv.status)}</td>
-        <td>${lines.map(li => _pvMoney(li.amount)).join('<br>')}</td>
+        <td>${lines.length ? lines.map(li => _pvMoney(li.amount)).join('<br>') : '—'}</td>
         <td>${_pvMoney(outstanding)}</td>
-        <td>${lines.length > 1 ? 'per line' : _pvMoney(est)}</td>
+        <td>${!lines.length ? '—' : lines.length > 1 ? 'per line' : _pvMoney(est)}</td>
       </tr>`;
     }).join('')}</tbody></table></div>`;
 }
@@ -895,17 +942,33 @@ function _founderApplySelect(invoiceId) {
   lineWrap.style.display = lines.length > 1 ? '' : 'none';
   lineSel.innerHTML = lines.map(li => `<option value="${li.id}">${_finEsc(li.description || `Line #${li.id}`)} (${_pvMoney(li.amount)})</option>`).join('');
   document.getElementById('founder-apply-msg').innerHTML = '';
+  // A different invoice means a different outstanding balance, so an earlier
+  // over-credit opt-in doesn't carry over.
+  const cb = document.getElementById('founder-apply-overcredit');
+  if (cb) cb.checked = false;
   _founderApplyRecompute();
 }
 
+// Over-credit mirrors credit-note apply (credit-notes.js _cnApplyRecompute):
+// a discount above the invoice's outstanding balance needs an explicit opt-in
+// and a reason, and the excess parks as a credit on the student's account.
+// The BE provision for founder's discounts was requested 2026-09-15:
+// FounderDiscountApplyBody gains allow_overcredit + override_reason, and
+// FounderDiscountApplyResult gains over_credited_by.
 function _founderApplyRecompute() {
   const ctx = _founderApply;
   const preview = document.getElementById('founder-apply-preview');
   const btn = document.getElementById('founder-apply-submit');
+  const ocWrap = document.getElementById('founder-apply-overcredit-wrap');
+  const reasonWrap = document.getElementById('founder-apply-reason-wrap');
+  const reasonEl = document.getElementById('founder-apply-reason');
   if (!ctx || !preview || !btn) return;
+  // A server message was about the previous amount; drop it once anything changes.
+  const msgEl = document.getElementById('founder-apply-msg');
+  if (msgEl) msgEl.innerHTML = '';
   const inv = ctx.invoices.find(i => String(i.id) === String(ctx.selectedId));
-  btn.disabled = !inv;
-  if (!inv) { preview.innerHTML = ''; return; }
+  ctx.overBy = 0;
+  if (!inv) { btn.disabled = true; preview.innerHTML = ''; if (ocWrap) ocWrap.style.display = 'none'; return; }
   const lines = _founderMatchingLines(inv, ctx.grant);
   const lineId = lines.length > 1 ? document.getElementById('founder-apply-line').value : lines[0]?.id;
   const line = lines.find(li => String(li.id) === String(lineId)) || lines[0];
@@ -913,9 +976,26 @@ function _founderApplyRecompute() {
   const override = parseFloat(overrideRaw);
   const amount = overrideRaw !== '' && !isNaN(override) ? override : _founderEstimate(ctx.grant, line);
   const outstanding = _founderInvoiceOutstanding(inv);
-  preview.innerHTML = amount > outstanding + 0.005
-    ? _founderInfoBox(`<strong>${_pvMoney(amount)}</strong> is more than the ${_pvMoney(outstanding)} outstanding on ${_finEsc(inv.invoice_number)}. The server refuses a discount above the outstanding balance, so enter a smaller override amount.`, 'gold')
-    : _founderInfoBox(`Applies <strong>${_pvMoney(amount)}</strong> to ${_finEsc(inv.invoice_number)}, leaving about <strong>${_pvMoney(outstanding - amount)}</strong> outstanding.`);
+  const excess = Math.round((amount - Math.max(outstanding, 0)) * 100) / 100;
+  const over = excess > 0.005;
+  const allow = over && !!document.getElementById('founder-apply-overcredit')?.checked;
+  const reason = (reasonEl?.value || '').trim();
+  ctx.overBy = over ? excess : 0;
+  if (ocWrap) ocWrap.style.display = over ? '' : 'none';
+  if (reasonWrap) reasonWrap.style.display = allow ? '' : 'none';
+  const countEl = document.getElementById('founder-apply-reason-count');
+  if (countEl) countEl.textContent = String((reasonEl?.value || '').length);
+  const invNo = _finEsc(inv.invoice_number || `#${inv.id}`);
+  if (!over) {
+    preview.innerHTML = _founderInfoBox(`Applies <strong>${_pvMoney(amount)}</strong> to ${invNo}, leaving about <strong>${_pvMoney(outstanding - amount)}</strong> outstanding.`);
+  } else if (!allow) {
+    preview.innerHTML = _founderInfoBox(`<strong>${_pvMoney(amount)}</strong> is more than the ${_pvMoney(Math.max(outstanding, 0))} ${invNo} still owes. Tick <em>Allow over-credit</em> below and give a reason to apply it anyway, or enter a smaller override amount.`, 'gold');
+  } else {
+    preview.innerHTML = _founderInfoBox(`Applies <strong>${_pvMoney(amount)}</strong> to ${invNo} and over-credits it by <strong>${_pvMoney(excess)}</strong>. The excess becomes a credit on the student's account and offsets their next invoice.`, 'gold');
+  }
+  // Blocked only where the server would refuse: over the balance with no
+  // opt-in, or opted in with no reason.
+  btn.disabled = (over && !allow) || (allow && !reason);
 }
 
 async function _founderSubmitApply() {
@@ -933,6 +1013,19 @@ async function _founderSubmitApply() {
     if (isNaN(n) || n <= 0) { _pvShowCoralMsg(msgEl, 'An override amount has to be above 0.'); return; }
     payload.override_amount = n;
   }
+  _founderApplyRecompute();
+  if (ctx.overBy > 0) {
+    const allow = !!document.getElementById('founder-apply-overcredit')?.checked;
+    const reason = (document.getElementById('founder-apply-reason')?.value || '').trim();
+    const errEl = document.getElementById('founder-apply-reason-err');
+    if (errEl) errEl.textContent = '';
+    if (!allow) { _pvShowCoralMsg(msgEl, 'The discount is more than this invoice still owes. Tick Allow over-credit and give a reason, or enter a smaller override amount.'); return; }
+    if (!reason) { if (errEl) errEl.textContent = 'A reason is required to over-credit.'; return; }
+    // Sent only when the discount exceeds the balance; otherwise the body is
+    // exactly what it was before over-credit existed.
+    payload.allow_overcredit = true;
+    payload.override_reason = reason;
+  }
   const btn = document.getElementById('founder-apply-submit');
   btn.disabled = true;
   const res = await apiFetch(`${_FOUNDER_API}/${g.id}/apply-to-invoice/${inv.id}`, {
@@ -942,15 +1035,27 @@ async function _founderSubmitApply() {
   if (res && res.ok) {
     const body = await res.json().catch(() => ({}));
     _coaCloseModal('founder-apply-modal-overlay');
-    showToast(`Applied ${_pvMoney(body.application?.applied_amount)} to ${inv.invoice_number}. Outstanding is now ${_pvMoney(body.invoice_outstanding_after)}.`, 'success');
+    const outstandingAfter = parseFloat(body.invoice_outstanding_after);
+    const excess = parseFloat(body.over_credited_by) || (outstandingAfter < 0 ? -outstandingAfter : 0);
+    showToast(excess > 0.005
+      ? `Applied ${_pvMoney(body.application?.applied_amount)} to ${inv.invoice_number}. It over-credits the invoice by ${_pvMoney(excess)}, which offsets the student's next invoice.`
+      : `Applied ${_pvMoney(body.application?.applied_amount)} to ${inv.invoice_number}. Outstanding is now ${_pvMoney(body.invoice_outstanding_after)}.`, 'success');
     const drawer = document.getElementById('founder-history-drawer');
     if (drawer && String(drawer.dataset.grantId) === String(g.id)) _founderLoadHistory(g);
     await _founderAfterChange();
     return;
   }
   // 409s (already applied to this line, above outstanding, grant not usable,
-  // wrong student) are written for the operator and shown as sent.
-  _pvShowCoralMsg(msgEl, res ? await parseApiError(res) : 'Network error. Refresh the invoice before retrying; the discount may have been applied.');
+  // wrong student) and the 422 for a missing reason are written for the
+  // operator and shown as sent.
+  let msg = res ? await parseApiError(res) : 'Network error. Refresh the invoice before retrying; the discount may have been applied.';
+  // Until the BE takes allow_overcredit it ignores the flag and answers with
+  // its plain "exceeds invoice outstanding" 409. Say so rather than leave the
+  // operator wondering why the tick didn't count. Remove once the BE ships it.
+  if (res && res.status === 409 && payload.allow_overcredit && /exceeds invoice outstanding/i.test(msg)) {
+    msg += " The server doesn't accept over-credit on founder's discounts yet.";
+  }
+  _pvShowCoralMsg(msgEl, msg);
 }
 
 // ── Renew for another academic year (POST /{id}/clone-to-ay/{ay_id}) ─────

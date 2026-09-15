@@ -1094,9 +1094,28 @@ async function submitAddAssignment() {
 let _rcvInvData = [];
 let _rcvInvPage=1, _rcvInvPerPage=25, _rcvInvFilterStatus='', _rcvInvFilterTerm='', _rcvInvFilterStudent='';
 
+// Fee item ids for the bulk template's fee_item_id column (BE provision
+// requested 2026-09-15). A line uploaded without one isn't linked to a fee
+// item, so founder's discounts and fee-item reports can never match it.
+function _rcvInvBulkFeeItemHint() {
+  const items = (_rcvFeeItemsCache || []).filter(f => f.is_active !== false);
+  const rows = items.length
+    ? items.map(f => `<tr><td>${_finEsc(f.id)}</td><td>${_finEsc(f.code || '')}</td><td>${_finEsc(f.name || '')}</td></tr>`).join('')
+    : `<tr><td colspan="3" class="fin-empty">${_finEsc(lookupPlaceholder('fee-items', 'No active fee items.'))}</td></tr>`;
+  return `
+    <details style="margin:-4px 0 12px;font-size:0.84rem;">
+      <summary style="cursor:pointer;color:var(--navy-700,#1B3057);">Fee item IDs for the upload template</summary>
+      <p style="margin:8px 0;color:var(--grey-600,#666);">Put the fee item's ID in each row's <strong>fee_item_id</strong> column. A line uploaded without one isn't linked to a fee item, so a founder's discount can never be applied to it.</p>
+      <div class="fin-table-wrap" style="max-height:220px;overflow:auto;max-width:520px;"><table class="fin-table">
+        <thead><tr><th>FEE_ITEM_ID</th><th>CODE</th><th>NAME</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    </details>`;
+}
+
 async function loadFeeInvoicesView(container) {
   _rcvInvPage=1; _rcvInvFilterStatus=''; _rcvInvFilterTerm=''; _rcvInvFilterStudent='';
-  await _rcvLoadLookups({ terms:true, students:true });
+  await _rcvLoadLookups({ terms:true, students:true, items:true });
   container.innerHTML = `
     <div class="fin-page">
       <div class="fin-header-row">
@@ -1104,6 +1123,7 @@ async function loadFeeInvoicesView(container) {
         <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Fee Invoices &rsaquo; Listing</div>
       </div>
       ${renderBulkUploadBar('fee-invoices', 'rcvInvLoad')}
+      ${_rcvInvBulkFeeItemHint()}
       <div class="fin-filter-section">
         <div class="fin-filter-grid">
           <div class="fin-filter-field">
