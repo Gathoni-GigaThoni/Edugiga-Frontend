@@ -382,8 +382,18 @@ function _bulkUploadResultHTML(data) {
 
   if (errors.length) {
     const shown = errors.slice(0, 25);
+    // The bulk validators return {row, field, message} (fin_bulk.py); anything
+    // else still falls back to its raw JSON so no error is ever hidden.
+    const line = e => {
+      if (typeof e === 'string') return esc(e);
+      if (e && e.message) {
+        const where = [e.row != null ? `Row ${e.row}` : '', e.field && e.field !== '__import__' ? e.field : ''].filter(Boolean).join(' · ');
+        return `${where ? `<strong>${esc(where)}</strong>: ` : ''}${esc(e.message)}`;
+      }
+      return esc(JSON.stringify(e));
+    };
     html += '<ul class="fin-bulk-error-list">' +
-      shown.map(e => `<li>${esc(typeof e === 'string' ? e : JSON.stringify(e))}</li>`).join('') +
+      shown.map(e => `<li>${line(e)}</li>`).join('') +
       '</ul>';
     if (errors.length > shown.length) html += `<div class="sa-empty-msg">&hellip;and ${errors.length - shown.length} more.</div>`;
   }

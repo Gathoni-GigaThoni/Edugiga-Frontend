@@ -64,10 +64,11 @@ function _daTypeBadge(type) {
 
 // ── Resolve the referenced document (payment_voucher | fee_invoice |
 // requisition | petty_cash) ─────────────────────────────────────────────
-// Payment Vouchers have no confirmed single-item GET, so the full collection
-// is fetched once and cached; the other three are fetched one-by-one via
-// their confirmed single-item GET endpoints.
-let _daPvListCache = null;
+// Each type is fetched one-by-one through its single-item GET. Payment
+// Vouchers used to come from the whole /payables/payment-vouchers/ list,
+// which only finance.payables can read; GET /payment-vouchers/{id} answers to
+// document_approval since BE c111ffd, so a DAS-only approver sees them too.
+let _daPvCache = {};
 let _daFeeInvoiceCache = {};
 let _daRequisitionCache = {};
 let _daPettyCashCache = {};
@@ -76,10 +77,10 @@ let _daAdvanceCache = {};
 let _daFounderDiscountCache = {};
 // grant id → the /preview result for that grant (see _founderFetchPreview).
 let _daFounderDiscountPreview = {};
-// "founder_discount:<id>" keys whose GET answered 403. The grant GET takes
-// finance.setup or finance.cancellations and DAS approvers only need
-// document_approval, so a 403 means "you can't see the grant", not "it's gone".
-// Kept apart from _daHydrationFailed so Approve/Reject stay available.
+// "founder_discount:<id>" keys whose read answered 403. Grant reads answer to
+// document_approval since BE 1653973 (2026-09-15), so this is a fallback; a 403
+// still means "you can't see the grant", not "it's gone". Kept apart from
+// _daHydrationFailed so Approve/Reject stay available.
 let _daFounderDiscountHidden = {};
 // Tracks "<type>:<id>" keys whose single-item GET came back non-OK (e.g. the
 // source document was deleted after the DA row was created) so the detail
@@ -88,7 +89,8 @@ let _daFounderDiscountHidden = {};
 let _daHydrationFailed = {};
 
 async function _daPrefetchDocuments(items) {
-  const pvNeeded = items.some(i => i.document_type === 'payment_voucher');
+  const pvIds = [...new Set(items.filter(i => i.document_type === 'payment_voucher').map(i => i.document_id))]
+    .filter(id => !_daPvCache[id]);
   const feeIds = [...new Set(items.filter(i => i.document_type === 'fee_invoice').map(i => i.document_id))]
     .filter(id => !_daFeeInvoiceCache[id]);
   const reqIds = [...new Set(items.filter(i => i.document_type === 'requisition').map(i => i.document_id))]
@@ -101,8 +103,8 @@ async function _daPrefetchDocuments(items) {
     .filter(id => !_daAdvanceCache[id]);
   // Not filtered against the cache: a grant is edited in place on the Founder's
   // Discounts page, and an edit that sends it back to Pending re-queues the same
-  // grant id, so a cached copy would show the old amount. The list endpoint has
-  // no id filter (checked 2026-09-15), so this is one GET per grant.
+  // grant id, so a cached copy would show the old amount. They all come back in
+  // one list request (see _daFetchFounderDiscounts).
   const fdIds = [...new Set(items.filter(i => i.document_type === 'founder_discount').map(i => i.document_id))];
   // Billing can change between visits, so the KES breakdown is re-read too.
   if (fdIds.length && typeof _founderPreviewByKey !== 'undefined') _founderPreviewByKey = {};
@@ -111,21 +113,21 @@ async function _daPrefetchDocuments(items) {
   if (reqIds.length && typeof _reqEnsureSuppliersCache === 'function') jobs.push(_reqEnsureSuppliersCache());
   if ((reqIds.length || pcaIds.length || advIds.length) && typeof _reqEnsureStaffCache === 'function') jobs.push(_reqEnsureStaffCache());
   if (intReqIds.length && typeof _invEnsureStoresCache === 'function') jobs.push(_invEnsureStoresCache());
-  // Names come from the finance lookups, which answer to the same two keys as
-  // the grant GET. Without either, loadLookupList would toast one 403 per lookup
-  // and the grant itself can't be read anyway, so they aren't requested.
-  if (fdIds.length && typeof _rcvLoadLookups === 'function' && (canView('finance.setup') || canView('finance.cancellations'))) {
+  // Student, fee item and year names. /lookups/students and fee-items answer to
+  // document_approval since BE c111ffd (academic years to any staff), so a
+  // DAS-only approver gets names too.
+  if (fdIds.length && typeof _rcvLoadLookups === 'function') {
     jobs.push(_rcvLoadLookups({ items: true, students: true, academicYears: true }));
   }
-  fdIds.forEach(id => jobs.push(_daFetchFounderDiscount(id)));
-  if (pvNeeded && !_daPvListCache) {
+  if (fdIds.length) jobs.push(_daFetchFounderDiscounts(fdIds));
+  pvIds.forEach(id => {
     jobs.push(
-      apiFetch(`${API_BASE}/payables/payment-vouchers/`)
-        .then(res => res && res.ok ? res.json() : [])
-        .then(data => { _daPvListCache = _toArray(data); })
-        .catch(() => { _daPvListCache = []; })
+      apiFetch(`${API_BASE}/payables/payment-vouchers/${id}`)
+        .then(res => res && res.ok ? res.json() : null)
+        .then(data => { if (data) _daPvCache[id] = data; })
+        .catch(() => {})
     );
-  }
+  });
   feeIds.forEach(id => {
     jobs.push(
       apiFetch(`${API_BASE}/receivables/fee-invoices/${id}`)
@@ -169,8 +171,45 @@ async function _daPrefetchDocuments(items) {
   await Promise.all(jobs);
 }
 
-// One grant, read on every queue load (see fdIds above) and again after an
-// approve/reject, so the detail pane shows the status the action left behind.
+// Every grant on the queue in one request per 500 ids (?ids=1&ids=2, BE
+// c111ffd), then each grant's billing preview. A grant the list doesn't return
+// was deleted after its approval row was created. A 403 means the grant can't
+// be read, not that it's gone.
+async function _daFetchFounderDiscounts(ids) {
+  for (let i = 0; i < ids.length; i += 500) {
+    const chunk = ids.slice(i, i + 500);
+    const qs = new URLSearchParams();
+    chunk.forEach(id => qs.append('ids', id));
+    let res = null;
+    try { res = await apiFetch(`${API_BASE}/receivables/setup/founder-discounts?${qs}`); } catch (_) {}
+    if (!res) continue;
+    chunk.forEach(id => { delete _daHydrationFailed[`founder_discount:${id}`]; delete _daFounderDiscountHidden[`founder_discount:${id}`]; });
+    if (!res.ok) {
+      chunk.forEach(id => {
+        delete _daFounderDiscountCache[id];
+        delete _daFounderDiscountPreview[id];
+        if (res.status === 403) _daFounderDiscountHidden[`founder_discount:${id}`] = true;
+        else _daHydrationFailed[`founder_discount:${id}`] = true;
+      });
+      continue;
+    }
+    const byId = new Map(_toArray(await res.json().catch(() => [])).map(g => [String(g.id), g]));
+    await Promise.all(chunk.map(async id => {
+      const g = byId.get(String(id));
+      if (!g) {
+        delete _daFounderDiscountCache[id];
+        delete _daFounderDiscountPreview[id];
+        _daHydrationFailed[`founder_discount:${id}`] = true;
+        return;
+      }
+      _daFounderDiscountCache[id] = g;
+      if (typeof _founderFetchPreview === 'function') _daFounderDiscountPreview[id] = await _founderFetchPreview(g);
+    }));
+  }
+}
+
+// One grant, re-read after an approve/reject so the detail pane shows the
+// status the action left behind.
 async function _daFetchFounderDiscount(id) {
   const key = `founder_discount:${id}`;
   try {
@@ -215,7 +254,7 @@ function _daFounderDiscountLabel(g) {
 
 function _daResolveDoc(item) {
   if (item.document_type === 'payment_voucher') {
-    const v = (_daPvListCache || []).find(x => String(x.id) === String(item.document_id));
+    const v = _daPvCache[item.document_id];
     if (!v) return { title: `Payment Voucher #${item.document_id}`, sub: '', amount: null };
     const payee = v.payee_name_freetext || v.payee_type || '—';
     return { title: v.voucher_no || `Payment Voucher #${item.document_id}`, sub: payee, amount: v.amount };
@@ -316,12 +355,13 @@ async function _daRenderQueueSplit(mountEl) {
   });
 }
 
-// Grants that went Pending, or were saved as Draft, before founder's discounts
-// were mirrored into DAS (2026-09-15) have no approval row, so they never reach
-// this queue. Until the BE backfills them, name them and say where they can be
-// approved. Reads the grant list, which document_approval can read; if the
-// list can't be read the banner stays off. It clears itself once every open
-// grant has a queue row.
+// Safety net for open grants with no approval row. The BE mirrors every grant
+// that goes Pending into DAS, and migration fg7b8c9d0e1f (2026-09-15) backfilled
+// the draft and pending grants created before that, so this should stay empty.
+// If one slips through (an environment that hasn't run the migration, say), it
+// is named here with where to approve it rather than silently missing. Reads
+// the grant list, which document_approval can read; if the list can't be read
+// the banner stays off.
 async function _daRenderFounderLegacyBanner(queueItems) {
   const el = document.getElementById('da-founder-legacy-banner');
   if (!el) return;
@@ -332,7 +372,7 @@ async function _daRenderFounderLegacyBanner(queueItems) {
       apiFetch(`${API_BASE}/receivables/setup/founder-discounts?status=${status}&is_active=true`)
         .then(res => (res && res.ok ? res.json().catch(() => null) : null))
         .catch(() => null))),
-    finance && typeof _rcvLoadLookups === 'function' ? _rcvLoadLookups({ items: true, students: true, academicYears: true }) : null,
+    typeof _rcvLoadLookups === 'function' ? _rcvLoadLookups({ items: true, students: true, academicYears: true }) : null,
   ]);
   if (!el.isConnected || lists.every(l => l == null)) return;
   const missing = lists.flatMap(l => _toArray(l || [])).filter(g => !queued.has(String(g.id)));
@@ -343,10 +383,10 @@ async function _daRenderFounderLegacyBanner(queueItems) {
   el.innerHTML = `
     <div style="background:var(--gold-100,#F7EFD5);border-left:3px solid var(--gold-500,#C9A227);color:#6b5400;border-radius:6px;padding:10px 14px;margin-bottom:10px;font-size:0.85rem;line-height:1.5;">
       <strong>${n} founder's discount grant${n === 1 ? ' is' : 's are'} waiting for approval but ${n === 1 ? 'is' : 'are'} not in this queue.</strong>
-      ${n === 1 ? 'It was' : 'They were'} created before founder's discounts were routed through Document Approvals, so no approval row exists yet.
+      No approval row exists for ${n === 1 ? 'it' : 'them'}, which usually means this environment hasn't run the DAS backfill migration (fg7b8c9d0e1f).
       ${finance
-        ? `Approve ${n === 1 ? 'it' : 'them'} from <a href="#" onclick="loadView('finance-founder-discounts');return false;">Founder's Discounts</a> until ${n === 1 ? 'it is' : 'they are'} synced here.`
-        : "A finance approver can clear them from Founder's Discounts until they are synced here."}
+        ? `Approve ${n === 1 ? 'it' : 'them'} from <a href="#" onclick="loadView('finance-founder-discounts');return false;">Founder's Discounts</a> in the meantime.`
+        : "A finance approver can clear them from Founder's Discounts in the meantime."}
       <ul style="margin:6px 0 0 18px;padding:0;">${shown}${n > 10 ? `<li>and ${n - 10} more</li>` : ''}</ul>
     </div>`;
 }
@@ -550,7 +590,7 @@ const _daDetailFields = [
   { label: 'Full Record', key: 'document_id', hideWhen: item => item.document_type !== 'founder_discount' || !_daFounderDiscountCache[item.document_id],
     fmt: (v, item) => `<a href="#" onclick="window._founderOpenGrantId=${parseInt(item.document_id, 10)};loadView('finance-founder-discounts');return false;">&rarr; Open Founder's Discount</a>` },
   { label: 'Grant Details', key: 'document_id', fullWidth: true, hideWhen: item => item.document_type !== 'founder_discount' || !_daFounderDiscountHidden[`founder_discount:${item.document_id}`],
-    fmt: () => `<span style="color:var(--grey-600,#5F6B7C);">Your role can't open founder's discount grants (that needs Finance Set-up or Cancellations), so only the approval record is shown. You can still approve or reject it.</span>` },
+    fmt: () => `<span style="color:var(--grey-600,#5F6B7C);">Your role can't read this grant, so only the approval record is shown. You can still approve or reject it.</span>` },
   { label: 'Status',        key: 'status',        fmt: v => _daBadge(v) },
   { label: 'Submitted By',  key: 'submitted_by',  fmt: v => v != null ? `Staff #${v}` : '—' },
   { label: 'Submitted At',  key: 'submitted_at',  fmt: v => _daDate(v) },

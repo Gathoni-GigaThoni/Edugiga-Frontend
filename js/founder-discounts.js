@@ -1036,9 +1036,9 @@ function _founderApplySelect(invoiceId) {
 // Over-credit mirrors credit-note apply (credit-notes.js _cnApplyRecompute):
 // a discount above the invoice's outstanding balance needs an explicit opt-in
 // and a reason, and the excess parks as a credit on the student's account.
-// The BE provision for founder's discounts was requested 2026-09-15:
-// FounderDiscountApplyBody gains allow_overcredit + override_reason, and
-// FounderDiscountApplyResult gains over_credited_by.
+// Live on the BE since c111ffd (2026-09-15): allow_overcredit + override_reason
+// on FounderDiscountApplyBody (422 without a reason), over_credited_by on the
+// result, and over_credit_reason on the application row.
 function _founderApplyRecompute() {
   const ctx = _founderApply;
   const preview = document.getElementById('founder-apply-preview');
@@ -1132,14 +1132,7 @@ async function _founderSubmitApply() {
   // 409s (already applied to this line, above outstanding, grant not usable,
   // wrong student) and the 422 for a missing reason are written for the
   // operator and shown as sent.
-  let msg = res ? await parseApiError(res) : 'Network error. Refresh the invoice before retrying; the discount may have been applied.';
-  // Until the BE takes allow_overcredit it ignores the flag and answers with
-  // its plain "exceeds invoice outstanding" 409. Say so rather than leave the
-  // operator wondering why the tick didn't count. Remove once the BE ships it.
-  if (res && res.status === 409 && payload.allow_overcredit && /exceeds invoice outstanding/i.test(msg)) {
-    msg += " The server doesn't accept over-credit on founder's discounts yet.";
-  }
-  _pvShowCoralMsg(msgEl, msg);
+  _pvShowCoralMsg(msgEl, res ? await parseApiError(res) : 'Network error. Refresh the invoice before retrying; the discount may have been applied.');
 }
 
 // ── Renew for another academic year (POST /{id}/clone-to-ay/{ay_id}) ─────
@@ -1300,7 +1293,8 @@ async function _founderLoadHistory(g) {
         <td style="white-space:nowrap;">${_pvDate(a.created_at)}</td>
         <td><a href="#" onclick="_coaCloseModal('founder-history-drawer');window._rcvCurrentInvoiceId=${invId};loadInvoiceDetailView(document.getElementById('main-content'),${invId});return false;">${_finEsc(invNo(invId))}</a></td>
         <td>${_pvMoney(a.applied_amount)}</td>
-        <td style="white-space:nowrap;">${_finEsc(_FOUNDER_MODE_LABELS[a.mode] || a.mode || '—')} ${appStatus(a.status)}</td>
+        <td style="white-space:nowrap;">${_finEsc(_FOUNDER_MODE_LABELS[a.mode] || a.mode || '—')} ${appStatus(a.status)}${a.over_credit_reason
+          ? `<div style="white-space:normal;max-width:220px;font-size:0.76rem;color:#7a6110;">Over-credited: ${_finEsc(a.over_credit_reason)}</div>` : ''}</td>
         <td>${a.journal_entry_id
           ? `<a href="#" onclick="_coaCloseModal('founder-history-drawer');_jeOpenDetail(${parseInt(a.journal_entry_id, 10)});return false;">View JE</a>`
           : '<span style="color:#888;" title="Discounted when the invoice was generated, so there is no separate entry.">—</span>'}</td>

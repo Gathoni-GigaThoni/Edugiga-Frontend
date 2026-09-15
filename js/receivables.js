@@ -1094,9 +1094,10 @@ async function submitAddAssignment() {
 let _rcvInvData = [];
 let _rcvInvPage=1, _rcvInvPerPage=25, _rcvInvFilterStatus='', _rcvInvFilterTerm='', _rcvInvFilterStudent='';
 
-// Fee item ids for the bulk template's fee_item_id column (BE provision
-// requested 2026-09-15). A line uploaded without one isn't linked to a fee
-// item, so founder's discounts and fee-item reports can never match it.
+// Fee item ids for the bulk template's optional fee_item_id column (BE c111ffd,
+// 2026-09-15; the upload refuses an id that isn't an active fee item). A line
+// uploaded without one isn't linked to a fee item, so founder's discounts and
+// fee-item reports can never match it.
 function _rcvInvBulkFeeItemHint() {
   const items = (_rcvFeeItemsCache || []).filter(f => f.is_active !== false);
   const rows = items.length
@@ -1105,7 +1106,7 @@ function _rcvInvBulkFeeItemHint() {
   return `
     <details style="margin:-4px 0 12px;font-size:0.84rem;">
       <summary style="cursor:pointer;color:var(--navy-700,#1B3057);">Fee item IDs for the upload template</summary>
-      <p style="margin:8px 0;color:var(--grey-600,#666);">Put the fee item's ID in each row's <strong>fee_item_id</strong> column. A line uploaded without one isn't linked to a fee item, so a founder's discount can never be applied to it.</p>
+      <p style="margin:8px 0;color:var(--grey-600,#666);">The template's <strong>fee_item_id</strong> column is optional. Fill it with an ID from this list to link the line to that fee item; the upload refuses an ID that isn't an active fee item. A line uploaded without one isn't linked, so a founder's discount can never be applied to it.</p>
       <div class="fin-table-wrap" style="max-height:220px;overflow:auto;max-width:520px;"><table class="fin-table">
         <thead><tr><th>FEE_ITEM_ID</th><th>CODE</th><th>NAME</th></tr></thead>
         <tbody>${rows}</tbody>
