@@ -105,6 +105,87 @@ function _founderProxyKes({ amount, percent, feeItemId }) {
   const base = f ? parseFloat(f.default_amount) : NaN;
   return isNaN(base) ? null : Math.round(base * percent) / 100;
 }
+
+// ── What a grant is worth to the student ─────────────────────────────────
+// From /preview: the fee lines this student is billed on the grant's fee item
+// in the grant's year, one per term assignment. Same arithmetic as
+// resolve_founder_discount (app/services/fin_founder_discount.py): a flat grant
+// takes its amount off each line and a percent grant takes percent × the
+// line's gross, capped at the line. The server takes sibling discounts off
+// first and caps the founder share at what is left, so each figure is an upper
+// bound. Cached per student|fee item|year for the page visit; the pages that
+// use it reset the cache when they load.
+let _founderPreviewByKey = {};
+function _founderFetchPreview(g) {
+  const key = `${g.student_id}|${g.fee_item_id}|${g.academic_year_id}`;
+  if (!_founderPreviewByKey[key]) {
+    const qs = new URLSearchParams({ student_id: g.student_id, fee_item_id: g.fee_item_id, academic_year_id: g.academic_year_id });
+    _founderPreviewByKey[key] = apiFetch(`${_FOUNDER_API}/preview?${qs}`)
+      .then(async res => {
+        if (!res || !res.ok) return { matches: null, status: res ? res.status : 0 };
+        const body = await res.json().catch(() => null);
+        return { matches: Array.isArray(body?.matches) ? body.matches : [], status: res.status };
+      })
+      .catch(() => ({ matches: null, status: 0 }));
+  }
+  return _founderPreviewByKey[key];
+}
+// { lines: [{ term, scope, base, value }], total, count }, or null when the
+// preview couldn't be read.
+function _founderValueFromPreview(g, preview) {
+  if (!g || !preview || !Array.isArray(preview.matches)) return null;
+  const flat = g.discount_amount != null ? parseFloat(g.discount_amount) : null;
+  const pct = g.discount_percent != null ? parseFloat(g.discount_percent) : 0;
+  const lines = preview.matches.map(m => {
+    const base = parseFloat(m.amount) || 0;
+    const raw = flat != null ? flat : Math.round(base * pct) / 100;
+    return { term: m.term_title || '', scope: m.scope_label || '', base, value: Math.max(0, Math.min(raw, base)) };
+  });
+  const total = Math.round(lines.reduce((s, l) => s + l.value, 0) * 100) / 100;
+  return { lines, total, count: lines.length };
+}
+// "KES 18,000.00 across 2 terms"; empty when nothing is billed.
+function _founderValueSpan(est) {
+  if (!est || !est.count) return '';
+  const unit = est.lines.every(l => l.term) ? 'term' : 'fee line';
+  return `${_pvMoney(est.total)}${est.count > 1 ? ` across ${est.count} ${unit}s` : ''}`;
+}
+// Per-term table for an approver, or a sentence saying why there is no KES
+// figure. The fee item default is only used as a last resort for a percent grant.
+function _founderValueBreakdownHtml(g, preview) {
+  const est = _founderValueFromPreview(g, preview);
+  const feeItemName = _finEsc(_rcvFeeItemName(g.fee_item_id));
+  const label = _finEsc(_founderDiscountLabel(g));
+  const muted = html => `<span style="color:var(--grey-600,#666);">${html}</span>`;
+  const proxy = g.discount_percent != null
+    ? _founderProxyKes({ amount: null, percent: parseFloat(g.discount_percent), feeItemId: g.fee_item_id })
+    : null;
+  const proxyNote = proxy != null ? ` On the fee item's default amount that is ${_pvMoney(proxy)} a line.` : '';
+  if (!est) {
+    const why = preview && preview.status === 403 ? "Your role can't read this student's billing" : "This student's billing couldn't be loaded";
+    return muted(`${why}, so the only figure is ${label} off each ${feeItemName} line.${proxyNote}`);
+  }
+  if (!est.count) {
+    return muted(`Nothing is billed to this student for ${feeItemName} in ${_finEsc(_founderYearName(g.academic_year_id))} yet, so approving takes nothing off today. Each ${feeItemName} line billed later loses ${label}.${proxyNote}`);
+  }
+  const rows = est.lines.map(l => `<tr><td>${_finEsc(l.term || '—')}</td><td>${_finEsc(l.scope || '—')}</td><td>${_pvMoney(l.base)}</td><td><strong>${_pvMoney(l.value)}</strong></td></tr>`).join('');
+  return `<div class="fin-table-wrap"><table class="fin-li-table">
+      <thead><tr><th>Term</th><th>Schedule</th><th>Billed</th><th>Founder's discount</th></tr></thead>
+      <tbody>${rows}<tr><td colspan="3" style="text-align:right;"><strong>Total</strong></td><td><strong>${_pvMoney(est.total)}</strong></td></tr></tbody>
+    </table></div>
+    <div style="font-size:0.76rem;color:var(--grey-600,#666);margin-top:4px;">Upper bound per line: sibling discounts and proration come off first, and the founder's discount can't exceed what's left.</div>`;
+}
+// Fills the small KES line under the DISCOUNT cell of open grants.
+async function _founderFillValues(grants) {
+  await Promise.all(grants.map(async g => {
+    const preview = await _founderFetchPreview(g);
+    const el = document.getElementById(`founder-val-${g.id}`);
+    const est = _founderValueFromPreview(g, preview);
+    if (!el || !est) return;
+    el.textContent = est.count ? _founderValueSpan(est) : 'Not billed yet';
+    el.title = est.lines.map(l => `${l.term || l.scope}: ${_pvMoney(l.value)} off ${_pvMoney(l.base)}`).join('\n');
+  }));
+}
 // Fetched on each page load until it succeeds. A BE without the route answers
 // 422 (it falls through to /{grant_id}); that, a 403 or a network failure keeps
 // the defaults rather than blocking the page.
@@ -136,6 +217,7 @@ function _founderInfoBox(html, tone = 'navy') {
 // ── Page ─────────────────────────────────────────────────────────────────
 async function loadFounderDiscountsView(container) {
   container.innerHTML = `<div class="fin-page"><p style="color:#888;padding:20px 0;">Loading&#8230;</p></div>`;
+  _founderPreviewByKey = {};
   await Promise.all([_rcvLoadLookups({ items: true, students: true, academicYears: true }), _founderLoadConfig()]);
   // A statement link opens one grant, so it starts from the unfiltered list.
   if (window._founderOpenGrantId || window._founderOpenApplicationId) {
@@ -308,11 +390,12 @@ function _founderRenderGrantsTable() {
       <td>${_finEsc(_rcvStudentName(g.student_id))}</td>
       <td>${_finEsc(_rcvFeeItemName(g.fee_item_id))}</td>
       <td>${_finEsc(_founderYearName(g.academic_year_id))}</td>
-      <td>${_founderDiscountLabel(g)}</td>
+      <td>${_founderDiscountLabel(g)}${g.status === 'draft' || g.status === 'pending' ? `<div id="founder-val-${g.id}" style="font-size:0.76rem;color:var(--grey-600,#666);"></div>` : ''}</td>
       <td>${_founderStatusBadge(g)}</td>
       <td>${_finEsc(_founderStaffLabel(g.created_by))}<br><small style="color:#888;">${_pvDate(g.created_at)}</small></td>
       <td style="white-space:nowrap;text-align:right;">${_founderRowActions(g)}</td>
     </tr>`).join('')}</tbody></table></div>`;
+  _founderFillValues(rows.filter(g => g.status === 'draft' || g.status === 'pending'));
 }
 
 function _founderRowActions(g) {
@@ -359,11 +442,12 @@ async function _founderLoadInbox(body) {
       <td>${_finEsc(_rcvStudentName(g.student_id))}</td>
       <td>${_finEsc(_rcvFeeItemName(g.fee_item_id))}</td>
       <td>${_finEsc(_founderYearName(g.academic_year_id))}</td>
-      <td>${_founderDiscountLabel(g)}</td>
+      <td>${_founderDiscountLabel(g)}<div id="founder-val-${g.id}" style="font-size:0.76rem;color:var(--grey-600,#666);"></div></td>
       <td style="max-width:260px;">${_finEsc(g.reason || '')}</td>
       <td>${_finEsc(_founderStaffLabel(g.created_by))}<br><small style="color:#888;">${_pvDate(g.created_at)}</small></td>
       <td style="white-space:nowrap;text-align:right;">${_founderRowActions(g)}</td>
     </tr>`).join('')}</tbody></table></div>`;
+  _founderFillValues(rows);
 }
 // The tab badge is fed by its own request so it is right on the Grants tab too.
 // A 403 (no finance.cancellations view) just leaves the badge off.

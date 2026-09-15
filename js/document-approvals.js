@@ -74,6 +74,8 @@ let _daPettyCashCache = {};
 let _daInternalRequisitionCache = {};
 let _daAdvanceCache = {};
 let _daFounderDiscountCache = {};
+// grant id → the /preview result for that grant (see _founderFetchPreview).
+let _daFounderDiscountPreview = {};
 // "founder_discount:<id>" keys whose GET answered 403. The grant GET takes
 // finance.setup or finance.cancellations and DAS approvers only need
 // document_approval, so a 403 means "you can't see the grant", not "it's gone".
@@ -102,6 +104,8 @@ async function _daPrefetchDocuments(items) {
   // grant id, so a cached copy would show the old amount. The list endpoint has
   // no id filter (checked 2026-09-15), so this is one GET per grant.
   const fdIds = [...new Set(items.filter(i => i.document_type === 'founder_discount').map(i => i.document_id))];
+  // Billing can change between visits, so the KES breakdown is re-read too.
+  if (fdIds.length && typeof _founderPreviewByKey !== 'undefined') _founderPreviewByKey = {};
 
   const jobs = [];
   if (reqIds.length && typeof _reqEnsureSuppliersCache === 'function') jobs.push(_reqEnsureSuppliersCache());
@@ -176,15 +180,28 @@ async function _daFetchFounderDiscount(id) {
     delete _daFounderDiscountHidden[key];
     if (res.ok) {
       const data = await res.json().catch(() => null);
-      if (data) _daFounderDiscountCache[id] = data;
+      if (data) {
+        _daFounderDiscountCache[id] = data;
+        // The KES the approver is signing off, from the student's billing.
+        if (typeof _founderFetchPreview === 'function') _daFounderDiscountPreview[id] = await _founderFetchPreview(data);
+      }
       return;
     }
     delete _daFounderDiscountCache[id];
+    delete _daFounderDiscountPreview[id];
     if (res.status === 403) _daFounderDiscountHidden[key] = true;
     else _daHydrationFailed[key] = true;
   } catch (_) {
     _daHydrationFailed[key] = true;
   }
+}
+
+// { lines, total, count } for a hydrated grant, or null (no grant, or the
+// billing preview couldn't be read).
+function _daFounderDiscountEstimate(documentId) {
+  const g = _daFounderDiscountCache[documentId];
+  if (!g || typeof _founderValueFromPreview !== 'function') return null;
+  return _founderValueFromPreview(g, _daFounderDiscountPreview[documentId]);
 }
 
 // founder-discounts.js is loaded on every staff page, so its label helper is
@@ -238,7 +255,9 @@ function _daResolveDoc(item) {
     const studentName = (typeof _rcvStudentName === 'function') ? _rcvStudentName(g.student_id) : `Student #${g.student_id}`;
     const feeItemName = (typeof _rcvFeeItemName === 'function') ? _rcvFeeItemName(g.fee_item_id) : `Fee Item #${g.fee_item_id}`;
     const yearName = (typeof _founderYearName === 'function') ? _founderYearName(g.academic_year_id) : `Academic Year #${g.academic_year_id}`;
-    return { title: [g.reason, studentName, feeItemName, _daFounderDiscountLabel(g)].join(' · '), sub: yearName, amount: g.discount_amount };
+    const est = _daFounderDiscountEstimate(item.document_id);
+    const worth = est && est.count ? `${_daFounderDiscountLabel(g)} = ${_founderValueSpan(est)}` : _daFounderDiscountLabel(g);
+    return { title: [g.reason, studentName, feeItemName, worth].join(' · '), sub: yearName, amount: est && est.count ? est.total : g.discount_amount };
   }
   return { title: `#${item.document_id}`, sub: '', amount: null };
 }
@@ -251,6 +270,7 @@ async function loadDaQueueView(container) {
     <div id="da-split-mount"></div>
   `;
   document.getElementById('da-toolbar').innerHTML = `
+    <div id="da-founder-legacy-banner" style="padding:0 4px;"></div>
     <div style="display:flex;justify-content:flex-end;gap:10px;padding:0 4px;">
       <button class="fin-btn-outline" onclick="_daSyncOverdue()">&#8635; Sync Overdue Invoices</button>
     </div>
@@ -265,6 +285,7 @@ async function _daRenderQueueSplit(mountEl) {
     if (res && res.ok) queueItems = _toArray(await res.json());
   } catch (_) {}
   await _daPrefetchDocuments(queueItems);
+  _daRenderFounderLegacyBanner(queueItems);
 
   await renderSplitView({
     container: mountEl,
@@ -293,6 +314,41 @@ async function _daRenderQueueSplit(mountEl) {
     },
     detailActions: _daDetailActions,
   });
+}
+
+// Grants that went Pending, or were saved as Draft, before founder's discounts
+// were mirrored into DAS (2026-09-15) have no approval row, so they never reach
+// this queue. Until the BE backfills them, name them and say where they can be
+// approved. Reads the grant list, which document_approval can read; if the
+// list can't be read the banner stays off. It clears itself once every open
+// grant has a queue row.
+async function _daRenderFounderLegacyBanner(queueItems) {
+  const el = document.getElementById('da-founder-legacy-banner');
+  if (!el) return;
+  const queued = new Set(queueItems.filter(i => i.document_type === 'founder_discount').map(i => String(i.document_id)));
+  const finance = canView('finance.setup') || canView('finance.cancellations');
+  const [lists] = await Promise.all([
+    Promise.all(['pending', 'draft'].map(status =>
+      apiFetch(`${API_BASE}/receivables/setup/founder-discounts?status=${status}&is_active=true`)
+        .then(res => (res && res.ok ? res.json().catch(() => null) : null))
+        .catch(() => null))),
+    finance && typeof _rcvLoadLookups === 'function' ? _rcvLoadLookups({ items: true, students: true, academicYears: true }) : null,
+  ]);
+  if (!el.isConnected || lists.every(l => l == null)) return;
+  const missing = lists.flatMap(l => _toArray(l || [])).filter(g => !queued.has(String(g.id)));
+  if (!missing.length) { el.innerHTML = ''; return; }
+  const n = missing.length;
+  const name = (fn, id) => (typeof fn === 'function' ? fn(id) : `#${id}`);
+  const shown = missing.slice(0, 10).map(g => `<li>${_daEsc(name(_rcvStudentName, g.student_id))} &middot; ${_daEsc(name(_rcvFeeItemName, g.fee_item_id))} &middot; ${_daEsc(name(_founderYearName, g.academic_year_id))} &middot; ${_daEsc(_daFounderDiscountLabel(g))} (${_daEsc(g.status)})</li>`).join('');
+  el.innerHTML = `
+    <div style="background:var(--gold-100,#F7EFD5);border-left:3px solid var(--gold-500,#C9A227);color:#6b5400;border-radius:6px;padding:10px 14px;margin-bottom:10px;font-size:0.85rem;line-height:1.5;">
+      <strong>${n} founder's discount grant${n === 1 ? ' is' : 's are'} waiting for approval but ${n === 1 ? 'is' : 'are'} not in this queue.</strong>
+      ${n === 1 ? 'It was' : 'They were'} created before founder's discounts were routed through Document Approvals, so no approval row exists yet.
+      ${finance
+        ? `Approve ${n === 1 ? 'it' : 'them'} from <a href="#" onclick="loadView('finance-founder-discounts');return false;">Founder's Discounts</a> until ${n === 1 ? 'it is' : 'they are'} synced here.`
+        : "A finance approver can clear them from Founder's Discounts until they are synced here."}
+      <ul style="margin:6px 0 0 18px;padding:0;">${shown}${n > 10 ? `<li>and ${n - 10} more</li>` : ''}</ul>
+    </div>`;
 }
 
 // ==================== ALL APPROVALS (filterable) ====================
@@ -480,6 +536,9 @@ const _daDetailFields = [
     fmt: (v, item) => { const g = _daFounderDiscountCache[item.document_id]; return _daEsc((typeof _founderYearName === 'function') ? _founderYearName(g.academic_year_id) : `Academic Year #${g.academic_year_id}`); } },
   { label: 'Discount', key: 'document_id', hideWhen: item => item.document_type !== 'founder_discount' || !_daFounderDiscountCache[item.document_id],
     fmt: (v, item) => _daEsc(_daFounderDiscountLabel(_daFounderDiscountCache[item.document_id])) },
+  { label: 'Amount Being Approved', key: 'document_id', fullWidth: true,
+    hideWhen: item => item.document_type !== 'founder_discount' || !_daFounderDiscountCache[item.document_id] || typeof _founderValueBreakdownHtml !== 'function',
+    fmt: (v, item) => _founderValueBreakdownHtml(_daFounderDiscountCache[item.document_id], _daFounderDiscountPreview[item.document_id]) },
   { label: 'Grant Status', key: 'document_id', hideWhen: item => item.document_type !== 'founder_discount' || !_daFounderDiscountCache[item.document_id],
     fmt: (v, item) => { const g = _daFounderDiscountCache[item.document_id]; return (typeof _founderStatusBadge === 'function') ? _founderStatusBadge(g) : _daEsc(g.status); } },
   { label: 'Grant Created By', key: 'document_id', hideWhen: item => item.document_type !== 'founder_discount' || !_daFounderDiscountCache[item.document_id],
@@ -850,7 +909,12 @@ async function _daApprove() {
       const studentName = (typeof _rcvStudentName === 'function') ? _rcvStudentName(g.student_id) : `Student #${g.student_id}`;
       const feeItemName = (typeof _rcvFeeItemName === 'function') ? _rcvFeeItemName(g.fee_item_id) : `Fee Item #${g.fee_item_id}`;
       const yearName = (typeof _founderYearName === 'function') ? _founderYearName(g.academic_year_id) : `Academic Year #${g.academic_year_id}`;
-      bodyHtml = `<p style="font-size:13px;color:var(--grey-600,#5F6B7C);margin:0 0 14px;">Approve a founder's discount of <strong>${_daEsc(_daFounderDiscountLabel(g))}</strong> on ${_daEsc(feeItemName)} for ${_daEsc(studentName)} (${_daEsc(yearName)})? Invoices generated from then on pick it up.</p>`;
+      const est = _daFounderDiscountEstimate(item.document_id);
+      const worth = est && est.count ? `, worth <strong>${_daEsc(_founderValueSpan(est))}</strong>,` : '';
+      bodyHtml = `<p style="font-size:13px;color:var(--grey-600,#5F6B7C);margin:0 0 10px;">Approve a founder's discount of <strong>${_daEsc(_daFounderDiscountLabel(g))}</strong>${worth} on ${_daEsc(feeItemName)} for ${_daEsc(studentName)} (${_daEsc(yearName)})? Invoices generated from then on pick it up.</p>`
+        + (typeof _founderValueBreakdownHtml === 'function'
+          ? `<div style="font-size:13px;margin:0 0 12px;">${_founderValueBreakdownHtml(g, _daFounderDiscountPreview[item.document_id])}</div>`
+          : '');
     } else {
       bodyHtml = `<p style="font-size:13px;color:var(--grey-600,#5F6B7C);margin:0 0 14px;">Approve founder's discount grant <strong>#${_daEsc(item.document_id)}</strong>? Invoices generated from then on pick it up.</p>`;
     }
