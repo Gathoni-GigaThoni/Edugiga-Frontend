@@ -55,6 +55,8 @@ let _founderApplySeq = 0;
 let _founderHistorySeq = 0;
 let _founderOpenSeq = 0;               // statement-link resolution (_founderOpenFromHash)
 let _founderRenew = null;              // { grant } while the Renew modal is open
+let _founderPreviewSeq = 0;
+let _founderPreviewCache = { key: null, matches: null };
 
 // ── Small helpers ────────────────────────────────────────────────────────
 function _founderStatusBadge(g) {
@@ -480,13 +482,13 @@ function _founderOpenForm(id = null) {
       <h3 style="margin:0 0 14px;font-size:1.05rem;color:var(--navy-700,#2c3e50);">${g ? 'Edit Grant' : "New Founder's Discount"}</h3>
       <div class="fin-form-group">
         <label class="fin-form-label">Student <span class="fin-required">*</span></label>
-        <select id="founder-form-student" class="fin-form-select" ${g ? 'disabled' : ''}>${_rcvStudentOptions('Please Select', g?.student_id)}</select>
+        <select id="founder-form-student" class="fin-form-select" ${g ? 'disabled' : ''} onchange="_founderRefreshPreview()">${_rcvStudentOptions('Please Select', g?.student_id)}</select>
         <span class="fin-field-error" id="founder-form-student-err"></span>
       </div>
       <div class="fin-form-grid-2">
         <div class="fin-form-group">
           <label class="fin-form-label">Fee Item <span class="fin-required">*</span></label>
-          <select id="founder-form-fee-item" class="fin-form-select" ${g ? 'disabled' : ''} onchange="_founderFormRecompute()">
+          <select id="founder-form-fee-item" class="fin-form-select" ${g ? 'disabled' : ''} onchange="_founderFormRecompute();_founderRefreshPreview()">
             <option value="">${_finEsc(lookupPlaceholder('fee-items', 'Please Select'))}</option>
             ${feeItems.map(f => `<option value="${f.id}" ${String(f.id) === String(g?.fee_item_id) ? 'selected' : ''}>${_finEsc(f.name || `#${f.id}`)} (${_pvMoney(f.default_amount)})</option>`).join('')}
           </select>
@@ -494,7 +496,7 @@ function _founderOpenForm(id = null) {
         </div>
         <div class="fin-form-group">
           <label class="fin-form-label">Academic Year <span class="fin-required">*</span></label>
-          <select id="founder-form-year" class="fin-form-select" ${g ? 'disabled' : ''}>
+          <select id="founder-form-year" class="fin-form-select" ${g ? 'disabled' : ''} onchange="_founderRefreshPreview()">
             <option value="">${_finEsc(lookupPlaceholder('academic-years', 'Please Select'))}</option>
             ${_founderYearOptions(g ? g.academic_year_id : currentYear?.id)}
           </select>
@@ -508,6 +510,7 @@ function _founderOpenForm(id = null) {
         <span id="founder-form-value-hint" style="font-size:12px;color:var(--grey-600);"></span>
         <span class="fin-field-error" id="founder-form-value-err"></span>
       </div>
+      <div id="founder-form-preview" style="margin-top:8px;"></div>
       <div id="founder-threshold-banner"></div>
       <div class="fin-form-group">
         <label class="fin-form-label">Reason <span class="fin-required">*</span></label>
@@ -529,8 +532,99 @@ function _founderOpenForm(id = null) {
       </div>
     </div>`;
   document.body.appendChild(wrap);
+  _founderPreviewCache = { key: null, matches: null };
   _founderFormRecompute();
+  // Prefill preview on edit (student + fee_item + year already set) — on
+  // create the student is blank so the fetch bails and the container
+  // stays empty until the bursar picks one.
+  _founderRefreshPreview();
 }
+
+
+// ── Preview: resolve what schedule + amount the grant will land on ──────
+// The picker exposes FeeItem (semantic anchor). Bursars think in
+// FeeSchedule (Willow-Tuition-50k vs Oak-Tuition-60k). A preview strip
+// under the picker lets them see the actual schedule + amount for THIS
+// student BEFORE they save, so the picker label doesn't mislead when
+// two students share a fee item but sit on different schedules.
+
+async function _founderRefreshPreview() {
+  const previewEl = document.getElementById('founder-form-preview');
+  if (!previewEl) return;
+  const studentId = parseInt(document.getElementById('founder-form-student').value, 10);
+  const feeItemId = parseInt(document.getElementById('founder-form-fee-item').value, 10);
+  const yearId    = parseInt(document.getElementById('founder-form-year').value, 10);
+  if (!studentId || !feeItemId) {
+    previewEl.innerHTML = '';
+    _founderPreviewCache = { key: null, matches: null };
+    return;
+  }
+  const key = `${studentId}|${feeItemId}|${yearId || ''}`;
+  // Cache-hit: no fetch, just re-render (value/percent change triggers
+  // this same helper to refresh the KES estimate on cached matches).
+  if (_founderPreviewCache.key === key && _founderPreviewCache.matches !== null) {
+    _founderRenderPreview();
+    return;
+  }
+  const seq = ++_founderPreviewSeq;
+  previewEl.innerHTML = `<div style="font-size:0.8rem;color:#888;padding:4px 0;">Checking this student's current billing…</div>`;
+  const qs = new URLSearchParams({ student_id: studentId, fee_item_id: feeItemId });
+  if (yearId) qs.set('academic_year_id', yearId);
+  let res;
+  try {
+    res = await apiFetch(`${_FOUNDER_API}/preview?${qs.toString()}`);
+  } catch (_) {
+    if (seq === _founderPreviewSeq) previewEl.innerHTML = '';
+    return;
+  }
+  if (seq !== _founderPreviewSeq) return;
+  if (!res || !res.ok) {
+    // Silent — the picker still works, the preview is a nice-to-have.
+    previewEl.innerHTML = '';
+    return;
+  }
+  const body = await res.json().catch(() => null);
+  if (seq !== _founderPreviewSeq) return;
+  _founderPreviewCache = { key, matches: (body && Array.isArray(body.matches)) ? body.matches : [] };
+  _founderRenderPreview();
+}
+
+function _founderRenderPreview() {
+  const previewEl = document.getElementById('founder-form-preview');
+  if (!previewEl) return;
+  const matches = _founderPreviewCache.matches;
+  if (matches == null) { previewEl.innerHTML = ''; return; }
+  const feeItemId = parseInt(document.getElementById('founder-form-fee-item').value, 10);
+  const feeItemName = _rcvFeeItemName(feeItemId) || 'this fee item';
+  const yearVal = document.getElementById('founder-form-year').value;
+
+  if (matches.length === 0) {
+    previewEl.innerHTML = _founderInfoBox(
+      `This student has no active <strong>${_finEsc(feeItemName)}</strong> assignment${yearVal ? ' for the selected year' : ''}. The grant is still saveable — it will apply to any future invoice that bills this fee item for this student.`,
+      'gold'
+    );
+    return;
+  }
+
+  const isPct = document.querySelector('input[name="founder-form-kind"]:checked')?.value === 'percent';
+  const raw = parseFloat(document.getElementById('founder-form-value').value);
+  const rows = matches.map(m => {
+    const amt = parseFloat(m.amount || 0);
+    let est = '';
+    if (!isNaN(raw) && raw > 0) {
+      const perLine = isPct ? amt * raw / 100 : Math.min(raw, amt);
+      est = ` &middot; grant would apply <strong>${_pvMoney(perLine)}</strong>`;
+    }
+    const term = m.term_title ? ` &middot; ${_finEsc(m.term_title)}` : '';
+    return `<li style="margin:2px 0;">${_finEsc(m.scope_label || 'Schedule')}${term} &middot; <strong>${_pvMoney(amt)}</strong>${est}</li>`;
+  }).join('');
+  const noun = matches.length === 1 ? 'schedule' : `${matches.length} schedules`;
+  previewEl.innerHTML = _founderInfoBox(
+    `Current billing for this student on <strong>${_finEsc(feeItemName)}</strong> (${noun}):<ul style="margin:6px 0 0 20px;padding:0;">${rows}</ul>`,
+    'navy'
+  );
+}
+
 
 function _founderFormRecompute() {
   const banner = document.getElementById('founder-threshold-banner');
@@ -543,6 +637,9 @@ function _founderFormRecompute() {
     : 'KES taken off the fee line: above 0.';
   document.getElementById('founder-form-reason-count').textContent = document.getElementById('founder-form-reason').value.length;
   document.getElementById('founder-form-notes-count').textContent = document.getElementById('founder-form-notes').value.length;
+  // Value/percent changes: re-render the KES estimate against the cached
+  // matches without a re-fetch (cache-hit inside _founderRefreshPreview).
+  _founderRefreshPreview();
 
   const cfg = _founderConfig || _FOUNDER_DEFAULT_CONFIG;
   const money = v => cfg.currency === 'KES' ? _pvMoney(v) : `${_finEsc(cfg.currency)} ${_finFmt(v)}`;
