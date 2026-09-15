@@ -1,5 +1,5 @@
 // ==================== DOCUMENT APPROVAL SYSTEM ====================
-// Approval workflow for six polymorphic document types: Payment Vouchers
+// Approval workflow for seven polymorphic document types: Payment Vouchers
 // (payables.js already has its own direct submit/approve/reject actions on
 // /payables/payment-vouchers/{id}/... — this module is the cross-cutting
 // queue that additionally covers overdue Fee Invoices, which have no other
@@ -8,7 +8,9 @@
 // Advances. As of 2026-08-10 the in-module approve/reject endpoints for
 // Requisitions/Petty Cash were removed server-side (404) — this is now
 // their only approval path; Internal Requisitions and Employee Advances
-// (added 2026-08-11) never had one. DocumentApproval only stores a
+// (added 2026-08-11) never had one. Founder's Discount grants (2026-09-15)
+// are mirrored in from the grant's own Approvals Inbox; approving or rejecting
+// on either surface closes both. DocumentApproval only stores a
 // document_type + document_id (no FK) so the referenced document's details
 // (payee/student, amount, description) must be resolved separately per type.
 
@@ -39,6 +41,7 @@ const _DA_TYPE_LABEL = {
   petty_cash:            'Petty Cash',
   internal_requisition: 'Internal Requisition',
   employee_advance:      'Employee Advance',
+  founder_discount:      "Founder's Discount",
 };
 const _DA_TYPE_PILL_STYLE = {
   payment_voucher:      'background:var(--navy-700,#1B3057);color:#fff;',
@@ -49,6 +52,9 @@ const _DA_TYPE_PILL_STYLE = {
   // Cash pill while staying inside the existing navy/gold/coral token set.
   internal_requisition: 'background:var(--coral-500,#D94040);color:#fff;',
   employee_advance:      'background:transparent;border:1px solid var(--gold-500,#C9A227);color:var(--gold-500,#C9A227);',
+  // Pale gold fill — same tone the Founder's Discounts page uses for its own
+  // notices, and unlike the solid-gold Fee Invoice / gold-ghost Advance pills.
+  founder_discount:      'background:var(--gold-100,#F7EFD5);color:#6b5400;',
 };
 function _daTypeLabel(type) { return _DA_TYPE_LABEL[type] || (type || '—'); }
 function _daTypeBadge(type) {
@@ -67,6 +73,12 @@ let _daRequisitionCache = {};
 let _daPettyCashCache = {};
 let _daInternalRequisitionCache = {};
 let _daAdvanceCache = {};
+let _daFounderDiscountCache = {};
+// "founder_discount:<id>" keys whose GET answered 403. The grant GET takes
+// finance.setup or finance.cancellations and DAS approvers only need
+// document_approval, so a 403 means "you can't see the grant", not "it's gone".
+// Kept apart from _daHydrationFailed so Approve/Reject stay available.
+let _daFounderDiscountHidden = {};
 // Tracks "<type>:<id>" keys whose single-item GET came back non-OK (e.g. the
 // source document was deleted after the DA row was created) so the detail
 // panel can render a coral banner and disable Approve/Reject instead of
@@ -85,11 +97,23 @@ async function _daPrefetchDocuments(items) {
     .filter(id => !_daInternalRequisitionCache[id]);
   const advIds = [...new Set(items.filter(i => i.document_type === 'employee_advance').map(i => i.document_id))]
     .filter(id => !_daAdvanceCache[id]);
+  // Not filtered against the cache: a grant is edited in place on the Founder's
+  // Discounts page, and an edit that sends it back to Pending re-queues the same
+  // grant id, so a cached copy would show the old amount. The list endpoint has
+  // no id filter (checked 2026-09-15), so this is one GET per grant.
+  const fdIds = [...new Set(items.filter(i => i.document_type === 'founder_discount').map(i => i.document_id))];
 
   const jobs = [];
   if (reqIds.length && typeof _reqEnsureSuppliersCache === 'function') jobs.push(_reqEnsureSuppliersCache());
   if ((reqIds.length || pcaIds.length || advIds.length) && typeof _reqEnsureStaffCache === 'function') jobs.push(_reqEnsureStaffCache());
   if (intReqIds.length && typeof _invEnsureStoresCache === 'function') jobs.push(_invEnsureStoresCache());
+  // Names come from the finance lookups, which answer to the same two keys as
+  // the grant GET. Without either, loadLookupList would toast one 403 per lookup
+  // and the grant itself can't be read anyway, so they aren't requested.
+  if (fdIds.length && typeof _rcvLoadLookups === 'function' && (canView('finance.setup') || canView('finance.cancellations'))) {
+    jobs.push(_rcvLoadLookups({ items: true, students: true, academicYears: true }));
+  }
+  fdIds.forEach(id => jobs.push(_daFetchFounderDiscount(id)));
   if (pvNeeded && !_daPvListCache) {
     jobs.push(
       apiFetch(`${API_BASE}/payables/payment-vouchers/`)
@@ -141,6 +165,37 @@ async function _daPrefetchDocuments(items) {
   await Promise.all(jobs);
 }
 
+// One grant, read on every queue load (see fdIds above) and again after an
+// approve/reject, so the detail pane shows the status the action left behind.
+async function _daFetchFounderDiscount(id) {
+  const key = `founder_discount:${id}`;
+  try {
+    const res = await apiFetch(`${API_BASE}/receivables/setup/founder-discounts/${id}`);
+    if (!res) return;
+    delete _daHydrationFailed[key];
+    delete _daFounderDiscountHidden[key];
+    if (res.ok) {
+      const data = await res.json().catch(() => null);
+      if (data) _daFounderDiscountCache[id] = data;
+      return;
+    }
+    delete _daFounderDiscountCache[id];
+    if (res.status === 403) _daFounderDiscountHidden[key] = true;
+    else _daHydrationFailed[key] = true;
+  } catch (_) {
+    _daHydrationFailed[key] = true;
+  }
+}
+
+// founder-discounts.js is loaded on every staff page, so its label helper is
+// normally there; the fallback is the same wording.
+function _daFounderDiscountLabel(g) {
+  if (typeof _founderDiscountLabel === 'function') return _founderDiscountLabel(g);
+  if (g.discount_amount != null) return `KES ${_daMoney(g.discount_amount)}`;
+  if (g.discount_percent != null) return `${parseFloat(g.discount_percent)}%`;
+  return '—';
+}
+
 function _daResolveDoc(item) {
   if (item.document_type === 'payment_voucher') {
     const v = (_daPvListCache || []).find(x => String(x.id) === String(item.document_id));
@@ -176,6 +231,14 @@ function _daResolveDoc(item) {
     if (!a) return { title: `Employee Advance #${item.document_id}`, sub: '', amount: null };
     const employeeName = (typeof _reqStaffLabel === 'function') ? _reqStaffLabel(a.employee_id) : `Employee #${a.employee_id}`;
     return { title: a.advance_number || `Employee Advance #${item.document_id}`, sub: employeeName, amount: a.approved_amount ?? a.principal };
+  }
+  if (item.document_type === 'founder_discount') {
+    const g = _daFounderDiscountCache[item.document_id];
+    if (!g) return { title: `Founder's Discount #${item.document_id}`, sub: '', amount: null };
+    const studentName = (typeof _rcvStudentName === 'function') ? _rcvStudentName(g.student_id) : `Student #${g.student_id}`;
+    const feeItemName = (typeof _rcvFeeItemName === 'function') ? _rcvFeeItemName(g.fee_item_id) : `Fee Item #${g.fee_item_id}`;
+    const yearName = (typeof _founderYearName === 'function') ? _founderYearName(g.academic_year_id) : `Academic Year #${g.academic_year_id}`;
+    return { title: [g.reason, studentName, feeItemName, _daFounderDiscountLabel(g)].join(' · '), sub: yearName, amount: g.discount_amount };
   }
   return { title: `#${item.document_id}`, sub: '', amount: null };
 }
@@ -217,8 +280,8 @@ async function _daRenderQueueSplit(mountEl) {
     col1Label: 'Document', col2Label: 'Status',
     col1: item => `${_daTypeBadge(item.document_type)} ${_daEsc(_daResolveDoc(item).title)}`,
     col2: () => _daBadge('pending'),
-    rowLabel: item => _daResolveDoc(item).title,
-    rowSub: item => `${_daTypeLabel(item.document_type)} — ${_daResolveDoc(item).sub}`,
+    rowLabel: item => _daEsc(_daResolveDoc(item).title),
+    rowSub: item => `${_daEsc(_daTypeLabel(item.document_type))} — ${_daEsc(_daResolveDoc(item).sub)}`,
     idKey: 'id',
     detailFields: _daDetailFields,
     renderAdd: el => {
@@ -260,6 +323,7 @@ function _daRenderAllFilterBar() {
           <option value="petty_cash" ${_daAllFilters.document_type === 'petty_cash' ? 'selected' : ''}>Petty Cash</option>
           <option value="internal_requisition" ${_daAllFilters.document_type === 'internal_requisition' ? 'selected' : ''}>Internal Requisition</option>
           <option value="employee_advance" ${_daAllFilters.document_type === 'employee_advance' ? 'selected' : ''}>Employee Advance</option>
+          <option value="founder_discount" ${_daAllFilters.document_type === 'founder_discount' ? 'selected' : ''}>Founder's Discount</option>
         </select>
       </div>
       <div class="fin-form-group" style="margin:0;">
@@ -313,8 +377,8 @@ async function _daRenderAllSplit() {
     col1Label: 'Document', col2Label: 'Status',
     col1: item => `${_daTypeBadge(item.document_type)} ${_daEsc(_daResolveDoc(item).title)}`,
     col2: item => _daBadge(item.status),
-    rowLabel: item => _daResolveDoc(item).title,
-    rowSub: item => `${_daTypeLabel(item.document_type)} — ${_daResolveDoc(item).sub}`,
+    rowLabel: item => _daEsc(_daResolveDoc(item).title),
+    rowSub: item => `${_daEsc(_daTypeLabel(item.document_type))} — ${_daEsc(_daResolveDoc(item).sub)}`,
     idKey: 'id',
     detailFields: _daDetailFields,
     renderAdd: el => {
@@ -408,6 +472,26 @@ const _daDetailFields = [
     fmt: (v, item) => { const a = _daAdvanceCache[item.document_id]; return (a && a.notes) ? _daEsc(a.notes) : '—'; } },
   { label: 'Full Record', key: 'document_id', hideWhen: item => item.document_type !== 'employee_advance',
     fmt: (v, item) => `<a href="#" onclick="window._advOpenId=${item.document_id};loadView('payroll-salary-advances');return false;">&rarr; Open Advance</a>` },
+  { label: 'Student', key: 'document_id', hideWhen: item => item.document_type !== 'founder_discount' || !_daFounderDiscountCache[item.document_id],
+    fmt: (v, item) => { const g = _daFounderDiscountCache[item.document_id]; return _daEsc((typeof _rcvStudentName === 'function') ? _rcvStudentName(g.student_id) : `Student #${g.student_id}`); } },
+  { label: 'Fee Item', key: 'document_id', hideWhen: item => item.document_type !== 'founder_discount' || !_daFounderDiscountCache[item.document_id],
+    fmt: (v, item) => { const g = _daFounderDiscountCache[item.document_id]; return _daEsc((typeof _rcvFeeItemName === 'function') ? _rcvFeeItemName(g.fee_item_id) : `Fee Item #${g.fee_item_id}`); } },
+  { label: 'Academic Year', key: 'document_id', hideWhen: item => item.document_type !== 'founder_discount' || !_daFounderDiscountCache[item.document_id],
+    fmt: (v, item) => { const g = _daFounderDiscountCache[item.document_id]; return _daEsc((typeof _founderYearName === 'function') ? _founderYearName(g.academic_year_id) : `Academic Year #${g.academic_year_id}`); } },
+  { label: 'Discount', key: 'document_id', hideWhen: item => item.document_type !== 'founder_discount' || !_daFounderDiscountCache[item.document_id],
+    fmt: (v, item) => _daEsc(_daFounderDiscountLabel(_daFounderDiscountCache[item.document_id])) },
+  { label: 'Grant Status', key: 'document_id', hideWhen: item => item.document_type !== 'founder_discount' || !_daFounderDiscountCache[item.document_id],
+    fmt: (v, item) => { const g = _daFounderDiscountCache[item.document_id]; return (typeof _founderStatusBadge === 'function') ? _founderStatusBadge(g) : _daEsc(g.status); } },
+  { label: 'Grant Created By', key: 'document_id', hideWhen: item => item.document_type !== 'founder_discount' || !_daFounderDiscountCache[item.document_id],
+    fmt: (v, item) => { const g = _daFounderDiscountCache[item.document_id]; return g.created_by != null ? `Staff #${_daEsc(g.created_by)}` : '—'; } },
+  { label: 'Grant Reason', key: 'document_id', fullWidth: true, hideWhen: item => item.document_type !== 'founder_discount' || !_daFounderDiscountCache[item.document_id],
+    fmt: (v, item) => _daEsc(_daFounderDiscountCache[item.document_id].reason || '—') },
+  { label: 'Grant Notes', key: 'document_id', fullWidth: true, hideWhen: item => item.document_type !== 'founder_discount' || !_daFounderDiscountCache[item.document_id],
+    fmt: (v, item) => { const g = _daFounderDiscountCache[item.document_id]; return g.notes ? _daEsc(g.notes) : '—'; } },
+  { label: 'Full Record', key: 'document_id', hideWhen: item => item.document_type !== 'founder_discount' || !_daFounderDiscountCache[item.document_id],
+    fmt: (v, item) => `<a href="#" onclick="window._founderOpenGrantId=${parseInt(item.document_id, 10)};loadView('finance-founder-discounts');return false;">&rarr; Open Founder's Discount</a>` },
+  { label: 'Grant Details', key: 'document_id', fullWidth: true, hideWhen: item => item.document_type !== 'founder_discount' || !_daFounderDiscountHidden[`founder_discount:${item.document_id}`],
+    fmt: () => `<span style="color:var(--grey-600,#5F6B7C);">Your role can't open founder's discount grants (that needs Finance Set-up or Cancellations), so only the approval record is shown. You can still approve or reject it.</span>` },
   { label: 'Status',        key: 'status',        fmt: v => _daBadge(v) },
   { label: 'Submitted By',  key: 'submitted_by',  fmt: v => v != null ? `Staff #${v}` : '—' },
   { label: 'Submitted At',  key: 'submitted_at',  fmt: v => _daDate(v) },
@@ -426,9 +510,33 @@ const _daDetailFields = [
     } },
 ];
 
+// Copied from the server's 403 detail on purpose — the pre-flight and the
+// refusal have to read the same for the audit trail.
+const _DA_FOUNDER_SOD_MESSAGE = 'Segregation of duties: a founder-discount grant cannot be approved by its creator.';
+// { approvalId, userId, message } from a founder-discount 403, shown inline in
+// that row's detail pane for the rest of the page session.
+let _daInlineError = null;
+
+// The server refuses the grant's creator (grant.created_by), who isn't always
+// the DAS submitter: an edit that sends an approved grant back to Pending is
+// submitted by whoever edited it. When the grant can't be read (403), the
+// submitter is the best guess, since a create or renew is submitted by the
+// creator. The server check stays authoritative either way.
+function _daFounderDiscountApproveHtml(item, isSubmitter) {
+  const g = _daFounderDiscountCache[item.document_id];
+  const isCreator = g
+    ? !!(currentUser && g.created_by != null && String(currentUser.id) === String(g.created_by))
+    : isSubmitter;
+  const refused = _daInlineError && String(_daInlineError.approvalId) === String(item.id)
+    && currentUser && String(_daInlineError.userId) === String(currentUser.id);
+  if (!isCreator && !refused) return `<button class="btn" onclick="_daApprove()">Approve</button>`;
+  return `<div style="width:100%;color:var(--color-danger);font-size:0.85rem;margin-bottom:8px;">${_daEsc(refused ? _daInlineError.message : _DA_FOUNDER_SOD_MESSAGE)}</div>
+    <button class="btn" disabled style="opacity:0.5;cursor:not-allowed;" title="${_daEsc(_DA_FOUNDER_SOD_MESSAGE)}">Approve</button>`;
+}
+
 function _daDetailActions(item) {
   window._daCurrentItem = item;
-  const hydrationFailed = ['requisition', 'petty_cash', 'internal_requisition', 'employee_advance'].includes(item.document_type) && _daHydrationFailed[`${item.document_type}:${item.document_id}`];
+  const hydrationFailed = ['requisition', 'petty_cash', 'internal_requisition', 'employee_advance', 'founder_discount'].includes(item.document_type) && _daHydrationFailed[`${item.document_type}:${item.document_id}`];
   const failBanner = hydrationFailed ? `
     <div style="width:100%;background:var(--coral-100,#FDEAEA);border:1px solid var(--coral-500,#D94040);color:var(--coral-600,#B03030);border-radius:6px;padding:10px 14px;font-size:0.85rem;margin-bottom:10px;">
       Could not load the source document. It may have been deleted.
@@ -442,6 +550,8 @@ function _daDetailActions(item) {
   if (hydrationFailed) {
     // approving/rejecting a document that failed to hydrate would just 404
     // server-side, so the buttons stay off rather than let the operator hit that.
+  } else if (item.document_type === 'founder_discount') {
+    html += _daFounderDiscountApproveHtml(item, isSubmitter);
   } else if (isSubmitter) {
     html += `<div style="width:100%;color:var(--color-danger);font-size:0.85rem;margin-bottom:8px;">You submitted this document — segregation of duties means you cannot approve or reject it yourself.</div>`;
   } else {
@@ -624,10 +734,25 @@ async function _daHandleActionError(res) {
   // to know exactly what happened, not a paraphrase of it.
   const detail = await parseApiError(res);
   showToast(detail, 'error');
+  const item = window._daCurrentItem;
+  if (item && item.document_type === 'founder_discount') {
+    // 403 segregation (the grant's creator) stays under the buttons, verbatim.
+    // 404: the grant or the approval row is gone, so reload like a 409 does.
+    if (res.status === 403 && /segregation/i.test(detail)) {
+      _daInlineError = { approvalId: item.id, userId: currentUser?.id, message: detail };
+      await _daRefreshCurrent();
+      return;
+    }
+    if (res.status === 404) { await _daRefreshCurrent(); return; }
+  }
   if (res.status === 409) await _daRefreshCurrent();
 }
 
 async function _daRefreshCurrent() {
+  // A grant can change under its row (approved or rejected here, or edited on
+  // the Founder's Discounts page), so it is re-read along with the list.
+  const item = window._daCurrentItem;
+  if (item && item.document_type === 'founder_discount') await _daFetchFounderDiscount(item.document_id);
   if (typeof window._splitRefreshSelected === 'function') await window._splitRefreshSelected();
 }
 
@@ -716,6 +841,19 @@ async function _daApprove() {
     const applicantName = (p && typeof _reqStaffLabel === 'function') ? _reqStaffLabel(p.applicant_id) : (p ? `Employee #${p.applicant_id}` : '—');
     title = 'Approve Petty Cash Application';
     bodyHtml = `<p style="font-size:13px;color:var(--grey-600,#5F6B7C);margin:0 0 14px;">Approve petty cash application from ${_daEsc(applicantName)} for ${_daMoney(p?.requested_amount)}?</p>`;
+  } else if (type === 'founder_discount') {
+    // Notes only: no line_adjustments or approved_amount for a grant.
+    const g = _daFounderDiscountCache[item.document_id];
+    if (g && currentUser && String(currentUser.id) === String(g.created_by)) { showToast(_DA_FOUNDER_SOD_MESSAGE, 'error'); return; }
+    title = "Approve Founder's Discount";
+    if (g) {
+      const studentName = (typeof _rcvStudentName === 'function') ? _rcvStudentName(g.student_id) : `Student #${g.student_id}`;
+      const feeItemName = (typeof _rcvFeeItemName === 'function') ? _rcvFeeItemName(g.fee_item_id) : `Fee Item #${g.fee_item_id}`;
+      const yearName = (typeof _founderYearName === 'function') ? _founderYearName(g.academic_year_id) : `Academic Year #${g.academic_year_id}`;
+      bodyHtml = `<p style="font-size:13px;color:var(--grey-600,#5F6B7C);margin:0 0 14px;">Approve a founder's discount of <strong>${_daEsc(_daFounderDiscountLabel(g))}</strong> on ${_daEsc(feeItemName)} for ${_daEsc(studentName)} (${_daEsc(yearName)})? Invoices generated from then on pick it up.</p>`;
+    } else {
+      bodyHtml = `<p style="font-size:13px;color:var(--grey-600,#5F6B7C);margin:0 0 14px;">Approve founder's discount grant <strong>#${_daEsc(item.document_id)}</strong>? Invoices generated from then on pick it up.</p>`;
+    }
   } else {
     // payment_voucher / fee_invoice — unchanged surcharge-policy note. Look up
     // the active policy up front since the surcharge auto-applies server-side.
