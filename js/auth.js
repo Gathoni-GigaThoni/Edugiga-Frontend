@@ -33,8 +33,32 @@ async function login() {
   // permission set already in hand — showDashboard() reads it synchronously
   // while rendering rail buttons, so rendering first and populating after
   // would show every module on first paint regardless of role.
-  await loadModulesCache();
+  if (!await loadModulesCache()) { _bootPermissionFailure(); return; }
   showDashboard();
+}
+
+// The module registry is the only thing standing between a signed-in user and
+// every screen in the app, so a failed fetch is a hard stop, not something to
+// shrug past: the permission helpers fail closed without it, and rendering
+// the dashboard anyway would produce an empty rail that looks like a
+// permissions bug. Retry is in the user's hands; Log Out is the way out.
+function _bootPermissionFailure() {
+  showSidebarAfterAuth();
+  document.body.innerHTML = `
+    <div class="perm-boot-error">
+      <h2>Couldn't load your permissions</h2>
+      <p>You're signed in, but the server didn't return the list of modules you
+         have access to, so we can't safely show the dashboard.</p>
+      <div class="perm-boot-error-actions">
+        <button class="perm-boot-btn perm-boot-btn--primary" onclick="_retryPermissionBoot()">Try again</button>
+        <button class="perm-boot-btn" onclick="logout()">Log out</button>
+      </div>
+    </div>`;
+}
+
+async function _retryPermissionBoot() {
+  if (!await loadModulesCache()) { _bootPermissionFailure(); return; }
+  location.reload();
 }
 
 // See _normaliseTokenPayload in config.js (id from sub, clearance, role).
@@ -444,7 +468,7 @@ if (!checkForPasswordResetToken()) {
     // Arrow-wrap the callback so `showDashboard` is resolved at call time.
     // dashboard.js is loaded after auth.js by index.html, so the name is
     // not defined at the moment .then() is registered.
-    loadModulesCache().then(() => showDashboard());
+    loadModulesCache().then(ok => ok ? showDashboard() : _bootPermissionFailure());
   } else {
     renderLoginPage();
   }

@@ -379,3 +379,59 @@ body.login-page #main-content {
   .login-ring-inner { width: 132px; height: 132px; border-width: 11px; }
   .login-welcome { font-size: 28px; }
 }
+
+
+/* ==================== PERMISSION BOOT FAILURE ====================
+   Shown when the signed-in user's module registry can't be fetched. The
+   permission helpers fail closed without it, so the dashboard is withheld
+   rather than rendered with an empty rail that reads as a role problem. */
+.perm-boot-error {
+  max-width: 460px;
+  margin: 18vh auto 0;
+  padding: 32px 30px;
+  background: var(--white);
+  border: 1px solid var(--card-border);
+  border-top: 4px solid var(--gold-500);
+  border-radius: 10px;
+  box-shadow: var(--card-shadow);
+  font-family: 'Inter', Arial, sans-serif;
+  text-align: center;
+}
+.perm-boot-error h2 {
+  margin: 0 0 10px;
+  font-size: 19px;
+  color: var(--navy-700);
+}
+.perm-boot-error p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--grey-800);
+}
+.perm-boot-error-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 24px;
+}
+.perm-boot-btn {
+  padding: 11px 20px;
+  font-family: 'Inter', Arial, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border: 1px solid var(--card-border);
+  background: var(--white);
+  color: var(--grey-800);
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+.perm-boot-btn:hover { background: var(--grey-50); }
+.perm-boot-btn--primary {
+  background: var(--navy-700);
+  border-color: var(--navy-700);
+  color: #FFFFFF;
+}
+.perm-boot-btn--primary:hover { background: var(--navy-800); }

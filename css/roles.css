@@ -139,6 +139,18 @@
 .perm-module-name.perm-depth-0 { color: var(--coral-500); }
 .perm-module-name.perm-depth-1 { color: var(--navy-700); }
 
+/* Intermediate grouping node (e.g. Student Management > Utilities). Label
+   only — the group itself is not a module_key, so it carries no checkboxes. */
+.perm-subgroup-row td {
+  background: var(--navy-50); padding: 6px 12px;
+  border-bottom: 1px solid var(--grey-100);
+}
+.perm-subgroup-row:hover td { background: var(--navy-50); }
+.perm-subgroup-name {
+  color: var(--grey-800); font-size: 0.76rem; font-weight: 700;
+  letter-spacing: 0.06em; text-transform: uppercase;
+}
+
 .perm-expand-btn {
   width: 20px; height: 20px; min-width: 20px;
   background: var(--gold-500); color: var(--white);

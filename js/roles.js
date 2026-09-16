@@ -453,14 +453,25 @@ const _PERM_ACTIONS = ['view', 'add', 'edit', 'delete'];
 // "utilities" is itself a real path segment, not just a UI grouping label to
 // drop — an earlier version of this function capped the key at 2 segments
 // and 400'd with "Unknown module key: payroll.financial_institutions").
-function _permFlattenLeaves(children, pathPrefix, depth) {
+//
+// Rows come back in render order, mixing two shapes: a `group` row carries an
+// intermediate node's label (Student Management > Utilities, Payroll >
+// Utilities) and gets no checkboxes, since only leaves are real module_keys;
+// a `leaf` row is a permissionable module. Emitting the group rows is what
+// makes the matrix read like the sidebar flyout — an earlier version kept the
+// leaves only, so Streams/Funding Sources/Sports Houses sat indented under
+// Student Management with nothing saying they were the Utilities sub-menu.
+// A group whose subtree holds no leaf is skipped rather than left as a
+// dangling header.
+function _permFlattenRows(children, pathPrefix, depth) {
   let out = [];
   for (const [key, def] of Object.entries(children)) {
     const path = `${pathPrefix}.${key}`;
     if (def.children) {
-      out = out.concat(_permFlattenLeaves(def.children, path, depth + 1));
+      const nested = _permFlattenRows(def.children, path, depth + 1);
+      if (nested.length) out.push({ type: 'group', def, depth }, ...nested);
     } else if (def.actions) {
-      out.push({ moduleKey: path, def, depth });
+      out.push({ type: 'leaf', moduleKey: path, def, depth });
     }
   }
   return out;
@@ -487,18 +498,28 @@ function renderPermMatrix(container, matrix, currentPerms) {
         </td>
       </tr>`;
 
-      const leaves = _permFlattenLeaves(def.children, key, 1);
-      leaves.forEach(leaf => {
-        const p = currentPerms[leaf.moduleKey] || {};
-        const supported = new Set(leaf.def.actions || _PERM_ACTIONS);
+      _permFlattenRows(def.children, key, 1).forEach(row => {
+        const indent = 40 + (row.depth - 1) * 20;
+
+        if (row.type === 'group') {
+          rows += `<tr class="perm-row perm-child-row perm-subgroup-row" data-parent-key="${key}" style="display:none">
+            <td class="perm-module-cell" colspan="5">
+              <span class="perm-module-name perm-subgroup-name" style="margin-left:${indent}px">${row.def.label}</span>
+            </td>
+          </tr>`;
+          return;
+        }
+
+        const p = currentPerms[row.moduleKey] || {};
+        const supported = new Set(row.def.actions || _PERM_ACTIONS);
         rows += `<tr class="perm-row perm-depth-1 perm-child-row" data-parent-key="${key}" style="display:none">
           <td class="perm-module-cell">
-            <span class="perm-module-name perm-depth-1" style="margin-left:${40 + (leaf.depth - 1) * 20}px">${leaf.def.label}</span>
+            <span class="perm-module-name perm-depth-1" style="margin-left:${indent}px">${row.def.label}</span>
           </td>`;
         _PERM_ACTIONS.forEach(action => {
           const ok = supported.has(action);
           rows += `<td class="perm-cb-cell"><input type="checkbox" class="perm-action-cb"
-            data-module="${leaf.moduleKey}" data-action="${action}"
+            data-module="${row.moduleKey}" data-action="${action}"
             ${ok && p[`can_${action}`] ? 'checked' : ''}
             ${!ok ? 'disabled' : ''}></td>`;
         });

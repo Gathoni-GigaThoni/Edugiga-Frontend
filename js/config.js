@@ -285,6 +285,10 @@ function stopKeepAlive() {
 let _modulesByKey = {};
 let _modulesLoaded = false; // true once a fetch has SUCCEEDED — see _moduleFlag for why this matters
 
+// Returns true only when the registry is actually in hand. Callers MUST NOT
+// render the dashboard on false: every gate below fails closed without the
+// registry, so a wide-open rail is no longer the failure mode — a blank one
+// is, and auth.js shows a retry screen instead (see _bootPermissionFailure).
 async function loadModulesCache() {
   try {
     const res = await apiFetch(`${API_BASE}/administration/modules`);
@@ -294,8 +298,13 @@ async function loadModulesCache() {
       _modulesByKey = {};
       list.forEach(m => { if (m?.key) _modulesByKey[m.key] = m; });
       _modulesLoaded = true;
+      return true;
     }
-  } catch (_) {}
+    console.error('module registry load failed:', res ? res.status : 'no response');
+  } catch (err) {
+    console.error('module registry load failed:', err);
+  }
+  return false;
 }
 
 function _isSuperAdmin() {
@@ -303,21 +312,38 @@ function _isSuperAdmin() {
 }
 
 // Generic flag lookup — flag is 'can_view'|'can_add'|'can_edit'|'can_delete'.
-// Fails OPEN only when there's genuinely no data to judge from: the fetch
-// never completed (network/auth issue — avoids locking every non-admin user
-// out of everything over an unrelated loading bug) or the key is not in
-// the registry at all (a screen whose gate hasn't been wired up yet). Since
-// the backend now returns every registered key on every response — with
-// can_view/add/edit/delete all False for keys the caller has no permission
-// on — a key that IS registered but the user can't access will be present
-// in the cache with False flags and correctly fails CLOSED.
+//
+// An un-loaded registry used to fail OPEN, on the theory that a loading blip
+// shouldn't lock a user out of everything. That theory was backwards: the
+// registry is fetched once, before the dashboard renders, and every gate in
+// the app reads it — so a single failed fetch (403, 500, or a cold-start that
+// outlives apiFetch's retries) handed the caller EVERY module and every
+// action. Now it fails CLOSED, and auth.js refuses to render the dashboard at
+// all until the fetch succeeds, so "locked out of everything" is never the
+// state a real user lands in — they get a retry screen.
+//
+// A key absent from the registry still fails open, deliberately: the backend
+// returns every REGISTERED key on every response (keys the caller has no
+// permission on come back all-False), so absence means the FE asked about a
+// key the registry doesn't define — a typo or an unwired gate, not a denial.
+// Failing closed there would black out working screens over a spelling
+// mistake. The console warning makes that drift visible instead of silent.
 function _moduleFlag(key, flag) {
   if (_isSuperAdmin()) return true;
   if (!key) return true;
-  if (!_modulesLoaded) return true;
+  if (!_modulesLoaded) return false;
   const m = _modulesByKey[key];
-  if (!m) return true;
+  if (!m) { _warnUnregisteredKey(key); return true; }
   return !!m[flag];
+}
+
+// One warning per key per session — these fire from render loops.
+const _warnedKeys = new Set();
+function _warnUnregisteredKey(key) {
+  if (_warnedKeys.has(key)) return;
+  _warnedKeys.add(key);
+  console.warn(`[permissions] "${key}" is not in the module registry — gate fails open. ` +
+               `Either the key is misspelled in the FE or the backend has not registered it.`);
 }
 
 function canView(key)   { return _moduleFlag(key, 'can_view'); }
@@ -332,7 +358,7 @@ function canDelete(key) { return _moduleFlag(key, 'can_delete'); }
 function hasModuleAccess(key) {
   if (_isSuperAdmin()) return true;
   if (!key) return true;
-  if (!_modulesLoaded) return true;
+  if (!_modulesLoaded) return false;   // fails closed — see _moduleFlag
   return Object.entries(_modulesByKey).some(([k, m]) =>
     m.can_view && (k === key || k.startsWith(key + '.'))
   );
