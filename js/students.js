@@ -4237,6 +4237,14 @@ let _ecStudents   = [];   // [{student_id, student_name, student_code, enrollmen
 let _ecDirtyRows  = {};   // { [studentId]: { [feeItemId]: bool } } — only changed cells
 let _ecNameFilter = '';
 let _ecPage = 1, _ecPerPage = 10;
+// Enrolments the last save reported as unbillable (bulk-assign warnings[],
+// code no_pricing_configured): the tick was stored, but the club had no
+// FeeSchedule and no default_amount, so no StudentFeeAssignment was made.
+// The grid only sends changed cells, so these are re-sent on the next save.
+// Once the club has a price, that re-send creates the assignment; re-sending
+// an existing enrolment changes nothing else. Kept for the current term only,
+// and dropped when the banner is dismissed.
+let _ecUnbilled = [];     // [{student_id, fee_item_id, fee_item_name}]
 
 async function loadExtraCurricularAssignmentView(container) {
   openStuUtilitiesDropdown();
@@ -4283,6 +4291,7 @@ async function loadExtraCurricularAssignmentView(container) {
           </select> entries &nbsp;|&nbsp; Total <span id="ec-total">0</span> entries
         </div>
       </div>
+      <div id="ec-warning-banner"></div>
       <div id="ec-table"></div>
       <div id="ec-pagination"></div>
     </div>
@@ -4320,6 +4329,7 @@ async function loadExtraCurricularAssignmentView(container) {
   _ecStudents = [];
   _ecFeeItems = [];
   _ecNameFilter = '';
+  _ecUnbilled = [];
 
   if (defaultTerm) {
     _ecTermId = defaultTerm.id;
@@ -4362,7 +4372,40 @@ async function ecLoadGrid() {
 
 async function ecOnTermFilterChange(termId) {
   _ecTermId = termId ? parseInt(termId) : null;
+  // The warnings were about enrolments in the previous term.
+  _ecUnbilled = [];
+  _renderEcWarningBanner();
   await ecLoadGrid();
+}
+
+function _renderEcWarningBanner() {
+  var el = document.getElementById('ec-warning-banner');
+  if (!el) return;
+  if (!_ecUnbilled.length) { el.innerHTML = ''; return; }
+  var clubs = [];
+  var seen = {};
+  _ecUnbilled.forEach(function(w) {
+    if (seen[w.fee_item_id]) return;
+    seen[w.fee_item_id] = true;
+    clubs.push(w.fee_item_name || ('Fee item #' + w.fee_item_id));
+  });
+  var n = _ecUnbilled.length;
+  el.innerHTML = '<div role="alert" style="position:relative;margin:0 0 12px;padding:12px 40px 12px 14px;border-radius:6px;'
+    + 'background:var(--gold-100,#F7EFD5);border-left:3px solid var(--gold-500,#C9A227);color:#6b5400;font-size:0.86rem;line-height:1.5;">'
+    + '<button type="button" onclick="ecDismissWarningBanner()" aria-label="Dismiss" title="Dismiss"'
+    + ' style="position:absolute;top:6px;right:8px;background:none;border:none;font-size:1.2rem;line-height:1;color:#6b5400;cursor:pointer;">&times;</button>'
+    + '<strong>' + n + ' enrolment' + (n === 1 ? '' : 's') + ' saved but not billable yet — the following club'
+    + (clubs.length === 1 ? ' has' : 's have') + ' no fee configured:</strong>'
+    + '<ul style="margin:6px 0 6px 20px;padding:0;">'
+    + clubs.map(function(name) { return '<li>' + _esc(name) + '</li>'; }).join('')
+    + '</ul>'
+    + 'Set a Default Amount on each club in Finance &rsaquo; Utilities &rsaquo; Fee Items, then click Save Changes again to bill the enrolments.'
+    + '</div>';
+}
+
+function ecDismissWarningBanner() {
+  _ecUnbilled = [];
+  _renderEcWarningBanner();
 }
 
 async function ecOnClassChange(classId) {
@@ -4488,6 +4531,14 @@ async function saveEcAssignmentChanges() {
       });
     });
   });
+  var changeCount = assignments.length;
+  // Re-send the enrolments the last save couldn't bill, unless the cell was
+  // edited since; the edit is already in the list and wins.
+  _ecUnbilled.forEach(function(w) {
+    var staged = _ecDirtyRows[w.student_id];
+    if (staged && Object.prototype.hasOwnProperty.call(staged, w.fee_item_id)) return;
+    assignments.push({ student_id: w.student_id, fee_item_id: w.fee_item_id, is_enrolled: true });
+  });
   if (!assignments.length) { showToast('No changes to save.', 'info'); return; }
 
   var btn = document.querySelector('[onclick="saveEcAssignmentChanges()"]');
@@ -4502,7 +4553,23 @@ async function saveEcAssignmentChanges() {
   if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }
 
   if (res && res.ok) {
-    showToast(assignments.length + ' assignment change' + (assignments.length !== 1 ? 's' : '') + ' saved.', 'success');
+    var result = await res.json().catch(function() { return null; });
+    var resent = assignments.length - changeCount;
+    if (changeCount) {
+      showToast(changeCount + ' assignment change' + (changeCount !== 1 ? 's' : '') + ' saved.', 'success');
+    } else {
+      showToast(resent + ' unbilled enrolment' + (resent !== 1 ? 's' : '') + ' sent again for billing.', 'success');
+    }
+    // A warning doesn't fail the save: the enrolment is stored either way.
+    // Every earlier unbilled pair was re-sent or overridden by an edit, so
+    // this response's warnings replace the list.
+    var warnings = result && Array.isArray(result.warnings) ? result.warnings : [];
+    _ecUnbilled = warnings
+      .filter(function(w) { return w && w.student_id != null && w.fee_item_id != null; })
+      .map(function(w) {
+        return { student_id: parseInt(w.student_id), fee_item_id: parseInt(w.fee_item_id), fee_item_name: w.fee_item_name || '' };
+      });
+    _renderEcWarningBanner();
     await ecLoadGrid();
   } else {
     showToast('Save failed: ' + (res ? await parseApiError(res) : 'An error occurred.'), 'error');

@@ -3222,6 +3222,28 @@ function _fiAccountName(id) {
   return a ? `${a.number || ''} — ${a.account_name || '-'}` : '-';
 }
 
+// A club (is_extra_curricular) needs default_amount > 0 so the ECA grid can
+// provision a fee schedule for its enrolments. The BE rejects a new or edited
+// club at <= 0 (422, 2026-09-16), but rows saved before that guard can still
+// hold 0, and their enrolments never bill.
+function _fiEcaUnpriced(f) {
+  return !!(f && f.is_extra_curricular && !(parseFloat(f.default_amount) > 0));
+}
+const _FI_ECA_PRICE_MSG = 'Extra-curricular clubs must have a price greater than 0 so the ECA module can auto-bill enrolments.';
+// The split view keeps its rows private, so the list pill looks the item up here.
+let _fiListById = {};
+function _fiUnpricedPill(f) {
+  const editable = canEdit('finance.utilities');
+  const style = 'display:inline-block;margin-top:3px;padding:1px 8px;border-radius:10px;font-size:0.7rem;font-weight:600;color:#6b5400;background:var(--gold-100,#F7EFD5);border:1px solid var(--gold-500,#C9A227);';
+  return editable
+    ? `<span role="button" title="Pricing missing — enrolments won't bill. Click to set a Default Amount." style="${style}cursor:pointer;" onclick="event.stopPropagation();_fiEditFromPill(${parseInt(f.id, 10)})">Pricing missing — enrolments won't bill</span>`
+    : `<span title="Pricing missing — enrolments won't bill" style="${style}">Pricing missing — enrolments won't bill</span>`;
+}
+function _fiEditFromPill(id) {
+  const item = _fiListById[id];
+  if (item && canEdit('finance.utilities')) renderFeeItemAddPage(document.getElementById('main-content'), item);
+}
+
 async function loadFeeItemsView(container) {
   await _fiLoadLookups();
   await renderSplitView({
@@ -3236,11 +3258,12 @@ async function loadFeeItemsView(container) {
     apiUrl: `${API_BASE}/receivables/setup/fee-items`,
     searchFields: ['name','code'],
     col1Label: 'Name', col2Label: 'Category',
-    col1: f => f.name || '—',
+    col1: f => _fiEcaUnpriced(f) ? `${_finEsc(f.name || '—')}<br>${_fiUnpricedPill(f)}` : (f.name || '—'),
     col2: f => (FEE_ITEM_CATEGORIES.find(c=>c.value===f.category)||{label:'—'}).label,
     rowLabel: f => f.name || '—',
     rowSub:   f => f.code || '',
     idKey: 'id',
+    onFetched: data => { _fiListById = {}; _toArray(data).forEach(f => { _fiListById[f.id] = f; }); },
     detailFields: [
       {label:'Code',           key:'code'},
       {label:'Name',           key:'name'},
@@ -3397,7 +3420,8 @@ async function renderFeeItemAddPage(container, item) {
         </div>
         <div class="fin-form-group" style="margin-bottom:16px;">
           <label class="fin-form-label">Default Amount <span class="fin-required">*</span></label>
-          <input type="number" id="fi-f-amount" class="fin-form-input" step="0.01" value="${item?.default_amount||''}">
+          <input type="number" id="fi-f-amount" class="fin-form-input" step="0.01" value="${item?.default_amount||''}" oninput="_fiCheckEcaPrice()">
+          <span id="fi-f-amount-hint" style="font-size:12px;color:var(--grey-600);display:${item?.is_extra_curricular?'block':'none'};">Required for an extra-curricular club: must be greater than 0.</span>
           <span class="fin-field-error" id="fi-f-amount-err"></span>
         </div>
         <div class="fin-form-group" style="margin-bottom:12px;">
@@ -3407,7 +3431,7 @@ async function renderFeeItemAddPage(container, item) {
         </div>
         <div class="fin-form-group" style="margin-bottom:20px;">
           <label style="display:flex;align-items:center;gap:8px;font-size:0.9rem;cursor:pointer;">
-            <input type="checkbox" id="fi-f-eca" class="fin-cb" ${item?.is_extra_curricular?'checked':''}> Extra Curricular Activity
+            <input type="checkbox" id="fi-f-eca" class="fin-cb" ${item?.is_extra_curricular?'checked':''} onchange="_fiCheckEcaPrice()"> Extra Curricular Activity
           </label>
         </div>
         <details style="margin-bottom:20px;border:1px solid #e0e0e0;border-radius:6px;padding:12px 16px;">
@@ -3431,8 +3455,9 @@ async function renderFeeItemAddPage(container, item) {
             </div>
           </div>
         </details>
+        <div id="fi-f-form-err" style="margin-bottom:12px;"></div>
         <div class="fin-form-actions">
-          <button class="fin-btn-teal" onclick="${item ? `submitFeeItemEdit(${item.id})` : 'submitFeeItemAdd()'}">${item ? 'Update' : 'Submit'}</button>
+          <button class="fin-btn-teal" id="fi-f-submit" onclick="${item ? `submitFeeItemEdit(${item.id})` : 'submitFeeItemAdd()'}">${item ? 'Update' : 'Submit'}</button>
           <button class="fin-btn-cancel" onclick="loadView('fin-fee-items')">Cancel</button>
         </div>
       </div>
@@ -3457,7 +3482,26 @@ function _fiValidate() {
   document.getElementById('fi-f-name-err').textContent     = name ? '' : 'This field is required.'; if(!name) valid=false;
   document.getElementById('fi-f-category-err').textContent = cat  ? '' : 'This field is required.'; if(!cat)  valid=false;
   document.getElementById('fi-f-amount-err').textContent   = (amtStr!=='' && !isNaN(amount)) ? '' : 'This field is required.'; if(amtStr==='' || isNaN(amount)) valid=false;
+  if (amtStr !== '' && !isNaN(amount) && document.getElementById('fi-f-eca').checked && amount <= 0) {
+    document.getElementById('fi-f-amount-err').textContent = _FI_ECA_PRICE_MSG;
+    valid = false;
+  }
   return valid;
+}
+// Live check as the ECA box or the amount changes. It only flags an amount
+// that is entered and <= 0 on a club, and clears that message again. An empty
+// field is left for the submit-time "required" check, so ticking the box on a
+// blank form doesn't open with an error.
+function _fiCheckEcaPrice() {
+  const eca = document.getElementById('fi-f-eca')?.checked;
+  const hint = document.getElementById('fi-f-amount-hint');
+  const errEl = document.getElementById('fi-f-amount-err');
+  if (hint) hint.style.display = eca ? 'block' : 'none';
+  if (!errEl) return;
+  const amtStr = document.getElementById('fi-f-amount').value;
+  const amount = parseFloat(amtStr);
+  if (eca && amtStr !== '' && !isNaN(amount) && amount <= 0) errEl.textContent = _FI_ECA_PRICE_MSG;
+  else if (errEl.textContent === _FI_ECA_PRICE_MSG || (amtStr !== '' && !isNaN(amount))) errEl.textContent = '';
 }
 // Map the FE `category` label onto the backend-enforced `billing_cadence`.
 // One axis, two field names — cadence is the field the backend acts on.
@@ -3481,28 +3525,37 @@ function _fiPayload() {
   };
 }
 
-async function submitFeeItemAdd() {
+// A refused save stays on the form with the server's reason in the form-level
+// slot, so nothing typed is lost. The ECA price 422 comes back as a string
+// detail on PATCH and a validation list on POST; parseApiError reads both.
+// Only a successful save returns to the list.
+async function _fiSubmit(url, method, successMsg) {
+  const errEl = document.getElementById('fi-f-form-err');
+  if (errEl) errEl.innerHTML = '';
   if (!_fiValidate()) return;
+  const btn = document.getElementById('fi-f-submit');
+  if (btn) btn.disabled = true;
+  let res = null;
   try {
-    const res = await apiFetch(`${API_BASE}/receivables/setup/fee-items`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(_fiPayload())
-    });
-    if (res && res.ok) { showToast('Fee item added!', 'success'); _rcvFeeItemsCache = null; } // invalidate so Fee Setup/Invoices/Statement pick it up
-    else if (res) { showToast('Error: ' + await parseApiError(res), 'error'); }
-  } catch (_) { showToast('Network error.', 'error'); }
-  loadView('fin-fee-items');
+    res = await apiFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(_fiPayload()) });
+  } catch (_) { res = null; }
+  if (btn) btn.disabled = false;
+  if (res && res.ok) {
+    showToast(successMsg, 'success');
+    _rcvFeeItemsCache = null; // invalidate so Fee Setup/Invoices/Statement pick it up
+    loadView('fin-fee-items');
+    return;
+  }
+  // A null response was already toasted by apiFetch (unreachable, or a 401 that logged out).
+  if (res) _pvShowCoralMsg(errEl, await parseApiError(res));
 }
 
-async function submitFeeItemEdit(id) {
-  if (!_fiValidate()) return;
-  try {
-    const res = await apiFetch(`${API_BASE}/receivables/setup/fee-items/${id}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(_fiPayload())
-    });
-    if (res && res.ok) { showToast('Fee item updated!', 'success'); _rcvFeeItemsCache = null; }
-    else if (res) { showToast('Error: ' + await parseApiError(res), 'error'); }
-  } catch (_) { showToast('Network error.', 'error'); }
-  loadView('fin-fee-items');
+function submitFeeItemAdd() {
+  return _fiSubmit(`${API_BASE}/receivables/setup/fee-items`, 'POST', 'Fee item added!');
+}
+
+function submitFeeItemEdit(id) {
+  return _fiSubmit(`${API_BASE}/receivables/setup/fee-items/${id}`, 'PATCH', 'Fee item updated!');
 }
 
 async function deleteFeeItem(id) {
