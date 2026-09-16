@@ -186,6 +186,49 @@ async function _founderFillValues(grants) {
     el.title = est.lines.map(l => `${l.term || l.scope}: ${_pvMoney(l.value)} off ${_pvMoney(l.base)}`).join('\n');
   }));
 }
+
+// ── Where an approved grant already sits ─────────────────────────────────
+// A grant spans a whole academic year, so one application doesn't finish it: a
+// later term's invoice issued before approval may still need it. The row stays
+// in the list and says how far it has got instead. Promises are cached per
+// grant id, so a search re-render doesn't re-fetch; _founderLoadGrants resets
+// the cache, which covers every apply, edit and cancel.
+let _founderAppsByGrant = {};
+function _founderFetchApplications(grantId) {
+  if (!_founderAppsByGrant[grantId]) {
+    _founderAppsByGrant[grantId] = apiFetch(`${_FOUNDER_API}/${parseInt(grantId, 10)}/applications`)
+      .then(async res => (res && res.ok ? _toArray(await res.json().catch(() => [])) : null))
+      .catch(() => null);
+  }
+  return _founderAppsByGrant[grantId];
+}
+// { invoices, total } over live applications; reversed ones don't count.
+function _founderAppliedSummary(apps) {
+  const live = (apps || []).filter(a => a && a.status !== 'reversed');
+  const invoices = new Set(live.map(a => String(a.fee_invoice_id))).size;
+  const total = Math.round(live.reduce((s, a) => s + (parseFloat(a.applied_amount) || 0), 0) * 100) / 100;
+  return { invoices, total };
+}
+function _founderApplyLabel(summary) {
+  return summary && summary.invoices ? 'Apply to Another Invoice' : 'Apply to Invoice';
+}
+// Fills "Applied to N invoices" under DISCOUNT and relabels the row's apply
+// button. A failed read leaves the row as it was rendered.
+async function _founderFillApplied(grants) {
+  await Promise.all(grants.map(async g => {
+    const apps = await _founderFetchApplications(g.id);
+    if (!apps) return;
+    const summary = _founderAppliedSummary(apps);
+    const el = document.getElementById(`founder-applied-${g.id}`);
+    if (el) {
+      el.textContent = summary.invoices
+        ? `Applied to ${summary.invoices} invoice${summary.invoices === 1 ? '' : 's'} · ${_pvMoney(summary.total)}`
+        : 'Not applied to an invoice yet';
+    }
+    const btn = document.getElementById(`founder-apply-btn-${g.id}`);
+    if (btn) btn.textContent = _founderApplyLabel(summary);
+  }));
+}
 // Fetched on each page load until it succeeds. A BE without the route answers
 // 422 (it falls through to /{grant_id}); that, a 403 or a network failure keeps
 // the defaults rather than blocking the page.
@@ -361,6 +404,7 @@ async function _founderLoadGrants() {
   const rows = _toArray(await res.json().catch(() => []));
   if (seq !== _founderListSeq || !el.isConnected) return;
   _founderGrants = rows;
+  _founderAppsByGrant = {};
   _founderRenderGrantsTable();
 }
 function _founderFilterChanged() {
@@ -390,16 +434,17 @@ function _founderRenderGrantsTable() {
       <td>${_finEsc(_rcvStudentName(g.student_id))}</td>
       <td>${_finEsc(_rcvFeeItemName(g.fee_item_id))}</td>
       <td>${_finEsc(_founderYearName(g.academic_year_id))}</td>
-      <td>${_founderDiscountLabel(g)}${g.status === 'draft' || g.status === 'pending' ? `<div id="founder-val-${g.id}" style="font-size:0.76rem;color:var(--grey-600,#666);"></div>` : ''}</td>
+      <td>${_founderDiscountLabel(g)}${g.status === 'draft' || g.status === 'pending' ? `<div id="founder-val-${g.id}" style="font-size:0.76rem;color:var(--grey-600,#666);"></div>` : ''}${g.status === 'approved' ? `<div id="founder-applied-${g.id}" style="font-size:0.76rem;color:var(--grey-600,#666);"></div>` : ''}</td>
       <td>${_founderStatusBadge(g)}</td>
       <td>${_finEsc(_founderStaffLabel(g.created_by))}<br><small style="color:#888;">${_pvDate(g.created_at)}</small></td>
       <td style="white-space:nowrap;text-align:right;">${_founderRowActions(g)}</td>
     </tr>`).join('')}</tbody></table></div>`;
   _founderFillValues(rows.filter(g => g.status === 'draft' || g.status === 'pending'));
+  _founderFillApplied(rows.filter(g => g.status === 'approved'));
 }
 
 function _founderRowActions(g) {
-  const btn = (label, fn, cls = 'fin-btn-outline') => `<button class="${cls}" style="padding:3px 10px;font-size:0.78rem;margin:2px;" onclick="${fn}">${label}</button>`;
+  const btn = (label, fn, cls = 'fin-btn-outline', id = '') => `<button${id ? ` id="${id}"` : ''} class="${cls}" style="padding:3px 10px;font-size:0.78rem;margin:2px;" onclick="${fn}">${label}</button>`;
   const open = g.status === 'draft' || g.status === 'pending';
   const out = [];
   if (open && canAdd('finance.cancellations')) {
@@ -407,7 +452,7 @@ function _founderRowActions(g) {
       ? `<span style="font-size:0.75rem;color:#888;margin:2px 6px;" title="The server refuses approval by the grant's creator.">Needs another approver</span>`
       : btn('Approve', `_founderApprove(${g.id})`, 'fin-btn-teal') + btn('Reject', `_founderOpenReject(${g.id})`));
   }
-  if (g.status === 'approved' && g.is_active && canAdd('finance.cancellations')) out.push(btn('Apply to Invoice', `_founderOpenApply(${g.id})`, 'fin-btn-teal'));
+  if (g.status === 'approved' && g.is_active && canAdd('finance.cancellations')) out.push(btn('Apply to Invoice', `_founderOpenApply(${g.id})`, 'fin-btn-teal', `founder-apply-btn-${g.id}`));
   if (_founderCanEdit(g) && canEdit('finance.setup')) out.push(btn('Edit', `_founderOpenForm(${g.id})`));
   if (canView('finance.setup') || canView('finance.cancellations')) out.push(btn('History', `_founderOpenHistory(${g.id})`));
   if (g.is_active && (open || g.status === 'approved') && canDelete('finance.setup')) out.push(btn('Cancel', `_founderCancel(${g.id})`));
@@ -1247,7 +1292,7 @@ async function _founderOpenHistory(id, grant = null) {
         ${g.status === 'rejected' && g.rejection_reason ? field('Rejection Reason', `<span style="color:var(--coral-600);">${_finEsc(g.rejection_reason)}</span>`, true) : ''}
       </div>
       ${canApply || canRenew ? `<div style="display:flex;gap:8px;flex-wrap:wrap;">
-        ${canApply ? `<button class="fin-btn-teal" onclick="_founderOpenApply(${g.id})">Apply to Invoice</button>` : ''}
+        ${canApply ? `<button id="founder-history-apply-btn" class="fin-btn-teal" onclick="_founderOpenApply(${g.id})">Apply to Invoice</button>` : ''}
         ${canRenew ? `<button class="fin-btn-outline" onclick="_founderOpenRenew(${g.id})">Renew for Next Year</button>` : ''}
       </div>` : ''}
       <h4 style="margin:20px 0 8px;font-size:0.95rem;color:var(--navy-700,#2c3e50);">Applications</h4>
@@ -1277,6 +1322,8 @@ async function _founderLoadHistory(g) {
   const apps = _toArray(await res.json().catch(() => []));
   const invoices = invRes && invRes.ok ? _toArray(await invRes.json().catch(() => [])) : [];
   if (seq !== _founderHistorySeq || !listEl.isConnected) return;
+  const applyBtn = document.getElementById('founder-history-apply-btn');
+  if (applyBtn) applyBtn.textContent = _founderApplyLabel(_founderAppliedSummary(apps));
   if (!apps.length) {
     listEl.innerHTML = `<p style="color:var(--grey-600,#666);font-size:0.86rem;">Not applied to any invoice yet.</p>`;
     return;
