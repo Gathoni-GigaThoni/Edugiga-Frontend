@@ -3368,11 +3368,26 @@ function ssGoPage(p) { _ssPage = p; _renderSsGrid(); }
 
 let _strPage = 1, _strPerPage = 10;
 
+// The three Utilities list screens below and the Stream Assignment page all
+// gate on student_management.students. That is the key the sidebar already
+// uses for them (_SIDEBAR_ITEM_MODULE_KEYS in dashboard.js), and until the
+// backend registers student_management.utilities.* it is the only registered
+// key that covers them — without it renderSplitView leaves Add and Edit fully
+// open to anyone who reaches the route, since only the nav link was hidden.
+const _STU_UTILITIES_MODULE_KEY = 'student_management.students';
+
+// Extra Curricular Activity Assignment sits in the same sidebar group but is
+// registered as its own top-level key, not under student_management — see
+// _SIDEBAR_ITEM_MODULE_KEYS. Kept separate so it doesn't get swept along if
+// the Utilities keys above are re-pointed.
+const _STU_EC_MODULE_KEY = 'extra_curricular.assignments';
+
 async function loadStreamsView(container) {
   openStuUtilitiesDropdown();
   await renderSplitView({
     container,
     title: 'Streams',
+    moduleKey: _STU_UTILITIES_MODULE_KEY,
     breadcrumb: [
       {label:'Dashboard',view:null},
       {label:'Student Management',view:'students-list'},
@@ -3514,6 +3529,7 @@ async function loadFundingSourcesView(container) {
   await renderSplitView({
     container,
     title: 'Funding Sources',
+    moduleKey: _STU_UTILITIES_MODULE_KEY,
     breadcrumb: [
       {label:'Dashboard',view:null},
       {label:'Student Management',view:'students-list'},
@@ -3652,6 +3668,7 @@ async function loadSportsHousesView(container) {
   await renderSplitView({
     container,
     title: 'Sports Houses',
+    moduleKey: _STU_UTILITIES_MODULE_KEY,
     breadcrumb: [
       {label:'Dashboard',view:null},
       {label:'Student Management',view:'students-list'},
@@ -3918,7 +3935,7 @@ async function loadStreamAssignmentView(container) {
           <button class="fin-btn-cancel" style="margin-bottom:2px;" onclick="saClearFilters()">Clear</button>
         </div>
         <div class="fin-controls-right">
-          <button class="fin-btn-teal" onclick="saveStreamAssignmentChanges()">Save Changes</button>
+          ${canEdit(_STU_UTILITIES_MODULE_KEY) ? `<button class="fin-btn-teal" onclick="saveStreamAssignmentChanges()">Save Changes</button>` : ''}
         </div>
       </div>
       <div class="fin-controls-row" style="padding-top:0;">
@@ -4039,6 +4056,11 @@ function saChangePerPage(v) { _saPerPage = parseInt(v); _saPage = 1; _renderSaTa
 function saGoPage(p)         { _saPage = p; _renderSaTable(); }
 
 function _renderSaTable() {
+  // Stream Assignment mutates students (PATCH /students/{id}), so the row
+  // controls follow canEdit exactly as the Save Changes button does — leaving
+  // them live for a read-only caller would let them stage changes that can
+  // only fail at save time.
+  var roDisabled = canEdit(_STU_UTILITIES_MODULE_KEY) ? '' : ' disabled';
   var totalEl = document.getElementById('sa-total');
   if (totalEl) totalEl.textContent = _saStudents.length;
 
@@ -4076,7 +4098,7 @@ function _renderSaTable() {
         + '<td>' + _esc((s.first_name||'') + ' ' + (s.last_name||'')).trim() + dirtyBadge + '</td>'
         + '<td>' + _esc(s.student_id||'') + '</td>'
         + '<td>'
-        +   '<select class="fin-search-input" style="padding:5px 8px!important;min-width:140px;" onchange="saOnClassRowChange(' + s.id + ',this.value)">'
+        +   '<select class="fin-search-input"' + roDisabled + ' style="padding:5px 8px!important;min-width:140px;" onchange="saOnClassRowChange(' + s.id + ',this.value)">'
         +     '<option value="">— Select —</option>'
         +     _saClasses.map(function(c) {
                 return '<option value="' + _esc(String(c.id)) + '"'
@@ -4087,12 +4109,12 @@ function _renderSaTable() {
         + '</td>'
         + '<td id="sa-code-' + s.id + '">' + _esc(classCode) + '</td>'
         + '<td style="text-align:center;">'
-        +   '<input type="checkbox" id="sa-chk-' + s.id + '-A" ' + checkedA
+        +   '<input type="checkbox" id="sa-chk-' + s.id + '-A" ' + checkedA + roDisabled
         +   ' onchange="saOnStreamCheck(' + s.id + ',\'A\',this.checked)"'
         +   ' style="width:auto;max-width:none;accent-color:#00b5b8;cursor:pointer;">'
         + '</td>'
         + '<td style="text-align:center;">'
-        +   '<input type="checkbox" id="sa-chk-' + s.id + '-B" ' + checkedB
+        +   '<input type="checkbox" id="sa-chk-' + s.id + '-B" ' + checkedB + roDisabled
         +   ' onchange="saOnStreamCheck(' + s.id + ',\'B\',this.checked)"'
         +   ' style="width:auto;max-width:none;accent-color:#00b5b8;cursor:pointer;">'
         + '</td>'
@@ -4152,6 +4174,7 @@ function _saMarkDirtyRow(studentId) {
 }
 
 async function saveStreamAssignmentChanges() {
+  if (!canEdit(_STU_UTILITIES_MODULE_KEY)) return; // button is already hidden when this is false
   var changed = Object.entries(_saDirtyRows);
   if (!changed.length) { showToast('No changes to save.', 'info'); return; }
 
@@ -4250,7 +4273,7 @@ async function loadExtraCurricularAssignmentView(container) {
           <button class="fin-btn-cancel" style="margin-bottom:2px;" onclick="ecClearFilters()">Clear</button>
         </div>
         <div class="fin-controls-right">
-          <button class="fin-btn-teal" onclick="saveEcAssignmentChanges()">Save Changes</button>
+          ${canEdit(_STU_EC_MODULE_KEY) ? `<button class="fin-btn-teal" onclick="saveEcAssignmentChanges()">Save Changes</button>` : ''}
         </div>
       </div>
       <div class="fin-controls-row" style="padding-top:0;">
@@ -4373,6 +4396,7 @@ function _ecFilteredStudents() {
 }
 
 function _renderEcTable() {
+  var ecDisabled = canEdit(_STU_EC_MODULE_KEY) ? '' : ' disabled';
   var filtered = _ecFilteredStudents();
   var totalEl = document.getElementById('ec-total');
   if (totalEl) totalEl.textContent = filtered.length;
@@ -4400,7 +4424,7 @@ function _renderEcTable() {
           ? staged[a.id]
           : !!(s.enrollments && s.enrollments[a.id]);
         return '<td style="text-align:center;">'
-          + '<input type="checkbox" id="ec-chk-' + s.student_id + '-' + a.id + '" ' + (enrolled ? 'checked' : '')
+          + '<input type="checkbox" id="ec-chk-' + s.student_id + '-' + a.id + '" ' + (enrolled ? 'checked' : '') + ecDisabled
           + ' onchange="ecOnActivityCheck(' + s.student_id + ',' + a.id + ',this.checked)"'
           + ' style="width:auto;max-width:none;accent-color:#00b5b8;cursor:pointer;">'
           + '</td>';
@@ -4452,6 +4476,7 @@ function _ecMarkDirtyRow(studentId) {
 }
 
 async function saveEcAssignmentChanges() {
+  if (!canEdit(_STU_EC_MODULE_KEY)) return; // button is already hidden when this is false
   var assignments = [];
   Object.entries(_ecDirtyRows).forEach(function(entry) {
     var studentId = entry[0], cells = entry[1];
