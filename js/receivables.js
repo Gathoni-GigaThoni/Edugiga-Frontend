@@ -792,6 +792,133 @@ function _rcvAsnInvoiceFor(assignmentId) {
   return _rcvAsnInvoiced.get(String(assignmentId)) || null;
 }
 
+// ── ECA enrolments → fee assignments ───────────────────────────────────────
+// Ticking a club in Student Management › Utilities › Extra Curricular Activity
+// Assignment is meant to create an auto_eca StudentFeeAssignment in the same
+// request (POST /extra-curricular/bulk-assign). That row is what this screen
+// lists and what /preview and /generate bill. Enrolments can still exist
+// without one. The BE's own /backfill docstring says the ECA screen
+// historically skipped the assignment hook, and a club saved before it had a
+// price stores the tick but no assignment. Such a club is ticked on the ECA
+// grid, missing here, and never reaches an invoice.
+//
+// Re-sending an enrolled pair to bulk-assign is the BE's own repair. It is an
+// idempotent upsert that also provisions the club's FeeSchedule from its
+// default_amount, and it leaves the enrolment itself unchanged. So Load,
+// Generate and the bulk pre-flight compare the term's enrolled pairs against
+// its assignments and re-send only the uncovered ones. /backfill is not used,
+// because it also re-runs the tuition, transport and meal hooks and would
+// bring back an assignment the bursar deliberately removed.
+//
+// A pair counts as covered by its bulk-assign row (source_ref
+// activity:<fee_item_id>) or by any row on one of the club's schedules. The
+// second case catches Override Amount (a DELETE + re-POST) and rows the BE
+// sync service wrote under a different source_ref. A PER_YEAR or ONCE club
+// billed in an earlier term stays uncovered and is re-sent on every Load. That
+// is harmless, because the upsert returns the earlier row, and `created`
+// counts only ids that are new afterwards.
+async function _rcvSyncEcaAssignments(termId, studentIds = null) {
+  const only = studentIds ? new Set(studentIds.map(String)) : null;
+  const single = only && only.size === 1 ? [...only][0] : '';
+  const listUrl = `${API_BASE}/receivables/student-fee-assignments/?term_id=${termId}${single ? `&student_id=${single}` : ''}`;
+  const fetchList = async () => {
+    const r = await apiFetch(listUrl);
+    return (r && r.ok) ? _toArray(await r.json().catch(() => [])) : null;
+  };
+  await _rcvLoadLookups({ schedules:true });
+  const [gridRes, before] = await Promise.all([
+    apiFetch(`${API_BASE}/extra-curricular/assignments?term_id=${termId}`),
+    fetchList(),
+  ]);
+  const out = { assignments: before, created: 0, unbillable: [], blocked: [], blockedReason: '' };
+  // Without both lists there is nothing to compare, and guessing would
+  // re-send pairs that are already billed.
+  if (!gridRes || !gridRes.ok || !before) return out;
+  const grid = await gridRes.json().catch(() => null);
+  const clubName = new Map(_toArray(grid?.fee_items || []).map(f => [String(f.id), f.name || '']));
+
+  const covered = new Set();
+  for (const a of before) {
+    const m = /^activity:(\d+)$/.exec(a.source_ref || '');
+    if (m) covered.add(`${a.student_id}:${m[1]}`);
+    const fid = _rcvScheduleById(a.fee_schedule_id)?.fee_item_id;
+    if (fid != null) covered.add(`${a.student_id}:${fid}`);
+  }
+  const missing = [];
+  for (const row of _toArray(grid?.students || [])) {
+    if (only && !only.has(String(row.student_id))) continue;
+    for (const [fid, on] of Object.entries(row.enrollments || {})) {
+      if (on && !covered.has(`${row.student_id}:${fid}`)) {
+        missing.push({ student_id: row.student_id, fee_item_id: parseInt(fid, 10), is_enrolled: true });
+      }
+    }
+  }
+  if (!missing.length) return out;
+
+  const named = p => ({ student_id: p.student_id, fee_item_id: p.fee_item_id, fee_item_name: p.fee_item_name || clubName.get(String(p.fee_item_id)) || '' });
+  const res = await apiFetch(`${API_BASE}/extra-curricular/bulk-assign`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ term_id: parseInt(termId, 10), assignments: missing }),
+  });
+  if (!res || !res.ok) {
+    // 403 is the expected failure: bulk-assign needs can_add on
+    // extra_curricular.assignments, which a finance-only role won't hold.
+    out.blocked = missing.map(named);
+    out.blockedReason = res && res.status === 403 ? 'forbidden' : (res ? await parseApiError(res) : 'network error');
+    return out;
+  }
+  const result = await res.json().catch(() => null);
+  out.unbillable = _toArray(result?.warnings || []).filter(w => w && w.student_id != null).map(named);
+  // bulk-assign may have provisioned a new FeeSchedule. Refresh the cache so
+  // the new rows show the club's name and amount instead of "Schedule #N".
+  _rcvSchedulesCache = null;
+  const [after] = await Promise.all([fetchList(), _rcvLoadLookups({ schedules:true })]);
+  if (after) {
+    const seen = new Set(before.map(a => String(a.id)));
+    out.created = after.filter(a => !seen.has(String(a.id))).length;
+    out.assignments = after;
+  }
+  return out;
+}
+
+// "Chess (3), Drama" — the clubs behind a set of pairs, with a count when
+// more than one student is affected.
+function _rcvEcaClubList(pairs) {
+  const counts = new Map();
+  for (const p of pairs) {
+    const name = p.fee_item_name || `Fee item #${p.fee_item_id}`;
+    counts.set(name, (counts.get(name) || 0) + 1);
+  }
+  return [...counts].map(([name, n]) => `<li>${_finEsc(name)}${n > 1 ? ` <span style="color:#888;">(${n} students)</span>` : ''}</li>`).join('');
+}
+
+function _rcvEcaSyncNoteHtml(sync) {
+  if (!sync) return '';
+  const box = (bg, border, color, body) =>
+    `<div role="status" style="margin:0 0 12px;padding:10px 14px;border-radius:6px;background:${bg};border-left:3px solid ${border};color:${color};font-size:0.86rem;line-height:1.5;">${body}</div>`;
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  let html = '';
+  if (sync.created) {
+    html += box('#d1fae5', '#10b981', '#065f46',
+      `Picked up ${plural(sync.created, 'club enrolment')} from Extra Curricular Activity Assignment that had no fee assignment yet. ${sync.created === 1 ? 'It is' : 'They are'} now billable.`);
+  }
+  if (sync.unbillable.length) {
+    html += box('var(--gold-100,#F7EFD5)', 'var(--gold-500,#C9A227)', '#6b5400',
+      `<strong>${plural(sync.unbillable.length, 'club enrolment')} can't be billed yet, because the club has no fee configured:</strong>
+       <ul style="margin:6px 0 6px 20px;padding:0;">${_rcvEcaClubList(sync.unbillable)}</ul>
+       Set a Default Amount on each club in Finance &rsaquo; Utilities &rsaquo; Fee Items, then load again.`);
+  }
+  if (sync.blocked.length) {
+    const why = sync.blockedReason === 'forbidden'
+      ? `Creating them needs add rights on Extra Curricular Activity Assignment, and your role doesn't have them. Ask an administrator to grant the right, or ask someone who has it to load this screen once.`
+      : `The server refused to create them: ${_finEsc(sync.blockedReason)}`;
+    html += box('var(--coral-100,#fde8e4)', 'var(--coral-500,#e5533d)', 'var(--coral-600,#b3402e)',
+      `<strong>${plural(sync.blocked.length, 'club enrolment')} in Extra Curricular Activity Assignment ${sync.blocked.length === 1 ? 'has' : 'have'} no fee assignment, so ${sync.blocked.length === 1 ? 'it' : 'they'} won't be invoiced:</strong>
+       <ul style="margin:6px 0 6px 20px;padding:0;">${_rcvEcaClubList(sync.blocked)}</ul>${why}`);
+  }
+  return html;
+}
+
 async function loadFeeAssignmentsView(container) {
   _rcvAsnTerm=''; _rcvAsnStudent=''; _rcvAsnData=[];
   _rcvAsnInvoiced = new Map(); _rcvAsnHideInvoiced = false;
@@ -828,6 +955,7 @@ async function loadFeeAssignmentsView(container) {
           </label>
         </div>
       </div>
+      <div id="rcv-asn-eca-note" style="margin-top:12px;"></div>
       <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;margin-top:12px;">
         <div style="flex:1;min-width:0;" id="rcv-asn-table-wrap">
           <p style="color:#888;padding:20px 0;">Select a term above and click Load.</p>
@@ -845,13 +973,21 @@ async function rcvAsnLoad() {
   if (!termId) return;
   _rcvAsnTerm    = termId;
   _rcvAsnStudent = studentId;
-  await _rcvLoadLookups({ schedules:true });
-  const url = `${API_BASE}/receivables/student-fee-assignments/?term_id=${termId}${studentId?`&student_id=${studentId}`:''}`;
-  const [res, consumed] = await Promise.all([
-    apiFetch(url),
+  const wrap = document.getElementById('rcv-asn-table-wrap');
+  if (wrap) wrap.innerHTML = '<p style="color:#888;padding:20px 0;">Loading&#8230;</p>';
+  // Refetch on every Load. Both caches outlive this screen, and saving the
+  // ECA grid can provision a club schedule after they were filled.
+  _rcvSchedulesCache = null; _rcvFeeItemsCache = null;
+  await _rcvLoadLookups({ schedules:true, items:true });
+  // The sync returns the term's assignment list (fetched again after any
+  // repair), so a second GET isn't needed.
+  const [sync, consumed] = await Promise.all([
+    _rcvSyncEcaAssignments(termId, studentId ? [studentId] : null),
     _rcvLoadConsumedAssignments(studentId),
   ]);
-  _rcvAsnData = (res && res.ok) ? _toArray(await res.json()) : [];
+  const note = document.getElementById('rcv-asn-eca-note');
+  if (note) note.innerHTML = _rcvEcaSyncNoteHtml(sync);
+  _rcvAsnData = sync.assignments || [];
   _rcvAsnInvoiced = consumed;
   _rcvRenderAsnTable();
   if (studentId) _rcvRenderAsnPreview(studentId, termId);
@@ -870,6 +1006,7 @@ function rcvAsnClear() {
   const t=document.getElementById('rcv-asn-term'); if(t) t.value='';
   const s=document.getElementById('rcv-asn-student'); if(s) s.value='';
   const w=document.getElementById('rcv-asn-table-wrap'); if(w) w.innerHTML='<p style="color:#888;padding:20px 0;">Select a term above and click Load.</p>';
+  const n=document.getElementById('rcv-asn-eca-note'); if(n) n.innerHTML='';
   const pp=document.getElementById('rcv-asn-preview-panel'); if(pp) pp.style.display='none';
 }
 
@@ -989,14 +1126,24 @@ async function rcvAsnOverrideSave(id) {
   const postRes = await apiFetch(`${API_BASE}/receivables/student-fee-assignments/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ student_id: a.student_id, term_id: a.term_id, fee_schedule_id: a.fee_schedule_id, override_amount: overrideVal }),
+    // Keep the provenance. Without it the re-POST lands as source_type
+    // "manual" and loses its activity:<id> link to the ECA enrolment.
+    body: JSON.stringify({ student_id: a.student_id, term_id: a.term_id, fee_schedule_id: a.fee_schedule_id, override_amount: overrideVal,
+                           source_type: a.source_type || null, source_ref: a.source_ref || null }),
   });
   if (postRes && postRes.ok) { showToast('Override saved.', 'success'); rcvAsnLoad(); }
   else if (postRes) { showToast('Error: ' + await parseApiError(postRes), 'error'); }
 }
 
 async function rcvAsnDelete(id) {
-  if (!confirm('Remove this fee assignment?')) return;
+  // An ECA row is re-created by the next Load while the student is still
+  // ticked on the ECA grid (see _rcvSyncEcaAssignments), so point at the
+  // place that actually stops the charge.
+  const a = _rcvAsnData.find(x=>String(x.id)===String(id));
+  const msg = a && a.source_type === 'auto_eca'
+    ? 'This charge comes from a club enrolment. It will be re-created the next time assignments are loaded, unless the student is unticked in Student Management \u203a Utilities \u203a Extra Curricular Activity Assignment. To waive the fee instead, use Override Amount with 0.\n\nRemove this fee assignment anyway?'
+    : 'Remove this fee assignment?';
+  if (!confirm(msg)) return;
   const res = await apiFetch(`${API_BASE}/receivables/student-fee-assignments/${id}`, { method: 'DELETE' });
   if (res && (res.ok || res.status === 204)) {
     showToast('Assignment removed.', 'success');
@@ -1319,7 +1466,13 @@ function _rcvExistingInvoiceLinks(list) {
   ).join(', ');
 }
 
+// Both pickers call this on change, and the ECA sync below adds a round trip,
+// so a slower earlier call could land after a later one and paint the wrong
+// student's lines. Only the latest call renders.
+let _rcvGenSeq = 0;
+
 async function rcvGenReviewAssignments() {
+  const seq = ++_rcvGenSeq;
   const studentId = document.getElementById('rcv-gen-student-hidden')?.value || document.getElementById('rcv-gen-student')?.value;
   const termId    = document.getElementById('rcv-gen-term')?.value;
   const preview   = document.getElementById('rcv-gen-preview');
@@ -1332,13 +1485,19 @@ async function rcvGenReviewAssignments() {
     if(btn) btn.disabled=true; return;
   }
   preview.innerHTML='<p style="color:#888;">Loading&#8230;</p>';
+  if (btn) btn.disabled = true;
   await _rcvLoadLookups({ items:true, schedules:true, accounts:true });
+  // Bring the student's club enrolments in as assignments first, so /preview
+  // and /generate see them. See _rcvSyncEcaAssignments.
+  const ecaNote = _rcvEcaSyncNoteHtml(await _rcvSyncEcaAssignments(termId, [studentId]));
+  if (seq !== _rcvGenSeq) return;
   const res = await apiFetch(`${API_BASE}/receivables/fee-invoices/preview`, {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ student_id: parseInt(studentId,10), term_id: parseInt(termId,10) }),
   });
+  if (seq !== _rcvGenSeq) return;
   if (!res || !res.ok) {
-    preview.innerHTML = `<p style="color:var(--coral-600);font-size:0.9rem;">Could not preview this student &times; term: ${_finEsc(res ? await parseApiError(res) : 'network error.')}</p>`;
+    preview.innerHTML = ecaNote + `<p style="color:var(--coral-600);font-size:0.9rem;">Could not preview this student &times; term: ${_finEsc(res ? await parseApiError(res) : 'network error.')}</p>`;
     if(btn) btn.disabled=true; return;
   }
   const data = await res.json();
@@ -1347,11 +1506,11 @@ async function rcvGenReviewAssignments() {
   // is kept on the wire for back-compat but only ever names the first open
   // invoice, so it is deliberately not read here.
   const existing = _toArray(data.existing_invoices || []);
-  const priorBanner = existing.length ? `
+  const priorBanner = ecaNote + (existing.length ? `
     <div style="background:#EEF3FA;border-left:3px solid var(--navy-400,#4A6FA5);border-radius:6px;padding:10px 14px;margin-bottom:12px;font-size:0.86rem;color:var(--navy-700,#1B3057);">
       ${existing.length} prior invoice${existing.length!==1?'s':''} on this student &times; term: ${_rcvExistingInvoiceLinks(existing)}.
       <br><span style="color:#666;">Generate will bill only the assignments not yet on one of these.</span>
-    </div>` : '';
+    </div>` : '');
 
   if (!lines.length) {
     preview.innerHTML = priorBanner + (existing.length
@@ -1808,16 +1967,20 @@ async function rcvBulkPreFlight() {
   }
   _rcvBulkStudentIds = studentIds;
 
-  const [existingRes, assignRes, unconfRes] = await Promise.all([
+  // Club enrolments become assignments before anything is counted, so a
+  // student whose only charge is a club isn't reported as having none. The
+  // sync hands back the term's assignment list, replacing the separate GET.
+  const [existingRes, sync, unconfRes] = await Promise.all([
     apiFetch(`${API_BASE}/receivables/fee-invoices?term_id=${termId}&status=issued`),
-    apiFetch(`${API_BASE}/receivables/student-fee-assignments/?term_id=${termId}`),
+    _rcvSyncEcaAssignments(termId, studentIds),
     // Layer-2 preflight: fee items with no configured income account.
     // Backend blocks generation for any assignment touching such an item.
     apiFetch(`${API_BASE}/receivables/setup/fee-items?missing_account=true`),
   ]);
   const existing   = (existingRes&&existingRes.ok)  ? _toArray(await existingRes.json()) : [];
-  const allAssigns = (assignRes&&assignRes.ok)       ? _toArray(await assignRes.json())  : [];
+  const allAssigns = sync.assignments || [];
   const unconfigured = (unconfRes&&unconfRes.ok)     ? _toArray(await unconfRes.json())  : [];
+  const ecaNote = _rcvEcaSyncNoteHtml(sync);
 
   const inScope = studentIds ? studentIds.length : '?';
   const alreadyOpen = existing.filter(inv=>!studentIds||studentIds.includes(inv.student_id)).length;
@@ -1840,6 +2003,7 @@ async function rcvBulkPreFlight() {
   wrap.insertAdjacentHTML('beforeend', `
     <div id="rcv-bulk-preflight" style="margin-top:20px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
       <h3 style="padding:12px 16px;margin:0;font-size:0.95rem;background:#f3f4f6;">Step 2 — Pre-flight Check</h3>
+      ${ecaNote ? `<div style="padding:12px 16px 0;">${ecaNote}</div>` : ''}
       <table class="fin-table" style="margin:0;">
         <tbody>
           <tr><td>Students in scope</td><td><strong>${inScope}</strong></td></tr>
