@@ -582,6 +582,10 @@ const PP_STATEMENT_TYPES = {
   // line (StudentStatementLine.entry_type='founder_discount'). No .pp-type-*
   // CSS class exists yet, so the generic .pp-type-pill styling applies.
   founder_discount: { label: "Founder's Discount", cls: 'pp-type-credit' },
+  // Prepayment sub-ledger row — the parent's own cash held on account
+  // until the next fee invoice is issued. Shares the credit pill styling
+  // with CN + founder's discount because it's on the same balance side.
+  prepayment:       { label: 'Prepayment',         cls: 'pp-type-credit' },
 };
 // entry_type gained "credit_note" in this addendum and may gain more later,
 // so an unrecognised value still renders its row — with the raw type as a

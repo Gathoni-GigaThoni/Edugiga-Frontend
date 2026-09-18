@@ -2905,6 +2905,10 @@ function _stuSoaLineTypePill(type) {
   // (DR income / CR AR) but sourced from FounderDiscountApplication, not
   // the credit_notes table. Distinguished with a purple pill.
   if (type === 'founder_discount') return '<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.75rem;font-weight:600;color:#5b21b6;background:#ede9fe;">Founder\'s Discount</span>';
+  // Prepayment sub-ledger row — the parent's cash landed and is held on
+  // account against the student until a fee invoice consumes it.
+  // Cyan/teal to distinguish from the green "Receipt" (settled payment).
+  if (type === 'prepayment') return '<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.75rem;font-weight:600;color:#0f5b6e;background:#cffafe;">Prepayment</span>';
   return `<span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.75rem;font-weight:600;color:#555;background:#eee;">${_esc(String(type || '—').replace(/_/g, ' '))}</span>`;
 }
 
@@ -2925,6 +2929,13 @@ function _stuSoaLineRef(l) {
   // Finance ▸ Set-up ▸ Founder's Discounts page (js/founder-discounts.js).
   if (l.entry_type === 'founder_discount' && l.founder_discount_application_id) {
     return `<a href="#" onclick="window._founderOpenApplicationId=${parseInt(l.founder_discount_application_id, 10)};loadView('finance-founder-discounts');return false;" title="Open the grant behind founder's discount application #${l.founder_discount_application_id}">${ref}</a>`;
+  }
+  // Prepayment row — hand a printable Prepayment Advice link so the bursar
+  // can give the parent proof of the payment before any invoice exists to
+  // receipt against. Opens the WeasyPrint PDF in a new tab.
+  if (l.entry_type === 'prepayment' && l.prepayment_id) {
+    const url = `${API_BASE}/receivables/prepayments/${l.prepayment_id}/advice`;
+    return `${ref} <a href="${url}" target="_blank" rel="noopener" title="Print Prepayment Advice for the parent" style="font-size:0.75rem;color:#0f5b6e;text-decoration:none;margin-left:6px;">&#128196; Advice</a>`;
   }
   return ref;
 }
