@@ -794,90 +794,44 @@ function _rcvAsnInvoiceFor(assignmentId) {
 
 // ── ECA enrolments → fee assignments ───────────────────────────────────────
 // Ticking a club in Student Management › Utilities › Extra Curricular Activity
-// Assignment is meant to create an auto_eca StudentFeeAssignment in the same
-// request (POST /extra-curricular/bulk-assign). That row is what this screen
-// lists and what /preview and /generate bill. Enrolments can still exist
-// without one. The BE's own /backfill docstring says the ECA screen
-// historically skipped the assignment hook, and a club saved before it had a
-// price stores the tick but no assignment. Such a club is ticked on the ECA
-// grid, missing here, and never reaches an invoice.
+// Assignment writes an auto_eca StudentFeeAssignment via bulk-assign. That
+// row is what this screen lists and what /preview and /generate bill. Legacy
+// enrolments saved before their club had a price left the SFA orphaned, so
+// Load surfaced nothing to invoice.
 //
-// Re-sending an enrolled pair to bulk-assign is the BE's own repair. It is an
-// idempotent upsert that also provisions the club's FeeSchedule from its
-// default_amount, and it leaves the enrolment itself unchanged. So Load,
-// Generate and the bulk pre-flight compare the term's enrolled pairs against
-// its assignments and re-send only the uncovered ones. /backfill is not used,
-// because it also re-runs the tuition, transport and meal hooks and would
-// bring back an assignment the bursar deliberately removed.
-//
-// A pair counts as covered by its bulk-assign row (source_ref
-// activity:<fee_item_id>) or by any row on one of the club's schedules. The
-// second case catches Override Amount (a DELETE + re-POST) and rows the BE
-// sync service wrote under a different source_ref. A PER_YEAR or ONCE club
-// billed in an earlier term stays uncovered and is re-sent on every Load. That
-// is harmless, because the upsert returns the earlier row, and `created`
-// counts only ids that are new afterwards.
+// The BE reconciler runs under finance.receivables via
+// POST /api/receivables/student-fee-assignments/sync-eca, and inline inside
+// /preview and the assignments GET. So Load only has to call the endpoint
+// once for its diagnostics — `created` for the green "picked up" banner and
+// `unbillable` for the amber "needs pricing" banner — then read the fresh
+// assignments list. There is no client-side diff and no bulk-assign call, so
+// a finance-only bursar never sees a 403.
 async function _rcvSyncEcaAssignments(termId, studentIds = null) {
-  const only = studentIds ? new Set(studentIds.map(String)) : null;
-  const single = only && only.size === 1 ? [...only][0] : '';
-  const listUrl = `${API_BASE}/receivables/student-fee-assignments/?term_id=${termId}${single ? `&student_id=${single}` : ''}`;
+  const listUrl = `${API_BASE}/receivables/student-fee-assignments/?term_id=${termId}${studentIds && studentIds.length === 1 ? `&student_id=${studentIds[0]}` : ''}`;
   const fetchList = async () => {
     const r = await apiFetch(listUrl);
-    return (r && r.ok) ? _toArray(await r.json().catch(() => [])) : null;
+    return (r && r.ok) ? _toArray(await r.json().catch(() => [])) : [];
   };
-  await _rcvLoadLookups({ schedules:true });
-  const [gridRes, before] = await Promise.all([
-    apiFetch(`${API_BASE}/extra-curricular/assignments?term_id=${termId}`),
-    fetchList(),
-  ]);
-  const out = { assignments: before, created: 0, unbillable: [], blocked: [], blockedReason: '' };
-  // Without both lists there is nothing to compare, and guessing would
-  // re-send pairs that are already billed.
-  if (!gridRes || !gridRes.ok || !before) return out;
-  const grid = await gridRes.json().catch(() => null);
-  const clubName = new Map(_toArray(grid?.fee_items || []).map(f => [String(f.id), f.name || '']));
 
-  const covered = new Set();
-  for (const a of before) {
-    const m = /^activity:(\d+)$/.exec(a.source_ref || '');
-    if (m) covered.add(`${a.student_id}:${m[1]}`);
-    const fid = _rcvScheduleById(a.fee_schedule_id)?.fee_item_id;
-    if (fid != null) covered.add(`${a.student_id}:${fid}`);
-  }
-  const missing = [];
-  for (const row of _toArray(grid?.students || [])) {
-    if (only && !only.has(String(row.student_id))) continue;
-    for (const [fid, on] of Object.entries(row.enrollments || {})) {
-      if (on && !covered.has(`${row.student_id}:${fid}`)) {
-        missing.push({ student_id: row.student_id, fee_item_id: parseInt(fid, 10), is_enrolled: true });
-      }
-    }
-  }
-  if (!missing.length) return out;
-
-  const named = p => ({ student_id: p.student_id, fee_item_id: p.fee_item_id, fee_item_name: p.fee_item_name || clubName.get(String(p.fee_item_id)) || '' });
-  const res = await apiFetch(`${API_BASE}/extra-curricular/bulk-assign`, {
+  const syncRes = await apiFetch(`${API_BASE}/receivables/student-fee-assignments/sync-eca`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ term_id: parseInt(termId, 10), assignments: missing }),
+    body: JSON.stringify({ term_id: parseInt(termId, 10), student_ids: studentIds || null }),
   });
-  if (!res || !res.ok) {
-    // 403 is the expected failure: bulk-assign needs can_add on
-    // extra_curricular.assignments, which a finance-only role won't hold.
-    out.blocked = missing.map(named);
-    out.blockedReason = res && res.status === 403 ? 'forbidden' : (res ? await parseApiError(res) : 'network error');
+  const out = { assignments: [], created: 0, unbillable: [] };
+  if (!syncRes || !syncRes.ok) {
+    // Sync failed — fall back to a plain list read so the screen still
+    // renders whatever assignments already exist.
+    out.assignments = await fetchList();
     return out;
   }
-  const result = await res.json().catch(() => null);
-  out.unbillable = _toArray(result?.warnings || []).filter(w => w && w.student_id != null).map(named);
-  // bulk-assign may have provisioned a new FeeSchedule. Refresh the cache so
-  // the new rows show the club's name and amount instead of "Schedule #N".
+  const sync = await syncRes.json().catch(() => null);
+  out.created = sync?.created || 0;
+  out.unbillable = _toArray(sync?.unbillable || []);
+  // The sync may have provisioned new FeeSchedules; refresh the cache so
+  // new rows show the club name and amount instead of "Schedule #N".
   _rcvSchedulesCache = null;
   const [after] = await Promise.all([fetchList(), _rcvLoadLookups({ schedules:true })]);
-  if (after) {
-    const seen = new Set(before.map(a => String(a.id)));
-    out.created = after.filter(a => !seen.has(String(a.id))).length;
-    out.assignments = after;
-  }
+  out.assignments = after;
   return out;
 }
 
@@ -907,14 +861,6 @@ function _rcvEcaSyncNoteHtml(sync) {
       `<strong>${plural(sync.unbillable.length, 'club enrolment')} can't be billed yet, because the club has no fee configured:</strong>
        <ul style="margin:6px 0 6px 20px;padding:0;">${_rcvEcaClubList(sync.unbillable)}</ul>
        Set a Default Amount on each club in Finance &rsaquo; Utilities &rsaquo; Fee Items, then load again.`);
-  }
-  if (sync.blocked.length) {
-    const why = sync.blockedReason === 'forbidden'
-      ? `Creating them needs add rights on Extra Curricular Activity Assignment, and your role doesn't have them. Ask an administrator to grant the right, or ask someone who has it to load this screen once.`
-      : `The server refused to create them: ${_finEsc(sync.blockedReason)}`;
-    html += box('var(--coral-100,#fde8e4)', 'var(--coral-500,#e5533d)', 'var(--coral-600,#b3402e)',
-      `<strong>${plural(sync.blocked.length, 'club enrolment')} in Extra Curricular Activity Assignment ${sync.blocked.length === 1 ? 'has' : 'have'} no fee assignment, so ${sync.blocked.length === 1 ? 'it' : 'they'} won't be invoiced:</strong>
-       <ul style="margin:6px 0 6px 20px;padding:0;">${_rcvEcaClubList(sync.blocked)}</ul>${why}`);
   }
   return html;
 }
