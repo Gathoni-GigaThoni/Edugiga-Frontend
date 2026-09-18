@@ -614,13 +614,13 @@ async function ppRenderStatement(studentId, studentName) {
           <div class="pp-filter-field">
             <label class="pp-filter-label" for="pp-stmt-start">Start Date</label>
             <input type="date" id="pp-stmt-start" class="pp-filter-input">
-            <span class="pp-filter-hint">Leave blank for full history.</span>
           </div>
           <div class="pp-filter-field">
             <label class="pp-filter-label" for="pp-stmt-end">End Date</label>
             <input type="date" id="pp-stmt-end" class="pp-filter-input" value="${new Date().toISOString().slice(0, 10)}">
           </div>
           <button class="pp-filter-btn" onclick="ppLoadStatement()">Apply</button>
+          <p class="pp-filter-hint">Leave Start Date blank for the full history.</p>
         </div>
         <div id="pp-stmt-content">
           <div class="pp-table-wrap">
