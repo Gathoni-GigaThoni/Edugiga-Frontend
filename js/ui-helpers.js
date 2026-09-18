@@ -845,3 +845,221 @@ function searchFinanceStudents(term, limit = 10) {
   return out;
 }
 
+
+// ── Type-to-filter dropdowns ─────────────────────────────────────────────────
+// Every single-choice <select> opens a filterable picker instead of the
+// native list: typing a few characters narrows the options ("john 7" matches
+// "John Mwangi — Grade 7"; every word must appear, in any order).
+// The native <select> stays on the page and stays the source of truth — the
+// picker only sets selectedIndex and fires input + change the way a real pick
+// does — so screens that build options with innerHTML, read .value, or listen
+// for change (inline onchange included) work unchanged.
+// Skipped: multiple / size>1 / disabled selects, anything marked
+// data-native-select, and touch-only devices, where the OS picker is better.
+(function () {
+  if (window.matchMedia && window.matchMedia('(hover: none) and (pointer: coarse)').matches) return;
+
+  const MAX_ROWS = 300;   // long lookups (students, accounts) render the first 300 matches
+  let st = null;          // { sel, pop, input, list, foot, rows, active, obs }
+  let uid = 0;
+
+  function eligible(el) {
+    return el instanceof HTMLSelectElement && !el.multiple && !(el.size > 1)
+      && !el.disabled && !el.hasAttribute('data-native-select');
+  }
+
+  function open(sel, seed) {
+    close(false);
+    const id = `ss-list-${++uid}`;
+    const pop = document.createElement('div');
+    pop.className = 'ss-pop';
+    pop.innerHTML = `<input type="text" class="ss-input" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="${id}" autocomplete="off" spellcheck="false" placeholder="Type to filter…"><div class="ss-list" id="${id}" role="listbox"></div><div class="ss-foot" hidden></div>`;
+    document.body.appendChild(pop);
+    st = { sel, pop, input: pop.querySelector('.ss-input'), list: pop.querySelector('.ss-list'), foot: pop.querySelector('.ss-foot'), rows: [], active: -1, obs: null };
+    sel.classList.add('ss-open');
+    st.input.value = seed || '';
+
+    st.input.addEventListener('input', render);
+    st.input.addEventListener('keydown', onInputKey);
+    // Keep focus in the filter box while clicking rows / scrolling the list.
+    pop.addEventListener('mousedown', e => { if (e.target !== st?.input) e.preventDefault(); });
+    st.list.addEventListener('click', e => {
+      const row = e.target.closest('.ss-opt');
+      if (row && !row.classList.contains('ss-disabled')) pick(st.rows[+row.dataset.i]);
+    });
+    st.list.addEventListener('mousemove', e => {
+      const row = e.target.closest('.ss-opt');
+      if (row && !row.classList.contains('ss-disabled')) setActive(+row.dataset.i, false);
+    });
+    pop.addEventListener('focusout', e => { if (st && !pop.contains(e.relatedTarget)) close(false); });
+
+    // Options often arrive async (lookups resolve after the form renders) —
+    // re-render when they change; close if the screen re-renders the select away.
+    st.obs = new MutationObserver(muts => {
+      if (!st) return;
+      if (!sel.isConnected || sel.disabled) return close(false);
+      if (muts.some(m => sel.contains(m.target))) render();
+    });
+    st.obs.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['disabled', 'hidden', 'label'] });
+
+    render();
+    st.input.focus({ preventScroll: true });
+    const end = st.input.value.length;
+    st.input.setSelectionRange(end, end);
+  }
+
+  function close(refocus) {
+    if (!st) return;
+    const { sel, pop, obs } = st;
+    st = null;
+    obs.disconnect();
+    pop.remove();
+    sel.classList.remove('ss-open');
+    if (refocus && sel.isConnected) sel.focus({ preventScroll: true });
+  }
+
+  function render() {
+    const { sel, input, list, foot } = st;
+    const terms = input.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const frag = document.createDocumentFragment();
+    const rows = [];
+    let total = 0, group = null, active = -1, firstEnabled = -1;
+    for (const opt of sel.options) {
+      if (opt.hidden || opt.style.display === 'none') continue;
+      const hay = opt.text.toLowerCase();
+      if (terms.length && !terms.every(t => hay.includes(t))) continue;
+      total++;
+      if (rows.length >= MAX_ROWS) continue;
+      const g = opt.parentElement.tagName === 'OPTGROUP' ? opt.parentElement : null;
+      if (g && g !== group) {
+        const h = document.createElement('div');
+        h.className = 'ss-group';
+        h.textContent = g.label;
+        frag.appendChild(h);
+      }
+      group = g;
+      const i = rows.length;
+      const disabled = opt.disabled || !!g?.disabled;
+      const row = document.createElement('div');
+      row.className = 'ss-opt' + (disabled ? ' ss-disabled' : '') + (g ? ' ss-in-group' : '') + (opt.selected ? ' ss-selected' : '');
+      row.id = `${list.id}-${i}`;
+      row.setAttribute('role', 'option');
+      row.setAttribute('aria-selected', opt.selected ? 'true' : 'false');
+      if (disabled) row.setAttribute('aria-disabled', 'true');
+      row.dataset.i = i;
+      row.textContent = opt.text || ' ';
+      row.title = opt.text;
+      frag.appendChild(row);
+      rows.push({ opt, row, disabled });
+      if (!disabled && firstEnabled < 0) firstEnabled = i;
+      if (!disabled && opt.selected && !terms.length) active = i;
+    }
+    list.replaceChildren(frag);
+    st.rows = rows;
+    st.active = -1;
+    setActive(active >= 0 ? active : firstEnabled, true);
+
+    if (!total) { foot.textContent = 'No matches'; foot.hidden = false; }
+    else if (total > rows.length) { foot.textContent = `Showing ${rows.length} of ${total} — keep typing to narrow`; foot.hidden = false; }
+    else foot.hidden = true;
+    place();
+  }
+
+  function setActive(i, scroll) {
+    const prev = st.rows[st.active];
+    if (prev) prev.row.classList.remove('ss-active');
+    st.active = i;
+    const cur = st.rows[i];
+    if (cur) {
+      cur.row.classList.add('ss-active');
+      st.input.setAttribute('aria-activedescendant', cur.row.id);
+      if (scroll) cur.row.scrollIntoView({ block: 'nearest' });
+    } else {
+      st.input.removeAttribute('aria-activedescendant');
+    }
+  }
+
+  function move(step) {
+    const { rows } = st;
+    let i = st.active;
+    for (let n = 0; n < rows.length; n++) {
+      i = i < 0 ? (step > 0 ? 0 : rows.length - 1) : i + step;
+      if (i < 0 || i >= rows.length) return;
+      if (!rows[i].disabled) return setActive(i, true);
+    }
+  }
+
+  function pick(r) {
+    if (!r || r.disabled) return;
+    const sel = st.sel;
+    close(true);
+    if (sel.selectedIndex === r.opt.index) return;
+    sel.selectedIndex = r.opt.index;
+    sel.dispatchEvent(new Event('input', { bubbles: true }));
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  function onInputKey(e) {
+    switch (e.key) {
+      case 'ArrowDown': e.preventDefault(); move(1); break;
+      case 'ArrowUp':   e.preventDefault(); move(-1); break;
+      case 'PageDown':  e.preventDefault(); for (let n = 0; n < 8; n++) move(1); break;
+      case 'PageUp':    e.preventDefault(); for (let n = 0; n < 8; n++) move(-1); break;
+      case 'Enter':
+        // Never let Enter reach an enclosing form / modal handler.
+        e.preventDefault(); e.stopPropagation();
+        pick(st.rows[st.active]);
+        break;
+      case 'Escape':
+        // Close just the picker, not the modal it sits in.
+        e.preventDefault(); e.stopPropagation();
+        close(true);
+        break;
+      case 'Tab':
+        // Hand focus back to the select before the browser moves it on, so
+        // Tab continues to the field after the dropdown.
+        close(true);
+        break;
+    }
+  }
+
+  // Anchor under the select (or above it when there's more room there).
+  function place() {
+    const { sel, pop } = st;
+    const r = sel.getBoundingClientRect();
+    if (!r.width && !r.height) return close(false);
+    const vw = window.innerWidth, vh = window.innerHeight, gap = 2, edge = 8;
+    const below = vh - r.bottom - gap - edge, above = r.top - gap - edge;
+    const down = below >= 260 || below >= above;
+    pop.style.minWidth = `${Math.max(r.width, 220)}px`;
+    pop.style.maxHeight = `${Math.max(120, Math.min(360, down ? below : above))}px`;
+    pop.style.left = '0px';   // measure the width unconstrained by the last position
+    pop.style.left = `${Math.max(edge, Math.min(r.left, vw - pop.offsetWidth - edge))}px`;
+    pop.style.top = `${down ? r.bottom + gap : r.top - gap - pop.offsetHeight}px`;
+  }
+
+  // Capture phase so this runs before the browser opens the native list.
+  document.addEventListener('mousedown', e => {
+    if (st && !st.pop.contains(e.target) && e.target !== st.sel) close(false);
+    if (e.button !== 0 || !eligible(e.target)) return;
+    e.preventDefault();
+    if (st && st.sel === e.target) close(true);   // second click on the same select toggles it shut
+    else open(e.target, '');
+  }, true);
+
+  // A focused (tabbed-to) select opens the picker on a typed character,
+  // seeded with it; Space / Alt+Arrow / F4 open it empty like the native one.
+  // Plain arrows still step through options natively without opening.
+  document.addEventListener('keydown', e => {
+    const sel = e.target;
+    if (st || !eligible(sel) || e.ctrlKey || e.metaKey || e.isComposing) return;
+    if (e.key === ' ' || e.key === 'F4' || (e.altKey && (e.key === 'ArrowDown' || e.key === 'ArrowUp'))) {
+      e.preventDefault(); open(sel, '');
+    } else if (e.key.length === 1 && !e.altKey) {
+      e.preventDefault(); open(sel, e.key);
+    }
+  }, true);
+
+  window.addEventListener('scroll', e => { if (st && !st.pop.contains(e.target)) place(); }, true);
+  window.addEventListener('resize', () => { if (st) place(); });
+})();
