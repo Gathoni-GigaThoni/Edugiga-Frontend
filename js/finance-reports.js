@@ -63,7 +63,9 @@ function _repCell(val) {
 // surfaces a document number (JV, PV, invoice, CN, receipt, payroll run).
 // Renders as an anchor that opens the owning module's detail view in a
 // new tab (target="_blank" — leaves the report intact in the original
-// tab). Returns '' when no doc_ref is present so callers can fall back to
+// tab). The click is routed through window.open() by
+// _openInAppLinkInNewTab (dashboard.js) so the new tab keeps the login;
+// a bare target="_blank" tab starts signed out. Returns '' when no doc_ref is present so callers can fall back to
 // _repCell() with `_repDocLink(r.doc_ref) || _repCell(r.some_number)`.
 function _repDocLink(docRef) {
   if (!docRef || !docRef.url || !docRef.number) return '';

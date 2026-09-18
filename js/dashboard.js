@@ -645,6 +645,27 @@ const _DOC_ROUTE_TO_PRESELECT = {
   'fin-founder-discounts':       '_founderOpenApplicationId',
 };
 
+// Sending side of the deep-link handoff. The session token lives in
+// sessionStorage, which a browser copies into a new tab only when that tab
+// has an opener — and a plain target="_blank" anchor gets none (implied
+// noopener, plus our explicit rel="noopener"). So a doc_ref click used to
+// land on the login page with the target document lost. Routing in-app
+// new-tab links (href="#route?...") through window.open() keeps the opener,
+// so the new tab inherits this tab's login, same as "Duplicate tab" does.
+// Left click, Ctrl/Cmd-click and middle-click are all caught; the browser's
+// right-click "Open link in new tab" can't be intercepted and still opens
+// signed out. External target="_blank" links (uploads etc.) are untouched.
+function _openInAppLinkInNewTab(e) {
+  if (e.defaultPrevented) return;
+  if (e.type === 'click' ? e.button !== 0 : e.button !== 1) return;
+  const a = e.target.closest && e.target.closest('a[target="_blank"][href^="#"]');
+  if (!a) return;
+  e.preventDefault();
+  window.open(a.href, '_blank');
+}
+document.addEventListener('click', _openInAppLinkInNewTab);
+document.addEventListener('auxclick', _openInAppLinkInNewTab);
+
 function _maybeOpenDocFromHash() {
   const raw = (location.hash || '').replace(/^#/, '');
   if (!raw) return;
