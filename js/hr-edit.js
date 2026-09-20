@@ -768,8 +768,54 @@ function renderHrEditTabDependents() {
           <th>GENDER</th><th>BIRTH DATE</th><th>ACTION</th>
         </tr></thead><tbody>${rows}</tbody></table>
       </div>
+      <div id="hr-edit-status-dependents" class="hr-edit-success" style="display:none;"></div>
+      <div class="hr-form-actions">
+        <button class="hr-btn-form-submit" onclick="updateHrEditDependents()">Update</button>
+      </div>
     </div>
   `;
+}
+
+async function updateHrEditDependents() {
+  const empId = hrEditRecord.id || hrEditRecord.employee_code;
+  const payload = (hrEditRecord.dependents || []).map(d => ({
+    dependent_name:        d.name,
+    relationship:          d.relationship || null,
+    gender:                d.gender || null,
+    birth_date:            d.birth_date || null,
+    insurance_type:        d.insurance_type || null,
+    notes:                 d.notes || null,
+    is_enrolled_in_school: !!d.enrolled_in_school,
+    enrolled_student_name: d.enrolled_in_school ? (d.student_name || null) : null,
+    enrolled_student_id:   d.enrolled_in_school ? (d.student_id   || null) : null,
+  }));
+  const res = await apiFetch(`${API_BASE}/hr/employees/${empId}/dependents`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res || !res.ok) {
+    showToast(res ? await parseApiError(res) : 'Network error.', 'error');
+    return;
+  }
+  const saved = await res.json().catch(() => []);
+  // Reflect server-assigned ids + normalized values back into local shape
+  // so the tab re-renders with the persisted state, not the in-memory draft.
+  hrEditRecord.dependents = (saved || []).map(d => ({
+    id:                 d.id,
+    name:               d.dependent_name || '',
+    relationship:       d.relationship || '',
+    gender:             d.gender || '',
+    birth_date:         d.birth_date || '',
+    insurance_type:     d.insurance_type || '',
+    notes:              d.notes || '',
+    enrolled_in_school: !!d.is_enrolled_in_school,
+    student_name:       d.enrolled_student_name || '',
+    student_id:         d.enrolled_student_id || '',
+  }));
+  document.getElementById('hr-edit-tab-content').innerHTML = renderHrEditTabDependents();
+  showToast('Dependents updated successfully.', 'success');
+  showHrEditSuccess('hr-edit-status-dependents', 'Dependents updated successfully.');
 }
 
 function toggleHrEditDepDropdown(event, idx) {

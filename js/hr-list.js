@@ -244,7 +244,23 @@ function _hrMapEditRecord(full, listRecord) {
   r.consultant_kra_pin           = full.consultant_kra_pin || '';
   r.identity_docs    = full.identity?.documents || [];
   r.education        = full.education || [];
-  r.dependents       = full.dependents || [];
+  // Server sends EmployeeDependentRead (dependent_name, is_enrolled_in_school,
+  // enrolled_student_name, enrolled_student_id). The Edit modal + tab render
+  // read the local shape (name, enrolled_in_school, student_name, student_id)
+  // that hr-add.js also uses. Normalize here so display + edit work; the
+  // reverse mapping happens in the atomic replace call on save.
+  r.dependents       = (full.dependents || []).map(d => ({
+    id:                 d.id,
+    name:               d.dependent_name || '',
+    relationship:       d.relationship || '',
+    gender:             d.gender || '',
+    birth_date:         d.birth_date || '',
+    insurance_type:     d.insurance_type || '',
+    notes:              d.notes || '',
+    enrolled_in_school: !!d.is_enrolled_in_school,
+    student_name:       d.enrolled_student_name || '',
+    student_id:         d.enrolled_student_id || '',
+  }));
   // EmployeeReadFull calls it service_profiles; the Edit tab (and the ESP form
   // that writes back into it) has always read service_profile. Without this
   // line the ESP tab reported "No records found" for every employee who

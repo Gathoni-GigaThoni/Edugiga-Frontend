@@ -690,6 +690,24 @@ async function submitHrAddEmployee() {
   const service_profile = _hrAddServiceProfilePayload();
   const onboardBody = { employee, identity, medical };
   if (service_profile) onboardBody.service_profile = service_profile;
+  // Dependents ride inside the atomic onboard body — previously they were
+  // N sequential POSTs after the core commit, which meant any mid-loop
+  // failure left the employee saved but their dependents lost. That in
+  // turn broke the director-waiver resolver, which only fires when the
+  // EmployeeDependent row exists with enrolled_student_id populated.
+  if (s.dependents.length) {
+    onboardBody.dependents = s.dependents.map(dep => ({
+      dependent_name: dep.name,
+      relationship: dep.relationship || null,
+      gender: dep.gender || null,
+      birth_date: dep.birth_date || null,
+      insurance_type: dep.insurance_type || null,
+      notes: dep.notes || null,
+      is_enrolled_in_school: !!dep.enrolled_in_school,
+      enrolled_student_name: dep.enrolled_in_school ? (dep.student_name || null) : null,
+      enrolled_student_id: dep.enrolled_in_school ? (dep.student_id || null) : null,
+    }));
+  }
 
   const res = await apiFetch(`${API_BASE}/hr/employees/onboard`, {
     method: 'POST',
@@ -706,11 +724,9 @@ async function submitHrAddEmployee() {
   const onboarded = await res.json();
   const employeeId = onboarded.employee_id;
 
-  // Education, identity documents and dependents aren't part of
-  // EmployeeOnboardRequest — the core record above is already committed, so
-  // these are attached individually against the real employee_id. Best
-  // effort: a failure here doesn't roll back the employee, it's surfaced
-  // per-item so the operator can retry from Edit Employee.
+  // Education and identity documents can't ride in /onboard — they're
+  // multipart uploads with real files. Best-effort per-item; a failure
+  // here does not roll back the committed employee record.
   for (const edu of s.education) {
     const fd = new FormData();
     if (edu.qualification) fd.append('qualification', edu.qualification);
@@ -728,21 +744,6 @@ async function submitHrAddEmployee() {
     if (doc.attachmentFile) fd.append('file', doc.attachmentFile);
     const r = await apiFetch(`${API_BASE}/hr/employees/${employeeId}/identity/documents`, { method: 'POST', body: fd });
     if (!(r && r.ok)) showToast(`Employee saved, but identity document "${doc.doc_title || ''}" failed: ` + (r ? await parseApiError(r) : 'network error'), 'error');
-  }
-  for (const dep of s.dependents) {
-    const payload = {
-      dependent_name: dep.name,
-      relationship: dep.relationship || null,
-      gender: dep.gender || null,
-      birth_date: dep.birth_date || null,
-      insurance_type: dep.insurance_type || null,
-      notes: dep.notes || null,
-      is_enrolled_in_school: !!dep.enrolled_in_school,
-      enrolled_student_name: dep.enrolled_in_school ? (dep.student_name || null) : null,
-      enrolled_student_id: dep.enrolled_in_school ? (dep.student_id || null) : null,
-    };
-    const r = await apiFetch(`${API_BASE}/hr/employees/${employeeId}/dependents`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    if (!(r && r.ok)) showToast(`Employee saved, but dependent "${dep.name || ''}" failed: ` + (r ? await parseApiError(r) : 'network error'), 'error');
   }
 
   showToast('Employee added successfully!', 'success');

@@ -1391,6 +1391,39 @@ async function loadInvoiceGenerateView(container, presetStudentId, presetTermId)
   }
 }
 
+// ── Discount buckets ──────────────────────────────────────────────────────
+// The server splits a line's discount_amount into three named buckets and
+// returns all three on the Generate preview and on FeeInvoiceLineItemRead.
+// A bare "−KES 40,000" leaves the bursar guessing which rule fired, and the
+// director's-dependent waiver was the worst case: the BE parked it in the
+// sibling bucket until 2026-09-20, so a 100%-waived line read as a sibling
+// discount. Render the total, then name the buckets beneath it.
+//
+// Director and sibling are mutually exclusive (the waiver supersedes the
+// policy and takes the whole prorated amount); founder stacks on sibling.
+// A single bucket covering the whole discount just gets named — repeating
+// its amount under an identical figure is noise. Manually-created lines and
+// anything invoiced before the split shipped carry no buckets, and fall
+// back to the bare total exactly as before.
+const _RCV_DISCOUNT_BUCKETS = [
+  ['director_discount_amount', "Director's waiver"],
+  ['sibling_discount_amount',  'Sibling discount'],
+  ['founder_discount_amount',  "Founder's discount"],
+];
+function _rcvDiscountCell(li) {
+  const total = parseFloat(li.discount_amount || 0);
+  if (!(total > 0)) return '—';
+  const parts = _RCV_DISCOUNT_BUCKETS
+    .map(([key, label]) => [label, parseFloat(li[key] || 0)])
+    .filter(([, amt]) => amt > 0);
+  const caption = !parts.length ? ''
+    : parts.length === 1
+      ? parts[0][0]
+      : parts.map(([label, amt]) => `${label} KES ${_finFmt(amt)}`).join(' &middot; ');
+  return `&minus;KES ${_finFmt(total)}`
+    + (caption ? `<div style="font-size:0.75rem;color:#888;margin-top:2px;">${caption}</div>` : '');
+}
+
 // ── Multi-invoice per (student, term) — 2026-09-02 addendum §A ─────────────
 // A (student, term) may now carry 0..N live invoices. The invariant that stops
 // double-billing moved from "one invoice per term" down to "one assignment on
@@ -1473,7 +1506,6 @@ async function rcvGenReviewAssignments() {
     const base     = parseFloat(li.base_unit_price || 0);
     const factor   = parseFloat(li.proration_factor ?? 1);
     const prorated = base * factor;
-    const disc     = parseFloat(li.discount_amount || 0);
     const net      = parseFloat(li.net_amount || 0);
     return `<tr>
       <td>${_finEsc(li.fee_item_name || _rcvFeeItemName(li.fee_item_id))}</td>
@@ -1481,7 +1513,7 @@ async function rcvGenReviewAssignments() {
       <td>KES ${_finFmt(base)}</td>
       <td>&times;${factor.toFixed(4)} <small style="color:#888;">(${(factor*100).toFixed(1)}%)</small></td>
       <td>KES ${_finFmt(prorated)}</td>
-      <td>${disc > 0 ? `&minus;KES ${_finFmt(disc)}` : '—'}</td>
+      <td>${_rcvDiscountCell(li)}</td>
       <td>KES ${_finFmt(net)}</td>
     </tr>`;
   }).join('');
@@ -1565,36 +1597,33 @@ async function loadInvoiceDetailView(container, invoiceId) {
   const credited = resolveCredited(inv);
   const bal  = invoiceBalance(inv, credited);
   const hasFull = lineItems.some(li => li.base_unit_price!=null);
-  // Founder's Discount (BE 4f191b4) splits a line's discount into
-  // sibling_discount_amount + founder_discount_amount, keeping discount_amount
-  // as their sum. The columns exist on the line model, but neither live
-  // openapi.json nor FeeInvoiceLineItemRead on BE staging exposes them (checked
-  // 2026-09-14), so the split renders only once the payload carries them.
-  const hasSplit = hasFull && lineItems.some(li => li.sibling_discount_amount !== undefined || li.founder_discount_amount !== undefined);
-  const discCell = v => { const n = parseFloat(v || 0); return n > 0 ? `−KES ${_finFmt(n)}` : '—'; };
+  // The discount buckets (director / sibling / founder) ride on
+  // FeeInvoiceLineItemRead as of 2026-09-20 — they had existed on the line
+  // model since the founder-discount work but were never on the wire, so
+  // this screen could only ever show the combined figure. _rcvDiscountCell
+  // names whichever buckets are populated under the total, which keeps the
+  // table at one money column instead of one per rule.
   const lineRows = lineItems.length ? lineItems.map(li => {
     const acctName = _rcvLineItemAccountName(li);
     if (hasFull && li.base_unit_price!=null) {
       const base   = parseFloat(li.base_unit_price||0);
       const factor = parseFloat(li.proration_factor||1);
       const prorated= base*factor;
-      const disc   = parseFloat(li.discount_amount||0);
-      const net    = parseFloat(li.amount||prorated-disc);
+      const net    = parseFloat(li.amount ?? (prorated - parseFloat(li.discount_amount||0)));
       const pct    = (factor*100).toFixed(1);
       return `<tr>
         <td>${_finEsc(li.description||'')}</td>
         <td>${_finEsc(acctName)}</td>
         <td>KES ${_finFmt(base)}</td>
         <td>×${factor.toFixed(4)} → KES ${_finFmt(prorated)} <small style="color:#888;">(${pct}%)</small></td>
-        ${hasSplit ? `<td>${discCell(li.sibling_discount_amount)}</td><td>${discCell(li.founder_discount_amount)}</td>` : ''}
-        <td>${disc>0?`−KES ${_finFmt(disc)}`:'—'}</td>
+        <td>${_rcvDiscountCell(li)}</td>
         <td>KES ${_finFmt(net)}</td>
       </tr>`;
     }
     return `<tr>
         <td>${_finEsc(li.description||'')}</td>
         <td>${_finEsc(acctName)}</td>
-        ${hasFull?`<td colspan="${hasSplit ? 5 : 3}" style="color:#888;">—</td>`:''}
+        ${hasFull?`<td colspan="3" style="color:#888;">—</td>`:''}
         <td>KES ${_finFmt(parseFloat(li.amount||0))}</td>
       </tr>`;
   }).join('') : '<tr><td colspan="6" class="fin-empty">No line items.</td></tr>';
@@ -1658,7 +1687,7 @@ async function loadInvoiceDetailView(container, invoiceId) {
           <thead><tr>
             <th>DESCRIPTION</th>
             <th>ACCOUNT</th>
-            ${hasFull?`<th>BASE</th><th>PRORATION</th>${hasSplit ? '<th>SIBLING</th><th>FOUNDER</th><th>DISCOUNT (TOTAL)</th>' : '<th>DISCOUNT</th>'}`:''}
+            ${hasFull?'<th>BASE</th><th>PRORATION</th><th>DISCOUNT</th>':''}
             <th>NET</th>
           </tr></thead>
           <tbody>${lineRows}</tbody>
