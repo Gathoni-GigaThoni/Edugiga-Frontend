@@ -113,8 +113,9 @@ function hrEditModalsHtml() {
           <div class="hr-modal-field">
             <label class="hr-form-label">Relationship <span class="hr-required">*</span></label>
             <select id="hr-dep-relationship" class="hr-modal-select">
-              <option value="">Please Select</option><option value="Spouse">Spouse</option>
-              <option value="Child">Child</option><option value="Parent">Parent</option><option value="Sibling">Sibling</option>
+              <option value="">Please Select</option><option value="spouse">Spouse</option>
+              <option value="child">Child</option><option value="parent">Parent</option><option value="sibling">Sibling</option>
+              <option value="other">Other</option>
             </select>
           </div>
           <div class="hr-modal-field">
