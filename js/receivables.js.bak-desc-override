@@ -396,10 +396,6 @@ async function openFeeScheduleModal(editId) {
         </select>
         <span class="fin-field-error" id="rcv-fs-term-err"></span>
       </div>
-      <div class="fin-form-group">
-        <label class="fin-form-label">Line Label Override <small style="color:#888;">(optional — prints on the invoice line instead of the Fee Item name)</small></label>
-        <input type="text" id="rcv-fs-desc-override" class="fin-form-input" maxlength="200" placeholder="e.g. Tuition Fees – Acorns Half Day" value="${_finEsc(s?.description_override||'')}">
-      </div>
       <!-- Conditional scope fields -->
       <div id="rcv-fs-scope-academic-level" class="fin-form-group" style="display:none;">
         <label class="fin-form-label">Academic Level <span class="fin-required">*</span></label>
@@ -537,7 +533,6 @@ async function submitFeeScheduleForm(editId) {
     scope_type:  scopeType,
     amount:      parseFloat(amount),
     term_id:     termId ? parseInt(termId, 10) : null,
-    description_override: (document.getElementById('rcv-fs-desc-override')?.value || '').trim() || null,
   };
 
   switch (scopeType) {
