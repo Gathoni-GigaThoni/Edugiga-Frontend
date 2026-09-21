@@ -464,11 +464,17 @@
 .fin-loading { color: var(--grey-600); font-style: italic; padding: 20px 0; }
 .fin-error   { color: var(--coral-600); padding: 10px 0; }
 
-/* ── Print ── */
+/* ── Print ──
+   Scoped to the JE-detail modal via `:has()`: the visibility hack only
+   fires when the modal is actually in the DOM. Previously this fired on
+   every window.print() call because `body *` matched globally, so pages
+   like the Summarised Fee Statement and the transaction-ledger Print
+   Fee Statement rendered a blank sheet. */
 @media print {
-  body * { visibility: hidden; }
-  #je-detail-print-area, #je-detail-print-area * { visibility: visible; }
-  #je-detail-print-area { position: absolute; left: 0; top: 0; width: 100%; box-shadow: none; }
+  body:has(#je-detail-print-area) * { visibility: hidden; }
+  body:has(#je-detail-print-area) #je-detail-print-area,
+  body:has(#je-detail-print-area) #je-detail-print-area * { visibility: visible; }
+  body:has(#je-detail-print-area) #je-detail-print-area { position: absolute; left: 0; top: 0; width: 100%; box-shadow: none; }
   .je-modal-no-print { display: none !important; }
 }
 

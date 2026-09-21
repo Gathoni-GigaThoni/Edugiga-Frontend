@@ -2586,6 +2586,9 @@ async function openStudentFeeStatement(studentId) {
     description: li.description || feeItemName(li.fee_item_id),
     invoiceNumber: inv.invoice_number || `#${inv.id}`,
     amount: parseFloat(li.net_amount ?? li.amount ?? 0) || 0,
+    // AT_ISSUANCE founder discount — baked into net_amount already, but
+    // surfaced as a per-line hint so the parent can see the reduction.
+    founderDiscount: parseFloat(li.founder_discount_amount ?? 0) || 0,
   })));
   const multiInvoice = invoices.length > 1;
 
@@ -2594,12 +2597,19 @@ async function openStudentFeeStatement(studentId) {
   // Credit notes are the third column as of the 2026-09-01 refactor: amount_due
   // is no longer reduced in place when one is applied, so a statement that
   // subtracts only cash receipts bills the parent for money already forgiven.
-  // FeeInvoiceRead doesn't carry amount_credited, hence the applied-CN index.
+  //
+  // Prefer FeeInvoiceRead.amount_credited (set by the server 2026-09-14) over
+  // the applied-CN index — the index misses retroactive founder-discount
+  // applications, which land in amount_credited but not in the credit_notes
+  // table, so the statement was silently under-crediting founder-discount
+  // students. resolveCredited() picks the header field when present and only
+  // falls back to the index for pre-2026-09-14 responses.
   await loadAppliedCreditIndex();
-  const total    = invoices.reduce((s,inv)=>s+(parseFloat(inv.amount_due)||0), 0);
-  const paid     = invoices.reduce((s,inv)=>s+(parseFloat(inv.amount_paid)||0), 0);
-  const credited = invoices.reduce((s,inv)=>s+(creditedForInvoice(inv.id)||0), 0);
-  const balance  = total - paid - credited;
+  const total     = invoices.reduce((s,inv)=>s+(parseFloat(inv.amount_due)||0), 0);
+  const paid      = invoices.reduce((s,inv)=>s+(parseFloat(inv.amount_paid)||0), 0);
+  const credited  = invoices.reduce((s,inv)=>s+(resolveCredited(inv)||0), 0);
+  const founderAtIssuance = lineItems.reduce((s,li)=>s+(li.founderDiscount||0), 0);
+  const balance   = total - paid - credited;
   // Overpayments are now held as a prepayment credit on the liability side
   // rather than assumed impossible — a negative summed balance means
   // credit/prepaid, not arrears. (No account number cited on purpose: the
@@ -2610,7 +2620,7 @@ async function openStudentFeeStatement(studentId) {
 
   const rows = lineItems.length
     ? lineItems.map((li,i)=>`<tr style="background:${i%2?'#f4f1ea':'#fff'}">
-        <td style="padding:10px 16px;">${_esc(li.description)}${multiInvoice?`<br><span style="font-size:0.78rem;color:#888;">${_esc(li.invoiceNumber)}</span>`:''}</td>
+        <td style="padding:10px 16px;">${_esc(li.description)}${multiInvoice?`<br><span style="font-size:0.78rem;color:#888;">${_esc(li.invoiceNumber)}</span>`:''}${li.founderDiscount?`<br><span style="font-size:0.75rem;color:#5b21b6;">Founder&rsquo;s discount applied: ${li.founderDiscount.toLocaleString()}</span>`:''}</td>
         <td style="padding:10px 16px;text-align:right;">${li.amount.toLocaleString()}</td>
       </tr>`).join('')
     : `<tr><td colspan="2" style="padding:18px;text-align:center;color:#888;">No invoices have been issued for this student in this term yet. Use "Generate Invoice" on Fee Invoices first.</td></tr>`;
@@ -2672,8 +2682,9 @@ async function openStudentFeeStatement(studentId) {
         <thead><tr class="acct-head"><th>Account</th><th>Amount (KES)</th></tr></thead>
         <tbody>${rows}</tbody>
         <tfoot>
-          <tr class="total-row"><td>TOTAL</td><td>${total.toLocaleString()}</td></tr>
-          ${credited ? `<tr><td style="padding:10px 16px;">Less: credit notes applied</td><td style="padding:10px 16px;text-align:right;">(${credited.toLocaleString()})</td></tr>` : ''}
+          <tr class="total-row"><td>TOTAL${founderAtIssuance ? ' (net of discounts)' : ''}</td><td>${total.toLocaleString()}</td></tr>
+          ${founderAtIssuance ? `<tr><td style="padding:8px 16px;font-size:0.8rem;color:#5b21b6;">&nbsp;&nbsp;memo — Founder&rsquo;s discount already netted above</td><td style="padding:8px 16px;text-align:right;font-size:0.8rem;color:#5b21b6;">${founderAtIssuance.toLocaleString()}</td></tr>` : ''}
+          ${credited ? `<tr><td style="padding:10px 16px;">Less: credits applied (credit notes / retroactive founder&rsquo;s discount)</td><td style="padding:10px 16px;text-align:right;">(${credited.toLocaleString()})</td></tr>` : ''}
           <tr class="balance-row"><td>Balance</td><td>${balance.toLocaleString()}</td></tr>
         </tfoot>
       </table>
