@@ -2629,6 +2629,7 @@ async function openStudentFeeStatement(studentId) {
   // GL. Best-effort — a missing endpoint or 401 leaves it at 0 rather
   // than blocking the statement.
   let prepaymentCredit = 0;
+  let prepaymentLoadError = null;
   try {
     const ppRes = await apiFetch(`${API_BASE}/receivables/prepayments?student_id=${studentId}`);
     if (ppRes && ppRes.ok) {
@@ -2636,8 +2637,23 @@ async function openStudentFeeStatement(studentId) {
       prepaymentCredit = rows
         .filter(pp => (pp.status || 'active') === 'active')
         .reduce((s, pp) => s + (parseFloat(pp.remaining_amount) || 0), 0);
+    } else if (ppRes) {
+      // 401 gets handled globally (apiFetch logs out on 401), so the only
+      // reason we land here is 403 (RBAC denied — endpoint has been
+      // widened but a very-narrow role could still hit this) or 5xx.
+      prepaymentLoadError = `HTTP ${ppRes.status}`;
+      const detail = await parseApiError(ppRes).catch(() => null);
+      if (detail) prepaymentLoadError += ` — ${detail}`;
+      console.error('Fee Statement: prepayment fetch failed:', prepaymentLoadError);
+    } else {
+      // apiFetch returned null (network error / offline / logged out).
+      prepaymentLoadError = 'network error';
+      console.error('Fee Statement: prepayment fetch returned null.');
     }
-  } catch (_) {}
+  } catch (err) {
+    prepaymentLoadError = err && err.message ? err.message : 'unknown error';
+    console.error('Fee Statement: prepayment fetch threw:', err);
+  }
   const balance   = total - paid - credited - prepaymentCredit;
   // Overpayments are now held as a prepayment credit on the liability side
   // rather than assumed impossible — a negative summed balance means
@@ -2706,6 +2722,7 @@ async function openStudentFeeStatement(studentId) {
       </table>
 
       <div class="arrears"><span>${_esc(arrearsLabel)}</span><span>${arrearsDisplay}</span></div>
+      ${prepaymentLoadError ? `<div style="background:#fdecea;border:1px solid #f5c2be;color:#b91c1c;padding:8px 12px;border-radius:4px;font-size:0.85rem;margin-bottom:12px;">Note — could not confirm this student's cash-on-account (prepayment) balance (${_esc(prepaymentLoadError)}). The Balance above may be understated if they have overpaid on a prior invoice. Check the Statement of Account tab or ask a finance user to confirm.</div>` : ''}
 
       <table class="panel" style="margin-bottom:0;">
         <thead><tr class="acct-head"><th>Account</th><th>Amount (KES)</th></tr></thead>
