@@ -560,9 +560,12 @@ async function loadStudentFormView(container) {
 async function _loadStuFormDropdowns() {
   // Routes live at /routes/ (confirmed via transport.js, the module that owns this resource) —
   // /transport/routes was a stale path that never matched the backend.
+  // ECA options are FeeItems flagged is_extra_curricular=True (source of
+  // truth since the 2026-07-22 pipeline lock — the legacy
+  // ExtraCurriculumActivity catalogue is dormant).
   const [trRes, ecRes] = await Promise.all([
     apiFetch(`${API_BASE}/routes/`),
-    apiFetch(`${API_BASE}/student-management/extra-curriculum/`),
+    apiFetch(`${API_BASE}/student-management/eca-fee-items/`),
   ]);
   _stuFormTransportRoutes = trRes && trRes.ok ? _toArray(await trRes.json()) : [];
   _stuFormExtraCurriculum = ecRes && ecRes.ok ? _toArray(await ecRes.json()) : [];
@@ -2098,19 +2101,17 @@ async function _stuSyncTransport(studentId, d) {
 }
 
 // Best-effort — a failure here doesn't roll back the record save that already
-// succeeded. Syncs the selected Extra Curriculum activities (the legacy
-// ExtraCurriculumActivity catalog behind the Personal tab's multiselect —
-// unrelated to the Fee-Items/ECA-Assignment grid used by Extra Curricular
-// Activity Assignment under Utilities) against
-// the real StudentExtraCurriculum rows via POST/DELETE, then PATCHes
-// extra_curriculum_term_id to trigger the backend's own enrollment +
-// fee-assignment sync for this term. Previously the selections were captured
-// in the form (d.extra_curriculum_ids) but never sent anywhere, so that
-// trigger — sent unconditionally on every Personal-tab save — had nothing to
-// act on. Row sync must happen before the trigger PATCH, which is why this
-// runs as its own step rather than bundling extra_curriculum_term_id into the
-// main flat-fields PATCH.
+// succeeded. Syncs the picked ECA FeeItems (is_extra_curricular=True — the
+// modern source of truth, aligned with Extra Curricular Activity Assignment
+// under Utilities) against StudentExtraCurriculum rows scoped to this
+// student and the current term, then PATCHes extra_curriculum_term_id to
+// trigger the backend sync_eca_fees pass. Rows must be keyed by
+// (fee_item_id, term_id) — the sync explicitly filters `fee_item_id IS NOT
+// NULL AND term_id = :term`, so the pre-2026 shape (extra_curriculum_id
+// only, term_id NULL) was invisible to the invoice generator. Rows for
+// other terms are left alone.
 async function _stuSyncEca(studentId, d) {
+  const termId = d.term_id ? Number(d.term_id) : null;
   const selectedIds = (d.extra_curriculum_ids || []).map(String);
 
   let existing = [];
@@ -2118,18 +2119,27 @@ async function _stuSyncEca(studentId, d) {
     const res = await apiFetch(`${API_BASE}/students/${studentId}/extra-curriculum/`);
     if (res && res.ok) existing = _toArray(await res.json());
   } catch (_) {}
-  const existingByActivity = new Map(existing.map(e => [String(e.extra_curriculum_id), e]));
+  // Only reconcile rows for the current term — leaves prior-term enrolments
+  // alone. Legacy rows (fee_item_id NULL) are ignored on both sides too.
+  const existingThisTerm = existing.filter(e =>
+    e.fee_item_id != null && (termId === null || Number(e.term_id) === termId)
+  );
+  const existingByFeeItem = new Map(existingThisTerm.map(e => [String(e.fee_item_id), e]));
 
-  for (const actId of selectedIds) {
-    if (existingByActivity.has(actId)) continue;
+  for (const fid of selectedIds) {
+    if (existingByFeeItem.has(fid)) continue;
     const res = await apiFetch(`${API_BASE}/students/${studentId}/extra-curriculum/`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ student_id: studentId, extra_curriculum_id: parseInt(actId, 10) }),
+      body: JSON.stringify({
+        student_id: studentId,
+        fee_item_id: parseInt(fid, 10),
+        term_id: termId,
+      }),
     });
     if (!(res && res.ok)) showToast('Saved, but enrolling in an Extra Curriculum activity failed: ' + (res ? await parseApiError(res) : 'unknown error'), 'error');
   }
-  for (const e of existing) {
-    if (!selectedIds.includes(String(e.extra_curriculum_id))) {
+  for (const e of existingThisTerm) {
+    if (!selectedIds.includes(String(e.fee_item_id))) {
       const res = await apiFetch(`${API_BASE}/students/${studentId}/extra-curriculum/${e.id}`, { method: 'DELETE' });
       if (!(res && res.ok)) showToast('Saved, but removing an Extra Curriculum activity failed: ' + (res ? await parseApiError(res) : 'unknown error'), 'error');
     }
@@ -2137,7 +2147,7 @@ async function _stuSyncEca(studentId, d) {
 
   const patchRes = await apiFetch(`${API_BASE}/students/${studentId}`, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ extra_curriculum_term_id: d.term_id || null }),
+    body: JSON.stringify({ extra_curriculum_term_id: termId }),
   });
   if (!(patchRes && patchRes.ok)) showToast('Saved, but syncing Extra Curriculum fees failed: ' + (patchRes ? await parseApiError(patchRes) : 'unknown error'), 'error');
 }
