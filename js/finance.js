@@ -5756,17 +5756,22 @@ async function _rtReload() {
     title: 'Transactions',
     breadcrumb: [{label:'Dashboard',view:null},{label:'Finance',view:null},{label:'Transactions'}],
     apiUrl: `${_RT_BASE}${params.toString() ? '?' + params.toString() : ''}`,
-    searchFields: ['gateway_receipt', 'gateway_transaction_id', 'payee_name', 'student_name'],
+    searchFields: ['gateway_receipt', 'gateway_transaction_id', 'student_name', 'narration'],
     col1Label: 'Reference', col2Label: 'Status',
     col1: t => t.gateway_receipt || t.gateway_transaction_id || `#${t.id}`,
     col2: t => _rtStatusBadge(t.status),
     rowLabel: t => t.gateway_receipt || t.gateway_transaction_id || `#${t.id}`,
-    rowSub: t => _rtMoney(t.amount),
+    // Show the resolved student name next to the amount so the list is
+    // scannable even when the reference is an opaque paybill id.
+    rowSub: t => {
+      const name = t.student_name || t.phone_number || '';
+      return name ? `${_finEsc(name)} · ${_rtMoney(t.amount)}` : _rtMoney(t.amount);
+    },
     idKey: 'id',
     detailFields: [
       {label:'Confirmation Code (M-Pesa Receipt)', key:'gateway_receipt',       fmt:v=>v||'—'},
       {label:'Initiation Reference',               key:'gateway_transaction_id', fmt:v=>v||'—'},
-      {label:'Payee / Student',                    key:'payee_name',           fmt:(v,t)=>v||t.student_name||t.phone_number||'—'},
+      {label:'Payee / Student',                    key:'student_name',         fmt:(v,t)=>v||t.phone_number||'—'},
       {label:'Amount',                             key:'amount',               fmt:v=>_rtMoney(v)},
       {label:'Status',                             key:'status',               fmt:v=>_rtStatusBadge(v)},
       {label:'Initiated By',                       key:'initiated_by',         fmt:v=>v?_finEsc(String(v)):'Paybill (customer-initiated)'},
