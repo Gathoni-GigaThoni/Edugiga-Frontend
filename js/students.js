@@ -4704,15 +4704,15 @@ async function loadStudentReportView(container) {
 }
 
 async function _loadStuRptFilterDropdowns() {
-  // Extra Curriculum: the master activity list below is real, but StudentReadFull
-  // (what /students/ returns, our data source) carries no enrolled-activity field,
-  // so this filter can't be applied client-side without an N+1 lookup per student.
-  // Left wired for visibility but not enforced in _fetchStuReport() — flagged there too.
+  // Extra Curriculum: FeeItems flagged is_extra_curricular=True are the source
+  // of truth for clubs (the legacy extra_curriculum_activity catalogue is
+  // dormant). The pick is forwarded to /students/?eca_fee_item_id=… so the
+  // filter is applied server-side against StudentExtraCurriculum enrolments.
   const [classesRes, streamsRes, routesRes, ecRes, housesRes] = await Promise.all([
     apiFetch(`${API_BASE}/classes/`),
     apiFetch(`${API_BASE}/student-management/streams/`),
     apiFetch(`${API_BASE}/routes/`),
-    apiFetch(`${API_BASE}/student-management/extra-curriculum/`),
+    apiFetch(`${API_BASE}/student-management/eca-fee-items/`),
     apiFetch(`${API_BASE}/student-management/sports-houses/`),
   ]);
   _stuRptFilterCache.classes = classesRes && classesRes.ok ? _toArray(await classesRes.json()) : [];
@@ -4730,7 +4730,7 @@ async function _loadStuRptFilterDropdowns() {
   _opt('srpt-f-class',        _stuRptFilterCache.classes,  'id', 'name');
   _opt('srpt-f-stream',       _stuRptFilterCache.streams,  'id', 'title');
   _opt('srpt-f-route',        _stuRptFilterCache.routes,   'id', 'name');
-  _opt('srpt-f-ec',           _stuRptFilterCache.ec,       'id', 'title');
+  _opt('srpt-f-ec',           _stuRptFilterCache.ec,       'id', 'name');
   _opt('srpt-f-sports-house', _stuRptFilterCache.houses,   'id', 'name');
 }
 
@@ -4744,7 +4744,7 @@ function showStuRptFilterPanel() {
   set('srpt-f-type',          f.student_type    || '');
   set('srpt-f-class',         f.class_id        || '');
   set('srpt-f-status',        f.status          || '');
-  set('srpt-f-ec',            f.extra_curriculum_id || '');
+  set('srpt-f-ec',            f.eca_fee_item_id || '');
   set('srpt-f-sports-house',  f.sports_house_id || '');
   set('srpt-f-stream',        f.stream_id       || '');
   set('srpt-f-route',         f.transport_route_id  || '');
@@ -4765,7 +4765,7 @@ async function applyStuRptFilters() {
   v('student_type',         'srpt-f-type');
   v('class_id',             'srpt-f-class');
   v('status',               'srpt-f-status');
-  v('extra_curriculum_id',  'srpt-f-ec');
+  v('eca_fee_item_id',      'srpt-f-ec');
   v('sports_house_id',      'srpt-f-sports-house');
   v('stream_id',            'srpt-f-stream');
   v('transport_route_id',   'srpt-f-route');
@@ -4791,18 +4791,21 @@ function sendStuRptSms() {
 
 async function _fetchStuReport() {
   renderSkeletonRows('srpt-table', 7);
-  // GET /reports/students doesn't exist on the backend (confirmed 404) — there is
-  // no server-side filtered report endpoint for students, so this pulls the full
-  // roster from GET /students/ (StudentReadFull[], max limit 1000) and filters
-  // client-side against the real fields that endpoint actually returns.
-  const res = await apiFetch(`${API_BASE}/students/?limit=1000`);
+  // GET /reports/students doesn't exist on the backend (confirmed 404) — this
+  // pulls the full roster from GET /students/ (StudentReadFull[], max limit 1000)
+  // and filters client-side against the fields that endpoint returns. The one
+  // exception is the ECA pick, which /students/ applies server-side via
+  // eca_fee_item_id (StudentReadFull carries no enrolled-activity field).
+  const f = _stuRptFilters;
+  const qs = new URLSearchParams({ limit: '1000' });
+  if (f.eca_fee_item_id) qs.set('eca_fee_item_id', String(f.eca_fee_item_id));
+  const res = await apiFetch(`${API_BASE}/students/?${qs.toString()}`);
   let all = [];
   if (res && res.ok) {
     const raw = await res.json();
     all = Array.isArray(raw) ? raw : [];
   }
 
-  const f = _stuRptFilters;
   _stuRptData = all.filter(s => {
     if (f.student_type        && s.student_type !== f.student_type) return false;
     if (f.class_id            && String(s.class_id ?? s.school_class_id) !== String(f.class_id)) return false;
@@ -4812,8 +4815,6 @@ async function _fetchStuReport() {
     if (f.transport_route_id   && String(s.transport_route_id) !== String(f.transport_route_id)) return false;
     if (f.parent_consents_photo !== undefined && String(!!s.parent_consents_photo) !== f.parent_consents_photo) return false;
     if (f.nationality          && (s.nationality || '').toLowerCase() !== f.nationality.toLowerCase()) return false;
-    // extra_curriculum_id: not filterable — StudentReadFull carries no enrolled-
-    // activity field (see _loadStuRptFilterDropdowns comment above).
     return true;
   });
   _stuRptPage = 1;
