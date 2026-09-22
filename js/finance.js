@@ -2045,11 +2045,8 @@ async function loadReceivePaymentsView(container) {
         hideWhen:p=>!p.superseded_by_receipt_id,
         fmt:v=>`#${v}`},
     ],
-    renderAdd: _finInfoPlaceholder('Payments are recorded from a Fee Invoice — open the invoice and click Record Payment.', "loadView('fin-fee-invoices')", 'Go to Fee Invoices'),
-    onAdd: () => {
-      showToast('Payments are recorded from a Fee Invoice — open the invoice and click Record Payment.', 'info');
-      loadView('fin-fee-invoices');
-    },
+    renderAdd: _finInfoPlaceholder('Click Add to record a payment against one or more invoices for a student — a paybill / bank transfer / cheque covering multiple invoices lives here. To record against a single invoice, open the invoice and use its Record Payment button.', 'openMultiInvoicePaymentModal()', 'Record Payment'),
+    onAdd: () => openMultiInvoicePaymentModal(),
     detailActions: p => {
       window._rcvReceiptCache = window._rcvReceiptCache || {};
       window._rcvReceiptCache[p.id] = p;
@@ -7083,5 +7080,266 @@ async function _reconImpSubmitSync() {
   } else {
     showToast('Error: ' + await parseApiError(res), 'error');
   }
+}
+
+// ── Money-first multi-invoice Record Payment (Option A) ─────────────────────
+// New entry point on Receive Payments — pick student, enter total + ref,
+// distribute across their open invoices. Surplus (total − sum(allocations))
+// parks in Student Prepayments automatically. Sends the money-first shape
+// {student_id, amount, allocations:[{fee_invoice_id, amount}, …], …} which
+// the backend orchestrates into ONE FinReceipt + N PaymentAllocation rows
+// + one consolidated JE. See app/services/fin_receivables.create_money_first_receipt.
+async function openMultiInvoicePaymentModal() {
+  _rcvCloseModal();
+  await _rcvLoadLookups({ accounts:true });
+  await loadFinanceStudents();
+  const today = new Date().toISOString().split('T')[0];
+  const lastDebit = localStorage.getItem('rcv_last_debit_account_id') || '';
+  const overlay = document.createElement('div');
+  overlay.id = 'fin-gen-modal-overlay';
+  overlay.style = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:1000;overflow-y:auto;';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:8px;padding:24px 28px;max-width:720px;width:94%;max-height:92vh;overflow-y:auto;">
+      <h3 style="margin-top:0;">Record Payment</h3>
+      <div class="fin-form-group" style="position:relative;">
+        <label class="fin-form-label">Student <span class="fin-required">*</span></label>
+        <input type="text" id="mip-student-search" class="fin-form-input" placeholder="Search student by name or SOIS ID&#8230;" oninput="_mipStudentSearch(this.value)" autocomplete="off">
+        <div id="mip-student-dd" class="fin-action-dropdown" style="display:none;max-height:220px;overflow-y:auto;position:absolute;top:100%;left:0;width:100%;z-index:100;"></div>
+        <input type="hidden" id="mip-student-id" value="">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+        <div class="fin-form-group">
+          <label class="fin-form-label">Total Amount <span class="fin-required">*</span></label>
+          <input type="number" id="mip-amount" class="fin-form-input" step="0.01" min="0.01" oninput="_mipRecomputeSurplus()">
+        </div>
+        <div class="fin-form-group">
+          <label class="fin-form-label">Payment Method <span class="fin-required">*</span></label>
+          <select id="mip-method" class="fin-form-select">
+            <option value="">Please Select</option>
+            ${RECEIPT_PAYMENT_METHODS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}
+          </select>
+        </div>
+        <div class="fin-form-group">
+          <label class="fin-form-label">Payment Date <span class="fin-required">*</span></label>
+          <input type="date" id="mip-date" class="fin-form-input" value="${today}">
+        </div>
+        <div class="fin-form-group">
+          <label class="fin-form-label">Reference <small style="color:#888;">(paybill / cheque no.)</small></label>
+          <input type="text" id="mip-ref" class="fin-form-input">
+        </div>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Debit Account (Cash / Bank) <span class="fin-required">*</span></label>
+        <select id="mip-debit" class="fin-form-select">
+          <option value="">Please Select</option>${_rcvAccountOptions('asset', lastDebit)}
+        </select>
+        <span class="fin-field-hint fin-field-hint-info">Server credits AR Control for allocations + Student Prepayments for any surplus.</span>
+      </div>
+
+      <div id="mip-allocations-block" style="display:none;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 6px;">
+          <div style="font-weight:600;font-size:0.92rem;">Allocate to open invoices</div>
+          <button type="button" class="fin-btn-outline" style="padding:4px 12px;font-size:0.82rem;" onclick="_mipAutoDistribute()">Auto-distribute FIFO</button>
+        </div>
+        <div id="mip-alloc-table"></div>
+        <div style="display:flex;justify-content:space-between;padding:10px 12px;background:#f7f7f7;border-radius:6px;margin-top:6px;font-size:0.9rem;">
+          <span>Allocated total</span><span id="mip-alloc-sum">0.00</span>
+        </div>
+        <div id="mip-surplus-row" style="display:none;justify-content:space-between;padding:10px 12px;background:#e0f2f1;border-radius:6px;margin-top:6px;font-size:0.9rem;color:#0f5b6e;">
+          <span>Held on account (prepayment) — will offset the next invoice</span><span id="mip-surplus">0.00</span>
+        </div>
+        <div id="mip-over-row" style="display:none;padding:10px 12px;background:#fdecea;border:1px solid #f5c2be;border-radius:6px;margin-top:6px;font-size:0.85rem;color:#b91c1c;">
+          Allocations exceed the total — reduce a row or raise the total.
+        </div>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Notes</label>
+        <textarea id="mip-notes" class="fin-form-input" rows="2" style="resize:vertical;"></textarea>
+      </div>
+      <div id="mip-submit-msg"></div>
+      <div class="fin-form-actions">
+        <button class="fin-btn-teal" id="mip-submit-btn" onclick="_mipSubmit()">Submit Payment</button>
+        <button class="fin-btn-cancel" onclick="_rcvCloseModal()">Cancel</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  setTimeout(() => { const s = document.getElementById('mip-student-search'); if (s) s.focus(); }, 0);
+}
+
+// State — keyed off invoice_id so the auto-distribute + hand-edit paths can
+// coexist without clobbering each other.
+let _mipOpenInvoices = [];  // [{id, invoice_number, outstanding}]
+let _mipStudentId = null;
+let _mipSearchTimer = null;
+
+function _mipStudentSearch(val) {
+  clearTimeout(_mipSearchTimer);
+  const dd = document.getElementById('mip-student-dd');
+  if (!dd) return;
+  if (!val.trim()) { dd.style.display = 'none'; return; }
+  _mipSearchTimer = setTimeout(() => {
+    const list = searchFinanceStudents(val);
+    dd.innerHTML = list.length ? list.map(s => {
+      const name = _finEsc(`${s.first_name||''} ${s.last_name||''}`.trim());
+      const idLabel = _finEsc(s.student_id||'');
+      return `<a href="#" class="fin-search-option" onclick="_mipStudentSelect(${s.id},'${idLabel} — ${name}');return false;">
+         <span class="fin-search-option-name">${name}</span>
+         <span class="fin-search-option-sub">${idLabel}</span>
+       </a>`;
+    }).join('') : '<div style="padding:10px 14px;color:#888;font-size:0.88rem;">No results found</div>';
+    dd.style.display = 'block';
+  }, 250);
+}
+
+async function _mipStudentSelect(studentId, label) {
+  document.getElementById('mip-student-search').value = label;
+  document.getElementById('mip-student-id').value = String(studentId);
+  document.getElementById('mip-student-dd').style.display = 'none';
+  _mipStudentId = studentId;
+
+  const block = document.getElementById('mip-allocations-block');
+  const tbl = document.getElementById('mip-alloc-table');
+  tbl.innerHTML = '<p style="color:#888;font-size:0.88rem;padding:10px;">Loading open invoices&#8230;</p>';
+  block.style.display = 'block';
+
+  const res = await apiFetch(`${API_BASE}/receivables/fee-invoices?student_id=${studentId}`);
+  if (!res || !res.ok) {
+    tbl.innerHTML = `<p style="color:#c0392b;font-size:0.88rem;padding:10px;">${res ? _finEsc(await parseApiError(res)) : 'Network error.'}</p>`;
+    return;
+  }
+  const invoices = _toArray(await res.json());
+  // Keep only open ones (unpaid remainder > 0) — ISSUED / PARTIALLY_PAID / OVERDUE
+  // Backend header already carries amount_due / amount_paid / amount_credited
+  // so we can compute outstanding without a per-invoice fetch.
+  _mipOpenInvoices = invoices
+    .filter(inv => inv.status !== 'cancelled' && inv.status !== 'paid')
+    .map(inv => ({
+      id: inv.id,
+      invoice_number: inv.invoice_number,
+      due_date: inv.due_date,
+      outstanding: Math.max(0, (parseFloat(inv.amount_due)||0) - (parseFloat(inv.amount_paid)||0) - (parseFloat(inv.amount_credited)||0)),
+    }))
+    .filter(x => x.outstanding > 0)
+    .sort((a, b) => (a.due_date || '').localeCompare(b.due_date || ''));
+
+  if (!_mipOpenInvoices.length) {
+    tbl.innerHTML = '<p style="color:#888;font-size:0.88rem;padding:10px;">This student has no open invoices — the whole amount will be held on account as a prepayment.</p>';
+    _mipRecomputeSurplus();
+    return;
+  }
+  tbl.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:0.88rem;">
+    <thead><tr style="background:#f7f7f7;">
+      <th style="text-align:left;padding:8px;">Invoice</th>
+      <th style="text-align:left;padding:8px;">Due</th>
+      <th style="text-align:right;padding:8px;">Outstanding</th>
+      <th style="text-align:right;padding:8px;width:130px;">Allocate</th>
+    </tr></thead>
+    <tbody>${_mipOpenInvoices.map(inv => `
+      <tr>
+        <td style="padding:8px;">${_finEsc(inv.invoice_number)}</td>
+        <td style="padding:8px;color:#666;">${_finEsc(inv.due_date || '')}</td>
+        <td style="padding:8px;text-align:right;">${_finFmt(inv.outstanding)}</td>
+        <td style="padding:8px;text-align:right;"><input type="number" step="0.01" min="0" data-mip-alloc="${inv.id}" class="fin-form-input" style="width:110px;text-align:right;padding:4px 6px;" oninput="_mipRecomputeSurplus()"></td>
+      </tr>`).join('')}</tbody></table>`;
+  _mipRecomputeSurplus();
+}
+
+function _mipAutoDistribute() {
+  const total = parseFloat(document.getElementById('mip-amount')?.value) || 0;
+  if (total <= 0) { showToast('Enter a total amount first.', 'info'); return; }
+  let remaining = total;
+  for (const inv of _mipOpenInvoices) {
+    const take = Math.min(remaining, inv.outstanding);
+    const cell = document.querySelector(`input[data-mip-alloc="${inv.id}"]`);
+    if (cell) cell.value = take > 0 ? take.toFixed(2) : '';
+    remaining = Math.max(0, remaining - take);
+  }
+  _mipRecomputeSurplus();
+}
+
+function _mipRecomputeSurplus() {
+  const total = parseFloat(document.getElementById('mip-amount')?.value) || 0;
+  let sum = 0;
+  document.querySelectorAll('input[data-mip-alloc]').forEach(el => {
+    sum += parseFloat(el.value) || 0;
+  });
+  document.getElementById('mip-alloc-sum').textContent = _finFmt(sum);
+  const surplus = +(total - sum).toFixed(2);
+  const surplusRow = document.getElementById('mip-surplus-row');
+  const overRow = document.getElementById('mip-over-row');
+  const btn = document.getElementById('mip-submit-btn');
+  if (surplus > 0.005) {
+    surplusRow.style.display = 'flex';
+    document.getElementById('mip-surplus').textContent = _finFmt(surplus);
+    overRow.style.display = 'none';
+    if (btn) btn.disabled = false;
+  } else if (surplus < -0.005) {
+    surplusRow.style.display = 'none';
+    overRow.style.display = 'block';
+    if (btn) btn.disabled = true;
+  } else {
+    surplusRow.style.display = 'none';
+    overRow.style.display = 'none';
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function _mipSubmit() {
+  const studentId = parseInt(document.getElementById('mip-student-id')?.value, 10);
+  const amount    = parseFloat(document.getElementById('mip-amount')?.value);
+  const method    = document.getElementById('mip-method')?.value;
+  const date      = document.getElementById('mip-date')?.value;
+  const ref       = (document.getElementById('mip-ref')?.value || '').trim();
+  const debitId   = parseInt(document.getElementById('mip-debit')?.value, 10);
+  const notes     = (document.getElementById('mip-notes')?.value || '').trim();
+  if (!studentId || !amount || isNaN(amount) || amount <= 0 || !method || !date || !debitId) {
+    showToast('Student, total amount, method, date and debit account are required.', 'error');
+    return;
+  }
+  const allocations = [];
+  document.querySelectorAll('input[data-mip-alloc]').forEach(el => {
+    const v = parseFloat(el.value);
+    const invId = parseInt(el.getAttribute('data-mip-alloc'), 10);
+    if (v > 0 && invId) allocations.push({ fee_invoice_id: invId, amount: v });
+  });
+  localStorage.setItem('rcv_last_debit_account_id', String(debitId));
+
+  const payload = {
+    student_id: studentId,
+    amount,
+    allocations,
+    payment_method: method,
+    payment_date: date + 'T00:00:00',
+    reference: ref || null,
+    debit_cash_account_id: debitId,
+    notes: notes || null,
+  };
+  const btn = document.getElementById('mip-submit-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Submitting…'; }
+  const msgEl = document.getElementById('mip-submit-msg');
+  if (msgEl) msgEl.innerHTML = '';
+
+  const res = await apiFetch(`${API_BASE}/receivables/receipts`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (btn) { btn.disabled = false; btn.textContent = 'Submit Payment'; }
+
+  if (res && res.ok) {
+    const created = await res.json();
+    const surplus = parseFloat(created.prepayment_amount) || 0;
+    const allocCount = (created.allocations || []).length;
+    const parts = [`${created.receipt_number} recorded — ${_finFmt(parseFloat(created.amount)||0)} total`];
+    if (allocCount) parts.push(`${allocCount} invoice${allocCount===1?'':'s'} settled`);
+    if (surplus > 0) parts.push(`${_finFmt(surplus)} held on account`);
+    showToast(parts.join(' · '), 'success');
+    _rcvCloseModal();
+    loadView('fin-receive-payments');
+    return;
+  }
+  if (!res) return;
+  const msg = await parseApiError(res);
+  if (isPeriodLockError(res.status, msg)) showPeriodLockError(msgEl, msg);
+  else showToast('Error: ' + msg, 'error');
 }
 
