@@ -1113,8 +1113,11 @@ function _prActionsHtml(run) {
   if (run.status === 'draft') {
     html += `<button class="btn" onclick="_prCalculate(${run.id})">Calculate</button>`;
   } else if (run.status === 'calculated') {
-    html += `<button class="btn" onclick="_prApprove(${run.id})">Approve</button>`;
+    html += `<button class="fin-btn-teal" onclick="_prSubmitForApproval(${run.id})">Submit for Approval</button>`;
     html += `<button class="btn" onclick="_prOpenAddEmployeeModal(${run.id})">Add Employee</button>`;
+  } else if (run.status === 'submitted') {
+    html += `<button class="fin-btn-teal" onclick="_prApprove(${run.id})">Approve</button>`;
+    html += `<div style="color:#666;font-size:0.85rem;margin-top:6px;">This run is also visible to the Document Approval System queue.</div>`;
   } else if (run.status === 'approved') {
     if (!run.payment_voucher_id) {
       html += `<button class="btn" onclick="_prOpenCreateVoucherModal(${run.id})">Create Payment Voucher</button>`;
@@ -1218,6 +1221,20 @@ async function _prApprove(runId) {
   else showToast('Error: ' + msg, 'error');
 }
 
+// Calculated → Submitted. Also drops a PENDING row into the DAS queue so
+// a document_approval-scoped user can action it from that side. 409 if
+// the run isn't in `calculated` state.
+async function _prSubmitForApproval(runId) {
+  const res = await apiFetch(`${API_BASE}/payroll/runs/${runId}/submit-for-approval`, { method: 'POST' });
+  if (res && res.ok) {
+    showToast('Submitted for approval. Any authorised approver can now action it in-module or from the DAS queue.', 'success');
+    await _prLoadRuns();
+    await _prSelectRun(runId);
+    return;
+  }
+  if (res) showToast('Error: ' + await parseApiError(res), 'error');
+}
+
 // ── Manual line add/remove (draft|calculated only) ──────────────────────────
 // Escape hatch when auto-enrollment sweeps in a stale/mislabeled record
 // (e.g. a consultant whose tax_profile is still 'employee') or when the
@@ -1288,23 +1305,82 @@ async function _prAddEmployee(runId) {
   if (res) showToast('Error: ' + await parseApiError(res), 'error');
 }
 
-function _prOpenCreateVoucherModal(runId) {
+// Cache for the two Create-PV account lookups. Populated once per session
+// and re-used for both payroll and consultant modals.
+let _prPayoutMoneyHolding = null;
+let _prPayoutOwnersCapital = null;
+async function _prLoadPayoutAccounts() {
+  if (_prPayoutMoneyHolding === null) {
+    const res = await apiFetch(`${API_BASE}/lookups/money-holding-accounts`);
+    _prPayoutMoneyHolding = (res && res.ok) ? await res.json() : [];
+  }
+  if (_prPayoutOwnersCapital === null) {
+    const res = await apiFetch(`${API_BASE}/lookups/owners-capital-accounts`);
+    _prPayoutOwnersCapital = (res && res.ok) ? await res.json() : [];
+  }
+}
+
+// Filter the money-holding list by kind (tendepay/bank/petty_cash) — the
+// backend gives them all one endpoint tagged with `kind`. For owners_capital
+// we hit a distinct endpoint (Shareholder-Funds).
+function _prPayoutOptionsForMethod(method, sel) {
+  let rows = [];
+  if (method === 'tendepay') rows = (_prPayoutMoneyHolding || []).filter(a => a.kind === 'wallet');
+  else if (method === 'bank') rows = (_prPayoutMoneyHolding || []).filter(a => a.kind === 'bank');
+  else if (method === 'petty_cash') rows = (_prPayoutMoneyHolding || []).filter(a => a.kind === 'petty_cash');
+  else if (method === 'owners_capital') rows = _prPayoutOwnersCapital || [];
+  if (!rows.length) return `<option value="">No accounts available for this rail</option>`;
+  const first = `<option value="">Please Select</option>`;
+  return first + rows.map(a => {
+    const label = `${a.number ? a.number + ' - ' : ''}${a.account_name}${a.bank_name ? ' (' + a.bank_name + ')' : ''}`;
+    return `<option value="${a.gl_account_id}" ${String(sel) === String(a.gl_account_id) ? 'selected' : ''}>${_finEsc(label)}</option>`;
+  }).join('');
+}
+
+// Emit the rail radio group markup. Same rail keys the backend accepts on
+// the widened CreateVoucherBody.
+function _prRailRadios(prefix, checkedMethod = 'tendepay') {
+  const rails = [
+    { key: 'tendepay',       label: 'Tendepay Wallet' },
+    { key: 'bank',           label: 'Bank' },
+    { key: 'petty_cash',     label: 'Petty Cash' },
+    { key: 'owners_capital', label: "Owner's Capital" },
+  ];
+  return rails.map(r => `
+    <label style="display:inline-flex;align-items:center;white-space:nowrap;font-size:0.9rem;cursor:pointer;margin-right:14px;">
+      <input type="radio" name="${prefix}-method" value="${r.key}" style="width:auto;margin:0 6px 0 0;accent-color:var(--navy-700);" ${r.key === checkedMethod ? 'checked' : ''} onchange="_prPayoutRailChanged('${prefix}', this.value)">${r.label}
+    </label>`).join('');
+}
+
+function _prPayoutRailChanged(prefix, method) {
+  const sel = document.getElementById(`${prefix}-account`);
+  if (sel) sel.innerHTML = _prPayoutOptionsForMethod(method, null);
+}
+
+async function _prOpenCreateVoucherModal(runId) {
+  await _prLoadPayoutAccounts();
   const wrap = document.createElement('div');
   wrap.id = 'pr-cv-modal-overlay';
   wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;overflow:auto;padding:24px;';
   wrap.innerHTML = `
-    <div style="background:white;border-radius:8px;padding:24px;width:600px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+    <div style="background:white;border-radius:8px;padding:24px;width:640px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
       <h3 style="margin:0 0 14px;font-size:1.05rem;color:#2c3e50;">Create Payment Voucher</h3>
       <div class="fin-form-grid-2">
         <div class="fin-form-group"><label class="fin-form-label">Ledger <span class="fin-required">*</span></label>
           <select id="pr-cv-ledger" class="fin-form-select"><option value="">Please Select</option>${_pvLedgerOptions(null)}</select></div>
         <div class="fin-form-group"><label class="fin-form-label">Cost Center <span class="fin-required">*</span></label>
           <select id="pr-cv-cost-center" class="fin-form-select"><option value="">Please Select</option>${_pvCostCenterOptions(null)}</select></div>
-        <div class="fin-form-group"><label class="fin-form-label">Tendepay Wallet <span class="fin-required">*</span></label>
-          <select id="pr-cv-wallet" class="fin-form-select"><option value="">Please Select</option>${_pvTendepayWalletOptions(null)}</select></div>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Payment Rail <span class="fin-required">*</span></label>
+        <div>${_prRailRadios('pr-cv', 'tendepay')}</div>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Payout Account <span class="fin-required">*</span></label>
+        <select id="pr-cv-account" class="fin-form-select">${_prPayoutOptionsForMethod('tendepay', null)}</select>
       </div>
       <div style="background:#EEF3FA;border-left:3px solid var(--navy-400,#4A6FA5);border-radius:6px;padding:10px 14px;margin:12px 0;font-size:12.5px;color:var(--navy-900,#0D2137);line-height:1.5;">
-        Payroll salary expense was booked per-department when this run was approved (each employee&#39;s department maps to its own salary-expense account). This voucher only settles <b>Net Pay Payable</b> via Tendepay — no Department or Debit Account selection is needed.
+        Payroll salary expense was booked per-department when this run was approved. This voucher only settles <b>Net Pay Payable</b> — Debit account is server-set. Non-Tendepay rails land in DRAFT; after Approve-Voucher, use the PV's Settle button to book the JE.
       </div>
       <div class="fin-form-group"><label class="fin-form-label">Description</label><textarea id="pr-cv-description" class="fin-form-textarea" rows="2"></textarea></div>
       <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
@@ -1316,24 +1392,28 @@ function _prOpenCreateVoucherModal(runId) {
 }
 
 async function _prSubmitCreateVoucher(runId) {
-  // Department + debit account are intentionally not collected — see the modal
-  // helper text. Server auto-sets debit_account_id = NET_PAY_PAYABLE_ACCOUNT_ID
-  // and stamps department_id null (a payroll run spans every department).
   const ledgerId = parseInt(document.getElementById('pr-cv-ledger').value, 10);
   const costCenterId = parseInt(document.getElementById('pr-cv-cost-center').value, 10);
-  const walletId = parseInt(document.getElementById('pr-cv-wallet').value, 10);
+  const method = document.querySelector('input[name="pr-cv-method"]:checked')?.value;
+  const accountId = parseInt(document.getElementById('pr-cv-account').value, 10);
   const description = document.getElementById('pr-cv-description').value.trim() || null;
-  if (!ledgerId || !costCenterId || !walletId) {
-    showToast('Ledger, Cost Center and Tendepay Wallet are all required.', 'error');
+  if (!ledgerId || !costCenterId || !method || !accountId) {
+    showToast('Ledger, Cost Center, Payment Rail and Payout Account are all required.', 'error');
     return;
   }
   const res = await apiFetch(`${API_BASE}/payroll/runs/${runId}/create-voucher`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ledger_id: ledgerId, cost_center_id: costCenterId, tendepay_wallet_account_id: walletId, description }),
+    body: JSON.stringify({
+      ledger_id: ledgerId,
+      cost_center_id: costCenterId,
+      settlement_method: method,
+      credit_account_id: accountId,
+      description,
+    }),
   });
   if (res && res.ok) {
     document.getElementById('pr-cv-modal-overlay')?.remove();
-    showToast('Draft payment voucher created. A different staff member must now approve it before Tendepay settlement can proceed.', 'success');
+    showToast('Draft payment voucher created. A different staff member must now approve it before settlement can proceed.', 'success');
     await _prLoadRuns();
     await _prSelectRun(runId);
   } else if (res && res.status === 409) {
@@ -1539,11 +1619,25 @@ function _crRenderDetail(right, run) {
     actions += `<button class="btn" onclick="_crCalculate(${run.id})">${run.status === 'calculated' ? 'Recalculate' : 'Calculate'}</button>`;
   }
   if (run.status === 'calculated') {
+    actions += `<button class="fin-btn-teal" onclick="_crSubmitForApproval(${run.id})">Submit for Approval</button>`;
+  }
+  if (run.status === 'submitted') {
     if (isSubmitter) {
-      actions += `<div style="color:var(--coral-500,#D94040);font-size:0.85rem;">You created this run — segregation of duties means you cannot approve it yourself.</div>`;
+      actions += `<div style="color:var(--coral-500,#D94040);font-size:0.85rem;">You submitted this run — segregation of duties means you cannot approve it yourself. Ask another authorised staff member (or the DAS officer).</div>`;
     } else {
       actions += `<button class="fin-btn-teal" onclick="_crApprove(${run.id})">Approve</button>`;
     }
+    actions += `<div style="color:#666;font-size:0.85rem;margin-top:6px;">This run is also visible to the Document Approval System queue.</div>`;
+  }
+  if (run.status === 'approved') {
+    if (!run.payment_voucher_id) {
+      actions += `<button class="fin-btn-teal" onclick="_crOpenCreateVoucherModal(${run.id})">Create Payment Voucher</button>`;
+    } else {
+      actions += `<button class="fin-btn-teal" onclick="_crApproveVoucher(${run.id})">Approve Payment Voucher</button>`;
+    }
+  }
+  if (run.status === 'awaiting_payment') {
+    actions += `<div style="color:#666;font-size:0.9rem;">Awaiting payment. Tendepay-rail runs settle via the Tendepay import confirm; other rails settle via the PV's Settle button in Payables → Payment Vouchers.</div>`;
   }
   right.innerHTML = `
     <div class="detail-banner" style="background:var(--navy-700,#1B3057);color:#fff;padding:16px 20px;border-radius:8px 8px 0 0;">
@@ -1624,6 +1718,95 @@ async function _crApprove(runId) {
     if (isPeriodLockError(res.status, msg)) showPeriodLockError(document.getElementById('cr-warnings'), msg);
     else showToast('Error: ' + msg, 'error');
   }
+}
+
+async function _crSubmitForApproval(runId) {
+  const res = await apiFetch(`${API_BASE}/payroll/consultant-runs/${runId}/submit-for-approval`, { method: 'POST' });
+  if (!res) return;
+  if (res.ok) {
+    showToast('Submitted for approval. Any authorised approver can now action it in-module or from the DAS queue.', 'success');
+    await _crLoadRuns();
+    await _crSelectRun(runId);
+    return;
+  }
+  showToast('Error: ' + await parseApiError(res), 'error');
+}
+
+async function _crOpenCreateVoucherModal(runId) {
+  await _prLoadPayoutAccounts();
+  const wrap = document.createElement('div');
+  wrap.id = 'cr-cv-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;overflow:auto;padding:24px;';
+  wrap.innerHTML = `
+    <div style="background:white;border-radius:8px;padding:24px;width:640px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 14px;font-size:1.05rem;color:#2c3e50;">Create Consultant Payment Voucher</h3>
+      <div class="fin-form-grid-2">
+        <div class="fin-form-group"><label class="fin-form-label">Ledger <span class="fin-required">*</span></label>
+          <select id="cr-cv-ledger" class="fin-form-select"><option value="">Please Select</option>${_pvLedgerOptions(null)}</select></div>
+        <div class="fin-form-group"><label class="fin-form-label">Cost Center <span class="fin-required">*</span></label>
+          <select id="cr-cv-cost-center" class="fin-form-select"><option value="">Please Select</option>${_pvCostCenterOptions(null)}</select></div>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Payment Rail <span class="fin-required">*</span></label>
+        <div>${_prRailRadios('cr-cv', 'tendepay')}</div>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Payout Account <span class="fin-required">*</span></label>
+        <select id="cr-cv-account" class="fin-form-select">${_prPayoutOptionsForMethod('tendepay', null)}</select>
+      </div>
+      <div style="background:#EEF3FA;border-left:3px solid var(--navy-400,#4A6FA5);border-radius:6px;padding:10px 14px;margin:12px 0;font-size:12.5px;color:var(--navy-900,#0D2137);line-height:1.5;">
+        Consultant PV JE at settle: <b>DR Consultants Fee Expense</b> (gross) / <b>CR Payout Account</b> (net) / <b>CR WHT Liability</b> (WHT). Debit and WHT accounts are server-set. Non-Tendepay rails land in DRAFT; after Approve-Voucher, use the PV's Settle button.
+      </div>
+      <div class="fin-form-group"><label class="fin-form-label">Description</label><textarea id="cr-cv-description" class="fin-form-textarea" rows="2"></textarea></div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="document.getElementById('cr-cv-modal-overlay').remove()">Cancel</button>
+        <button class="fin-btn-teal" onclick="_crSubmitCreateVoucher(${runId})">Create</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+
+async function _crSubmitCreateVoucher(runId) {
+  const ledgerId = parseInt(document.getElementById('cr-cv-ledger').value, 10);
+  const costCenterId = parseInt(document.getElementById('cr-cv-cost-center').value, 10);
+  const method = document.querySelector('input[name="cr-cv-method"]:checked')?.value;
+  const accountId = parseInt(document.getElementById('cr-cv-account').value, 10);
+  const description = document.getElementById('cr-cv-description').value.trim() || null;
+  if (!ledgerId || !costCenterId || !method || !accountId) {
+    showToast('Ledger, Cost Center, Payment Rail and Payout Account are all required.', 'error');
+    return;
+  }
+  const res = await apiFetch(`${API_BASE}/payroll/consultant-runs/${runId}/create-voucher`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ledger_id: ledgerId,
+      cost_center_id: costCenterId,
+      settlement_method: method,
+      credit_account_id: accountId,
+      description,
+    }),
+  });
+  if (res && res.ok) {
+    document.getElementById('cr-cv-modal-overlay')?.remove();
+    showToast('Draft consultant PV created. A different staff member must approve it before settlement can proceed.', 'success');
+    await _crLoadRuns();
+    await _crSelectRun(runId);
+  } else if (res && res.status === 409) {
+    showToast('A payment voucher already exists for this run.', 'error');
+  } else if (res) {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
+}
+
+async function _crApproveVoucher(runId) {
+  const res = await apiFetch(`${API_BASE}/payroll/consultant-runs/${runId}/approve-voucher`, { method: 'POST' });
+  if (res && res.ok) {
+    showToast('Payment voucher approved. Settle it from Payables → Payment Vouchers (non-Tendepay rails) or wait for the Tendepay import confirm.', 'success');
+    await _crLoadRuns();
+    await _crSelectRun(runId);
+    return;
+  }
+  if (res) showToast('Error: ' + await parseApiError(res), 'error');
 }
 
 async function _crDownloadFeeNote(runId, lineId) {
