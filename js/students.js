@@ -4856,6 +4856,22 @@ async function submitStuRptEmail() {
     return;
   }
 
+  // R5 — guardrail: if the current filter includes non-active students
+  // (Inactive / Graduated / Transferred), make the operator confirm before
+  // blasting their parents. Easy to hit accidentally by leaving the Student
+  // Status filter set from a prior report.
+  const inactiveCount = students.filter(s =>
+    s.is_active === false || (s.student_status && s.student_status !== 'Active')
+  ).length;
+  if (inactiveCount > 0) {
+    const ok = window.confirm(
+      `${inactiveCount} of ${students.length} students in this filter are not Active ` +
+      `(Inactive / Graduated / Transferred). Their parents will receive this email. ` +
+      `Continue?`
+    );
+    if (!ok) return;
+  }
+
   const btn = document.getElementById('srpt-email-send-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
 
@@ -4873,9 +4889,18 @@ async function submitStuRptEmail() {
   }
   const data = await res.json();
   const missing = (data.students_without_email || []).length;
+  const failedList = data.failed_recipients || [];
   const parts = [`${data.sent}/${data.recipients_targeted} parent email${data.recipients_targeted===1?'':'s'} sent`];
-  if (data.failed)  parts.push(`${data.failed} failed`);
-  if (missing)      parts.push(`${missing} student${missing===1?'':'s'} without a parent email on file`);
+  if (data.failed) {
+    if (failedList.length) {
+      const shown = failedList.slice(0, 3).join(', ');
+      const extra = failedList.length > 3 ? ` +${failedList.length - 3} more` : '';
+      parts.push(`${data.failed} failed: ${shown}${extra}`);
+    } else {
+      parts.push(`${data.failed} failed`);
+    }
+  }
+  if (missing) parts.push(`${missing} student${missing===1?'':'s'} without a parent email on file`);
   showToast(parts.join(' · '), data.failed ? 'error' : 'success');
   closeStuRptEmailModal();
 }
