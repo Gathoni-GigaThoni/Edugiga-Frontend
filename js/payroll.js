@@ -838,10 +838,11 @@ function _prPaymentStatusBadge(status) {
 
 async function _prRenderLinesTab(el, run) {
   const lines = run.lines || [];
+  const editable = ['draft', 'calculated'].includes(run.status);
   await _prLoadOutstandingAdvances(run);
   el.innerHTML = `
     <div class="fin-table-wrap"><table class="fin-table">
-      <thead><tr><th>Employee Code</th><th>Basic Salary</th><th>Gross Pay</th><th>NSSF</th><th>SHIF</th><th>PAYE</th><th>Housing Levy</th><th>Total Deductions</th><th>Net Pay</th><th>Deductions</th><th>Payment Status</th><th>Tendepay Ref</th><th>Receipt</th><th>Paid At</th><th>Failure Reason</th></tr></thead>
+      <thead><tr><th>Employee Code</th><th>Basic Salary</th><th>Gross Pay</th><th>NSSF</th><th>SHIF</th><th>PAYE</th><th>Housing Levy</th><th>Total Deductions</th><th>Net Pay</th><th>Deductions</th><th>Payment Status</th><th>Tendepay Ref</th><th>Receipt</th><th>Paid At</th><th>Failure Reason</th>${editable ? '<th></th>' : ''}</tr></thead>
       <tbody>
         ${lines.length ? lines.map(l => `<tr>
           <td>${_finEsc(l.employee_code)}${_prAdvancePreviewPill(l.employee_id)}</td>
@@ -859,7 +860,8 @@ async function _prRenderLinesTab(el, run) {
           <td>${_finEsc(l.gateway_receipt || '—')}</td>
           <td>${l.paid_at ? _pvDate(l.paid_at) : '—'}</td>
           <td>${l.payment_status === 'failed' ? `<span style="color:#c0392b;">${_finEsc(l.failure_reason || '—')}</span>` : ''}</td>
-        </tr>`).join('') : `<tr><td colspan="15" class="fin-empty">No lines yet &mdash; run Calculate first.</td></tr>`}
+          ${editable ? `<td><a href="#" onclick="_prRemoveLine(${run.id},${l.id},'${_finEsc(l.employee_code)}');return false;" style="color:#c0392b;">Remove</a></td>` : ''}
+        </tr>`).join('') : `<tr><td colspan="${editable ? 16 : 15}" class="fin-empty">No lines yet &mdash; run Calculate first.</td></tr>`}
       </tbody>
     </table></div>
     <div id="pr-payslips-panel" style="margin-top:20px;"></div>`;
@@ -1112,6 +1114,7 @@ function _prActionsHtml(run) {
     html += `<button class="btn" onclick="_prCalculate(${run.id})">Calculate</button>`;
   } else if (run.status === 'calculated') {
     html += `<button class="btn" onclick="_prApprove(${run.id})">Approve</button>`;
+    html += `<button class="btn" onclick="_prOpenAddEmployeeModal(${run.id})">Add Employee</button>`;
   } else if (run.status === 'approved') {
     if (!run.payment_voucher_id) {
       html += `<button class="btn" onclick="_prOpenCreateVoucherModal(${run.id})">Create Payment Voucher</button>`;
@@ -1213,6 +1216,76 @@ async function _prApprove(runId) {
   const msgEl = document.getElementById('pr-export-error');
   if (isPeriodLockError(res.status, msg)) showPeriodLockError(msgEl, msg);
   else showToast('Error: ' + msg, 'error');
+}
+
+// ── Manual line add/remove (draft|calculated only) ──────────────────────────
+// Escape hatch when auto-enrollment sweeps in a stale/mislabeled record
+// (e.g. a consultant whose tax_profile is still 'employee') or when the
+// admin patches an employee's profile after /calculate has already run and
+// wants them included without wiping the whole run. Server-side gate is
+// authoritative — the router refuses these on approved/paid runs.
+
+async function _prRemoveLine(runId, lineId, employeeCode) {
+  if (!confirm(`Remove ${employeeCode} from this payroll run? Run totals will be recomputed.`)) return;
+  const res = await apiFetch(`${API_BASE}/payroll/runs/${runId}/lines/${lineId}`, { method: 'DELETE' });
+  if (res && res.ok) { showToast(`${employeeCode} removed.`, 'success'); await _prLoadRuns(); await _prSelectRun(runId); return; }
+  if (res) showToast('Error: ' + await parseApiError(res), 'error');
+}
+
+async function _prOpenAddEmployeeModal(runId) {
+  const run = _prCurrentRun;
+  if (!run) return;
+  const params = new URLSearchParams({ period_year: run.period_year, period_month: run.period_month });
+  const res = await apiFetch(`${API_BASE}/payroll/runs/eligibility?${params.toString()}`);
+  if (!res || !res.ok) { showToast('Could not load eligible employees.', 'error'); return; }
+  const data = await res.json();
+  const currentIds = new Set((run.lines || []).map(l => l.employee_id));
+  const candidates = (data.eligible || []).filter(e => !currentIds.has(e.employee_id));
+
+  const wrap = document.createElement('div');
+  wrap.id = 'pr-add-emp-overlay';
+  wrap.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;';
+  const options = candidates.map(e => `<option value="${e.employee_id}">${_finEsc(e.employee_code)} — ${_finEsc(e.employee_name)} (proj. net ${_pvMoney(e.projected_net)})</option>`).join('');
+  wrap.innerHTML = `
+    <div style="background:#fff;border-radius:8px;padding:22px 26px;min-width:460px;max-width:90vw;">
+      <h3 style="margin:0 0 12px;">Add employee to ${_finEsc(run.run_number)}</h3>
+      <p style="margin:0 0 14px;color:#666;font-size:0.87rem;">Only employees the auto-enrollment would have picked (active, tax_profile=employee, salary source resolved) are listed. Consultants are excluded by design — fix their tax_profile in HR first if one is missing here.</p>
+      ${candidates.length ? `
+        <label style="display:block;font-size:0.85rem;margin-bottom:6px;">Employee</label>
+        <select id="pr-add-emp-select" class="fin-form-select" style="width:100%;margin-bottom:16px;">${options}</select>
+        <div style="display:flex;gap:10px;justify-content:flex-end;">
+          <button class="btn" style="background:#eee;color:#333;" onclick="_prCloseAddEmployeeModal()">Cancel</button>
+          <button class="btn" onclick="_prAddEmployee(${run.id})">Add</button>
+        </div>` : `
+        <p style="color:#888;">Every eligible employee is already on this run. Fix a service profile in HR (e.g. add a pay grade) if you expected someone else to appear here.</p>
+        <div style="display:flex;justify-content:flex-end;">
+          <button class="btn" onclick="_prCloseAddEmployeeModal()">Close</button>
+        </div>`}
+    </div>`;
+  document.body.appendChild(wrap);
+}
+
+function _prCloseAddEmployeeModal() {
+  document.getElementById('pr-add-emp-overlay')?.remove();
+}
+
+async function _prAddEmployee(runId) {
+  const sel = document.getElementById('pr-add-emp-select');
+  const employeeId = sel && sel.value ? parseInt(sel.value, 10) : null;
+  if (!employeeId) return;
+  const res = await apiFetch(`${API_BASE}/payroll/runs/${runId}/lines`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ employee_id: employeeId }),
+  });
+  if (res && res.ok) {
+    showToast('Employee added.', 'success');
+    _prCloseAddEmployeeModal();
+    await _prLoadRuns();
+    await _prSelectRun(runId);
+    return;
+  }
+  if (res) showToast('Error: ' + await parseApiError(res), 'error');
 }
 
 function _prOpenCreateVoucherModal(runId) {
