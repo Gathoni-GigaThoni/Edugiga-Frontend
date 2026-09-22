@@ -4703,7 +4703,7 @@ async function loadStudentReportView(container) {
         </div>
         <div class="hr-filter-panel-footer" style="display:flex;align-items:center;gap:8px;padding:14px 20px;border-top:1px solid #eee;">
           <a href="#" onclick="clearStuRptFilters();return false;" style="color:#555;font-size:0.88rem;text-decoration:none;margin-right:auto;">Clear All Filters</a>
-          <button class="fin-btn-teal" style="background:#e67e22!important;" onclick="sendStuRptSms()">Send SMS</button>
+          <button class="fin-btn-teal" style="background:#e67e22!important;" onclick="openStuRptEmailModal()">Send Email</button>
           <button class="fin-btn-teal" onclick="applyStuRptFilters()">Submit</button>
         </div>
       </div>
@@ -4794,9 +4794,90 @@ async function clearStuRptFilters() {
   await _fetchStuReport();
 }
 
-function sendStuRptSms() {
-  // TODO: wire to the SMS composition flow once an SMS module is available in the codebase.
-  showToast('SMS feature is not yet implemented.', 'info');
+// Opens the compose modal for the Student Report → Send Email flow.
+// Recipients are the parents of the currently-filtered students; the actual
+// list is resolved server-side against the ids we pass so filter drift
+// between page and send is impossible. Sender is fixed on the backend
+// (no-reply@sevenoaks.ac via Resend).
+function openStuRptEmailModal() {
+  const students = _stuRptFiltered();
+  if (!students.length) {
+    showToast('No students in the current filter — nothing to send.', 'info');
+    return;
+  }
+
+  const existing = document.getElementById('srpt-email-modal');
+  if (existing) existing.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'srpt-email-modal';
+  modal.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.45);z-index:500;display:flex;align-items:center;justify-content:center;';
+  modal.innerHTML = `
+    <div style="background:#fff;width:min(560px,92vw);max-height:88vh;border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.25);display:flex;flex-direction:column;">
+      <div style="padding:14px 20px;border-bottom:1px solid #eee;display:flex;align-items:center;justify-content:space-between;">
+        <span style="font-weight:600;font-size:1rem;">Send Email to ${students.length} filtered student${students.length===1?'':'s'}' parents</span>
+        <button onclick="closeStuRptEmailModal()" style="background:none;border:none;font-size:1.1rem;cursor:pointer;">&#x2715;</button>
+      </div>
+      <div style="padding:16px 20px;overflow-y:auto;flex:1;">
+        <div style="margin-bottom:12px;">
+          <label style="display:block;font-size:0.85rem;color:#444;margin-bottom:4px;">Subject</label>
+          <input id="srpt-email-subject" type="text" maxlength="200" class="fin-search-input" style="width:100%!important;" placeholder="e.g. Reminder — Term 2 opening">
+        </div>
+        <div>
+          <label style="display:block;font-size:0.85rem;color:#444;margin-bottom:4px;">Message</label>
+          <textarea id="srpt-email-body" rows="9" style="width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:4px;font-family:inherit;font-size:0.92rem;" placeholder="Type the message body. Basic HTML tags are allowed."></textarea>
+          <div style="font-size:0.78rem;color:#666;margin-top:6px;">Sender: no-reply@sevenoaks.ac. One send per unique parent email; parents with more than one filtered child receive a single message.</div>
+        </div>
+      </div>
+      <div style="padding:12px 20px;border-top:1px solid #eee;display:flex;justify-content:flex-end;gap:8px;">
+        <button onclick="closeStuRptEmailModal()" style="background:#eee;border:none;padding:8px 14px;border-radius:4px;cursor:pointer;">Cancel</button>
+        <button id="srpt-email-send-btn" class="fin-btn-teal" onclick="submitStuRptEmail()">Send</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  setTimeout(() => { const s = document.getElementById('srpt-email-subject'); if (s) s.focus(); }, 0);
+}
+
+function closeStuRptEmailModal() {
+  const m = document.getElementById('srpt-email-modal');
+  if (m) m.remove();
+}
+
+async function submitStuRptEmail() {
+  const subject = (document.getElementById('srpt-email-subject')?.value || '').trim();
+  const body    = (document.getElementById('srpt-email-body')?.value || '').trim();
+  if (!subject) { showToast('Subject is required.', 'error'); return; }
+  if (!body)    { showToast('Message body is required.', 'error'); return; }
+
+  const students = _stuRptFiltered();
+  const studentIds = students.map(s => s.id).filter(id => id != null);
+  if (!studentIds.length) {
+    showToast('No students in the current filter — nothing to send.', 'info');
+    return;
+  }
+
+  const btn = document.getElementById('srpt-email-send-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+
+  const res = await apiFetch(`${API_BASE}/students/report/send-email`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subject, body_html: body, student_ids: studentIds }),
+  });
+
+  if (btn) { btn.disabled = false; btn.textContent = 'Send'; }
+
+  if (!(res && res.ok)) {
+    showToast('Send failed: ' + (res ? await parseApiError(res) : 'unknown error'), 'error');
+    return;
+  }
+  const data = await res.json();
+  const missing = (data.students_without_email || []).length;
+  const parts = [`${data.sent}/${data.recipients_targeted} parent email${data.recipients_targeted===1?'':'s'} sent`];
+  if (data.failed)  parts.push(`${data.failed} failed`);
+  if (missing)      parts.push(`${missing} student${missing===1?'':'s'} without a parent email on file`);
+  showToast(parts.join(' · '), data.failed ? 'error' : 'success');
+  closeStuRptEmailModal();
 }
 
 async function _fetchStuReport() {
