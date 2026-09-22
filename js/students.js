@@ -2619,7 +2619,26 @@ async function openStudentFeeStatement(studentId) {
   const paid      = invoices.reduce((s,inv)=>s+(parseFloat(inv.amount_paid)||0), 0);
   const credited  = invoices.reduce((s,inv)=>s+(resolveCredited(inv)||0), 0);
   const founderAtIssuance = lineItems.reduce((s,li)=>s+(li.founderDiscount||0), 0);
-  const balance   = total - paid - credited;
+
+  // Overpayments sit in StudentPrepayment (sub-ledger), NOT on
+  // invoice.amount_paid — invoice math alone cannot see them, which is
+  // why an Annabelle-shaped 22,500 payment (16,500 + 5,793 to invoices,
+  // 207 surplus) rendered 'balance 0' here before this fix. Fold the
+  // active remaining balance on the student's prepayments back into the
+  // running balance so the popup matches the chronological SoA and the
+  // GL. Best-effort — a missing endpoint or 401 leaves it at 0 rather
+  // than blocking the statement.
+  let prepaymentCredit = 0;
+  try {
+    const ppRes = await apiFetch(`${API_BASE}/receivables/prepayments?student_id=${studentId}`);
+    if (ppRes && ppRes.ok) {
+      const rows = _toArray(await ppRes.json());
+      prepaymentCredit = rows
+        .filter(pp => (pp.status || 'active') === 'active')
+        .reduce((s, pp) => s + (parseFloat(pp.remaining_amount) || 0), 0);
+    }
+  } catch (_) {}
+  const balance   = total - paid - credited - prepaymentCredit;
   // Overpayments are now held as a prepayment credit on the liability side
   // rather than assumed impossible — a negative summed balance means
   // credit/prepaid, not arrears. (No account number cited on purpose: the
@@ -2695,6 +2714,7 @@ async function openStudentFeeStatement(studentId) {
           <tr class="total-row"><td>TOTAL${founderAtIssuance ? ' (net of discounts)' : ''}</td><td>${total.toLocaleString()}</td></tr>
           ${founderAtIssuance ? `<tr><td style="padding:8px 16px;font-size:0.8rem;color:#5b21b6;">&nbsp;&nbsp;memo — Founder&rsquo;s discount already netted above</td><td style="padding:8px 16px;text-align:right;font-size:0.8rem;color:#5b21b6;">${founderAtIssuance.toLocaleString()}</td></tr>` : ''}
           ${credited ? `<tr><td style="padding:10px 16px;">Less: credits applied (credit notes / retroactive founder&rsquo;s discount)</td><td style="padding:10px 16px;text-align:right;">(${credited.toLocaleString()})</td></tr>` : ''}
+          ${prepaymentCredit ? `<tr><td style="padding:10px 16px;color:#0f5b6e;">Less: cash on account (prepayment held for future invoices)</td><td style="padding:10px 16px;text-align:right;color:#0f5b6e;">(${prepaymentCredit.toLocaleString()})</td></tr>` : ''}
           <tr class="balance-row"><td>Balance</td><td>${balance.toLocaleString()}</td></tr>
         </tfoot>
       </table>
@@ -2990,15 +3010,48 @@ function _stuRenderSoaResult(data, startDate) {
   // Server sorts lines (entry_date ASC, type_order ASC) — never re-sort here,
   // or a same-day invoice/receipt/credit-note trio renders out of the order
   // its running_balance column was computed in (§1.4).
-  const lineRows = lines.map(l => `<tr>
-    <td>${_esc(l.entry_date || '')}</td>
+  // Group consecutive receipt + prepayment lines sharing a payment_reference
+  // so the operator sees one 22,500 payment header with its 16,500 / 5,793 /
+  // 207 breakdown below, instead of three unrelated ledger rows. The running
+  // balance still comes from the API — the last row of a group carries the
+  // group's closing balance, which is what a reader wants anyway.
+  const groups = [];
+  for (const l of lines) {
+    const key = (l.entry_type === 'receipt' || l.entry_type === 'prepayment')
+      ? (l.payment_reference || null)
+      : null;
+    const prev = groups[groups.length - 1];
+    if (key && prev && prev.key === key) {
+      prev.rows.push(l);
+    } else {
+      groups.push({ key, rows: [l] });
+    }
+  }
+  const _pmtGroupHeader = g => {
+    const total = g.rows.reduce((s,l) => s + (parseFloat(l.credit) || 0), 0);
+    return `<tr style="background:#eef6f7;font-weight:600;">
+      <td>${_esc(g.rows[0].entry_date || '')}</td>
+      <td colspan="3" style="color:#0f5b6e;">Payment received &middot; Ref ${_esc(g.key)}</td>
+      <td>&mdash;</td>
+      <td>${formatKES(total)}</td>
+      <td>&mdash;</td>
+    </tr>`;
+  };
+  const _pmtGroupRow = (l, grouped) => `<tr${grouped ? ' style="background:#f8fafc;"' : ''}>
+    <td${grouped ? ' style="padding-left:20px;color:#555;"' : ''}>${grouped ? '&#8618;' : _esc(l.entry_date || '')}</td>
     <td>${_stuSoaLineTypePill(l.entry_type)}</td>
     <td>${_stuSoaLineRef(l)}</td>
     <td>${_esc(l.description || '')}${_stuSoaFounderHint(l)}</td>
     <td>${l.debit ? formatKES(l.debit) : '—'}</td>
     <td>${l.credit ? formatKES(l.credit) : '—'}</td>
     <td>${formatKES(l.running_balance)}</td>
-  </tr>`).join('');
+  </tr>`;
+  const lineRows = groups.map(g => {
+    if (g.rows.length > 1 && g.key) {
+      return _pmtGroupHeader(g) + g.rows.map(l => _pmtGroupRow(l, true)).join('');
+    }
+    return _pmtGroupRow(g.rows[0], false);
+  }).join('');
 
   out.innerHTML = `
     <div style="margin-bottom:12px;font-size:0.88rem;">

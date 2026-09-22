@@ -2018,12 +2018,32 @@ async function loadReceivePaymentsView(container) {
     detailFields: [
       {label:'Receipt No',    key:'receipt_number', fmt:v=>v||'—'},
       {label:'Student',       key:'student_id', fmt:v=>_invStudentName(v)},
-      {label:'Invoice',       key:'fee_invoice_id', fmt:v=>v?`#${v}`:'—'},
+      // Money-first: allocations is a list of {invoice_number, amount};
+      // legacy: fee_invoice_id is a single pointer. The fmt reads the
+      // whole item so we can fall back cleanly.
+      {label:'Applied to',    key:'allocations', fmt:(_,p)=>{
+        const list = Array.isArray(p.allocations) ? p.allocations : [];
+        if (list.length) return list.map(a =>
+          `${_finEsc(a.invoice_number || `#${a.fee_invoice_id}`)} &middot; ${_finFmt(parseFloat(a.amount)||0)}`
+        ).join('<br>');
+        if (p.fee_invoice_id) return `#${p.fee_invoice_id}`;
+        return '—';
+      }},
+      // Only surface the surplus prepayment when it's linked (money-first).
+      {label:'Held on account', key:'prepayment_amount',
+        hideWhen:p=>!p.prepayment_id,
+        fmt:(v)=>`${_finFmt(parseFloat(v)||0)} <span style="color:#0f5b6e;font-size:0.78rem;">(prepayment)</span>`},
       {label:'Payment Method',key:'payment_method', fmt:v=>receiptMethodLabel(v)},
       {label:'Reference',     key:'reference', fmt:v=>v||'—'},
       {label:'Date',          key:'payment_date', fmt:v=>v?v.split('T')[0]:'—'},
       {label:'Amount',        key:'amount', fmt:v=>_finFmt(parseFloat(v)||0)},
       {label:'Voided',        key:'voided', fmt:v=>v?'Yes':'No'},
+      // Consolidation trail: superseded rows point at their new canonical
+      // via superseded_by_receipt_id (Option A backfill). Only shown when
+      // the receipt was consolidated into another one.
+      {label:'Superseded by', key:'superseded_by_receipt_id',
+        hideWhen:p=>!p.superseded_by_receipt_id,
+        fmt:v=>`#${v}`},
     ],
     renderAdd: _finInfoPlaceholder('Payments are recorded from a Fee Invoice — open the invoice and click Record Payment.', "loadView('fin-fee-invoices')", 'Go to Fee Invoices'),
     onAdd: () => {
@@ -2188,9 +2208,28 @@ async function openReceiptPdf(receiptId) {
         <tr><td colspan="4" class="panel-head">Receipt Details</td></tr>
         <tr><td class="info-cell"><span class="info-label">Receipt No.</span>${_finEsc(receiptNo)}</td><td class="info-cell"><span class="info-label">Date</span>${_finEsc(paymentDate)}</td></tr>
         <tr><td class="info-cell"><span class="info-label">Received From</span>${_finEsc(studentName)}</td><td class="info-cell"><span class="info-label">Admission No.</span>${_finEsc(admissionNo)}</td></tr>
-        <tr><td class="info-cell"><span class="info-label">Invoice Ref.</span>${_finEsc(invoice?.invoice_number || (receipt.fee_invoice_id ? `#${receipt.fee_invoice_id}` : '—'))}</td><td class="info-cell"><span class="info-label">Printed On</span>${_finEsc(printedOn)}</td></tr>
+        <tr><td class="info-cell"><span class="info-label">Reference</span>${_finEsc(receipt.reference || '—')}</td><td class="info-cell"><span class="info-label">Printed On</span>${_finEsc(printedOn)}</td></tr>
       </table>
 
+      ${(() => {
+        // Money-first receipts render an Applied-to breakdown so the
+        // parent sees which invoices the payment settled + any surplus.
+        // Legacy receipts (no allocations, no linked prepayment) skip
+        // this panel so the receipt stays compact.
+        const allocs = Array.isArray(receipt.allocations) ? receipt.allocations : [];
+        const ppAmt  = parseFloat(receipt.prepayment_amount) || 0;
+        if (!allocs.length && !ppAmt) return '';
+        const rows = allocs.map(a =>
+          `<tr><td style="padding:10px 16px;">${_finEsc(a.invoice_number || `#${a.fee_invoice_id}`)}</td><td style="padding:10px 16px;text-align:right;">${(parseFloat(a.amount)||0).toLocaleString()}</td></tr>`
+        ).join('');
+        const ppRow = ppAmt
+          ? `<tr><td style="padding:10px 16px;color:#0f5b6e;">Held on account (prepayment for future invoices)</td><td style="padding:10px 16px;text-align:right;color:#0f5b6e;">${ppAmt.toLocaleString()}</td></tr>`
+          : '';
+        return `<table class="panel">
+          <thead><tr class="acct-head"><th>Applied to</th><th style="text-align:right;">Amount (KES)</th></tr></thead>
+          <tbody>${rows}${ppRow}</tbody>
+        </table>`;
+      })()}
       <table class="panel" style="margin-bottom:0;">
         <thead><tr class="acct-head"><th>Payment Method</th><th>Reference</th><th style="text-align:right;">Amount (KES)</th></tr></thead>
         <tbody>
@@ -2200,7 +2239,7 @@ async function openReceiptPdf(receiptId) {
           <tr class="total-row"><td colspan="2">AMOUNT RECEIVED</td><td>${amount.toLocaleString()}</td></tr>
         </tfoot>
       </table>
-      <p class="footnote">*This receipt confirms payment received against the invoice referenced above.</p>
+      <p class="footnote">*This receipt confirms payment received${(Array.isArray(receipt.allocations)&&receipt.allocations.length)?' and its allocation across the invoices listed above':' against the invoice referenced above'}.</p>
 
       <p class="closing">Thank you for partnering with us in your child's journey &mdash; from seed to oak.</p>
 
