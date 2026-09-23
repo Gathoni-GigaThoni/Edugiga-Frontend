@@ -110,6 +110,13 @@ function _rcvStudentName(id) {
   const s = (_rcvStudentsCache||[]).find(x => String(x.id) === String(id));
   return s ? `${s.first_name||''} ${s.last_name||''}`.trim() || `#${id}` : (id ? `#${id}` : '—');
 }
+// Admission number, for the printed invoice's Student Details panel and the
+// M-Pesa account-number example on it. The finance lookup carries it as
+// student_id (the human code), distinct from the row's numeric id.
+function _rcvStudentAdmissionNo(id) {
+  const s = (_rcvStudentsCache||[]).find(x => String(x.id) === String(id));
+  return (s && (s.student_id || s.code)) || '-';
+}
 function _rcvRouteName(id) {
   const r = (_rcvRoutesCache||[]).find(x => String(x.id) === String(id));
   return r ? (r.name || r.route_name || '-') : (id ? `Route #${id}` : '—');
@@ -1712,12 +1719,102 @@ async function loadInvoiceDetailView(container, invoiceId) {
           <span>Balance</span><span>KES ${_finFmt(bal)}</span>
         </div>
       </div>
-      ${actions?`<div class="fin-form-actions" style="margin-top:20px;">${actions}
+      <div class="fin-form-actions" style="margin-top:20px;">${actions}
+        <button class="fin-btn-outline" onclick="openFeeInvoicePdf(${inv.id})">&#128438; Print Invoice</button>
         <button class="fin-btn-outline" onclick="loadView('fin-fee-invoices')">&#8592; Back to List</button>
-      </div>`:
-      `<div style="margin-top:16px;"><button class="fin-btn-outline" onclick="loadView('fin-fee-invoices')">&#8592; Back to List</button></div>`}
+      </div>
       <div id="inv-action-msg"></div>
     </div>`;
+}
+
+// ── Printable fee invoice ───────────────────────────────────────────────────
+// The invoice a parent is actually handed or emailed, as opposed to the
+// operator's detail screen above. Same standalone document as the fee
+// statement (students.js) and the receipt (finance.js): crest top centre,
+// school letterhead, running footer and the Payment Details panel all come
+// from js/print-letterhead.js.
+//
+// The screen's base/proration/discount columns are deliberately dropped here.
+// A parent needs description, quantity of discount given and what is owed —
+// the pricing arithmetic behind a line belongs on the staff screen. Discounts
+// are still shown, as their own money column, because a parent who was given
+// one should see it on the document that bills them.
+async function openFeeInvoicePdf(invoiceId) {
+  // Opened first, synchronously, or the popup blocker eats it — same rule as
+  // openReceiptPdf and openStudentFeeStatement.
+  const win = soisOpenPrintWindow('Loading invoice…');
+  if (!win) { showToast('Please allow pop-ups to view the invoice.', 'error'); return; }
+
+  const res = await apiFetch(`${API_BASE}/receivables/fee-invoices/${invoiceId}`);
+  if (!res || !res.ok) {
+    if (!win.closed) win.document.body.innerHTML = '<p style="font-family:Arial,sans-serif;padding:24px;color:#c0392b;">Could not load this invoice.</p>';
+    return;
+  }
+  const inv = await res.json();
+  await _rcvLoadLookups({ terms:true, students:true, accounts:true, items:true });
+  // Forced refresh for the same reason the detail screen forces it: the
+  // operator often prints right after applying a credit note, and a stale
+  // index would put the pre-credit balance on the parent's copy.
+  await loadAppliedCreditIndex(true);
+  if (win.closed) return;
+
+  const lineItems = _toArray(inv.line_items||inv.lineItems||[]);
+  const due       = parseFloat(inv.amount_due||0);
+  const paid      = parseFloat(inv.amount_paid||0);
+  const credited  = resolveCredited(inv);
+  const bal       = invoiceBalance(inv, credited);
+  const anyDiscount = lineItems.some(li => parseFloat(li.discount_amount||0) > 0);
+
+  const studentName = _rcvStudentName(inv.student_id);
+  const admissionNo = _rcvStudentAdmissionNo(inv.student_id);
+  const invoiceNo   = inv.invoice_number || `#${inv.id}`;
+  const issueDate   = (inv.issue_date||inv.created_at||'').split('T')[0] || '—';
+  const dueDate     = (inv.due_date||'').split('T')[0] || '—';
+  const printedOn   = new Date().toLocaleString('en-GB', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' });
+  const cancelled   = inv.status === 'cancelled';
+
+  const rows = lineItems.length ? lineItems.map((li,i) => `
+      <tr style="background:${i%2?'#f4f1ea':'#fff'}">
+        <td style="padding:10px 16px;">${_finEsc(li.description||'')}</td>
+        ${anyDiscount ? `<td style="padding:10px 16px;text-align:right;">${parseFloat(li.discount_amount||0) > 0 ? `(${_finFmt(parseFloat(li.discount_amount))})` : '—'}</td>` : ''}
+        <td style="padding:10px 16px;text-align:right;">${_finFmt(parseFloat(li.amount||0))}</td>
+      </tr>`).join('')
+    : `<tr><td colspan="${anyDiscount?3:2}" style="padding:18px;text-align:center;color:#888;">This invoice has no line items.</td></tr>`;
+
+  const body = `
+      ${cancelled ? '<div class="cancelled-stamp">CANCELLED</div>' : ''}
+      <table class="sois-panel">
+        <tr><td colspan="2" class="sois-panel-head">Invoice Details</td></tr>
+        <tr><td class="sois-info-cell"><span class="sois-info-label">Invoice No.</span>${_finEsc(invoiceNo)}</td><td class="sois-info-cell"><span class="sois-info-label">Issue Date</span>${_finEsc(issueDate)}</td></tr>
+        <tr><td class="sois-info-cell"><span class="sois-info-label">Billed To</span>${_finEsc(studentName)}</td><td class="sois-info-cell"><span class="sois-info-label">Admission No.</span>${_finEsc(admissionNo)}</td></tr>
+        <tr><td class="sois-info-cell"><span class="sois-info-label">Term</span>${_finEsc(_rcvTermName(inv.term_id))}</td><td class="sois-info-cell"><span class="sois-info-label">Due Date</span>${_finEsc(dueDate)}</td></tr>
+        <tr><td class="sois-info-cell"><span class="sois-info-label">Printed On</span>${_finEsc(printedOn)}</td><td class="sois-info-cell"></td></tr>
+      </table>
+
+      <table class="sois-panel" style="margin-bottom:0;">
+        <thead><tr class="acct-head">
+          <th>Description</th>${anyDiscount?'<th style="text-align:right;">Discount (KES)</th>':''}<th style="text-align:right;">Amount (KES)</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot>
+          <tr class="total-row"><td${anyDiscount?' colspan="2"':''}>TOTAL INVOICED</td><td>${_finFmt(due)}</td></tr>
+          ${paid ? `<tr><td${anyDiscount?' colspan="2"':''} style="padding:10px 16px;">Less: payments received</td><td style="padding:10px 16px;text-align:right;">(${_finFmt(paid)})</td></tr>` : ''}
+          ${credited ? `<tr><td${anyDiscount?' colspan="2"':''} style="padding:10px 16px;">Less: credit notes applied</td><td style="padding:10px 16px;text-align:right;">(${_finFmt(credited)})</td></tr>` : ''}
+          <tr class="balance-row"><td${anyDiscount?' colspan="2"':''}>Balance Due</td><td>${_finFmt(bal)}</td></tr>
+        </tfoot>
+      </table>
+      <p class="sois-footnote">*Quote the invoice number above when paying. ${cancelled ? 'This invoice has been cancelled and is shown for reference only — nothing is payable against it.' : 'Fees are payable on or before the due date shown.'}</p>`;
+
+  soisWriteDoc(win, soisPrintDocHtml({
+    title:    `Invoice ${invoiceNo} - ${studentName}`,
+    docTitle: 'Fee Invoice',
+    bodyHtml: body,
+    paymentDetails: !cancelled,
+    admissionNo,
+    closing:  cancelled ? '' : `Kindly send your deposit slip or M-Pesa confirmation by email to <strong>${soisEsc(SOIS_PAYMENT_DETAILS.contactEmail)}</strong> once fees are paid.<br>
+      Thank you for partnering with us in your child's journey &mdash; from seed to oak.`,
+    extraCss: `.cancelled-stamp{color:#c0392b;text-align:center;font-weight:700;font-size:1.3rem;letter-spacing:3px;border:3px solid #c0392b;padding:6px;margin-bottom:16px;transform:rotate(-3deg);}`,
+  }));
 }
 
 // 500 classification per the 2026-08-17 addendum §2.3: an unset

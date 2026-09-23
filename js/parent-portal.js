@@ -568,9 +568,14 @@ function ppGoStatement() { ppRenderStatement(ppCurrentChild.studentId, ppCurrent
 function ppChildTabs(active) {
   const tab = (key, label, fn) =>
     `<a class="pp-subnav-link${active === key ? ' active' : ''}" onclick="${fn}()">${label}</a>`;
+  // Print sits on the tab bar so both child pages get it from one place. The
+  // printed page carries the school letterhead — js/print-letterhead.js drops
+  // the crest/header/footer bands in, css/core.css positions them into the
+  // page margins and css/parent-portal.css hides the portal's own chrome.
   return `<nav class="pp-subnav">
     ${tab('invoices',  'Invoices',       'ppGoInvoices')}
     ${tab('statement', 'Full Statement', 'ppGoStatement')}
+    <a class="pp-subnav-link pp-subnav-print" onclick="window.print()">&#128438; Print</a>
   </nav>`;
 }
 

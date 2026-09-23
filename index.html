@@ -21,7 +21,7 @@
        parent-portal.html carries its own copy of the same token. -->
 
   <!-- ── Core styles ── -->
-  <link rel="stylesheet" href="css/core.css?v=20260918a">
+  <link rel="stylesheet" href="css/core.css?v=20260924a">
   <link rel="stylesheet" href="css/auth.css?v=20260916a">
 
   <!-- ── Module styles ── -->
@@ -30,7 +30,7 @@
   <link rel="stylesheet" href="css/hr.css?v=20260911e">
   <link rel="stylesheet" href="css/payroll.css?v=20260911e">
   <link rel="stylesheet" href="css/academics.css?v=20260911e">
-  <link rel="stylesheet" href="css/finance.css?v=20260921a">
+  <link rel="stylesheet" href="css/finance.css?v=20260924a">
   <link rel="stylesheet" href="css/students.css?v=20260911e">
   <link rel="stylesheet" href="css/transport.css?v=20260911e">
   <link rel="stylesheet" href="css/parent-access.css?v=20260911e">
@@ -45,17 +45,20 @@
   <script src="js/config.js?v=20260916a"></script>
   <script src="js/auth.js?v=20260916a"></script>
   <script src="js/ui-helpers.js?v=20260918a"></script>
+  <!-- School letterhead for everything the app prints (standalone documents
+       + the live page). Must load before any module that builds one. -->
+  <script src="js/print-letterhead.js?v=20260924a"></script>
   <script src="js/dashboard.js?v=20260918b"></script>
 
   <!-- ── Feature modules (order within this group does not matter) ── -->
-  <script src="js/students.js?v=20260921a"></script>
+  <script src="js/students.js?v=20260924a"></script>
   <script src="js/admissions.js?v=20260911e"></script>
   <script src="js/supplies.js?v=20260911e"></script>
   <script src="js/attendance.js?v=20260911e"></script>
   <script src="js/transport.js?v=20260911e"></script>
   <script src="js/academics.js?v=20260911e"></script>
-  <script src="js/finance.js?v=20260916a"></script>
-  <script src="js/receivables.js?v=20260920a"></script>
+  <script src="js/finance.js?v=20260924a"></script>
+  <script src="js/receivables.js?v=20260924a"></script>
   <script src="js/payables.js?v=20260914b"></script>
   <script src="js/journal-entries.js?v=20260911e"></script>
   <script src="js/fiscal-years.js?v=20260911e"></script>
@@ -66,7 +69,7 @@
   <script src="js/asset-categories.js?v=20260911e"></script>
   <script src="js/account-subtypes.js?v=20260911e"></script>
   <script src="js/inventory.js?v=20260911e"></script>
-  <script src="js/fixed-asset-locations.js?v=20260911e"></script>
+  <script src="js/fixed-asset-locations.js?v=20260924a"></script>
   <script src="js/reports.js?v=20260911e"></script>
   <script src="js/finance-reports.js?v=20260918b"></script>
   <script src="js/procurement.js?v=20260911e"></script>

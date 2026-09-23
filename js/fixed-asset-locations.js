@@ -184,8 +184,10 @@ async function openClassAssetSummary(classId) {
   win.document.close();
 }
 
-// Same standalone-document look as the receipt (openReceiptPdf): navy
-// #1d2d50, gold #c9a227. Totals are the server's, shown as sent.
+// Same standalone document as the receipt and the fee statement — crest,
+// header, footer and navy/gold theme all come from js/print-letterhead.js.
+// No Payment Details panel: nobody pays against an asset register. Totals are
+// the server's, shown as sent.
 function _falSummaryDocHtml(s) {
   const rows = _toArray(s.rows);
   const count = Number(s.total_asset_count) || 0;
@@ -202,44 +204,31 @@ function _falSummaryDocHtml(s) {
       <div class="sign-line"><span>${role}:</span><span class="line"></span></div>
       <div class="sign-line"><span>Date:</span><span class="line short"></span></div>
     </div>`;
-  return `<html><head><title>Class Asset Summary - ${_finEsc(name)}</title>
-    <style>
-      body{font-family:Arial,Helvetica,sans-serif;color:#222;max-width:760px;margin:30px auto;padding:0 16px;}
-      h1{color:#1d2d50;text-align:center;margin:0 0 4px;font-size:1.5rem;}
-      .rule{border:none;border-top:3px solid #c9a227;margin:10px 0 16px;}
-      .doc-title{text-align:center;font-weight:700;margin-bottom:6px;}
-      .headline{text-align:center;font-size:1.05rem;margin:0 0 4px;}
-      .meta{text-align:center;color:#666;font-size:0.8rem;margin:0 0 16px;}
-      table{width:100%;border-collapse:collapse;border:1px solid #d8d8d8;}
-      th{background:#1d2d50;color:#fff;text-align:left;padding:10px 16px;}
-      td{padding:9px 16px;border-bottom:1px solid #eee;font-size:0.9rem;}
-      th.num,td.num{text-align:right;}
-      td.empty{text-align:center;color:#777;padding:18px;}
-      tfoot td{background:#c9a227;font-weight:700;border-bottom:none;}
-      .note{font-size:0.75rem;color:#777;margin:8px 0 0;}
-      .signatures{display:flex;gap:48px;margin-top:56px;}
-      .sign{flex:1;font-size:0.9rem;}
-      .sign-line{display:flex;align-items:flex-end;gap:8px;margin-bottom:26px;}
-      .line{flex:1;border-bottom:1px solid #222;height:1.1em;}
-      .line.short{flex:0 0 120px;}
-      @page{margin:16mm;}
-      @media print{.no-print{display:none;} body{margin:0 auto;} th,tfoot td{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
-    </style></head>
-    <body>
-      <h1>Seven Oaks International School</h1>
-      <hr class="rule">
-      <div class="doc-title">Class Asset Summary</div>
+  return soisPrintDocHtml({
+    title: `Class Asset Summary - ${name}`,
+    docTitle: 'Class Asset Summary',
+    bodyHtml: `
       <p class="headline">${_finEsc(name)} &mdash; ${count} asset${count === 1 ? '' : 's'}, ${_finEsc(formatKES(s.total_acquisition_cost))}</p>
-      <p class="meta">Printed on ${_finEsc(printedOn)}</p>
-      <table>
+      <p class="sois-meta">Printed on ${_finEsc(printedOn)}</p>
+      <table class="fal-table">
         <thead><tr><th>Category</th><th class="num">Count</th><th class="num">&Sigma; Acquisition Cost</th></tr></thead>
         <tbody>${body}</tbody>
         <tfoot><tr><td>Total</td><td class="num">${count}</td><td class="num">${_finEsc(formatKES(s.total_acquisition_cost))}</td></tr></tfoot>
       </table>
-      <p class="note">Assets the register currently places in this class. Rejected and disposed assets are not included.</p>
-      <div class="signatures">${sign('Homeroom Teacher')}${sign('Bursar')}</div>
-      <div class="no-print" style="text-align:center;margin-top:20px;">
-        <button onclick="window.print()" style="padding:8px 22px;font-size:0.95rem;">Print</button>
-      </div>
-    </body></html>`;
+      <p class="sois-footnote">Assets the register currently places in this class. Rejected and disposed assets are not included.</p>
+      <div class="signatures">${sign('Homeroom Teacher')}${sign('Bursar')}</div>`,
+    extraCss: `
+      .headline{text-align:center;font-size:1.05rem;margin:0 0 4px;}
+      .fal-table{border:1px solid #d8d8d8;}
+      .fal-table th{background:#1d2d50;color:#fff;text-align:left;padding:10px 16px;}
+      .fal-table td{padding:9px 16px;border-bottom:1px solid #eee;font-size:0.9rem;}
+      .fal-table th.num,.fal-table td.num{text-align:right;}
+      .fal-table td.empty{text-align:center;color:#777;padding:18px;}
+      .fal-table tfoot td{background:#c9a227;font-weight:700;border-bottom:none;}
+      .signatures{display:flex;gap:48px;margin-top:56px;}
+      .sign{flex:1;font-size:0.9rem;}
+      .sign-line{display:flex;align-items:flex-end;gap:8px;margin-bottom:26px;}
+      .line{flex:1;border-bottom:1px solid #222;height:1.1em;}
+      .line.short{flex:0 0 120px;}`,
+  });
 }

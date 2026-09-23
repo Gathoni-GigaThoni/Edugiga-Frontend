@@ -470,3 +470,27 @@
   .pp-filter-row { gap: 10px; }
   .pp-subnav { gap: 18px; }
 }
+
+/* ── Print ──────────────────────────────────────────────────────────────────
+   A parent printing their child's statement or invoice list gets the same
+   letterheaded document a bursar does: js/print-letterhead.js appends the
+   crest/header/footer bands and css/core.css positions them into the page
+   margins. Everything here is the portal's navigation chrome, which has no
+   business on a printed statement. */
+@media print {
+  .pp-topbar, .pp-subnav, .pp-back-link, .pp-filter-row,
+  .pp-page-subtitle { display: none !important; }
+  /* #pp-root itself moves into the print frame on beforeprint, so unlike the
+     staff app's .container there is no emptied shell left behind to hide. */
+  .pp-shell { background: #fff !important; }
+  .pp-container { padding: 0 !important; max-width: none !important; }
+  .pp-page-header { margin-bottom: 12px; }
+  .pp-table-wrap { overflow: visible !important; box-shadow: none !important; }
+  .pp-type-pill, .pp-stmt-totals, .pp-stmt-total-card {
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+}
+
+/* Print action on the child sub-nav — pushed to the far end so it reads as an
+   action rather than a third page. */
+.pp-subnav-print { margin-left: auto; cursor: pointer; }

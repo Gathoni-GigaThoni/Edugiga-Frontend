@@ -472,9 +472,22 @@
    Fee Statement rendered a blank sheet. */
 @media print {
   body:has(#je-detail-print-area) * { visibility: hidden; }
+  /* The letterhead bands are printed siblings of the modal, so the blanket
+     visibility:hidden above would wipe them off the voucher. Named back in. */
   body:has(#je-detail-print-area) #je-detail-print-area,
-  body:has(#je-detail-print-area) #je-detail-print-area * { visibility: visible; }
-  body:has(#je-detail-print-area) #je-detail-print-area { position: absolute; left: 0; top: 0; width: 100%; box-shadow: none; }
+  body:has(#je-detail-print-area) #je-detail-print-area *,
+  body:has(#je-detail-print-area) #sois-print-letterhead,
+  body:has(#je-detail-print-area) #sois-print-letterhead *,
+  body:has(#je-detail-print-area) #sois-print-footer,
+  body:has(#je-detail-print-area) #sois-print-footer * { visibility: visible; }
+  /* Pushed clear of the letterhead band the print frame's <thead> occupies —
+     at top:0 the voucher printed straight over the crest. */
+  body:has(#je-detail-print-area) #je-detail-print-area { position: absolute; left: 0; top: 45mm; width: 100%; box-shadow: none; }
+  /* The page behind the modal is only visibility:hidden, so it still takes up
+     its full height — printing a voucher from a long grid used to spit out
+     blank continuation pages. Now that each of those pages would also carry a
+     letterhead, drop the frame's body entirely: the voucher is the document. */
+  body:has(#je-detail-print-area) #sois-print-frame > tbody { display: none; }
   .je-modal-no-print { display: none !important; }
 }
 

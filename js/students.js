@@ -2674,57 +2674,19 @@ async function openStudentFeeStatement(studentId) {
   const studentName  = `${d.first_name||''} ${d.last_name||''}`.trim() || '-';
   const printedOn      = new Date().toLocaleString('en-GB', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' });
 
-  win.document.open();
-  win.document.write(`
-    <html><head><title>Fee Statement - ${_esc(studentName)}</title>
-    <style>
-      body{font-family:Arial,Helvetica,sans-serif;color:#222;max-width:760px;margin:30px auto;padding:0 16px;}
-      .crest{color:#c9a227;text-align:center;font-size:0.8rem;letter-spacing:1px;margin-bottom:4px;}
-      h1{color:#1d2d50;text-align:center;margin:0 0 4px;font-size:1.6rem;}
-      .addr{text-align:center;color:#444;font-size:0.85rem;margin:0;}
-      .motto{text-align:center;color:#c9a227;font-style:italic;font-size:0.85rem;margin:4px 0 14px;}
-      .rule{border:none;border-top:3px solid #c9a227;margin:0 0 16px;}
-      .stmt-title{text-align:center;font-weight:700;margin-bottom:16px;}
-      .panel{border:1px solid #d8d8d8;margin-bottom:14px;border-collapse:collapse;width:100%;}
-      .panel-head{background:#1d2d50;color:#fff;padding:8px 16px;font-weight:700;}
-      .info-row{display:flex;}
-      .info-cell{flex:1;padding:8px 16px;border-bottom:1px solid #eee;font-size:0.9rem;}
-      .info-label{font-weight:700;display:inline-block;min-width:100px;}
-      .arrears{background:#efece4;padding:8px 16px;font-weight:700;display:flex;justify-content:space-between;margin-bottom:14px;}
-      table{width:100%;border-collapse:collapse;}
-      .acct-head th{background:#1d2d50;color:#fff;text-align:left;padding:10px 16px;}
-      .acct-head th:last-child{text-align:right;}
-      .total-row td{background:#c9a227;font-weight:700;padding:10px 16px;}
-      .total-row td:last-child{text-align:right;}
-      .balance-row td{background:#1d2d50;color:#fff;font-weight:700;padding:10px 16px;}
-      .balance-row td:last-child{text-align:right;}
-      .footnote{font-size:0.75rem;color:#777;margin:8px 0 18px;}
-      .pay-cols{display:flex;gap:24px;padding:14px 16px;}
-      .pay-col{flex:1;font-size:0.85rem;}
-      .pay-col h4{margin:0 0 6px;}
-      .closing{font-size:0.8rem;color:#555;margin-top:16px;}
-      @media print { .no-print{display:none;} }
-    </style></head>
-    <body>
-      <div class="crest">[ OFFICIAL CREST ]</div>
-      <h1>Seven Oaks International School</h1>
-      <p class="addr">143 Brookview, Membley | Email: admin@sevenoaks.ac | Phone: 07 XXX XXX XX</p>
-      <p class="motto">Rooted in God &middot; Growing through our Pillars &middot; From seed to oak</p>
-      <hr class="rule">
-      <div class="stmt-title">Summarised Fee Statement &mdash; ${_esc(termName(termId))}, ${_esc(yearName(classId))}</div>
-
-      <table class="panel">
-        <tr><td colspan="4" class="panel-head">Student Details</td></tr>
-        <tr><td class="info-cell"><span class="info-label">Name</span>${_esc(studentName)}</td><td class="info-cell"><span class="info-label">Admission No.</span>${_esc(admissionNo)}</td></tr>
-        <tr><td class="info-cell"><span class="info-label">Class</span>${_esc(className(classId))}</td><td class="info-cell"><span class="info-label">Programme</span>-</td></tr>
-        <tr><td class="info-cell"><span class="info-label">Stream</span>${_esc(d.stream||'N/A')}</td><td class="info-cell"><span class="info-label">Stage</span>-</td></tr>
-        <tr><td class="info-cell"><span class="info-label">Printed On</span>${_esc(printedOn)}</td><td class="info-cell"></td></tr>
+  const body = `
+      <table class="sois-panel">
+        <tr><td colspan="2" class="sois-panel-head">Student Details</td></tr>
+        <tr><td class="sois-info-cell"><span class="sois-info-label">Name</span>${_esc(studentName)}</td><td class="sois-info-cell"><span class="sois-info-label">Admission No.</span>${_esc(admissionNo)}</td></tr>
+        <tr><td class="sois-info-cell"><span class="sois-info-label">Class</span>${_esc(className(classId))}</td><td class="sois-info-cell"><span class="sois-info-label">Programme</span>-</td></tr>
+        <tr><td class="sois-info-cell"><span class="sois-info-label">Stream</span>${_esc(d.stream||'N/A')}</td><td class="sois-info-cell"><span class="sois-info-label">Stage</span>-</td></tr>
+        <tr><td class="sois-info-cell"><span class="sois-info-label">Printed On</span>${_esc(printedOn)}</td><td class="sois-info-cell"></td></tr>
       </table>
 
       <div class="arrears"><span>${_esc(arrearsLabel)}</span><span>${arrearsDisplay}</span></div>
       ${prepaymentLoadError ? `<div style="background:#fdecea;border:1px solid #f5c2be;color:#b91c1c;padding:8px 12px;border-radius:4px;font-size:0.85rem;margin-bottom:12px;">Note — could not confirm this student's cash-on-account (prepayment) balance (${_esc(prepaymentLoadError)}). The Balance above may be understated if they have overpaid on a prior invoice. Check the Statement of Account tab or ask a finance user to confirm.</div>` : ''}
 
-      <table class="panel" style="margin-bottom:0;">
+      <table class="sois-panel" style="margin-bottom:0;">
         <thead><tr class="acct-head"><th>Account</th><th>Amount (KES)</th></tr></thead>
         <tbody>${rows}</tbody>
         <tfoot>
@@ -2735,25 +2697,21 @@ async function openStudentFeeStatement(studentId) {
           <tr class="balance-row"><td>Balance</td><td>${balance.toLocaleString()}</td></tr>
         </tfoot>
       </table>
-      <p class="footnote">*Amounts reflect the fee schedule configured for this class and term.${multiInvoice?` This term is billed across ${invoices.length} invoices (${_esc(invoices.map(i=>i.invoice_number||('#'+i.id)).join(', '))}).`:''}</p>
+      <p class="sois-footnote">*Amounts reflect the fee schedule configured for this class and term.${multiInvoice?` This term is billed across ${invoices.length} invoices (${_esc(invoices.map(i=>i.invoice_number||('#'+i.id)).join(', '))}).`:''}</p>`;
 
-      <table class="panel">
-        <tr><td colspan="3" class="panel-head">Payment Details</td></tr>
-        <tr>
-          <td class="pay-col"><h4>Bank Transfer</h4>Bank: [Bank Name]<br>Acc Name: Seven Oaks International School<br>Acc No: [Account No.]<br>Branch: [Branch], Nairobi</td>
-          <td class="pay-col"><h4>Cheque</h4>Payable to:<br>Seven Oaks International School<br><br>Crossed &amp; marked<br>&ldquo;A/C Payee Only&rdquo;</td>
-          <td class="pay-col"><h4>M-Pesa</h4>Pay Bill No.: [Paybill]<br>Account No.: Admission No.<br>(e.g. ${_esc(admissionNo)})</td>
-        </tr>
-      </table>
-
-      <p class="closing">Kindly send your deposit slip or confirmation by email to <strong>admin@sevenoaks.ac</strong> or WhatsApp <strong>07 XXX XXX XX</strong> once fees are paid.<br>
-      Fees are payable on or before the first day of term. Thank you for partnering with us in your child's journey &mdash; from seed to oak.</p>
-
-      <div class="no-print" style="text-align:center;margin-top:20px;">
-        <button onclick="window.print()" style="padding:8px 22px;font-size:0.95rem;">Print</button>
-      </div>
-    </body></html>`);
-  win.document.close();
+  // Letterhead, Payment Details and the running footer all come from
+  // js/print-letterhead.js so this statement, the fee invoice and the receipt
+  // stay identical documents above the fold.
+  soisWriteDoc(win, soisPrintDocHtml({
+    title:    `Fee Statement - ${studentName}`,
+    docTitle: `Summarised Fee Statement &mdash; ${_esc(termName(termId))}, ${_esc(yearName(classId))}`,
+    bodyHtml: body,
+    paymentDetails: true,
+    admissionNo,
+    closing:  `Kindly send your deposit slip or M-Pesa confirmation by email to <strong>${soisEsc(SOIS_PAYMENT_DETAILS.contactEmail)}</strong> once fees are paid.<br>
+      Fees are payable on or before the first day of term. Thank you for partnering with us in your child's journey &mdash; from seed to oak.`,
+    extraCss: `.arrears{font-size:0.95rem;}`,
+  }));
 }
 
 function _renderStudentViewBody(d, activeTab) {

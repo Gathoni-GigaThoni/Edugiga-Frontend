@@ -421,14 +421,53 @@ th {
 .app-toast--warning { background: #e67e22; }
 
 /* ── Print styles ── */
+/* The school letterhead on everything the app prints. js/print-letterhead.js
+   appends #sois-print-frame (a real table) and #sois-print-footer to <body>,
+   and on beforeprint it moves #main-content into the frame's body cell.
+
+   The frame's <thead> is what repeats the crest and header on EVERY page and
+   reserves the space for them — a table header group is the one running-header
+   mechanism Chrome honours. The footer is position:fixed at bottom:0, which
+   repeats pinned to the page bottom, with the frame's empty <tfoot> reserving
+   its band. A negatively-offset fixed header sitting in a deep @page margin
+   was measured and rejected: Chrome drops it from the last page. Keep this in
+   step with soisDocCss() in js/print-letterhead.js. */
+#sois-print-frame,
+#sois-print-footer { display: none; }
+
 @media print {
+  @page { size: A4; margin: 12mm 19mm 10mm; }
+
   .sidebar, .hr-controls-row, .fin-controls-row, .sa-controls-row,
   .fin-btn-filter, .fin-export-btn, .hr-add-btn, .hr-filter-btn,
   .hr-icon-btn, button, .modal, #toast-container { display: none !important; }
   .container { display: block !important; }
+  /* Set by js/print-letterhead.js once #main-content has moved into the print
+     frame: the shell it left behind is min-height:100vh and would otherwise
+     print as a blank first page. */
+  .sois-print-wrapped .container { display: none !important; }
   main, #main-content { width: 100% !important; padding: 0 !important; }
   body { background: var(--white) !important; }
   .fin-table, .hr-table, table { box-shadow: none !important; }
+
+  /* !important beats the inline display:none the injected nodes carry, which
+     is there so they never flash on screen before this stylesheet lands. */
+  #sois-print-frame { display: table !important; width: 100%; border-collapse: collapse; }
+  #sois-print-frame > thead > tr > td,
+  #sois-print-frame > tbody > tr > td,
+  #sois-print-frame > tfoot > tr > td { padding: 0; }
+  #sois-print-frame > thead > tr > td { padding-bottom: 4px; }
+  #sois-print-frame .sois-foot-spacer { height: 12mm; }
+
+  #sois-print-letterhead { text-align: center; color: #222A35; }
+  #sois-print-letterhead .sois-crest-wrap { height: 17mm; overflow: hidden; margin-bottom: 2px; }
+  #sois-print-letterhead .sois-crest      { width: 44mm; height: auto; display: inline-block; }
+  #sois-print-letterhead .sois-lh-name    { font-weight: 700; font-size: 12pt; color: #222A35; }
+  #sois-print-letterhead .sois-lh-line    { font-weight: 700; font-size: 8pt;  color: #222A35; line-height: 1.45; }
+  #sois-print-letterhead .sois-rule       { border: none; border-top: 3px solid #c9a227; margin: 8px 0 0; }
+
+  #sois-print-footer { display: block !important; position: fixed; bottom: 0; left: 0; right: 0; text-align: center; }
+  #sois-print-footer .sois-doc-footer { font-style: italic; font-size: 9pt; color: #222A35; }
 }
 
 /* ==================== STUDENT MODULE COMPONENTS ==================== */

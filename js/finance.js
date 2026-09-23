@@ -2133,10 +2133,11 @@ async function _paStudentSelect(studentId, label) {
     </div>`).join('');
 }
 
-// Receipt PDF — same standalone-document pattern/theme as the Fee Statement
-// (see openStudentFeeStatement in students.js: navy #1d2d50 / gold #c9a227,
-// same panel/table CSS, same synchronous-window.open-before-any-await fix
-// for popup blockers). Reads the receipt record from the cache detailActions
+// Receipt PDF — the school letterhead, theme and Payment Details panel all come
+// from js/print-letterhead.js, so this, the fee statement (students.js) and the
+// fee invoice (receivables.js) are the same document with different middles.
+// soisOpenPrintWindow keeps the synchronous-window.open-before-any-await fix
+// for popup blockers. Reads the receipt record from the cache detailActions
 // above populates (already the full row from Receive Payments' own fetch, no
 // need to re-fetch it or thread it through the onclick attribute — passing a
 // whole object through an inline onclick means escaping embedded quotes,
@@ -2145,9 +2146,8 @@ async function _paStudentSelect(studentId, label) {
 async function openReceiptPdf(receiptId) {
   const receipt = (window._rcvReceiptCache || {})[receiptId];
   if (!receipt) { showToast('Receipt not found — please reselect it from the list.', 'error'); return; }
-  const win = window.open('', '_blank');
+  const win = soisOpenPrintWindow('Loading receipt\u2026');
   if (!win) { showToast('Please allow pop-ups to view the receipt.', 'error'); return; }
-  win.document.write('<p style="font-family:Arial,sans-serif;padding:24px;color:#888;">Loading receipt&#8230;</p>');
 
   if (!_invStudentsCache.length) await _invLoadLookups();
   let invoice = null;
@@ -2167,45 +2167,13 @@ async function openReceiptPdf(receiptId) {
   const methodLabel  = receiptMethodLabel(receipt.payment_method);
   const amount       = parseFloat(receipt.amount) || 0;
 
-  win.document.open();
-  win.document.write(`
-    <html><head><title>Receipt ${_finEsc(receiptNo)} - ${_finEsc(studentName)}</title>
-    <style>
-      body{font-family:Arial,Helvetica,sans-serif;color:#222;max-width:760px;margin:30px auto;padding:0 16px;}
-      .crest{color:#c9a227;text-align:center;font-size:0.8rem;letter-spacing:1px;margin-bottom:4px;}
-      h1{color:#1d2d50;text-align:center;margin:0 0 4px;font-size:1.6rem;}
-      .addr{text-align:center;color:#444;font-size:0.85rem;margin:0;}
-      .motto{text-align:center;color:#c9a227;font-style:italic;font-size:0.85rem;margin:4px 0 14px;}
-      .rule{border:none;border-top:3px solid #c9a227;margin:0 0 16px;}
-      .stmt-title{text-align:center;font-weight:700;margin-bottom:16px;}
-      .panel{border:1px solid #d8d8d8;margin-bottom:14px;border-collapse:collapse;width:100%;}
-      .panel-head{background:#1d2d50;color:#fff;padding:8px 16px;font-weight:700;}
-      .info-cell{padding:8px 16px;border-bottom:1px solid #eee;font-size:0.9rem;}
-      .info-label{font-weight:700;display:inline-block;min-width:110px;}
-      table{width:100%;border-collapse:collapse;}
-      .acct-head th{background:#1d2d50;color:#fff;text-align:left;padding:10px 16px;}
-      .acct-head th:last-child{text-align:right;}
-      .total-row td{background:#c9a227;font-weight:700;padding:10px 16px;}
-      .total-row td:last-child{text-align:right;}
-      .footnote{font-size:0.75rem;color:#777;margin:8px 0 18px;}
-      .closing{font-size:0.8rem;color:#555;margin-top:16px;}
-      .voided-stamp{color:#c0392b;text-align:center;font-weight:700;font-size:1.3rem;letter-spacing:3px;border:3px solid #c0392b;padding:6px;margin-bottom:16px;transform:rotate(-3deg);}
-      @media print { .no-print{display:none;} }
-    </style></head>
-    <body>
-      <div class="crest">[ OFFICIAL CREST ]</div>
-      <h1>Seven Oaks International School</h1>
-      <p class="addr">143 Brookview, Membley | Email: admin@sevenoaks.ac | Phone: 07 XXX XXX XX</p>
-      <p class="motto">Rooted in God &middot; Growing through our Pillars &middot; From seed to oak</p>
-      <hr class="rule">
-      <div class="stmt-title">Official Payment Receipt</div>
+  const body = `
       ${receipt.voided ? '<div class="voided-stamp">VOIDED</div>' : ''}
-
-      <table class="panel">
-        <tr><td colspan="4" class="panel-head">Receipt Details</td></tr>
-        <tr><td class="info-cell"><span class="info-label">Receipt No.</span>${_finEsc(receiptNo)}</td><td class="info-cell"><span class="info-label">Date</span>${_finEsc(paymentDate)}</td></tr>
-        <tr><td class="info-cell"><span class="info-label">Received From</span>${_finEsc(studentName)}</td><td class="info-cell"><span class="info-label">Admission No.</span>${_finEsc(admissionNo)}</td></tr>
-        <tr><td class="info-cell"><span class="info-label">Reference</span>${_finEsc(receipt.reference || '—')}</td><td class="info-cell"><span class="info-label">Printed On</span>${_finEsc(printedOn)}</td></tr>
+      <table class="sois-panel">
+        <tr><td colspan="2" class="sois-panel-head">Receipt Details</td></tr>
+        <tr><td class="sois-info-cell"><span class="sois-info-label">Receipt No.</span>${_finEsc(receiptNo)}</td><td class="sois-info-cell"><span class="sois-info-label">Date</span>${_finEsc(paymentDate)}</td></tr>
+        <tr><td class="sois-info-cell"><span class="sois-info-label">Received From</span>${_finEsc(studentName)}</td><td class="sois-info-cell"><span class="sois-info-label">Admission No.</span>${_finEsc(admissionNo)}</td></tr>
+        <tr><td class="sois-info-cell"><span class="sois-info-label">Reference</span>${_finEsc(receipt.reference || '—')}</td><td class="sois-info-cell"><span class="sois-info-label">Printed On</span>${_finEsc(printedOn)}</td></tr>
       </table>
 
       ${(() => {
@@ -2216,18 +2184,18 @@ async function openReceiptPdf(receiptId) {
         const allocs = Array.isArray(receipt.allocations) ? receipt.allocations : [];
         const ppAmt  = parseFloat(receipt.prepayment_amount) || 0;
         if (!allocs.length && !ppAmt) return '';
-        const rows = allocs.map(a =>
+        const allocRows = allocs.map(a =>
           `<tr><td style="padding:10px 16px;">${_finEsc(a.invoice_number || `#${a.fee_invoice_id}`)}</td><td style="padding:10px 16px;text-align:right;">${(parseFloat(a.amount)||0).toLocaleString()}</td></tr>`
         ).join('');
         const ppRow = ppAmt
           ? `<tr><td style="padding:10px 16px;color:#0f5b6e;">Held on account (prepayment for future invoices)</td><td style="padding:10px 16px;text-align:right;color:#0f5b6e;">${ppAmt.toLocaleString()}</td></tr>`
           : '';
-        return `<table class="panel">
+        return `<table class="sois-panel">
           <thead><tr class="acct-head"><th>Applied to</th><th style="text-align:right;">Amount (KES)</th></tr></thead>
-          <tbody>${rows}${ppRow}</tbody>
+          <tbody>${allocRows}${ppRow}</tbody>
         </table>`;
       })()}
-      <table class="panel" style="margin-bottom:0;">
+      <table class="sois-panel" style="margin-bottom:0;">
         <thead><tr class="acct-head"><th>Payment Method</th><th>Reference</th><th style="text-align:right;">Amount (KES)</th></tr></thead>
         <tbody>
           <tr><td style="padding:10px 16px;">${_finEsc(methodLabel)}</td><td style="padding:10px 16px;">${_finEsc(receipt.reference || '—')}</td><td style="padding:10px 16px;text-align:right;">${amount.toLocaleString()}</td></tr>
@@ -2236,15 +2204,19 @@ async function openReceiptPdf(receiptId) {
           <tr class="total-row"><td colspan="2">AMOUNT RECEIVED</td><td>${amount.toLocaleString()}</td></tr>
         </tfoot>
       </table>
-      <p class="footnote">*This receipt confirms payment received${(Array.isArray(receipt.allocations)&&receipt.allocations.length)?' and its allocation across the invoices listed above':' against the invoice referenced above'}.</p>
+      <p class="sois-footnote">*This receipt confirms payment received${(Array.isArray(receipt.allocations)&&receipt.allocations.length)?' and its allocation across the invoices listed above':' against the invoice referenced above'}.</p>`;
 
-      <p class="closing">Thank you for partnering with us in your child's journey &mdash; from seed to oak.</p>
-
-      <div class="no-print" style="text-align:center;margin-top:20px;">
-        <button onclick="window.print()" style="padding:8px 22px;font-size:0.95rem;">Print</button>
-      </div>
-    </body></html>`);
-  win.document.close();
+  // Crest, header, footer and the Payment Details panel come from
+  // js/print-letterhead.js — shared with the fee statement and the invoice.
+  soisWriteDoc(win, soisPrintDocHtml({
+    title:    `Receipt ${receiptNo} - ${studentName}`,
+    docTitle: 'Official Payment Receipt',
+    bodyHtml: body,
+    paymentDetails: true,
+    admissionNo,
+    closing:  "Thank you for partnering with us in your child's journey &mdash; from seed to oak.",
+    extraCss: `.voided-stamp{color:#c0392b;text-align:center;font-weight:700;font-size:1.3rem;letter-spacing:3px;border:3px solid #c0392b;padding:6px;margin-bottom:16px;transform:rotate(-3deg);}`,
+  }));
 }
 
 
