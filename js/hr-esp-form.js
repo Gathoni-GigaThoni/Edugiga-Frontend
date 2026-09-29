@@ -15,11 +15,15 @@ function applyEspConsultantShape(isConsultant) {
   show('hr-esp-sheltered-section', !isConsultant);
   show('hr-esp-basic-salary-hint', isConsultant);
   const hint = document.getElementById('hr-esp-window-hint');
-  if (hint) hint.style.display = isConsultant ? 'block' : 'none';
+  // Show the window-selection hint for BOTH employees and consultants —
+  // BE now picks the ESP whose interval covers the payroll period for
+  // employees too (fix 2026-09-29). Keeping HR informed prevents the
+  // "created a raise ESP, ran September, September got the raise" trap.
+  if (hint) hint.style.display = 'block';
   const salaryLabel = document.getElementById('hr-esp-basic-salary-label');
   if (salaryLabel) salaryLabel.textContent = _espSalaryLabel(isConsultant);
   const winTitle = document.getElementById('hr-esp-window-title');
-  if (winTitle) winTitle.textContent = isConsultant ? 'Engagement window' : 'Effective dates';
+  if (winTitle) winTitle.textContent = isConsultant ? 'Engagement window' : 'Effective window';
   const endLabel = document.getElementById('hr-esp-end-date-label');
   if (endLabel) endLabel.textContent = isConsultant ? 'End Date (engagement over)' : 'End Date';
 }
@@ -197,10 +201,10 @@ function renderHrEspFormPage(container) {
         </div>
 
         <div class="hr-esp-sheltered-section" id="hr-esp-window-section">
-          <label class="hr-form-label" id="hr-esp-window-title">${isConsultant ? 'Engagement window' : 'Effective dates'}</label>
-          <span id="hr-esp-window-hint" style="display:${isConsultant ? 'block' : 'none'};font-size:12px;color:var(--grey-600);margin-bottom:8px;">
-            A consultant run pays the latest profile whose window covers the run period: it starts on or before the period end, and either has no end date or ends on or after the period start.
-            Setting an end date is how you stop paying a consultant — leave their employee status alone.
+          <label class="hr-form-label" id="hr-esp-window-title">${isConsultant ? 'Engagement window' : 'Effective window'}</label>
+          <span id="hr-esp-window-hint" style="display:block;font-size:12px;color:var(--grey-600);margin-bottom:8px;">
+            Payroll picks the ESP whose window covers the period being run — the profile whose effective date is on or before the period end, and whose end date is either blank or on or after the period end.
+            ${isConsultant ? 'Setting an end date is how you stop paying a consultant — leave their employee status alone.' : 'When terms change (raise, promotion, mid-year contract), set an end date on the current ESP and add a new one starting the day after. Re-running an older month keeps using the ESP that was in force back then.'}
           </span>
           <div class="hr-form-grid">
             <div class="hr-form-group">
