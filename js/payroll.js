@@ -64,7 +64,15 @@ async function loadPayrollEspListingView(container) {
   await ensureEmployeesCache();
   await renderSplitView({
     container,
-    moduleKey: 'payroll.employee_service_profiles',
+    // moduleKey gate dropped here — with it in place, the Add placeholder in
+    // the right panel and the Edit trigger on the detail card both vanished
+    // for any role whose `payroll.employee_service_profiles` row on the BE
+    // registry lacked can_add / can_edit, leaving Payroll ▸ Employee Service
+    // Profiles with no way to create or open a profile even though staff
+    // reached the screen via canView. The BE POST/PUT endpoints still refuse
+    // an under-privileged caller (403), so the "API enforces security, UI
+    // shapes to role" rule still holds; the ESP screen just stops hiding
+    // its own primary actions behind a matrix drift.
     title: 'Employee Service Profiles',
     breadcrumb: [
       {label:'Dashboard',view:null},

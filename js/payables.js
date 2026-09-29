@@ -404,6 +404,12 @@ function _pvPvDetailActions(v) {
   if (_pvPvCanSettle(v)) {
     window._pvPvSettlePending = v;
     html += `<button class="btn" onclick="_pvPvOpenSettleModal(${v.id})">Settle</button>`;
+    // Tranche/mixed-rail: same eligibility as Settle. Refused for WHT and
+    // tendepay-linked (BE settle_voucher_tranche); the button hides those
+    // cases up front so operators do not hit a 400.
+    if (_pvPvCanTranche(v)) {
+      html += `<button class="fin-btn-outline" onclick="_pvPvOpenTrancheModal(${v.id})">Settle in Tranches</button>`;
+    }
   }
   if (_pvPvCanLinkJe(v)) {
     window._pvPvSettlePending = v;
@@ -4151,4 +4157,200 @@ async function _pvIsrSubmitAdd() {
       }
     }
   } catch (e) { showToast('Network error.', 'error'); }
+}
+
+
+// ── Tranche / mixed-rail settlement ─────────────────────────────────────────
+// One PV → many partial settlements across mixed rails (bank + petty_cash +
+// owners_capital tranches). Each POST /settle-tranche books its own JE and
+// appends a row to payment_voucher_settlements; the PV stays approved until
+// cumulative reaches voucher.amount, then flips PAID via the same cascade
+// as /settle. WHT and tendepay-linked vouchers are refused BE-side — this
+// button hides itself for those so the operator does not hit a 400.
+function _pvPvCanTranche(v) {
+  // WHT must settle in a single 3-leg JE; tendepay owns its own confirm path.
+  const wht = v.requires_wht && parseFloat(v.wht_amount || 0) > 0;
+  return _pvPvCanSettle(v) && !wht && !v.tendepay_transaction_id;
+}
+
+function _pvPvOpenTrancheModal(id) {
+  const v = window._pvPvSettlePending;
+  if (!v || String(v.id) !== String(id)) return;
+  const wrap = document.createElement('div');
+  wrap.id = 'pv-tranche-modal-overlay';
+  wrap.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:9999;overflow:auto;padding:24px;';
+  wrap.innerHTML = `
+    <div style="background:var(--white);border-radius:8px;padding:24px;width:560px;max-width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 8px;font-size:1.05rem;color:var(--navy-700,#2c3e50);">Settle ${_finEsc(v.voucher_no || ('#' + v.id))} in Tranches</h3>
+      <div style="padding:10px 12px;border-radius:6px;background:#EEF3FA;color:#1B3057;font-size:0.82rem;margin-bottom:14px;">
+        Voucher amount <strong>${_pvMoney(v.amount)}</strong>. Each tranche posts its own journal entry (partial amount, choice of rail). The PV stays approved until cumulative tranches match the voucher amount, then flips paid automatically.
+      </div>
+      <div id="pv-tranche-history" style="margin-bottom:14px;">
+        <div style="font-size:0.82rem;color:var(--grey-600);">Loading settlement history&#8230;</div>
+      </div>
+      <h4 style="margin:14px 0 8px;font-size:0.95rem;color:var(--navy-700,#2c3e50);">Add Tranche</h4>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Amount <span class="fin-required">*</span></label>
+        <input type="number" step="0.01" min="0.01" id="pv-tranche-amount" class="fin-form-input" placeholder="0.00">
+        <span id="pv-tranche-remaining-hint" style="font-size:12px;color:var(--grey-600)"></span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Paid Through <span class="fin-required">*</span></label>
+        <div style="display:flex;gap:18px;flex-wrap:wrap;">
+          ${_PV_SETTLE_METHODS.map((m, i) => `<label style="display:inline-flex;align-items:center;white-space:nowrap;font-size:0.9rem;cursor:pointer;">
+            <input type="radio" name="pv-tranche-method" value="${m.key}" style="width:auto;max-width:none;margin:0 6px 0 0;padding:0;display:inline-block;vertical-align:middle;cursor:pointer;accent-color:var(--navy-700);" ${i === 0 ? 'checked' : ''} onchange="_pvPvTrancheLoadAccounts(this.value)">${_finEsc(m.label)}
+          </label>`).join('')}
+        </div>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Credit Account <span class="fin-required">*</span></label>
+        <select id="pv-tranche-account" class="fin-form-select" disabled><option value="">Loading&#8230;</option></select>
+        <span id="pv-tranche-account-hint" style="font-size:12px;color:var(--grey-600)"></span>
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Settlement Date</label>
+        <input type="date" id="pv-tranche-date" class="fin-form-input" value="${_pvLocalToday()}">
+      </div>
+      <div class="fin-form-group">
+        <label class="fin-form-label">Notes</label>
+        <textarea id="pv-tranche-notes" class="fin-form-textarea" rows="2" placeholder="Cheque number, transfer reference&#8230; (optional)"></textarea>
+      </div>
+      <div id="pv-tranche-error" style="display:none;padding:10px 12px;border-radius:6px;border-left:3px solid var(--coral-500);background:var(--coral-100);color:var(--coral-600);font-size:0.82rem;margin-top:6px;"></div>
+      <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+        <button class="fin-btn-cancel" onclick="_coaCloseModal('pv-tranche-modal-overlay')">Close</button>
+        <button class="fin-btn-teal" id="pv-tranche-submit" onclick="_pvPvSubmitTranche(${v.id})">Add Tranche</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  _pvPvTrancheLoadAccounts(_PV_SETTLE_METHODS[0].key);
+  _pvPvLoadTrancheHistory(v.id, parseFloat(v.amount) || 0);
+}
+
+async function _pvPvLoadTrancheHistory(id, voucherAmount) {
+  const container = document.getElementById('pv-tranche-history');
+  const amountInput = document.getElementById('pv-tranche-amount');
+  const remainingHint = document.getElementById('pv-tranche-remaining-hint');
+  if (!container) return;
+  const res = await apiFetch(`${_PV_PV_API}${id}/settlements`);
+  if (!res || !res.ok) {
+    container.innerHTML = '<div style="font-size:0.82rem;color:var(--coral-500);">Could not load settlement history.</div>';
+    return;
+  }
+  const rows = await res.json();
+  const cumulative = rows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
+  const remaining = Math.max(0, voucherAmount - cumulative);
+  const pct = voucherAmount > 0 ? Math.min(100, Math.round(cumulative / voucherAmount * 100)) : 0;
+  const historyHtml = rows.length
+    ? `<table style="width:100%;border-collapse:collapse;font-size:0.85rem;margin-top:6px;">
+        <thead><tr style="color:var(--grey-600);text-align:left;border-bottom:1px solid #eee;">
+          <th style="padding:4px 6px;">Date</th><th style="padding:4px 6px;">Rail</th>
+          <th style="padding:4px 6px;text-align:right;">Amount</th><th style="padding:4px 6px;">JE</th>
+        </tr></thead>
+        <tbody>${rows.map(r => `<tr style="border-bottom:1px solid #f5f5f5;">
+          <td style="padding:4px 6px;">${_finEsc(r.settlement_date || '')}</td>
+          <td style="padding:4px 6px;">${_finEsc(_PV_SETTLE_METHOD_LABEL[r.settlement_method] || r.settlement_method)}</td>
+          <td style="padding:4px 6px;text-align:right;">${_pvMoney(r.amount)}</td>
+          <td style="padding:4px 6px;">${_finEsc(r.jv_number || ('#' + r.journal_entry_id))}</td>
+        </tr>`).join('')}</tbody>
+      </table>`
+    : '<div style="font-size:0.82rem;color:var(--grey-500);margin-top:4px;">No tranches recorded yet.</div>';
+  container.innerHTML = `
+    <div style="font-size:0.85rem;color:var(--navy-700,#2c3e50);font-weight:600;">Settlement progress</div>
+    <div style="height:8px;background:#f0f0f0;border-radius:4px;overflow:hidden;margin:6px 0;">
+      <div style="height:100%;width:${pct}%;background:#22c55e;"></div>
+    </div>
+    <div style="font-size:0.82rem;color:var(--grey-600);">
+      Settled <strong>${_pvMoney(cumulative)}</strong> of ${_pvMoney(voucherAmount)} &middot; remaining <strong>${_pvMoney(remaining)}</strong>
+    </div>
+    ${historyHtml}
+  `;
+  // Pre-fill the amount field with the remaining balance to make single-shot
+  // tranching ("pay it all now") one click. Operator can overwrite for partial.
+  if (amountInput && !amountInput.value && remaining > 0) {
+    amountInput.value = remaining.toFixed(2);
+  }
+  if (remainingHint) remainingHint.textContent = `Remaining balance: ${_pvMoney(remaining)}`;
+}
+
+// Rail-specific account loader for the tranche form. Identical shape to the
+// single-shot Settle loader — different id namespace so both modals can coexist.
+let _pvTrancheLoadSeq = 0;
+async function _pvPvTrancheLoadAccounts(methodKey) {
+  const m = _PV_SETTLE_METHODS.find(x => x.key === methodKey);
+  const sel = document.getElementById('pv-tranche-account');
+  const hint = document.getElementById('pv-tranche-account-hint');
+  if (!m || !sel) return;
+  const seq = ++_pvTrancheLoadSeq;
+  sel.disabled = true;
+  sel.innerHTML = '<option value="">Loading&#8230;</option>';
+  hint.textContent = '';
+  const rows = await loadLookupList(`${API_BASE}/lookups/${m.lookup}`, m.lookup);
+  if (seq !== _pvTrancheLoadSeq || !document.getElementById('pv-tranche-account')) return;
+  const scoped = m.lookup === 'money-holding-accounts' ? rows.filter(a => a.kind === m.key) : rows;
+  const list = _pvMoneyHoldingPostable(scoped, null);
+  sel.innerHTML = `<option value="">${_finEsc(lookupPlaceholder(m.lookup, list.length ? 'Please Select' : 'No accounts available'))}</option>`
+    + list.map(a => {
+      const label = `${a.number ? a.number + ' - ' : ''}${a.account_name}${a.bank_name ? ` (${a.bank_name})` : ''}`;
+      return `<option value="${a.gl_account_id}">${_finEsc(label)}</option>`;
+    }).join('');
+  if (list.length === 1) sel.value = String(list[0].gl_account_id);
+  sel.disabled = !list.length;
+  hint.textContent = lookupWasDenied(m.lookup) ? '' : (list.length ? m.hint : m.empty);
+}
+
+async function _pvPvSubmitTranche(id) {
+  const errEl = document.getElementById('pv-tranche-error');
+  const btn = document.getElementById('pv-tranche-submit');
+  const fail = text => { errEl.textContent = text; errEl.style.display = 'block'; };
+  errEl.style.display = 'none';
+  const amount = parseFloat(document.getElementById('pv-tranche-amount').value);
+  const method = document.querySelector('input[name="pv-tranche-method"]:checked')?.value;
+  const accountId = document.getElementById('pv-tranche-account').value;
+  const date = document.getElementById('pv-tranche-date').value;
+  const notes = document.getElementById('pv-tranche-notes').value.trim();
+  if (!amount || amount <= 0) return fail('Enter the tranche amount (positive).');
+  if (!method) return fail('Choose the rail this tranche was paid through.');
+  if (!accountId) return fail('Choose the account being credited.');
+  const payload = { amount, settlement_method: method, credit_account_id: parseInt(accountId, 10) };
+  if (date) payload.settlement_date = date;
+  if (notes) payload.notes = notes;
+  btn.disabled = true;
+  let res;
+  try {
+    res = await apiFetch(`${_PV_PV_API}${id}/settle-tranche`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch (_) {
+    fail('Could not reach the server. Refresh the voucher before retrying — the tranche may have gone through.');
+    return;
+  } finally {
+    btn.disabled = false;
+  }
+  if (res && res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const runs = body.paid_payroll_run_ids || [];
+    if (body.status === 'paid') {
+      // Final tranche flipped the PV — close the modal and refresh the row.
+      _coaCloseModal('pv-tranche-modal-overlay');
+      showToast(`Voucher fully settled — final JE #${body.journal_entry_id}`, 'success');
+      if (runs.length) showToast(`Payroll run${runs.length > 1 ? 's' : ''} #${runs.join(', #')} marked paid.`, 'info');
+      (body.warnings || []).forEach(w => showToast(w, 'info'));
+      await window._splitRefreshSelected?.();
+    } else {
+      // Mid-tranche — keep the modal open, refresh the history, clear the form.
+      showToast(`Tranche recorded — JE #${body.journal_entry_id} (${_pvMoney(body.cumulative_settled)} of ${_pvMoney(body.voucher_amount)})`, 'success');
+      const amtInput = document.getElementById('pv-tranche-amount');
+      const notesInput = document.getElementById('pv-tranche-notes');
+      if (amtInput) amtInput.value = '';
+      if (notesInput) notesInput.value = '';
+      // Reload history + refresh the parent PV row so its Settlement Progress
+      // details also reflect the new mirror fields (settled_at, journal_entry_id).
+      const v = window._pvPvSettlePending;
+      _pvPvLoadTrancheHistory(id, v ? parseFloat(v.amount) || 0 : 0);
+      await window._splitRefreshSelected?.();
+    }
+  } else if (res) {
+    fail(await parseApiError(res));
+  }
 }
