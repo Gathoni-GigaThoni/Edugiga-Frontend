@@ -706,7 +706,10 @@ function _prRenderShell(container) {
       <div class="split-left">
         <div class="split-left-header">
           <span class="split-left-title">Payroll Runs</span>
-          <span class="split-left-count">${_prRuns.length}</span>
+          <span style="display:flex;align-items:center;gap:8px;">
+            <button class="fin-btn-teal" style="padding:3px 10px;font-size:0.75rem;" onclick="_prRenderAddForm()">+ Add</button>
+            <span class="split-left-count">${_prRuns.length}</span>
+          </span>
         </div>
         <div class="split-left-col-headers"><span>Run</span><span>Status</span></div>
         <div class="split-list" id="pr-list-items"></div>
