@@ -30,7 +30,6 @@ function renderHrEditPage(container, record) {
     ${hrEditModalsHtml()}
   `;
   loadDepartmentOptions('hr-edit-department', hrEditRecord.department_id);
-  loadHrWhtPaymentTypes('edit', hrEditRecord.consultant_wht_payment_type);
   applyHrConsultantFieldRules('edit', hrEditRecord.tax_profile === 'consultant');
 }
 
@@ -149,6 +148,65 @@ function hrEditModalsHtml() {
         </div>
       </div>
     </div>
+    <div id="hr-ctp-overlay" class="hr-modal-overlay" style="display:none;" onclick="if(event.target===this)closeHrEditChangeTaxProfile()">
+      <div class="hr-modal">
+        <h3 class="hr-modal-title">Change tax profile</h3>
+        <div class="hr-modal-body">
+          <div id="hr-ctp-current" style="font-size:0.88rem;color:#555;margin-bottom:10px;"></div>
+          <div id="hr-ctp-error" style="display:none;background:#FDECEA;border-left:3px solid #C0392B;color:#7B241C;padding:10px 12px;border-radius:6px;margin-bottom:12px;font-size:0.86rem;white-space:pre-wrap;"></div>
+          <div class="hr-modal-field">
+            <label class="hr-form-label">New tax profile <span class="hr-required">*</span></label>
+            <div class="hr-radio-row">
+              <label class="hr-form-checkbox-label">
+                <input type="radio" name="hr-ctp-profile" value="employee" onchange="_hrCtpToggleRail()"> Employee
+              </label>
+              <label class="hr-form-checkbox-label">
+                <input type="radio" name="hr-ctp-profile" value="consultant" onchange="_hrCtpToggleRail()"> Consultant
+              </label>
+            </div>
+          </div>
+          <div class="hr-modal-field">
+            <label class="hr-form-label">Effective date <span class="hr-required">*</span></label>
+            <input type="date" id="hr-ctp-effective-date" class="hr-modal-input">
+          </div>
+          <div class="hr-modal-field">
+            <label class="hr-form-label">Notes</label>
+            <textarea id="hr-ctp-notes" class="hr-modal-textarea" rows="3" placeholder="Optional context — shown on the resulting ESP audit stamp."></textarea>
+          </div>
+          <div id="hr-ctp-consultant-fields" style="display:none;">
+            <div class="hr-modal-field">
+              <label class="hr-form-label">Payment Type <span class="hr-required">*</span></label>
+              <select id="hr-ctp-wht-type" class="hr-modal-select"><option value="">Loading&#8230;</option></select>
+            </div>
+            <div class="hr-modal-field">
+              <label class="hr-form-checkbox-label">
+                <input type="checkbox" id="hr-ctp-non-resident" class="hr-form-cb"> Non-resident
+              </label>
+              <span style="font-size:0.78rem;color:#888;display:block;">Non-residents pay the higher WHT rate and are never exempt.</span>
+            </div>
+            <div class="hr-modal-field">
+              <label class="hr-form-label">KRA PIN</label>
+              <input type="text" id="hr-ctp-kra-pin" class="hr-modal-input" placeholder="Optional">
+            </div>
+          </div>
+          <div id="hr-ctp-employee-fields" style="display:none;">
+            <div class="hr-modal-field">
+              <label class="hr-form-label">Pay Grade</label>
+              <select id="hr-ctp-pay-grade" class="hr-modal-select"><option value="">Loading&#8230;</option></select>
+            </div>
+            <div class="hr-modal-field">
+              <label class="hr-form-label">Basic Salary</label>
+              <input type="number" step="0.01" min="0" id="hr-ctp-basic-salary" class="hr-modal-input" placeholder="Enter amount">
+            </div>
+            <div style="font-size:0.78rem;color:#888;">Fill at least one of Pay Grade or Basic Salary.</div>
+          </div>
+        </div>
+        <div class="hr-modal-actions">
+          <button class="hr-modal-btn-close" onclick="closeHrEditChangeTaxProfile()">Close</button>
+          <button class="hr-modal-btn-submit" onclick="submitHrEditChangeTaxProfile()">Submit</button>
+        </div>
+      </div>
+    </div>
   `;
 }
 
@@ -192,6 +250,56 @@ function handleHrEditPhotoPreview(input) {
     preview.innerHTML = '';
     preview.appendChild(img);
   }
+}
+
+// The director flag and the tax-profile rail are no longer part of PUT
+// /hr/employees/{id} — the API 422s on those fields now. They move to
+// dedicated Super-Admin-only endpoints (/director-flag and /change-tax-profile)
+// with an ESP-shape audit trail behind them, so they need their own controls
+// here rather than being buried in the Basic tab payload.
+function renderHrEditDirectorControl(r) {
+  if (!_isSuperAdmin()) return '';
+  return `
+    <div class="hr-form-checkboxes">
+      <label class="hr-form-checkbox-label" title="Toggles the director flag via /director-flag. Super Admin only.">
+        <input type="checkbox" id="hr-edit-director-toggle" class="hr-form-cb" ${r.is_director ? 'checked' : ''} onchange="toggleHrEditDirectorFlag(this)"> Director?
+      </label>
+    </div>`;
+}
+
+function renderHrEditTaxProfileReadOnly(r) {
+  const isConsultant = r.tax_profile === 'consultant';
+  const whtLabel = r.consultant_wht_payment_type
+    ? whtPaymentTypeLabel(r.consultant_wht_payment_type)
+    : '—';
+  const kraPin   = r.consultant_kra_pin || 'N/A (printed as N/A on fee notes)';
+  const nonRes   = r.is_non_resident ? 'Yes' : 'No';
+  const railLabel = isConsultant ? 'Consultant' : 'Employee';
+  const changeBtn = _isSuperAdmin()
+    ? `<button type="button" class="hr-form-section-btn" onclick="openHrEditChangeTaxProfile()" style="margin-left:8px;">Change tax profile</button>`
+    : '';
+  const consultantBlock = isConsultant ? `
+      <div class="hr-form-grid" style="margin-top:8px;">
+        <div class="hr-form-group">
+          <label class="hr-form-label">WHT Payment Type</label>
+          <input type="text" class="hr-form-input hr-form-readonly" value="${whtLabel}" readonly>
+        </div>
+        <div class="hr-form-group">
+          <label class="hr-form-label">Non-resident</label>
+          <input type="text" class="hr-form-input hr-form-readonly" value="${nonRes}" readonly>
+        </div>
+        <div class="hr-form-group hr-form-span2">
+          <label class="hr-form-label">Consultant KRA PIN</label>
+          <input type="text" class="hr-form-input hr-form-readonly" value="${kraPin}" readonly>
+        </div>
+      </div>` : '';
+  return `
+    <div style="font-size:0.78rem;font-weight:600;color:var(--navy-700,#1B3057);text-transform:uppercase;margin:18px 0 10px;">Statutory pipeline</div>
+    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:6px;">
+      <span style="font-size:0.92rem;">Currently: <strong>${railLabel}</strong></span>
+      ${changeBtn}
+    </div>
+    ${consultantBlock}`;
 }
 
 // ==================== EDIT TAB A — Basic Information ====================
@@ -297,12 +405,8 @@ function renderHrEditTabBasic() {
           <input type="text" id="hr-edit-national-id" class="hr-form-input" value="${r.national_id || ''}">
         </div>
       </div>
-      <div class="hr-form-checkboxes">
-        <label class="hr-form-checkbox-label">
-          <input type="checkbox" id="hr-edit-director" class="hr-form-cb" ${r.is_director ? 'checked' : ''}> Director?
-        </label>
-      </div>
-      ${renderHrTaxProfileFieldset('edit', r)}
+      ${renderHrEditDirectorControl(r)}
+      ${renderHrEditTaxProfileReadOnly(r)}
       <div class="hr-photo-section">
         <label class="hr-form-label">Photo</label>
         <div class="hr-photo-row">
@@ -346,22 +450,11 @@ async function updateHrEditBasic() {
   if (!gender)           { showToast('Gender is required.', 'error'); return; }
   if (!joining_date)     { showToast('Joining Date is required.', 'error'); return; }
 
-  const taxProfileEl = document.querySelector('input[name="hr-edit-tax-profile"]:checked');
-  const tax_profile = taxProfileEl ? taxProfileEl.value : 'employee';
-  const isConsultant = tax_profile === 'consultant';
+  const isConsultant = hrEditRecord.tax_profile === 'consultant';
   // Probation is hidden for a consultant and forced to 0 by the API, so it
   // can't be a required field for one.
   if (!isConsultant && !probation_period) { showToast('Probation Period is required.', 'error'); return; }
   if (!nationality)      { showToast('Nationality is required.', 'error'); return; }
-
-  const consultant_wht_payment_type = gv('hr-edit-wht-type');
-  if (isConsultant && !consultant_wht_payment_type) {
-    showToast('Payment Type is required for consultant employees.', 'error'); return;
-  }
-  hrEditRecord.tax_profile = tax_profile;
-  hrEditRecord.consultant_wht_payment_type = isConsultant ? consultant_wht_payment_type : null;
-  hrEditRecord.is_non_resident = isConsultant ? (document.getElementById('hr-edit-non-resident')?.checked || false) : false;
-  hrEditRecord.consultant_kra_pin = isConsultant ? gvt('hr-edit-consultant-kra-pin') : null;
 
   hrEditRecord.employment_terms = employment_terms;
   hrEditRecord.last_name        = surname;
@@ -377,7 +470,6 @@ async function updateHrEditBasic() {
   hrEditRecord.address          = gv('hr-edit-address');
   hrEditRecord.nationality      = nationality;
   hrEditRecord.national_id      = gvt('hr-edit-national-id');
-  hrEditRecord.is_director      = document.getElementById('hr-edit-director')?.checked || false;
 
   const nameEl = document.getElementById('hr-edit-info-name');
   if (nameEl) nameEl.textContent = (other_names + ' ' + surname).trim();
@@ -405,15 +497,10 @@ async function updateHrEditBasic() {
     address:           hrEditRecord.address,
     nationality:       hrEditRecord.nationality,
     national_id_no:    hrEditRecord.national_id,
-    is_director:       hrEditRecord.is_director,
     emergency_contact_name:         ec?.name || null,
     emergency_contact_country_code: ec?.phone_code || null,
     emergency_contact_number:       ec?.phone || null,
     emergency_contact_relationship: ec?.relationship || null,
-    tax_profile:                   hrEditRecord.tax_profile,
-    consultant_wht_payment_type:   hrEditRecord.consultant_wht_payment_type,
-    is_non_resident:               hrEditRecord.is_non_resident,
-    consultant_kra_pin:            hrEditRecord.consultant_kra_pin,
   };
 
   const res = await apiFetch(`${API_BASE}/hr/employees/${empId}`, {
@@ -998,7 +1085,6 @@ function switchHrEditTab(tabId) {
   const content = document.getElementById('hr-edit-tab-content');
   if (content) content.innerHTML = renderHrEditTabContent(tabId);
   loadDepartmentOptions('hr-edit-department', hrEditRecord.department_id);
-  loadHrWhtPaymentTypes('edit', hrEditRecord.consultant_wht_payment_type);
   applyHrConsultantFieldRules('edit', hrEditRecord.tax_profile === 'consultant');
   if (tabId === 'service-profile') {
     ensurePayGradeCache().then(() => {
@@ -1006,5 +1092,175 @@ function switchHrEditTab(tabId) {
       if (c && hrEditActiveTab === 'service-profile') c.innerHTML = renderHrEditTabServiceProfile();
     });
   }
+}
+
+// The two new endpoints reshape the record on the server side, so their
+// success responses replace the fields we care about here (is_director,
+// tax_profile, consultant_*). Refresh both stores the FE reads for this
+// employee: hrEditRecord (open edit page) and the matching row in the
+// employeesData list cache, which drives the directory, the ESP form's
+// consultant-shape detection (_espCurrentEmployee → employeeFromRecord),
+// and payroll's autoenrollment picker.
+function _hrEditMergeEmployee(updated, fallbackPatch) {
+  const patch = updated && typeof updated === 'object' ? updated : (fallbackPatch || null);
+  if (!patch) return;
+  Object.assign(hrEditRecord, patch);
+  const idx = (employeesData || []).findIndex(e =>
+    String(e.id) === String(hrEditRecord.id) ||
+    String(e.employee_code) === String(hrEditRecord.employee_code)
+  );
+  if (idx !== -1) Object.assign(employeesData[idx], patch);
+}
+
+// ==================== DIRECTOR FLAG (Super Admin only) ====================
+async function toggleHrEditDirectorFlag(cb) {
+  const empId = hrEditRecord.id || hrEditRecord.employee_code;
+  const desired = !!cb.checked;
+  cb.disabled = true;
+  const res = await apiFetch(`${API_BASE}/hr/employees/${empId}/director-flag`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ is_director: desired }),
+  });
+  cb.disabled = false;
+  if (res && res.ok) {
+    const updated = await res.json().catch(() => null);
+    _hrEditMergeEmployee(updated, { is_director: desired });
+    showToast(`Director flag ${desired ? 'set' : 'cleared'}.`, 'success');
+    return;
+  }
+  cb.checked = !desired;
+  if (res && res.status === 403) {
+    showToast('Permission denied — director flag is Super Admin only.', 'error');
+    return;
+  }
+  showToast(res ? await parseApiError(res) : 'Network error.', 'error');
+}
+
+// ==================== CHANGE TAX PROFILE (Super Admin only) ====================
+async function openHrEditChangeTaxProfile() {
+  if (!_isSuperAdmin()) { showToast('Super Admin only.', 'error'); return; }
+  const ov = document.getElementById('hr-ctp-overlay');
+  if (!ov) return;
+
+  const currentRail = hrEditRecord.tax_profile === 'consultant' ? 'Consultant' : 'Employee';
+  document.getElementById('hr-ctp-current').textContent = `Currently: ${currentRail}`;
+  const errEl = document.getElementById('hr-ctp-error');
+  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+
+  const targetRail = hrEditRecord.tax_profile === 'consultant' ? 'employee' : 'consultant';
+  document.querySelectorAll('input[name="hr-ctp-profile"]').forEach(el => { el.checked = el.value === targetRail; });
+
+  const dateEl = document.getElementById('hr-ctp-effective-date');
+  if (dateEl) dateEl.value = new Date().toISOString().slice(0, 10);
+  const notesEl = document.getElementById('hr-ctp-notes');
+  if (notesEl) notesEl.value = '';
+
+  const nonRes = document.getElementById('hr-ctp-non-resident');
+  if (nonRes) nonRes.checked = false;
+  const kra = document.getElementById('hr-ctp-kra-pin');
+  if (kra) kra.value = '';
+  const basicSalaryEl = document.getElementById('hr-ctp-basic-salary');
+  if (basicSalaryEl) basicSalaryEl.value = '';
+
+  _hrCtpToggleRail();
+  _hrCtpLoadWhtTypes();
+  _hrCtpLoadPayGrades();
+
+  ov.style.display = 'flex';
+}
+
+function closeHrEditChangeTaxProfile() {
+  const ov = document.getElementById('hr-ctp-overlay');
+  if (ov) ov.style.display = 'none';
+}
+
+function _hrCtpToggleRail() {
+  const checked = document.querySelector('input[name="hr-ctp-profile"]:checked');
+  const rail = checked ? checked.value : '';
+  const cf = document.getElementById('hr-ctp-consultant-fields');
+  const ef = document.getElementById('hr-ctp-employee-fields');
+  if (cf) cf.style.display = rail === 'consultant' ? '' : 'none';
+  if (ef) ef.style.display = rail === 'employee'   ? '' : 'none';
+}
+
+async function _hrCtpLoadWhtTypes() {
+  const sel = document.getElementById('hr-ctp-wht-type');
+  if (!sel) return;
+  const active = await fetchActiveWhtSchedule();
+  const rates = new Map(((active && active.rates) || []).map(rr => [rr.payment_type, rr]));
+  const opts = CONSULTANT_WHT_PAYMENT_TYPES.map(t => {
+    const r = rates.get(t.value);
+    const note = r ? '' : ' — no rate configured yet';
+    const selected = t.value === 'professional_management_consultancy' ? 'selected' : '';
+    return `<option value="${t.value}" ${selected}>${t.label}${note}</option>`;
+  });
+  sel.innerHTML = opts.join('');
+}
+
+async function _hrCtpLoadPayGrades() {
+  const sel = document.getElementById('hr-ctp-pay-grade');
+  if (!sel) return;
+  await ensurePayGradeCache();
+  const grades = _payGradeAllCache || [];
+  sel.innerHTML = '<option value="">— none —</option>' +
+    grades.map(g => `<option value="${g.id}">${g.position} — ${formatKES(g.amount)}</option>`).join('');
+}
+
+async function submitHrEditChangeTaxProfile() {
+  const errEl = document.getElementById('hr-ctp-error');
+  const showErr = (msg) => {
+    if (errEl) { errEl.textContent = msg; errEl.style.display = 'block'; }
+  };
+  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+
+  const railEl = document.querySelector('input[name="hr-ctp-profile"]:checked');
+  const new_tax_profile = railEl ? railEl.value : '';
+  const effective_date  = document.getElementById('hr-ctp-effective-date')?.value || '';
+  const notes = (document.getElementById('hr-ctp-notes')?.value || '').trim();
+
+  if (!new_tax_profile) { showErr('Choose Employee or Consultant.'); return; }
+  if (!effective_date)  { showErr('Effective date is required.'); return; }
+
+  const payload = { new_tax_profile, effective_date, notes: notes || null };
+
+  if (new_tax_profile === 'consultant') {
+    const wht = document.getElementById('hr-ctp-wht-type')?.value || '';
+    if (!wht) { showErr('Payment Type is required for a consultant.'); return; }
+    payload.consultant_wht_payment_type = wht;
+    payload.is_non_resident = !!document.getElementById('hr-ctp-non-resident')?.checked;
+    const kra = (document.getElementById('hr-ctp-kra-pin')?.value || '').trim();
+    payload.consultant_kra_pin = kra || null;
+  } else {
+    const pg = document.getElementById('hr-ctp-pay-grade')?.value || '';
+    const bs = (document.getElementById('hr-ctp-basic-salary')?.value || '').trim();
+    if (!pg && !bs) { showErr('Enter at least one of Pay Grade or Basic Salary.'); return; }
+    payload.new_pay_grade_id = pg ? parseInt(pg, 10) : null;
+    payload.new_basic_salary = bs || null;
+  }
+
+  const empId = hrEditRecord.id || hrEditRecord.employee_code;
+  const btn = document.querySelector('#hr-ctp-overlay .hr-modal-btn-submit');
+  if (btn) btn.disabled = true;
+  const res = await apiFetch(`${API_BASE}/hr/employees/${empId}/change-tax-profile`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (btn) btn.disabled = false;
+
+  if (res && res.ok) {
+    const updated = await res.json().catch(() => null);
+    _hrEditMergeEmployee(updated, { tax_profile: new_tax_profile });
+    closeHrEditChangeTaxProfile();
+    showToast(`Tax profile changed to ${new_tax_profile}.`, 'success');
+    const content = document.getElementById('hr-edit-tab-content');
+    if (content && hrEditActiveTab === 'basic') content.innerHTML = renderHrEditTabContent('basic');
+    return;
+  }
+
+  if (!res) { showErr('Network error. Please try again.'); return; }
+  if (res.status === 403) { showErr('Permission denied — Super Admin only.'); return; }
+  showErr(await parseApiError(res));
 }
 
