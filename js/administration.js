@@ -95,6 +95,17 @@ function _deptSplitForm(item, el) {
         <input id="dept-f-name" value="${_finEsc(item?.name || '')}" style="max-width:none;width:100%">
       </div>
       <div class="stu-form-group" style="margin-top:12px">
+        <label>Salary Expense Account</label>
+        <select id="dept-f-expense-acct" class="stu-form-select" style="max-width:none;width:100%">
+          <option value="">Loading&#8230;</option>
+        </select>
+        <div style="font-size:12px;color:#666;margin-top:4px">
+          Which P&amp;L account payroll should DR for this department's salaries.
+          Leave blank to fall back to Non-Teaching Staff Salaries (env default).
+          Only active Expense accounts appear here.
+        </div>
+      </div>
+      <div class="stu-form-group" style="margin-top:12px">
         <label><input type="checkbox" id="dept-f-active" style="width:auto;margin:0 6px 0 0;padding:0"${(item ? item.is_active : true) ? ' checked' : ''}> Active</label>
       </div>
       <div id="dept-split-status" style="margin-top:10px;font-size:13px;color:var(--coral-500)"></div>
@@ -104,17 +115,41 @@ function _deptSplitForm(item, el) {
       </div>
     </div>
   `;
+  _deptLoadExpenseAccountOptions(item?.staff_expense_account_id ?? null);
+}
+
+// One-shot cache so re-opening the form doesn't refetch every time.
+let _deptExpenseAcctCache = null;
+async function _deptLoadExpenseAccountOptions(selectedId) {
+  const sel = document.getElementById('dept-f-expense-acct');
+  if (!sel) return;
+  if (_deptExpenseAcctCache === null) {
+    try {
+      const res = await apiFetch(`${API_BASE}/accounts/?account_type=Expense&is_active=true`);
+      _deptExpenseAcctCache = res && res.ok ? await res.json() : [];
+    } catch (_) { _deptExpenseAcctCache = []; }
+  }
+  const opts = ['<option value="">-- None (use default) --</option>']
+    .concat(_deptExpenseAcctCache.map(a => {
+      const sel = String(a.id) === String(selectedId) ? ' selected' : '';
+      return `<option value="${a.id}"${sel}>${_finEsc(a.number)} ${_finEsc(a.account_name)}</option>`;
+    }));
+  sel.innerHTML = opts.join('');
 }
 
 async function _deptSaveSplit(id) {
   const statusEl = document.getElementById('dept-split-status');
   const name = (document.getElementById('dept-f-name')?.value || '').trim();
   const is_active = document.getElementById('dept-f-active')?.checked ?? true;
+  // Empty string from the select → null in the payload (clear override).
+  const rawAcct = document.getElementById('dept-f-expense-acct')?.value || '';
+  const staff_expense_account_id = rawAcct ? parseInt(rawAcct, 10) : null;
   if (!name) { if (statusEl) statusEl.textContent = 'Name is required.'; return; }
 
   const res = await apiFetch(
     id ? `${API_BASE}/departments/${id}` : `${API_BASE}/departments/`,
-    { method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, is_active }) }
+    { method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, is_active, staff_expense_account_id }) }
   );
   if (res && res.ok) {
     // Payables caches the department list for the whole session (_pvLoadLookups),
