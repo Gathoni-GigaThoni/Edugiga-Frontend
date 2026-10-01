@@ -1126,6 +1126,11 @@ function _prActionsHtml(run) {
   } else if (run.status === 'calculated') {
     html += `<button class="fin-btn-teal" onclick="_prSubmitForApproval(${run.id})">Submit for Approval</button>`;
     html += `<button class="btn" onclick="_prOpenAddEmployeeModal(${run.id})">Add Employee</button>`;
+    // Backend /calculate accepts status in {draft, calculated} and is idempotent
+    // — wipes lines, rolls back advance repayments, re-resolves rates. We confirm
+    // because the recalc also drops any employee added via "Add Employee" above
+    // (they'll be re-added only if still active with a complete profile).
+    html += `<button class="btn" onclick="_prRecalculate(${run.id})">Recalculate</button>`;
   } else if (run.status === 'submitted') {
     html += `<button class="fin-btn-teal" onclick="_prApprove(${run.id})">Approve</button>`;
     html += `<div style="color:#666;font-size:0.85rem;margin-top:6px;">This run is also visible to the Document Approval System queue.</div>`;
@@ -1220,6 +1225,12 @@ function _prGoToServiceProfile(employeeCode) {
 async function _prCalculate(runId) {
   const res = await apiFetch(`${API_BASE}/payroll/runs/${runId}/calculate`, { method: 'POST' });
   if (res && res.ok) { showToast('Statutory deductions calculated.', 'success'); await _prLoadRuns(); await _prSelectRun(runId); }
+  else if (res) showToast('Error: ' + await parseApiError(res), 'error');
+}
+async function _prRecalculate(runId) {
+  if (!confirm('Recalculate wipes all current lines, rolls back advance repayments, re-resolves rate schedules, and regenerates the run. Any employee manually added via "Add Employee" will be re-added only if they are still active with a complete pay profile. Continue?')) return;
+  const res = await apiFetch(`${API_BASE}/payroll/runs/${runId}/calculate`, { method: 'POST' });
+  if (res && res.ok) { showToast('Run recalculated.', 'success'); await _prLoadRuns(); await _prSelectRun(runId); }
   else if (res) showToast('Error: ' + await parseApiError(res), 'error');
 }
 async function _prApprove(runId) {
@@ -1991,6 +2002,14 @@ function _srRenderDetail(type) {
       <tbody>${(s.rates||[]).map(r=>`<tr><td>${_finEsc(whtPaymentTypeLabel(r.payment_type))}</td><td>${_srPercent(r.resident_rate)}</td><td>${_srPercent(r.nonresident_rate)}</td><td>${r.resident_exempt_below!=null?_srMoney(r.resident_exempt_below):'Always deduct'}</td><td>${_finEsc(r.notes||'—')}</td></tr>`).join('')}</tbody>
     </table>`;
   }
+  // Edit + Delete are gated to future (not-yet-in-force) schedules. Backend
+  // mirrors this check and will 409 on an in-force row; the FE just hides
+  // the buttons to keep the panel honest.
+  const editDeleteActions = status === 'future' ? `
+    <div style="margin-top:14px;padding-top:12px;border-top:1px solid #eee;display:flex;gap:8px;">
+      <button class="fin-btn-teal" onclick="_srOpenEditForm('${type}',${s.id})">Edit</button>
+      <button class="btn-danger" onclick="_srDeleteSchedule('${type}',${s.id})">Delete</button>
+    </div>` : '';
   el.className = 'split-right-detail';
   el.innerHTML = `
     <div class="detail-banner">
@@ -2004,6 +2023,7 @@ function _srRenderDetail(type) {
       ${body}
       ${s.notes?`<p style="margin-top:12px;font-size:0.85rem;color:#555;"><strong>Notes:</strong> ${_finEsc(s.notes)}</p>`:''}
       <p style="margin-top:10px;font-size:11.5px;color:#888;">Created ${_srDate(s.created_at)}${s.created_by?` by staff #${s.created_by}`:''}</p>
+      ${editDeleteActions}
     </div>`;
 }
 
@@ -2132,16 +2152,15 @@ function _srAddRateRow() { _srRatesEditor.push({ payment_type:'', resident_rate:
 function _srRemoveRate(i) { if (_srRatesEditor.length<=1) return; _srRatesEditor.splice(i,1); _srRenderRatesEditor(); }
 function _srUpdateRate(i,key,val) { _srRatesEditor[i][key] = val; }
 
-async function _srSubmitAdd(type) {
-  const effFrom = document.getElementById('sr-add-eff-from')?.value;
-  const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
-  if (!effFrom) { showToast('Effective From is required.', 'error'); return; }
-  if (effFrom < tomorrow) { showToast('Effective From must be strictly after today.', 'error'); return; }
-  const notes = document.getElementById('sr-add-notes')?.value.trim() || null;
-  const payload = { effective_from: effFrom, notes };
+// Builds the type-specific payload block (everything except effective_from)
+// shared by Add (POST) and Edit (PATCH). Returns null and toasts on validation
+// error so the caller just bails out on null.
+function _srBuildTypePayload(type) {
+  const payload = {};
+  payload.notes = document.getElementById('sr-add-notes')?.value.trim() || null;
   if (type === 'paye') {
     const uncappedCount = _srBandsEditor.filter(b => !b.upper_bound).length;
-    if (uncappedCount !== 1) { showToast('Exactly one band must be uncapped (blank Upper Bound) — the top band.', 'error'); return; }
+    if (uncappedCount !== 1) { showToast('Exactly one band must be uncapped (blank Upper Bound) — the top band.', 'error'); return null; }
     payload.personal_relief = document.getElementById('sr-add-personal-relief')?.value || '0';
     payload.insurance_relief_rate = document.getElementById('sr-add-ins-relief-rate')?.value || '0';
     payload.insurance_relief_cap = document.getElementById('sr-add-ins-relief-cap')?.value || '0';
@@ -2161,15 +2180,137 @@ async function _srSubmitAdd(type) {
     payload.reduces_paye_taxable = document.getElementById('sr-add-reduces-paye')?.checked || false;
   } else if (type === 'wht') {
     const types = _srRatesEditor.map(r => (r.payment_type||'').trim());
-    if (types.some(t => !t)) { showToast('Every rate row needs a Payment Type.', 'error'); return; }
-    if (new Set(types).size !== types.length) { showToast('Payment Type must be unique across rows.', 'error'); return; }
+    if (types.some(t => !t)) { showToast('Every rate row needs a Payment Type.', 'error'); return null; }
+    if (new Set(types).size !== types.length) { showToast('Payment Type must be unique across rows.', 'error'); return null; }
     payload.rates = _srRatesEditor.map(r => ({ payment_type: r.payment_type.trim(), resident_rate: r.resident_rate || '0', nonresident_rate: r.nonresident_rate || '0', resident_exempt_below: r.resident_exempt_below || null, notes: r.notes || null }));
   }
+  return payload;
+}
+
+async function _srSubmitAdd(type) {
+  const effFrom = document.getElementById('sr-add-eff-from')?.value;
+  const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+  if (!effFrom) { showToast('Effective From is required.', 'error'); return; }
+  if (effFrom < tomorrow) { showToast('Effective From must be strictly after today.', 'error'); return; }
+  const typePayload = _srBuildTypePayload(type);
+  if (typePayload === null) return;
+  const payload = { effective_from: effFrom, ...typePayload };
   const res = await apiFetch(`${_SR_API}/${type}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   if (!res) return;
   if (res.ok) {
     showToast(`${_SR_LABELS[type]} schedule created.`, 'success');
     if (type === 'wht') _whtActiveScheduleCache = undefined; // invalidate the Employee-form WHT picker cache
+    loadView('payroll-utilities-statutory-rates');
+  } else {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
+}
+
+// ── Edit future schedule ─────────────────────────────────────────────────────
+// Reuses the Add form DOM (same input IDs). Pre-fills from the already-fetched
+// schedule in _srLists; disables effective_from (not patchable backend-side).
+// On submit, PATCHes `_SR_API/{type}/{id}` with everything except effective_from.
+function _srOpenEditForm(type, id) {
+  const s = (_srLists[type] || []).find(x => String(x.id) === String(id));
+  if (!s) { showToast('Schedule not found; reload the page.', 'error'); return; }
+  if (_srStatusOf(s) !== 'future') { showToast('Only future-dated schedules can be edited.', 'error'); return; }
+  if (type === 'paye') {
+    _srBandsEditor = (s.bands || []).slice().sort((a,b)=>a.band_order-b.band_order).map(b => ({
+      band_order: b.band_order,
+      lower_bound: String(b.lower_bound),
+      upper_bound: b.upper_bound == null ? '' : String(b.upper_bound),
+      rate_percent: String(b.rate_percent),
+    }));
+  }
+  if (type === 'wht') {
+    _srRatesEditor = (s.rates || []).map(r => ({
+      payment_type: r.payment_type,
+      resident_rate: String(r.resident_rate),
+      nonresident_rate: String(r.nonresident_rate),
+      resident_exempt_below: r.resident_exempt_below == null ? '' : String(r.resident_exempt_below),
+      notes: r.notes || '',
+    }));
+  }
+  const container = document.getElementById('main-content');
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Edit ${_SR_LABELS[type]} Schedule</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Payroll &rsaquo; Utilities &rsaquo; Statutory Rates &rsaquo; ${_SR_LABELS[type]} &rsaquo; Edit</div>
+      </div>
+      <div style="background:#FFF4E5;border-left:3px solid #D97706;border-radius:6px;padding:12px 16px;margin-bottom:16px;font-size:12.5px;color:#92400E;">
+        You are editing a future-dated schedule (effective ${_srDate(s.effective_from)}). The effective date itself cannot be edited &mdash; Delete and re-create to shift it.
+      </div>
+      <div class="fin-form-wrap" id="sr-add-form-body"></div>
+      <div class="fin-form-actions">
+        <button class="fin-btn-teal" onclick="_srSubmitEdit('${type}',${id})">Update</button>
+        <button class="fin-btn-cancel" onclick="loadView('payroll-utilities-statutory-rates')">Cancel</button>
+      </div>
+    </div>`;
+  // Reuse the Add form shell — min date is irrelevant since we disable the field.
+  document.getElementById('sr-add-form-body').innerHTML = _srAddFormFieldsHtml(type, s.effective_from);
+  const efFrom = document.getElementById('sr-add-eff-from');
+  if (efFrom) {
+    efFrom.value = s.effective_from;
+    efFrom.disabled = true;
+    efFrom.title = 'Not editable — Delete and re-create to shift the effective date.';
+  }
+  if (type === 'paye') {
+    document.getElementById('sr-add-personal-relief').value = s.personal_relief;
+    document.getElementById('sr-add-ins-relief-rate').value = s.insurance_relief_rate;
+    document.getElementById('sr-add-ins-relief-cap').value = s.insurance_relief_cap;
+    document.getElementById('sr-add-ncpwd').value = s.ncpwd_exemption;
+    _srRenderBandsEditor();
+  } else if (type === 'nssf') {
+    document.getElementById('sr-add-tier1-limit').value = s.tier1_limit;
+    document.getElementById('sr-add-tier1-rate').value = s.tier1_rate;
+    document.getElementById('sr-add-tier2-limit').value = s.tier2_upper_limit;
+    document.getElementById('sr-add-tier2-rate').value = s.tier2_rate;
+  } else if (type === 'shif') {
+    document.getElementById('sr-add-rate').value = s.rate;
+    document.getElementById('sr-add-minimum').value = s.minimum;
+  } else if (type === 'ahl') {
+    document.getElementById('sr-add-emp-rate').value = s.employee_rate;
+    document.getElementById('sr-add-empr-rate').value = s.employer_rate;
+    document.getElementById('sr-add-reduces-paye').checked = !!s.reduces_paye_taxable;
+  } else if (type === 'wht') {
+    _srRenderRatesEditor();
+  }
+  const notesEl = document.getElementById('sr-add-notes');
+  if (notesEl) notesEl.value = s.notes || '';
+}
+
+async function _srSubmitEdit(type, id) {
+  const payload = _srBuildTypePayload(type);
+  if (payload === null) return;
+  const res = await apiFetch(`${_SR_API}/${type}/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res) return;
+  if (res.ok) {
+    showToast(`${_SR_LABELS[type]} schedule updated.`, 'success');
+    if (type === 'wht') _whtActiveScheduleCache = undefined;
+    loadView('payroll-utilities-statutory-rates');
+  } else {
+    showToast('Error: ' + await parseApiError(res), 'error');
+  }
+}
+
+async function _srDeleteSchedule(type, id) {
+  const s = (_srLists[type] || []).find(x => String(x.id) === String(id));
+  const label = s
+    ? `${_SR_LABELS[type]} schedule effective ${_srDate(s.effective_from)}`
+    : `${_SR_LABELS[type]} schedule`;
+  if (!confirm(`Delete ${label}? The previously-closed schedule will be re-chained automatically. This action cannot be undone.`)) return;
+  const res = await apiFetch(`${_SR_API}/${type}/${id}`, { method: 'DELETE' });
+  if (!res) return;
+  if (res.ok) {
+    showToast(`${_SR_LABELS[type]} schedule deleted.`, 'success');
+    if (type === 'wht') _whtActiveScheduleCache = undefined;
+    // Current selection may have just been deleted — clear it.
+    if (_srSelected[type] === id) _srSelected[type] = null;
     loadView('payroll-utilities-statutory-rates');
   } else {
     showToast('Error: ' + await parseApiError(res), 'error');
