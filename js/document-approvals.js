@@ -253,6 +253,15 @@ function _daFounderDiscountLabel(g) {
 }
 
 function _daResolveDoc(item) {
+  // Snapshot the BE wrote at submission time (see
+  // app/services/document_approval_reference.py). Wins over any
+  // re-hydrated field because it is what the approver signed off, it
+  // survives source-doc deletes, and it also covers types the
+  // per-type cases below don't have — notably payroll_run and
+  // consultant_run, which otherwise fall through to the bare #id.
+  if (item && item.reference_text) {
+    return { title: item.reference_text, sub: _daTypeLabel(item.document_type), amount: null };
+  }
   if (item.document_type === 'payment_voucher') {
     const v = _daPvCache[item.document_id];
     if (!v) return { title: `Payment Voucher #${item.document_id}`, sub: '', amount: null };
@@ -529,6 +538,12 @@ function _daInternalRequisitionLinesHtml(documentId) {
 }
 
 const _daDetailFields = [
+  // Snapshot captured when the row was submitted (BE n8p9q0r1t2u3 +
+  // o9q0r1s2u3v4). Full-width so the approver sees the whole dense
+  // one-liner — payee, amount, narrative — above the hydrated breakdown.
+  { label: "What's being approved", key: 'reference_text', fullWidth: true,
+    hideWhen: item => !item.reference_text,
+    fmt: v => _daEsc(v) },
   { label: 'Document Type', key: 'document_type', fmt: v => _daTypeLabel(v) },
   { label: 'Reference',     key: 'document_id',  fmt: (v, item) => _daResolveDoc(item).title },
   { label: 'Amount',        key: 'document_id',  fmt: (v, item) => { const a = _daResolveDoc(item).amount; return a != null ? _daMoney(a) : '—'; } },
