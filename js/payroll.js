@@ -2079,7 +2079,7 @@ function _srAddFormFieldsHtml(type, tomorrow) {
         <div class="fin-form-group"><label class="fin-form-label">Employee Rate (%)</label><input type="number" id="sr-add-emp-rate" class="fin-form-input" step="0.01"></div>
         <div class="fin-form-group"><label class="fin-form-label">Employer Rate (%)</label><input type="number" id="sr-add-empr-rate" class="fin-form-input" step="0.01"></div>
       </div>
-      <label class="hr-form-checkbox-label" style="margin-top:8px;"><input type="checkbox" id="sr-add-reduces-paye" class="hr-form-cb"> Reduces PAYE Taxable</label>
+      <label class="hr-form-checkbox-label" style="margin-top:8px;"><input type="checkbox" id="sr-add-reduces-paye" class="hr-form-cb" checked> Deductible from PAYE taxable income (Tax Laws Amendment Act 2024 — leave checked)</label>
       ${notes}`;
   }
   if (type === 'wht') {
