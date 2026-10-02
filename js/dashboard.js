@@ -107,6 +107,10 @@ const _SIDEBAR_ITEM_MODULE_KEYS = {
   'sidebar-fin-spon-mgmt':                'finance.student_finance',
   'sidebar-fin-bc-recon':                 'finance.cash_bank_management',
   'sidebar-fin-bc-imports':               'finance.cash_bank_management',
+  // Wallets read gate accepts either finance.tendepay_wallets or finance.setup,
+  // mirroring the BE contract for GET /tendepay/wallets/. The write gate is
+  // strict finance.tendepay_wallets — enforced by the split view's moduleKey.
+  'sidebar-fin-tp-wallets':               ['finance.tendepay_wallets', 'finance.setup'],
   'sidebar-fin-tp-import':                'finance.cash_bank_management',
   'sidebar-fin-tp-history':               'finance.cash_bank_management',
   'sidebar-fin-tp-suspense':              'finance.cash_bank_management',
@@ -398,6 +402,7 @@ function showDashboard() {
               <li class="dropdown">
                 ${flyoutGroupHeader('Tendepay', 'fin-tendepay-dropdown')}
                 <ul id="fin-tendepay-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('fin-tendepay-dropdown')}">
+                  <li id="sidebar-fin-tp-wallets"  class="sidebar-sub-sub" onclick="loadView('tendepay-wallets')">Wallets</li>
                   <li id="sidebar-fin-tp-import"   class="sidebar-sub-sub" onclick="loadView('tendepay-import')">Import Statement</li>
                   <li id="sidebar-fin-tp-history"  class="sidebar-sub-sub" onclick="loadView('tendepay-import-history')">Import History</li>
                   <li id="sidebar-fin-tp-suspense" class="sidebar-sub-sub" onclick="loadView('tendepay-suspense')">Suspense</li>
@@ -1228,6 +1233,7 @@ const FORM_VIEWS = new Set([
   'assets-categories-add', 'assets-categories-edit',
   // Tendepay
   'tendepay-import', 'tendepay-fund-loads', 'tendepay-fund-loads-upload', 'tendepay-reconciliation',
+  'tendepay-wallets', 'tendepay-wallets-add', 'tendepay-wallets-edit',
   // HR / Payroll
   'hr-employee-directory', 'payroll-esp', 'payroll-fi', 'payroll-runs', 'payroll-payslips', 'payroll-salary-deductions', 'payroll-salary-advances',
   // Procurement
@@ -1500,6 +1506,13 @@ async function loadView(view) {
     case 'document-approvals-surcharge-policy':
       setActiveSidebarItem('sidebar-da-surcharge'); await loadDaSurchargePolicyView(main); break;
     // Tendepay sub-modules
+    case 'tendepay-wallets':
+      setActiveSidebarItem('sidebar-fin-tp-wallets'); openFinTendepayDropdown();
+      await loadTendepayWalletsView(main); break;
+    case 'tendepay-wallets-add':
+      openFinTendepayDropdown(); await loadTendepayWalletsAddView(main); break;
+    case 'tendepay-wallets-edit':
+      openFinTendepayDropdown(); await loadTendepayWalletsEditView(main); break;
     case 'tendepay-import':
       setActiveSidebarItem('sidebar-fin-tp-import'); openFinTendepayDropdown();
       await loadTendepayImportView(main); break;
