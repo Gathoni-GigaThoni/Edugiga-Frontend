@@ -1119,6 +1119,77 @@ async function _prSubmitVoid(runId) {
   errEl.textContent = await parseApiError(res); errEl.style.display = 'block';
 }
 
+
+// Shared Export PDF for payroll report screens. Takes a title, an optional
+// period subtitle, and either an element selector to snapshot or raw inner
+// HTML. Wraps the snapshot in the SOIS letterhead (soisPrintDocHtml) and the
+// QuickBooks-style body shell (soisReportBodyHtml), then opens a window the
+// user prints / saves as PDF through the browser dialog. Same
+// window.open-first-synchronously rule as _repPrint / openFeeInvoicePdf. The
+// extraCss hook lets each view hide its own chrome (action buttons, filter
+// strips) from the printed page without polluting the shared stylesheet.
+function _prPrintView(opts) {
+  const o = opts || {};
+  let inner = o.innerHtml;
+  if (!inner && o.rootSelector) {
+    const root = document.querySelector(o.rootSelector);
+    inner = root ? root.innerHTML.trim() : '';
+  }
+  if (!inner) { showToast('Nothing to export yet — generate the view first.', 'error'); return; }
+  const win = soisOpenPrintWindow('Preparing PDF…');
+  if (!win) { showToast('Please allow pop-ups to export this view to PDF.', 'error'); return; }
+  const docTitle = o.periodLabel ? `${o.title} — ${o.periodLabel}` : o.title;
+  soisWriteDoc(win, soisPrintDocHtml({
+    title:    docTitle,
+    docTitle: '',
+    bodyHtml: soisReportBodyHtml({ title: o.title, periodLabel: o.periodLabel, innerHtml: inner }),
+    extraCss: SOIS_REPORT_PRINT_CSS + (o.extraCss || ''),
+  }));
+}
+
+// Export the currently-open payroll run as a PDF: run header card (navy
+// block), action row (hidden), tab switcher (hidden), and the active tab's
+// table — lines + payslips panel when the run is paid. The right pane is
+// what's visible on screen for the selected run, so snapshotting it keeps
+// the printed document aligned with what the user is looking at. Interactive
+// chrome (Calculate / Approve / Add Employee / tab buttons / per-row Remove
+// links) is suppressed from print via the extraCss block.
+function _prPrintRun(runId) {
+  const run = _prCurrentRun;
+  if (!run || String(run.id) !== String(runId)) {
+    showToast('Open the run first, then export to PDF.', 'error'); return;
+  }
+  const period = `${_PR_MONTHS[run.period_month] || ''} ${run.period_year || ''}`.trim();
+  _prPrintView({
+    title: `Payroll Run ${run.run_number || '#' + run.id}`,
+    periodLabel: period ? `Period: ${period}` : '',
+    rootSelector: '#pr-right-panel',
+    extraCss: `
+      #pr-action-row, #pr-export-error { display:none !important; }
+      .rep-print-body button { display:none !important; }
+      .rep-print-body a[onclick] { color:#222A35 !important; text-decoration:none !important; pointer-events:none; }
+    `,
+  });
+}
+
+// Export the current Statutory Rates view (summary + whichever tab is open)
+// as a PDF. The summary block already renders all five rate types, so the
+// printed document gives a one-page audit snapshot of what's live today;
+// the active tab's schedule history goes under it.
+function _srPrint() {
+  const activeType = _srActiveTab;
+  const typeLabel = (_SR_TYPES.find(([t]) => t === activeType) || [])[1] || activeType;
+  const summary = document.getElementById('sr-summary');
+  const content = document.getElementById('sr-tab-content');
+  const inner = (summary ? summary.outerHTML : '') + (content ? content.outerHTML : '');
+  _prPrintView({
+    title: `Statutory Rates — ${typeLabel}`,
+    periodLabel: `As at ${_pvDate(new Date().toISOString().slice(0,10))}`,
+    innerHtml: inner,
+    extraCss: `.rep-print-body button { display:none !important; }`,
+  });
+}
+
 function _prActionsHtml(run) {
   let html = '';
   if (run.status === 'draft') {
@@ -1159,6 +1230,7 @@ function _prActionsHtml(run) {
   if ((run.failed_line_count > 0) || (run.pending_line_count > 0)) {
     html += `<button class="btn" onclick="_prRetryExport(${run.id})">Retry export (unpaid only)</button>`;
   }
+  html += `<button class="fin-btn-outline" onclick="_prPrintRun(${run.id})">Export PDF</button>`;
   return `<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">${html}</div>`;
 }
 
@@ -1878,7 +1950,10 @@ async function loadStatutoryRatesView(container) {
       <div id="sr-summary"></div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin:6px 0 12px;flex-wrap:wrap;gap:10px;">
         <div id="sr-tabs" style="display:flex;gap:6px;"></div>
-        <button class="fin-btn-teal" onclick="_srOpenAddForm(_srActiveTab)">+ Add future schedule</button>
+        <div style="display:flex;gap:8px;">
+          <button class="fin-btn-outline" onclick="_srPrint()">Export PDF</button>
+          <button class="fin-btn-teal" onclick="_srOpenAddForm(_srActiveTab)">+ Add future schedule</button>
+        </div>
       </div>
       <div id="sr-tab-content"></div>
     </div>`;

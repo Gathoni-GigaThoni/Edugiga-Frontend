@@ -220,6 +220,70 @@ function soisPrintDocHtml(opts) {
     </body></html>`;
 }
 
+// Shared body wrapper for a QuickBooks-style report under the SOIS letterhead.
+// soisPrintDocHtml renders the crest, footer and the frame around every page;
+// this helper only owns what sits inside that frame — the centred report
+// title, the italic period subtitle under it, and the already-rendered
+// #rep-output HTML snapshot. The accompanying SOIS_REPORT_PRINT_CSS neutralises
+// the teal/navy on-screen chrome (zebra rows, coloured headers, hover tints)
+// into the black-on-white QB look while keeping the SOIS letterhead on top.
+const SOIS_REPORT_PRINT_CSS = `
+  .rep-print-title { text-align:center; font-size:14pt; font-weight:700; color:#222A35; margin:2px 0; letter-spacing:0.02em; }
+  .rep-print-period { text-align:center; font-size:10pt; font-style:italic; color:#555; margin:0 0 14px; }
+  .rep-print-body > :first-child { margin-top:0; }
+  .rep-print-body h2, .rep-print-body h3, .rep-print-body h4 { color:#222A35; }
+
+  /* Generic finance tables — flattened to QB look (no colours, no zebra). */
+  .fin-table-wrap { width:100%; margin:6px 0 14px; overflow:visible; }
+  .fin-table { width:100%; border-collapse:collapse; font-size:10pt; background:#fff; box-shadow:none; min-width:0; }
+  .fin-table th {
+    padding:5px 8px; text-align:left; font-weight:700; color:#222A35;
+    border-top:0; border-bottom:2px solid #222A35; background:transparent;
+    font-size:9pt; letter-spacing:0.03em; text-transform:uppercase; white-space:normal;
+  }
+  .fin-table td { padding:4px 8px; border-bottom:1px solid #e5e5e5; color:#222A35; font-size:10pt; font-variant-numeric:tabular-nums; }
+  .fin-table tbody tr:nth-child(even) td { background:transparent; }
+  .fin-table th:last-child, .fin-table td:last-child { text-align:right; }
+  .fin-tfoot-total td, .fin-table tfoot td { font-weight:700; background:transparent; border-top:2px solid #222A35; border-bottom:2px solid #222A35; padding:6px 8px; }
+  .fin-empty { text-align:center; color:#888; padding:18px; font-style:italic; }
+  .fin-section-label { font-size:11pt; font-weight:700; color:#222A35; margin:14px 0 6px; padding-bottom:4px; border-bottom:1px solid #c9a227; }
+  .fin-form-wrap { max-width:none !important; padding:0 !important; margin:0 0 14px !important; background:transparent !important; border:none !important; box-shadow:none !important; }
+  .fin-li-table { width:100%; border-collapse:collapse; font-size:10pt; }
+  .fin-li-table th, .fin-li-table td { padding:4px 8px; border-bottom:1px solid #e5e5e5; }
+  .fin-li-table th:last-child, .fin-li-table td:last-child { text-align:right; }
+
+  /* Cash-flow / statement renderers lean on .rep-cf* in finance.css — recreate
+     the geometry monochrome. */
+  .rep-cf { max-width:none; background:transparent; border:none; border-radius:0; padding:0; }
+  .rep-cf-head { text-align:center; padding-bottom:10px; margin-bottom:14px; border-bottom:2px solid #222A35; }
+  .rep-cf-head-title { font-size:12pt; font-weight:700; color:#222A35; letter-spacing:0.02em; }
+  .rep-cf-head-period { margin-top:3px; font-size:9pt; color:#555; font-style:italic; }
+  .rep-cf-section { margin-bottom:16px; }
+  .rep-cf-section:last-child { margin-bottom:0; }
+  .rep-cf-section-title { font-size:11pt; font-weight:700; color:#222A35; margin:0 0 6px; }
+  .rep-cf-table { width:100%; border-collapse:collapse; font-size:10pt; }
+  .rep-cf-table th { background:transparent; padding:5px 8px; text-align:left; font-size:9pt; color:#222A35; font-weight:700; border:0; border-bottom:2px solid #222A35; text-transform:uppercase; letter-spacing:0.03em; }
+  .rep-cf-table td { padding:4px 8px; border:0; border-bottom:1px solid #e5e5e5; color:#222A35; }
+  .rep-cf-table .rep-cf-amt { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+  .rep-cf-table td.is-out, .rep-cf-table td.is-in { color:#222A35; }
+  .rep-cf-none { color:#888; font-style:italic; }
+  .rep-cf-net td { font-weight:700; color:#222A35; background:transparent; border-top:2px solid #222A35; border-bottom:2px solid #222A35; }
+
+  /* Inline-styled renderers (SoFP schools view, bank rec, aged tables) carry
+     their colours as inline style= attributes — strip the two heaviest tints. */
+  .rep-print-body [style*="background:#1d2d50"], .rep-print-body [style*="background: #1d2d50"] { background:transparent !important; color:#222A35 !important; }
+  .rep-print-body [style*="background:#c9a227"], .rep-print-body [style*="background: #c9a227"] { background:transparent !important; color:#222A35 !important; }
+`;
+
+function soisReportBodyHtml(opts) {
+  const o = opts || {};
+  return `
+    <div class="rep-print-title">${soisEsc(o.title || '')}</div>
+    ${o.periodLabel ? `<div class="rep-print-period">${soisEsc(o.periodLabel)}</div>` : ''}
+    <div class="rep-print-body">${o.innerHtml || ''}</div>`;
+}
+
+
 // window.open must run in the same synchronous tick as the click or the popup
 // blocker eats it — see the comment on openStudentFeeStatement. Callers open
 // the window first, await their fetches, then hand the HTML back here.

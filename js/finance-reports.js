@@ -297,6 +297,7 @@ async function loadFinanceReportView(container, routeKey) {
           <button class="fin-btn-teal" onclick="_repGenerate('${routeKey}')">Generate Report</button>
           <button class="fin-btn-outline" onclick="_repExport('${routeKey}','excel')">Export Excel</button>
           <button class="fin-btn-outline" onclick="_repExport('${routeKey}','csv')">Export CSV</button>
+          <button class="fin-btn-outline" onclick="_repPrint('${routeKey}')">Export PDF</button>
         </div>
       </div>
       <div id="rep-output"></div>
@@ -442,6 +443,55 @@ async function _repExport(routeKey, format) {
       errorPrefix: 'Export failed: ',
     });
   } catch (e) { showToast('Network error during export.', 'error'); }
+}
+
+
+// Build the "For the period 1 Jan 2026 to 31 Dec 2026" / "As at 31 Dec 2026"
+// subtitle drawn under the report title on the PDF. Reads straight from the
+// live filter inputs _repGenerate just ran against, so what prints matches
+// the parameters that produced the on-screen numbers.
+function _repPeriodLabel(def) {
+  const val = id => (document.getElementById(id) || {}).value || '';
+  if (def.dateMode === 'range') {
+    const s = val('rep-start-date'), e = val('rep-end-date');
+    if (s && e) return `For the period ${_pvDate(s)} to ${_pvDate(e)}`;
+  } else if (def.dateMode === 'asof') {
+    const a = val('rep-asof-date');
+    const c = def.compareDate ? val('rep-compare-date') : '';
+    if (a) return c ? `As at ${_pvDate(a)} (compared with ${_pvDate(c)})` : `As at ${_pvDate(a)}`;
+  } else if (def.dateMode === 'single') {
+    const d = val('rep-single-date');
+    if (d) return `For ${_pvDate(d)}`;
+  }
+  return '';
+}
+
+// Export PDF on finance reports: snapshot whatever _repGenerate just rendered
+// into #rep-output, wrap it in the SOIS letterhead (soisPrintDocHtml) and the
+// QuickBooks-style body shell (soisReportBodyHtml), and open a window the user
+// prints / saves as PDF through the browser's own Print dialog. Same
+// window.open-first-synchronously rule as openFeeInvoicePdf — a pop-up blocker
+// swallows the window otherwise. No network: this is a pure DOM snapshot of
+// the already-generated report.
+function _repPrint(routeKey) {
+  const def = REPORT_DEFS[routeKey];
+  if (!def) return;
+  const out = document.getElementById('rep-output');
+  const inner = out ? out.innerHTML.trim() : '';
+  if (!inner || /class="fin-empty"/.test(inner)) {
+    showToast('Generate the report first, then export to PDF.', 'error');
+    return;
+  }
+  const periodLabel = _repPeriodLabel(def);
+  const win = soisOpenPrintWindow('Preparing PDF…');
+  if (!win) { showToast('Please allow pop-ups to export this report to PDF.', 'error'); return; }
+  const docTitle = periodLabel ? `${def.title} — ${periodLabel}` : def.title;
+  soisWriteDoc(win, soisPrintDocHtml({
+    title:    docTitle,
+    docTitle: '',
+    bodyHtml: soisReportBodyHtml({ title: def.title, periodLabel, innerHtml: inner }),
+    extraCss: SOIS_REPORT_PRINT_CSS,
+  }));
 }
 
 // ── Table layout (most reports) ─────────────────────────────────────────────
