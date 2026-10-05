@@ -4658,7 +4658,7 @@ async function loadStudentReportView(container) {
           </select> entries &nbsp;|&nbsp; Total <span id="srpt-total">0</span> entries
         </div>
         <div class="fin-controls-right">
-          <button class="fin-export-btn" title="Export PDF">&#128438;</button>
+          <button class="fin-export-btn" title="Export PDF" onclick="exportStuReportPDF()">&#128438;</button>
           <button class="fin-export-btn" title="Export CSV" onclick="exportStuReportCSV()">&#128202;</button>
           <input type="text" class="fin-search-input" id="srpt-search" placeholder="&#128269; Search&#8230;" oninput="onStuRptSearch(this.value)">
           <button class="fin-btn-filter" onclick="showStuRptFilterPanel()">&#9776; Filters</button>
@@ -5037,6 +5037,7 @@ async function loadStudentGuardianReportView(container) {
           </select> entries &nbsp;|&nbsp; Total <span id="sgr-total">0</span> entries
         </div>
         <div class="fin-controls-right">
+          <button class="fin-export-btn" title="Export PDF" onclick="exportStuGuaReportPDF()">&#128438;</button>
           <button class="fin-export-btn" title="Export CSV" onclick="exportStuGuaReportCSV()">&#128202;</button>
           <input type="text" class="fin-search-input" id="sgr-search" placeholder="&#128269; Search&#8230;" oninput="onStuGuaSearch(this.value)">
           <button class="fin-btn-filter" onclick="showStuGuaFilterPanel()">&#9776; Filters</button>
@@ -5237,6 +5238,72 @@ function exportStuGuaReportCSV() {
     ]),
     'student-guardian-report.csv'
   );
+}
+
+
+// Export PDF for the two Student Management reports. Builds a complete
+// table over the FULL filtered dataset (matches the CSV path — not just the
+// visible page) and renders it through the SOIS letterhead using the
+// shared QuickBooks-style helpers from print-letterhead.js. "As at" subtitle
+// is the current date, in line with how CSV naming treats these reports as
+// point-in-time snapshots of the roster.
+function _stuPdfAsOf() {
+  return new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function exportStuReportPDF() {
+  const rows = _stuRptFiltered();
+  if (!rows.length) { showToast('No records to export.', 'error'); return; }
+  const win = soisOpenPrintWindow('Preparing PDF…');
+  if (!win) { showToast('Please allow pop-ups to export this report to PDF.', 'error'); return; }
+  const asOf = _stuPdfAsOf();
+  const tbody = rows.map(s => `<tr>
+    <td>${_esc(s.student_id||s.admission_no||'')}</td>
+    <td>${_esc(`${s.first_name||''} ${s.last_name||''}`.trim()||s.full_name||'')}</td>
+    <td>${_esc(s.joining_date||'-')}</td>
+    <td>${_esc(s.gender||'-')}</td>
+    <td>${_esc(s.date_of_birth||'-')}</td>
+    <td>${_esc(s.admission_date||s.joining_date||'-')}</td>
+    <td>${s.is_active ? 'Active' : 'Inactive'}</td>
+  </tr>`).join('');
+  const body = `<div class="fin-table-wrap"><table class="fin-table">
+    <thead><tr><th>ADMISSION NO.</th><th>FULL NAME</th><th>JOINING DATE</th><th>GENDER</th><th>BIRTH DATE</th><th>ADMISSION DATE</th><th>STATUS</th></tr></thead>
+    <tbody>${tbody}</tbody>
+  </table></div>
+  <p style="margin-top:12px;font-size:9pt;color:#555;">Total records: ${rows.length}</p>`;
+  soisWriteDoc(win, soisPrintDocHtml({
+    title:    `Student Report - As at ${asOf}`,
+    docTitle: '',
+    bodyHtml: soisReportBodyHtml({ title: 'Student Report', periodLabel: `As at ${asOf}`, innerHtml: body }),
+    extraCss: SOIS_REPORT_PRINT_CSS,
+  }));
+}
+
+function exportStuGuaReportPDF() {
+  const rows = _stuGuaFiltered();
+  if (!rows.length) { showToast('No records to export.', 'error'); return; }
+  const win = soisOpenPrintWindow('Preparing PDF…');
+  if (!win) { showToast('Please allow pop-ups to export this report to PDF.', 'error'); return; }
+  const asOf = _stuPdfAsOf();
+  const tbody = rows.map(g => `<tr>
+    <td>${_esc(g.admission_number||'')}</td>
+    <td>${_esc(g.student_name||'')}</td>
+    <td>${_esc(g.contact_name||'')}</td>
+    <td>${_esc(_STU_GUA_RELATIONSHIP_LABEL[g.relationship]||g.relationship||'')}</td>
+    <td>${_esc(g.phone||'')}</td>
+    <td>${_esc(g.email||'')}</td>
+  </tr>`).join('');
+  const body = `<div class="fin-table-wrap"><table class="fin-table">
+    <thead><tr><th>STUDENT ID</th><th>STUDENT NAME</th><th>GUARDIAN NAME</th><th>RELATIONSHIP</th><th>PHONE</th><th>EMAIL</th></tr></thead>
+    <tbody>${tbody}</tbody>
+  </table></div>
+  <p style="margin-top:12px;font-size:9pt;color:#555;">Total records: ${rows.length}</p>`;
+  soisWriteDoc(win, soisPrintDocHtml({
+    title:    `Student Guardian Report - As at ${asOf}`,
+    docTitle: '',
+    bodyHtml: soisReportBodyHtml({ title: 'Student Guardian Report', periodLabel: `As at ${asOf}`, innerHtml: body }),
+    extraCss: SOIS_REPORT_PRINT_CSS,
+  }));
 }
 
 // ==================== 11. CLASSES ====================
