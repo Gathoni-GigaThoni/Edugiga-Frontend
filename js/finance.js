@@ -5599,6 +5599,227 @@ function _tpReconWalletCard(w) {
     </div>`;
 }
 
+// ==================== CO-OP IPN RECONCILIATION ====================
+// Sweeps un-reconciled Co-op paybill IPN receipts out of the M-Collection
+// clearing account (10-01-202) into Main Current (10-01-201) via a single
+// server-posted JE. Both date params are optional and inclusive on
+// FinReceipt.payment_date; both omitted = sweep every un-swept credit
+// (initial backfill). Permission: finance.bank_reconciliation (view for
+// Preview, add for Sweep) — enforced by the backend.
+
+const _COOP_IPN_BASE = `${API_BASE}/finance/coop-ipn`;
+
+// Snapshot of the filter at the last successful Preview — gates the Sweep
+// button so the operator can't post a sweep whose preview numbers they
+// never actually saw. Cleared on filter edit and after a successful sweep.
+let _coopIpnLastPreview = null;
+
+function _coopIpnMoney(v) { return formatKES(v); }
+
+function _coopIpnReadFilter() {
+  const start = document.getElementById('coop-ipn-start')?.value || '';
+  const end = document.getElementById('coop-ipn-end')?.value || '';
+  return { start_date: start, end_date: end };
+}
+
+function _coopIpnFilterQuery(filter) {
+  const p = new URLSearchParams();
+  if (filter.start_date) p.set('start_date', filter.start_date);
+  if (filter.end_date) p.set('end_date', filter.end_date);
+  return p.toString();
+}
+
+function _coopIpnWindowLabel(filter) {
+  const s = filter.start_date || 'all';
+  const e = filter.end_date || 'all';
+  return `${_finEsc(s)} &rarr; ${_finEsc(e)}`;
+}
+
+function _coopIpnSameFilter(a, b) {
+  if (!a || !b) return false;
+  return a.start_date === b.start_date && a.end_date === b.end_date;
+}
+
+async function loadCoopIpnReconciliationView(container) {
+  _coopIpnLastPreview = null;
+  container.innerHTML = `
+    <div class="fin-page">
+      <div class="fin-header-row">
+        <h2 class="fin-title">Co-op IPN Reconciliation</h2>
+        <div class="fin-breadcrumb">Dashboard &rsaquo; Finance &rsaquo; Bank &amp; Cash &rsaquo; IPN Reconciliation</div>
+      </div>
+      <p style="max-width:820px;color:var(--grey-700,#444);font-size:0.9rem;line-height:1.5;margin:0 0 16px;">
+        This sweep moves un-reconciled Co-op paybill receipts out of the M-Collection clearing account
+        (<strong>10-01-202</strong>) and into Main Current (<strong>10-01-201</strong>) in a single journal entry.
+        Cross-check the Co-op e-banking statement for the chosen period before posting — once posted, a reversal
+        requires a manual JE.
+      </p>
+      <div id="coop-ipn-banner"></div>
+      <div class="fin-filter-section">
+        <div class="fin-filter-grid" style="align-items:flex-end;">
+          <div class="fin-filter-field">
+            <label class="fin-filter-label">Start Date</label>
+            <input type="date" id="coop-ipn-start" class="fin-filter-input" oninput="_coopIpnOnFilterChange()">
+          </div>
+          <div class="fin-filter-field">
+            <label class="fin-filter-label">End Date</label>
+            <input type="date" id="coop-ipn-end" class="fin-filter-input" oninput="_coopIpnOnFilterChange()">
+          </div>
+        </div>
+        <p style="margin:8px 0 0;font-size:0.78rem;color:var(--grey-500,#888);">
+          Leave both blank to sweep all un-reconciled credits (first-run backfill).
+        </p>
+        <div class="fin-filter-actions" style="margin-top:14px;">
+          <button class="fin-btn-teal" id="coop-ipn-preview-btn" onclick="_coopIpnPreview()">Preview</button>
+          <button class="fin-btn-outline" id="coop-ipn-sweep-btn" onclick="_coopIpnSweep()" disabled>Sweep now</button>
+        </div>
+      </div>
+      <div id="coop-ipn-output"></div>
+    </div>`;
+}
+
+function _coopIpnOnFilterChange() {
+  _coopIpnLastPreview = null;
+  _coopIpnSetSweepEnabled(false);
+  const out = document.getElementById('coop-ipn-output');
+  if (out) out.innerHTML = '';
+}
+
+function _coopIpnSetSweepEnabled(enabled) {
+  const btn = document.getElementById('coop-ipn-sweep-btn');
+  if (!btn) return;
+  btn.disabled = !enabled;
+  btn.className = enabled ? 'fin-btn-teal' : 'fin-btn-outline';
+}
+
+function _coopIpnStartValidation() {
+  const { start_date, end_date } = _coopIpnReadFilter();
+  if (start_date && end_date && start_date > end_date) {
+    return 'Start Date must be on or before End Date.';
+  }
+  return null;
+}
+
+function _coopIpnShowBanner(kind, text) {
+  const el = document.getElementById('coop-ipn-banner');
+  if (!el) return;
+  const palette = kind === 'error'
+    ? { border: 'var(--coral-500,#D94040)', bg: 'var(--coral-100,#fde0de)', fg: 'var(--coral-600,#c0392b)' }
+    : { border: 'var(--teal-500,#1e7e34)', bg: '#dcf3e2',                   fg: '#1e5c28' };
+  el.innerHTML = `
+    <div style="margin:0 0 14px;padding:10px 14px;border-radius:6px;border-left:4px solid ${palette.border};background:${palette.bg};color:${palette.fg};font-size:0.88rem;display:flex;align-items:flex-start;gap:10px;">
+      <div style="flex:1;">${text}</div>
+      <button type="button" aria-label="Dismiss" onclick="_coopIpnDismissBanner()" style="background:transparent;border:0;color:inherit;font-size:1.1rem;font-weight:700;cursor:pointer;line-height:1;">&times;</button>
+    </div>`;
+}
+
+function _coopIpnDismissBanner() {
+  const el = document.getElementById('coop-ipn-banner');
+  if (el) el.innerHTML = '';
+}
+
+async function _coopIpnPreview() {
+  _coopIpnDismissBanner();
+  _coopIpnLastPreview = null;
+  _coopIpnSetSweepEnabled(false);
+  const out = document.getElementById('coop-ipn-output');
+  if (!out) return;
+  const vErr = _coopIpnStartValidation();
+  if (vErr) { _coopIpnShowBanner('error', _finEsc(vErr)); out.innerHTML = ''; return; }
+  const filter = _coopIpnReadFilter();
+  out.innerHTML = '<p class="sa-loading">Loading&#8230;</p>';
+  const qs = _coopIpnFilterQuery(filter);
+  const res = await apiFetch(`${_COOP_IPN_BASE}/reconcile/preview${qs ? '?' + qs : ''}`);
+  if (!res) { out.innerHTML = ''; return; }
+  if (!res.ok) {
+    await _coopIpnHandleError(res, 'preview');
+    out.innerHTML = '';
+    return;
+  }
+  const data = await res.json();
+  const pending = parseFloat(data.pending_amount) || 0;
+  const count = parseInt(data.receipt_count, 10) || 0;
+  const windowFilter = { start_date: data.start_date || '', end_date: data.end_date || '' };
+  _coopIpnLastPreview = { filter, pending_amount: data.pending_amount, receipt_count: count };
+  _coopIpnSetSweepEnabled(pending > 0 && count > 0);
+  out.innerHTML = `
+    <div class="fin-filter-section" style="margin-top:16px;">
+      <div class="fin-section-label">Preview</div>
+      <div class="fin-controls-row">
+        <div class="fin-controls-left" style="display:grid;grid-template-columns:160px 1fr;gap:6px 18px;font-size:0.92rem;">
+          <div style="color:var(--grey-600,#555);">Pending amount</div><div><strong>${_coopIpnMoney(data.pending_amount)}</strong></div>
+          <div style="color:var(--grey-600,#555);">Receipt count</div><div><strong>${count}</strong></div>
+          <div style="color:var(--grey-600,#555);">Window</div><div>${_coopIpnWindowLabel(windowFilter)}</div>
+        </div>
+      </div>
+      ${pending <= 0 || count <= 0
+        ? '<p style="margin:12px 0 0;font-size:0.85rem;color:var(--grey-600,#555);">Nothing to sweep for this window.</p>'
+        : ''}
+    </div>`;
+}
+
+async function _coopIpnSweep() {
+  _coopIpnDismissBanner();
+  const current = _coopIpnReadFilter();
+  if (!_coopIpnLastPreview || !_coopIpnSameFilter(current, _coopIpnLastPreview.filter)) {
+    _coopIpnShowBanner('error', 'Preview this window first — the Sweep posts the amount shown in the Preview panel.');
+    _coopIpnSetSweepEnabled(false);
+    return;
+  }
+  const amount = _coopIpnMoney(_coopIpnLastPreview.pending_amount);
+  const count = _coopIpnLastPreview.receipt_count;
+  const confirmed = confirm(
+    `Post sweep JE: ${amount} across ${count} receipt(s)?\n\n` +
+    `This cannot be undone from the UI — a reversal would need a manual JE.`
+  );
+  if (!confirmed) return;
+  const sweepBtn = document.getElementById('coop-ipn-sweep-btn');
+  const previewBtn = document.getElementById('coop-ipn-preview-btn');
+  if (sweepBtn) sweepBtn.disabled = true;
+  if (previewBtn) previewBtn.disabled = true;
+  const qs = _coopIpnFilterQuery(_coopIpnLastPreview.filter);
+  const res = await apiFetch(`${_COOP_IPN_BASE}/reconcile${qs ? '?' + qs : ''}`, { method: 'POST' });
+  if (previewBtn) previewBtn.disabled = false;
+  if (!res) { _coopIpnSetSweepEnabled(true); return; }
+  if (!res.ok) {
+    await _coopIpnHandleError(res, 'sweep');
+    _coopIpnSetSweepEnabled(res.status !== 403);
+    return;
+  }
+  const data = await res.json();
+  const jv = data.jv_number || `JE #${data.journal_entry_id}`;
+  const jeId = parseInt(data.journal_entry_id, 10);
+  showToast(`Sweep posted: ${jv} for ${_coopIpnMoney(data.swept_amount)}.`, 'success');
+  const linkHtml = Number.isFinite(jeId)
+    ? `<a href="#" onclick="_jeOpenDetail(${jeId});return false;" style="color:inherit;text-decoration:underline;font-weight:600;">View JE ${_finEsc(jv)}</a>`
+    : `<strong>${_finEsc(jv)}</strong>`;
+  _coopIpnShowBanner('success',
+    `Sweep posted. ${linkHtml} &middot; ${_coopIpnMoney(data.swept_amount)} across ${_finEsc(String(data.receipt_count ?? ''))} receipt(s).`);
+  _coopIpnLastPreview = null;
+  _coopIpnSetSweepEnabled(false);
+  const out = document.getElementById('coop-ipn-output');
+  if (out) out.innerHTML = '';
+}
+
+async function _coopIpnHandleError(res, action) {
+  const status = res.status;
+  if (status >= 500) {
+    console.error(`Co-op IPN ${action} failed`, status, await parseApiError(res));
+    _coopIpnShowBanner('error', 'Server error, try again.');
+    return;
+  }
+  const detail = await parseApiError(res);
+  if (status === 403) {
+    _coopIpnShowBanner('error', 'You do not have permission to run IPN reconciliation. Ask an admin to grant you <code>finance.bank_reconciliation</code>.');
+    return;
+  }
+  if (status === 409) {
+    _coopIpnShowBanner('error', 'No un-swept credits match this filter. (You may have already swept this window.)');
+    return;
+  }
+  _coopIpnShowBanner('error', _finEsc(detail || `HTTP ${status}`));
+}
+
 // ==================== GATEWAY TRANSACTIONS (Receivables) ====================
 // Route/field names beyond gateway_receipt/gateway_transaction_id/initiated_by
 // were not spelled out in the BE_FE_Contract (only /summary, /reconcile-now,

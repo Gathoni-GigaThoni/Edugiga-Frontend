@@ -107,6 +107,7 @@ const _SIDEBAR_ITEM_MODULE_KEYS = {
   'sidebar-fin-spon-mgmt':                'finance.student_finance',
   'sidebar-fin-bc-recon':                 'finance.cash_bank_management',
   'sidebar-fin-bc-imports':               'finance.cash_bank_management',
+  'sidebar-fin-ipn-recon':                'finance.bank_reconciliation',
   // Wallets read gate accepts either finance.tendepay_wallets or finance.setup,
   // mirroring the BE contract for GET /tendepay/wallets/. The write gate is
   // strict finance.tendepay_wallets — enforced by the split view's moduleKey.
@@ -396,6 +397,7 @@ function showDashboard() {
                 ${flyoutGroupHeader('Bank & Cash', 'fin-bankcash-dropdown')}
                 <ul id="fin-bankcash-dropdown" class="dropdown-menu" style="${flyoutGroupUlStyle('fin-bankcash-dropdown')}">
                   <li id="sidebar-fin-bc-recon"   class="sidebar-sub-sub" onclick="loadView('bank-cash-reconciliation-workspace')">Reconciliation Workspace</li>
+                  <li id="sidebar-fin-ipn-recon"  class="sidebar-sub-sub" onclick="loadView('coop-ipn-reconciliation')">IPN Reconciliation</li>
                   <li id="sidebar-fin-bc-imports" class="sidebar-sub-sub" onclick="loadView('bank-cash-reconciliation-imports')">Statement Imports</li>
                 </ul>
               </li>
@@ -1495,6 +1497,9 @@ async function loadView(view) {
     case 'bank-cash-reconciliation-workspace':
       setActiveSidebarItem('sidebar-fin-bc-recon'); openFinBankCashDropdown();
       await loadReconSessionsView(main); break;
+    case 'coop-ipn-reconciliation':
+      setActiveSidebarItem('sidebar-fin-ipn-recon'); openFinBankCashDropdown();
+      await loadCoopIpnReconciliationView(main); break;
     case 'bank-cash-reconciliation-imports':
       setActiveSidebarItem('sidebar-fin-bc-imports'); openFinBankCashDropdown();
       await loadReconImportsView(main); break;
