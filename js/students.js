@@ -5357,12 +5357,9 @@ async function loadStudentClassesView(container) {
     ],
     renderAdd:  el => _clsSplitForm(null, el),
     renderEdit: (item, el) => _clsSplitForm(item, el),
-    // Printable asset summary for the term-open hand-over
-    // (fixed-asset-locations.js). Left unset without fixed-asset access, so
-    // the pane doesn't grow an empty actions row.
-    detailActions: canView('asset_management.fixed_assets')
-      ? c => `<button class="fin-btn-outline" onclick="openClassAssetSummary(${Number(c.id)})">Print Asset Summary</button>`
-      : undefined,
+    // No per-class asset summary — SchoolClass stopped being a location
+    // dimension in the 2026-10-06 asset-location re-engineer. The equivalent
+    // per-location summary lives on Finance ▸ Asset Location ▸ Register slice.
   });
 }
 

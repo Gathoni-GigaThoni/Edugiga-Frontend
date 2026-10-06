@@ -119,16 +119,15 @@ function _faGlActionsHtml(item) {
 
 // ── Physical placement + movement log ────────────────────────────────────
 // Location and custodian are tracked apart from the GL: a movement is a
-// physical event with no journal entry. current_school_class_id /
-// current_location_text / current_custodian_employee_id on the asset row are
-// the cached placement and the source of truth for any list — the movement
-// log is only fetched to show an asset's history.
+// physical event with no journal entry. current_asset_location_id and
+// current_custodian_employee_id on the asset row are the cached placement
+// and the source of truth for any list — the movement log is only fetched
+// to show an asset's history.
 //
-// Class and custodian names come from inventory.js's shared lookups (the same
-// HR-employee custodian picker and class list the Stores form uses), loaded
-// once with the register.
+// Location names come from fixed-asset-locations.js's shared cache; the
+// custodian picker is inventory.js's HR-employee one.
 function _faEnsurePlacementLookups() {
-  return Promise.all([_invEnsureCustodianCache(), _invEnsureClassesCache()]);
+  return Promise.all([_invEnsureCustodianCache(), _invEnsureAssetLocationsCache()]);
 }
 
 // Enum order is deliberate (roughly by frequency) — don't re-sort.
@@ -157,14 +156,25 @@ function _faTrunc(text, max, tip = text) {
   return `<span title="${_finEsc(tip)}">${_finEsc(s.slice(0, max - 1))}&hellip;</span>`;
 }
 const _FA_MUTED_DASH = '<span style="color:var(--grey-400,#aaa);">—</span>';
-// A class id wins over free text; the backend never sets both.
-function _faPlacementName(classId, text) {
-  if (classId != null) return _invClassLabel(classId);
-  return text || '';
+function _faPlacementName(locationId) {
+  if (locationId == null) return '';
+  return _invAssetLocationLabel(locationId);
 }
-function _faPlacementCell(classId, text, max = 40) {
-  const name = _faPlacementName(classId, text);
-  return name ? _faTrunc(name, max) : _FA_MUTED_DASH;
+// A location that isn't in the cache is likely hard-deleted — schedule the
+// lazy /{id} fallback so the row re-renders with a sensible name once the
+// fetch resolves. Caller must pass a `slot` id for the re-render to land.
+function _faPlacementCell(locationId, max = 40, slot = null) {
+  if (locationId == null) return _FA_MUTED_DASH;
+  const sync = _faPlacementName(locationId);
+  if (slot && !_invAssetLocationLookup(locationId)) {
+    const slotId = `fa-loc-slot-${slot}-${locationId}-${Math.random().toString(36).slice(2, 7)}`;
+    _invAssetLocationLabelAsync(locationId).then(label => {
+      const el = document.getElementById(slotId);
+      if (el) el.innerHTML = _faTrunc(label, max);
+    });
+    return `<span id="${slotId}">${_faTrunc(sync, max)}</span>`;
+  }
+  return _faTrunc(sync, max);
 }
 function _faCustodianName(id) {
   return id == null ? '' : _invCustodianLabel(id);
@@ -207,7 +217,7 @@ function _faInvalidateMovements(assetIds) {
 }
 
 function _faCurrentPlacementCardHtml(item) {
-  const place = _faPlacementName(item.current_school_class_id, item.current_location_text);
+  const place = _faPlacementName(item.current_asset_location_id);
   const custodian = _faCustodianName(item.current_custodian_employee_id);
   const muted = s => `<span style="color:var(--grey-500,#888);font-weight:600;">${s}</span>`;
   return `<div style="padding:10px 14px;border-radius:6px;background:var(--navy-50,#EEF3FA);border-left:3px solid var(--navy-700,#1B3057);font-size:0.88rem;margin-bottom:10px;">
@@ -232,8 +242,8 @@ function _faMovementRowsHtml(rows) {
     return `<tr>
       <td style="white-space:nowrap;">${_pvDate(m.moved_at)}</td>
       <td>${_faMovementPill(m.movement_type)}</td>
-      <td>${_faPlacementCell(m.from_school_class_id, m.from_location_text)}</td>
-      <td>${_faPlacementCell(m.to_school_class_id, m.to_location_text)}</td>
+      <td>${_faPlacementCell(m.from_asset_location_id, 40, `mv-${m.id}-from`)}</td>
+      <td>${_faPlacementCell(m.to_asset_location_id, 40, `mv-${m.id}-to`)}</td>
       <td>${custodianCell}</td>
       <td>${_faTrunc(m.reason, 60, tip)}${_faDocLinkHtml(m.supporting_document_url)}</td>
       <td style="white-space:nowrap;">Staff #${_finEsc(m.created_by)}</td>
@@ -273,25 +283,30 @@ function _faMovementPanelHtml(item) {
 // ── Record a movement (POST /{id}/movements) ─────────────────────────────
 // The per-type field rules mirror the backend's validation, so the form can't
 // assemble a combination the server would 422:
-//   to   'any'  = exactly one of classroom / free text; 'text' = free text only
-//   from whether from_* (location and custodian) may be sent at all
-//   cust to_custodian_employee_id — 'required', 'optional', or not allowed
+//   to    whether to_asset_location_id is required
+//   from  whether from_asset_location_id may be sent at all
+//   cust  to_custodian_employee_id — 'required', 'optional', or not allowed
 // Everything else the server checks (status, date order, duplicates, target
 // equal to current custodian) comes back as a detail shown verbatim.
+//
+// sent_for_repair / pre_disposal_hold used to carry a free-text location
+// (provider name, sentinel). The 2026-10-06 backend re-engineer dropped
+// that — the operator picks a Transport/Other AssetLocation now, or creates
+// one inline via the picker.
 const _FA_MV_RULES = {
-  initial_placement:    { to: 'any',  from: false, cust: 'optional' },
-  transfer:             { to: 'any',  from: true,  cust: 'optional' },
-  custodian_change:     { to: null,   from: false, cust: 'required' },
-  sent_for_repair:      { to: 'text', from: true,  cust: 'optional' },
-  returned_from_repair: { to: 'any',  from: true,  cust: 'optional' },
-  verification:         { to: null,   from: false, cust: null },
-  pre_disposal_hold:    { to: 'any',  from: true,  cust: 'optional' },
+  initial_placement:    { to: true,  from: false, cust: 'optional' },
+  transfer:             { to: true,  from: true,  cust: 'optional' },
+  custodian_change:     { to: false, from: false, cust: 'required' },
+  sent_for_repair:      { to: true,  from: true,  cust: 'optional' },
+  returned_from_repair: { to: true,  from: true,  cust: 'optional' },
+  verification:         { to: false, from: false, cust: null },
+  pre_disposal_hold:    { to: true,  from: true,  cust: 'optional' },
 };
 const _FA_MV_HINTS = {
   initial_placement:    'First placement of this asset. It can only be logged once.',
   transfer:             'A full physical move from one location to another.',
   custodian_change:     'Same location, new accountable staff member.',
-  sent_for_repair:      'Temporary hand-off to an external repair provider.',
+  sent_for_repair:      'Temporary hand-off to an external repair provider. Pick a Transport/Other location, or create one.',
   returned_from_repair: 'Back from repair. The destination may differ from where it left.',
   verification:         'Confirms the asset is where the register says. Reason should identify the verifier (e.g. <code>Term 2 audit walk — HoF</code>).',
   pre_disposal_hold:    'Physically removed from use but not yet financially disposed.',
@@ -330,38 +345,27 @@ function _faLocalToday() {
 // Classroom | Free-text segmented control. Switching segments keeps what was
 // entered in the other one, so both can end up filled — submit refuses that
 // (XOR) rather than silently dropping one.
-function _faMvLocationFieldsHtml(p) {
-  const seg = (mode, label, radius) => `<button type="button" id="${p}-seg-${mode}" class="fin-btn-outline" aria-pressed="false"
-    style="padding:3px 12px;font-size:0.78rem;border-radius:${radius};" onclick="_faMvSetMode('${p}','${mode}')">${label}</button>`;
+// Single-dropdown location field for the movement form. The shared asset-
+// location picker (grouped by type, with the inline "+ Create new location…"
+// affordance) replaces the old segmented class/free-text toggle after the
+// 2026-10-06 backend re-engineer.
+function _faMvLocationFieldHtml(p, selectedId = null) {
   return `
-    <div id="${p}-seg" style="display:inline-flex;margin-bottom:6px;">${seg('class', 'Classroom', '6px 0 0 6px')}${seg('text', 'Free-text', '0 6px 6px 0')}</div>
-    <input type="hidden" id="${p}-mode" value="class">
-    <div id="${p}-class-wrap">${_invClassPickerHtml(`${p}-class`, null)}</div>
-    <div id="${p}-text-wrap" style="display:none;"><input type="text" id="${p}-text" class="fin-form-input" maxlength="120" placeholder="e.g. Head Office, Storage B"></div>
+    ${_invAssetLocationPickerHtml(`${p}-loc`, selectedId, { placeholder: 'Pick a location' })}
     <span class="fin-field-error" id="${p}-err"></span>`;
 }
-function _faMvSetMode(p, mode) {
-  document.getElementById(`${p}-mode`).value = mode;
-  document.getElementById(`${p}-class-wrap`).style.display = mode === 'class' ? '' : 'none';
-  document.getElementById(`${p}-text-wrap`).style.display = mode === 'text' ? '' : 'none';
-  // .fin-btn-outline sets background/color/border with !important, so the
-  // selected segment has to override at the same priority.
-  const pressed = { background: 'var(--navy-700,#1B3057)', color: '#fff', 'border-color': 'var(--navy-700,#1B3057)' };
-  ['class', 'text'].forEach(m => {
-    const b = document.getElementById(`${p}-seg-${m}`);
-    const on = m === mode;
-    b.setAttribute('aria-pressed', String(on));
-    Object.entries(pressed).forEach(([prop, val]) => on ? b.style.setProperty(prop, val, 'important') : b.style.removeProperty(prop));
-  });
+function _faMvLocationValue(p) {
+  const sel = document.getElementById(`${p}-loc`);
+  if (!sel) return null;
+  const v = sel.value;
+  if (!v || v === '__create__') return null;
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) ? n : null;
 }
-// The class picker lists active classes only; an asset can still sit in one
-// that has since been closed, so its from-location keeps that option.
-function _faMvSelectClass(selectId, classId) {
-  const sel = document.getElementById(selectId);
+function _faMvSetLocation(p, locationId) {
+  const sel = document.getElementById(`${p}-loc`);
   if (!sel) return;
-  if (classId == null) { sel.value = ''; return; }
-  if (![...sel.options].some(o => o.value === String(classId))) sel.add(new Option(`${_invClassLabel(classId)} (inactive)`, classId));
-  sel.value = String(classId);
+  sel.value = locationId == null ? '' : String(locationId);
 }
 
 let _faMv = null;  // open movement form: { assets, bulk, cur, acquired, rows, loaded, submitting, fromEditing, fromTouched, lastType, fromSelection }
@@ -378,7 +382,7 @@ function _faMvAssetsHeaderHtml(state) {
   if (!state.bulk) return _faCurrentPlacementCardHtml(state.assets[0]);
   const n = state.assets.length;
   const items = state.assets.slice(0, 5).map(a => {
-    const place = _faPlacementName(a.current_school_class_id, a.current_location_text);
+    const place = _faPlacementName(a.current_asset_location_id);
     return `<li><strong>${_finEsc(a.asset_tag || '—')}</strong>${a.description ? ` — ${_faTrunc(a.description, 50)}` : ''}
       <span style="color:var(--grey-500,#888);">&middot; ${place ? _finEsc(place) : 'Unplaced'}</span></li>`;
   }).join('');
@@ -405,12 +409,10 @@ async function _faOpenMovementForm(assets, presetType = 'transfer', opts = {}) {
   const n = assets.length;
   const asset = assets[0];
   const disposed = !bulk && !!asset.is_disposed;
-  const sharedClass = _faSharedValue(assets, 'current_school_class_id');
-  const sharedText = _faSharedValue(assets, 'current_location_text');
+  const sharedLoc = _faSharedValue(assets, 'current_asset_location_id');
   const cur = {
-    samePlace: sharedClass !== undefined && sharedText !== undefined,
-    classId: sharedClass ?? null,
-    text: sharedText || '',
+    samePlace: sharedLoc !== undefined,
+    locationId: sharedLoc ?? null,
     custodian: _faSharedValue(assets, 'current_custodian_employee_id'),  // undefined = they differ
   };
   const acquired = assets.reduce((max, a) => (a.acquisition_date || '') > max ? a.acquisition_date : max, '');
@@ -422,7 +424,7 @@ async function _faOpenMovementForm(assets, presetType = 'transfer', opts = {}) {
   const state = _faMv = { assets, bulk, cur, acquired, rows: [], loaded: bulk, submitting: false, fromEditing: mixedFrom, fromTouched: mixedFrom, lastType: null, fromSelection: !!opts.fromSelection };
   // "Move" on assets that were never placed means their first placement. A
   // selection is judged by its cached placement, a single asset by its history.
-  if (bulk && presetType === 'transfer' && cur.samePlace && cur.classId == null && !cur.text) presetType = 'initial_placement';
+  if (bulk && presetType === 'transfer' && cur.samePlace && cur.locationId == null) presetType = 'initial_placement';
   const today = _faLocalToday();
   const curCust = cur.custodian ?? null;
   const hint = 'font-size:11px;color:var(--grey-500,#888);';
@@ -451,13 +453,13 @@ async function _faOpenMovementForm(assets, presetType = 'transfer', opts = {}) {
           <label class="fin-form-label" style="margin:0;">From Location</label>
           <button type="button" id="famv-from-edit" class="fin-btn-outline" style="padding:2px 10px;font-size:0.76rem;" onclick="_faMvToggleFromEdit()">Edit</button>
         </div>
-        ${_faMvLocationFieldsHtml('famv-from')}
+        ${_faMvLocationFieldHtml('famv-from', cur.locationId)}
         <div style="margin-top:8px;">${_invCustodianPickerHtml('famv-from-cust', curCust)}</div>
         <span style="${hint}">${fromHint}</span>
       </div>
       <div id="famv-to-block" class="fin-form-group">
         <label class="fin-form-label" id="famv-to-label">To Location <span class="fin-required">*</span></label>
-        ${_faMvLocationFieldsHtml('famv-to')}
+        ${_faMvLocationFieldHtml('famv-to')}
       </div>
       <div id="famv-cust-block" class="fin-form-group">
         <div id="famv-cust-current" style="font-size:0.82rem;color:var(--grey-600,#666);margin-bottom:4px;"></div>
@@ -493,16 +495,14 @@ async function _faOpenMovementForm(assets, presetType = 'transfer', opts = {}) {
       </div>
     </div>`;
   document.body.appendChild(wrap);
-  // The reused pickers carry their own labels; the segmented control and the
-  // block headings already say what these are.
-  wrap.querySelectorAll('#famv-from-class-wrap > label, #famv-to-class-wrap > label').forEach(l => l.remove());
+  // The reused custodian pickers carry their own labels; the block headings
+  // already say what these are.
   wrap.querySelectorAll('#famv-from-cust, #famv-to-cust').forEach(sel => {
     const cur = [...sel.options].find(o => o.value !== '' && o.value === String(curCust));
     if (cur) cur.textContent += ' (current)';
   });
   wrap.querySelector('#famv-from-cust').previousElementSibling.textContent = 'From Custodian';
   _faMvApplyFromLock();
-  if (mixedFrom) _faMvSetMode('famv-from', 'class');
   _faMvApplyDateBounds();
   _faMvApplyType();
   if (bulk) return;
@@ -533,7 +533,7 @@ function _faMvToggleFromEdit() {
 }
 function _faMvApplyFromLock() {
   const locked = !_faMv.fromEditing;
-  ['famv-from-class', 'famv-from-text', 'famv-from-cust', 'famv-from-seg-class', 'famv-from-seg-text']
+  ['famv-from-loc', 'famv-from-cust']
     .forEach(id => { const el = document.getElementById(id); if (el) el.disabled = locked; });
   document.getElementById('famv-from-edit').textContent = locked ? 'Edit' : 'Done';
 }
@@ -541,14 +541,12 @@ function _faMvApplyFromLock() {
 // form), except a return from repair, which starts where the last
 // sent_for_repair movement left it.
 function _faMvPrefillFrom() {
-  let { classId, text } = _faMv.cur;
+  let locId = _faMv.cur.locationId ?? null;
   if (document.getElementById('famv-type').value === 'returned_from_repair') {
     const out = _faMv.rows.find(m => m.movement_type === 'sent_for_repair');  // rows are newest first
-    if (out && out.to_location_text) { classId = null; text = out.to_location_text; }
+    if (out && out.to_asset_location_id != null) locId = out.to_asset_location_id;
   }
-  _faMvSelectClass('famv-from-class', classId);
-  document.getElementById('famv-from-text').value = classId != null ? '' : text;
-  _faMvSetMode('famv-from', classId != null ? 'class' : 'text');
+  _faMvSetLocation('famv-from', locId);
   document.getElementById('famv-from-cust').value = _faMv.cur.custodian ?? '';
 }
 
@@ -564,10 +562,9 @@ function _faMvApplyType() {
   if (!_faMv.fromTouched) _faMvPrefillFrom();
 
   show('famv-to-block', !!rule.to);
-  show('famv-to-seg', rule.to === 'any');
-  document.getElementById('famv-to-label').innerHTML = `${rule.to === 'text' ? 'Repair Provider' : 'To Location'} <span class="fin-required">*</span>`;
-  if (rule.to === 'text') _faMvSetMode('famv-to', 'text');
-  else if (rule.to === 'any' && typeChanged) _faMvSetMode('famv-to', type === 'pre_disposal_hold' ? 'text' : 'class');
+  const toLabel = type === 'sent_for_repair' ? 'Repair Provider Location' : 'To Location';
+  document.getElementById('famv-to-label').innerHTML = `${toLabel} <span class="fin-required">*</span>`;
+  if (typeChanged && rule.to) _faMvSetLocation('famv-to', null);
 
   // A custodian change must name someone other than the current custodian, so
   // that option is disabled. Other types keep the current custodian unless
@@ -625,15 +622,6 @@ function _faMvClearErrors() {
   const msg = document.getElementById('famv-msg');
   if (msg) msg.innerHTML = '';
 }
-// Reads a location widget. Returns { classId, text } with at most one set, or
-// { error } when both are filled.
-function _faMvReadLocation(p, rule) {
-  const text = document.getElementById(`${p}-text`).value.trim();
-  if (rule === 'text') return { classId: null, text };
-  const classVal = document.getElementById(`${p}-class`).value;
-  if (classVal && text) return { error: 'Choose either a classroom or a free-text location, not both. Clear one of them.' };
-  return { classId: classVal ? parseInt(classVal, 10) : null, text: classVal ? '' : text };
-}
 
 async function _faSubmitMovement() {
   if (!_faMv || _faMv.submitting) return;
@@ -659,17 +647,13 @@ async function _faSubmitMovement() {
   }
 
   if (rule.to) {
-    const to = _faMvReadLocation('famv-to', rule.to);
-    if (to.error) fail('famv-to-err', to.error);
-    else if (to.classId == null && !to.text) fail('famv-to-err', rule.to === 'text' ? 'Enter the repair provider.' : 'Pick a classroom or enter a location.');
-    else if (to.classId != null) payload.to_school_class_id = to.classId;
-    else payload.to_location_text = to.text;
+    const toLoc = _faMvLocationValue('famv-to');
+    if (toLoc == null) fail('famv-to-err', 'Pick a location.');
+    else payload.to_asset_location_id = toLoc;
   }
   if (rule.from) {
-    const from = _faMvReadLocation('famv-from', 'any');
-    if (from.error) fail('famv-from-err', from.error);
-    else if (from.classId != null) payload.from_school_class_id = from.classId;
-    else if (from.text) payload.from_location_text = from.text;
+    const fromLoc = _faMvLocationValue('famv-from');
+    if (fromLoc != null) payload.from_asset_location_id = fromLoc;
     const fromCust = document.getElementById('famv-from-cust').value;
     if (fromCust) payload.from_custodian_employee_id = parseInt(fromCust, 10);
   }
@@ -719,10 +703,10 @@ async function _faSubmitMovement() {
 // refetched rather than patched locally.
 async function _faAfterMovementRecorded(assetIds) {
   _faInvalidateMovements(assetIds);
-  // Assets by Location (fixed-asset-locations.js) re-runs its query, since a
-  // move can take the asset off that list.
-  if (document.getElementById('fal-results')) {
-    await _falLoad();
+  // Asset Location ▸ Register slice (fixed-asset-locations.js) re-runs its
+  // query since a move can take the asset off that list.
+  if (document.getElementById('fal-reg-body')) {
+    await _falRegLoad();
     return;
   }
   if (_faTab === 'live' && _faView === 'table') {
@@ -776,8 +760,9 @@ async function _faOpenAssetDetails(id, toHistory = false) {
   try { await _faRenderTab(); } finally { _faPreselectId = null; }
   if (toHistory) document.querySelector('#split-right-panel [id^="fa-mv-panel-"]')?.parentElement?.scrollIntoView({ block: 'start' });
 }
-// Opens an asset in the register from outside it (Assets by Location), on the
-// tab that holds it, with any filter that could hide the row cleared.
+// Opens an asset in the register from outside it (Asset Location ▸ Register
+// slice), on the tab that holds it, with any filter that could hide the
+// row cleared.
 async function _faOpenInRegister(id) {
   const item = _faKnownAssets[id];
   if (!item) return;
@@ -848,7 +833,7 @@ function _faRenderTableRows() {
       <td style="white-space:nowrap;">${_faGlPill(a, true)}<strong>${tag}</strong>${_faMethodBadge(a)}</td>
       <td>${a.description ? _faTrunc(a.description, 50) : _FA_MUTED_DASH}</td>
       <td>${_finEsc(_acCategoryName(a.category_id))}</td>
-      <td>${_faPlacementCell(a.current_school_class_id, a.current_location_text)}</td>
+      <td>${_faPlacementCell(a.current_asset_location_id, 40, `reg-${a.id}`)}</td>
       <td>${custodian ? _finEsc(custodian) : _FA_MUTED_DASH}</td>
       <td style="text-align:right;white-space:nowrap;">${_faMoney(a.net_book_value ?? a.acquisition_cost)}</td>
       <td style="width:40px;text-align:right;" onclick="event.stopPropagation()"><button type="button" class="split-left-menu-btn" style="margin:0;" aria-haspopup="menu" aria-label="Actions for ${tag}" onclick="_faToggleRowMenu(this, ${a.id})">&#8942;</button></td>
@@ -968,7 +953,7 @@ async function loadFixedAssetsView(container) {
         ${_FA_TABS
           .filter(t => t.key !== 'reconciliation' || canView('asset_management.reconciliation'))
           .map(t => `<button class="${_faTab===t.key?'fin-btn-teal':'fin-btn-outline'}" onclick="_faSwitchTab('${t.key}')">${t.label}</button>`).join('')}
-        ${canView('asset_management.locations') ? `<button class="fin-btn-outline" style="margin-left:auto!important;" onclick="loadView('assets-by-location')">Assets by Location &rarr;</button>` : ''}
+        ${canView('asset_management.locations') ? `<button class="fin-btn-outline" style="margin-left:auto!important;" onclick="loadView('asset-location')">Asset Location &rarr;</button>` : ''}
       </div>
       <div id="fa-tab-container"></div>
     </div>`;
@@ -1164,7 +1149,7 @@ function _faDetailFields() {
     {label:'Notes', key:'notes', fmt:v=>v||'—'},
     // Rejected assets were never physical items — the backend refuses any
     // movement against them, so there is no placement or history to show.
-    {label:'Movement History', key:'current_school_class_id', fullWidth:true, hideWhen: item=>item.status==='rejected', fmt:(v,item)=>_faMovementPanelHtml(item)},
+    {label:'Movement History', key:'current_asset_location_id', fullWidth:true, hideWhen: item=>item.status==='rejected', fmt:(v,item)=>_faMovementPanelHtml(item)},
   ];
 }
 
@@ -1182,6 +1167,60 @@ function _faDetailActions(item) {
       <button class="fin-btn-cancel" onclick="_faConfirmDelete(${item.id})">Delete</button>`;
   }
   return '';
+}
+
+// ── Register-time placement (initial_* fields) ─────────────────────────
+// Collapsible disclosure block attached to the asset-create, confirm-draft
+// and bulk-from-line forms. The backend accepts four optional fields:
+// initial_asset_location_id + initial_custodian_employee_id +
+// initial_placement_moved_at + initial_placement_notes. All four empty = a
+// legal "unplaced" asset. Supplying any sub-field without a location is a
+// 422 — the pre-flight below catches it before the POST goes out.
+function _faInitialPlacementSectionHtml(prefix, defaultDate = '') {
+  return `
+    <details id="${prefix}-ipl-details" style="margin:12px 0;">
+      <summary style="cursor:pointer;font-size:12.5px;color:var(--grey-600,#666);">Register-time placement (optional)</summary>
+      <div style="margin-top:10px;padding:12px 14px;border:1px solid var(--grey-100,#ECEEF2);border-radius:6px;">
+        <p style="margin:0 0 10px;font-size:0.82rem;color:var(--grey-600,#666);">Supplying any of these fields writes the initial placement in the same step. Leave all blank to register the asset unplaced.</p>
+        <div class="fin-form-group">
+          <label class="fin-form-label">Location</label>
+          ${_invAssetLocationPickerHtml(`${prefix}-ipl-loc`, null)}
+          <span class="fin-field-error" id="${prefix}-ipl-loc-err"></span>
+        </div>
+        <div class="fin-form-group">
+          ${_invCustodianPickerHtml(`${prefix}-ipl-cust`, null)}
+        </div>
+        <div class="fin-form-group">
+          <label class="fin-form-label">Moved At</label>
+          <input type="date" id="${prefix}-ipl-date" class="fin-form-input" value="${_finEsc(defaultDate)}">
+          <span style="font-size:11px;color:var(--grey-500,#888);">Defaults to acquisition date.</span>
+        </div>
+        <div class="fin-form-group">
+          <label class="fin-form-label">Notes</label>
+          <textarea id="${prefix}-ipl-notes" class="fin-form-textarea" rows="2" maxlength="1000"></textarea>
+        </div>
+      </div>
+    </details>`;
+}
+// Reads the four fields and returns { placement, error } — error is a
+// user-facing string ready for an inline banner, placement is the payload
+// slice to merge into the create body (empty object = unplaced).
+function _faReadInitialPlacement(prefix) {
+  const locVal = document.getElementById(`${prefix}-ipl-loc`)?.value || '';
+  const custVal = document.getElementById(`${prefix}-ipl-cust`)?.value || '';
+  const dateVal = document.getElementById(`${prefix}-ipl-date`)?.value || '';
+  const notesVal = (document.getElementById(`${prefix}-ipl-notes`)?.value || '').trim();
+  const hasSubField = !!custVal || !!dateVal || !!notesVal;
+  const locationId = (locVal && locVal !== '__create__') ? parseInt(locVal, 10) : null;
+  if (hasSubField && locationId == null) {
+    return { error: 'Pick a location first — the placement sub-fields (custodian / moved at / notes) need a location to attach to.' };
+  }
+  if (locationId == null) return { placement: {}, hasPlacement: false };
+  const slice = { initial_asset_location_id: locationId };
+  if (custVal) slice.initial_custodian_employee_id = parseInt(custVal, 10);
+  if (dateVal) slice.initial_placement_moved_at = dateVal;
+  if (notesVal) slice.initial_placement_notes = notesVal;
+  return { placement: slice, hasPlacement: true };
 }
 
 // ── Add (manual, category-driven — Live tab only) ───────────────────────
@@ -1265,6 +1304,7 @@ async function _faRenderAddForm(el) {
         <label class="fin-form-label">Notes</label>
         <textarea id="fa-f-notes" class="fin-form-textarea" rows="3"></textarea>
       </div>
+      ${_faInitialPlacementSectionHtml('fa-f')}
       <div id="fa-f-nogl-warn" style="margin-top:12px;padding:10px 14px;border-radius:6px;border-left:3px solid var(--gold-500);background:var(--gold-100);color:#7a6110;font-size:0.85rem;">
         This asset will be registered without a GL link. You can attach a Journal Entry or attest later from the asset detail page.
       </div>
@@ -1336,14 +1376,25 @@ async function submitFaAdd() {
 
   const msgEl = document.getElementById('fa-f-submit-msg');
   if (msgEl) msgEl.innerHTML = '';
+  const initial = _faReadInitialPlacement('fa-f');
+  if (initial.error) { setErr('fa-f-ipl-loc-err', initial.error); document.getElementById('fa-f-ipl-details')?.setAttribute('open', ''); return; }
+  Object.assign(payload, initial.placement);
+  // Default initial_placement_moved_at to the acquisition date when the
+  // operator left it blank. Matches the hint under the field.
+  if (initial.hasPlacement && !payload.initial_placement_moved_at && acqDate) {
+    payload.initial_placement_moved_at = acqDate;
+  }
+
   const res = await apiFetch(`${_FA_API}/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   if (res && res.ok) {
     const created = await res.json().catch(() => null);
     showToast('Fixed asset added.', 'success');
     await window._splitReload?.();
-    // New assets are registered unplaced, so go straight to logging where this
-    // one is going. Skipping leaves every current_* field null.
-    if (created && created.id != null && _faCanMove(created)) {
+    // The create payload already carried the placement when the operator
+    // used the Register-time placement section — the backend wrote an
+    // initial_placement movement in the same transaction, so no nudge.
+    // Only prompt when the asset was registered unplaced.
+    if (!initial.hasPlacement && created && created.id != null && _faCanMove(created)) {
       _faRememberAsset(created);
       _faOpenMovementModal(created.id, 'initial_placement', {
         intro: "New assets are registered without a physical placement. Log where this asset is going now — you'll be able to move it later without touching the GL.",
@@ -1468,9 +1519,13 @@ function _faOpenConfirmModal(id) {
         <label class="fin-form-label">Reducing Balance Rate (%)</label>
         <input type="number" id="fac-f-rbr" class="fin-form-input" min="0.01" step="0.01" value="${asset.reducing_balance_rate ?? ''}">
       </div>
+      ${asset.current_asset_location_id == null
+        ? _faInitialPlacementSectionHtml('fac-f', asset.acquisition_date || '')
+        : `<p style="margin:10px 0;padding:8px 12px;border-radius:6px;background:var(--navy-50,#EEF3FA);font-size:0.82rem;color:var(--navy-700,#1B3057);">Already placed at <strong>${_finEsc(_invAssetLocationLabel(asset.current_asset_location_id))}</strong> — the placement sub-fields are for an unplaced draft only.</p>`}
+      <div id="fac-f-msg"></div>
       <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
         <button class="fin-btn-cancel" onclick="_coaCloseModal('fa-confirm-modal-overlay')">Cancel</button>
-        <button class="fin-btn-teal" onclick="_faSubmitConfirm(${id})">Confirm</button>
+        <button class="fin-btn-teal" id="fac-f-submit" onclick="_faSubmitConfirm(${id})">Confirm</button>
       </div>
     </div>`;
   document.body.appendChild(wrap);
@@ -1490,6 +1545,16 @@ async function _faSubmitConfirm(id) {
   if (method) payload.depreciation_method = method;
   const rbr = document.getElementById('fac-f-rbr').value;
   if (method === 'reducing_balance' && rbr) payload.reducing_balance_rate = rbr;
+  if (document.getElementById('fac-f-ipl-loc')) {
+    const initial = _faReadInitialPlacement('fac-f');
+    if (initial.error) {
+      const err = document.getElementById('fac-f-ipl-loc-err');
+      if (err) err.textContent = initial.error;
+      document.getElementById('fac-f-ipl-details')?.setAttribute('open', '');
+      return;
+    }
+    Object.assign(payload, initial.placement);
+  }
   const res = await apiFetch(`${_FA_API}/${id}/promote-draft`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   if (res && res.ok) {
     _coaCloseModal('fa-confirm-modal-overlay');
@@ -1498,7 +1563,7 @@ async function _faSubmitConfirm(id) {
     await loadFixedAssetsView(document.getElementById('main-content'));
     return;
   }
-  if (res) showToast('Error: ' + await parseApiError(res), 'error');
+  if (res) _pvShowCoralMsg(document.getElementById('fac-f-msg'), await parseApiError(res));
 }
 
 // ── Reject Draft ─────────────────────────────────────────────────────────
@@ -1575,6 +1640,7 @@ async function _faOpenBulkFromLineModal() {
         <label class="fin-form-label">Description</label>
         <input type="text" id="fab-f-desc" class="fin-form-input" maxlength="500" placeholder="(from invoice line)">
       </div>
+      ${_faInitialPlacementSectionHtml('fab-f')}
       <div id="fab-msg"></div>
       <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
         <button class="fin-btn-cancel" onclick="_coaCloseModal('fa-bulk-modal-overlay')">Cancel</button>
@@ -1610,6 +1676,14 @@ async function _faSubmitBulkFromLine() {
     asset_tag_prefix: prefix,
     description: document.getElementById('fab-f-desc').value.trim() || null,
   };
+  const initial = _faReadInitialPlacement('fab-f');
+  if (initial.error) {
+    const err = document.getElementById('fab-f-ipl-loc-err');
+    if (err) err.textContent = initial.error;
+    document.getElementById('fab-f-ipl-details')?.setAttribute('open', '');
+    return;
+  }
+  Object.assign(payload, initial.placement);
   const res = await apiFetch(`${_FA_API}/bulk-from-line`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   if (res && res.ok) {
     const created = await res.json();
