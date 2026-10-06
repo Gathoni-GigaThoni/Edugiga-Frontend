@@ -71,6 +71,9 @@ function logout() {
   token = '';
   currentUser = null;
   sessionStorage.removeItem('edugiga_token');
+  // Drop any in-app view hash so the reload lands cleanly on the login page
+  // instead of trying to re-dispatch a stale route after the next sign-in.
+  try { history.replaceState(null, '', location.pathname); } catch (_) {}
   location.reload();
 }
 

@@ -608,20 +608,60 @@ function showDashboard() {
       <main id="main-content"></main>
     </div>
   `;
-  renderDashboardHome(document.getElementById('main-content'));
   _applyFlyoutPermissions();
 
   document.getElementById('main-content').addEventListener('click', () => {
     if (activeModule !== null) closeFlyout();
   });
 
-  // Deep-link handoff: when a new tab boots at #<route>?<query>, skip the
-  // dashboard home and go straight to the target. Two shapes are understood:
-  // ?open=<id> from a clickable doc_ref anchor (opens that document), and a
-  // report route with filter params (opens that report, pre-run). Unrecognised
-  // hashes are ignored and the dashboard renders normally.
-  _maybeOpenDocFromHash();
+  // Hash router / deep-link handoff. Two shapes understood:
+  //   #<route>?<query> — doc_ref link (?open=<id>) or report prefill
+  //   #<view>          — plain in-app view, from Back/Forward or a pasted URL
+  // Empty hash falls through to the dashboard home.
+  _bootRouteFromHash();
 }
+
+// ====================================================================
+// Hash router — in-app navigation is reflected in location.hash so the
+// browser Back/Forward buttons walk the view history. Before this, every
+// screen lived at the same URL; Back popped the one entry that preceded
+// the app (the login page), which looked like a sudden logout.
+// _maybeOpenDocFromHash still owns the #<route>?<query> shape; this
+// router owns the plain #<view> shape and glues both to popstate.
+// ====================================================================
+let _navFromHistory = false;
+
+function _bootRouteFromHash() {
+  const raw = (location.hash || '').replace(/^#/, '');
+  _navFromHistory = true; // the initial dispatch isn't a new nav; don't push
+  if (raw.includes('?')) {
+    if (_maybeOpenDocFromHash()) return;
+    // Unrecognised deep link — fall through to the dashboard home rather than
+    // leaving #main-content blank.
+    _navFromHistory = true;
+    loadView('dashboard');
+  } else if (raw) {
+    loadView(raw);
+  } else {
+    loadView('dashboard');
+  }
+}
+
+window.addEventListener('popstate', () => {
+  // Only route when the dashboard shell is mounted — the login page shares
+  // this origin, and a popstate landing there would hit a #main-content that
+  // doesn't exist.
+  if (!document.getElementById('main-content')) return;
+  const raw = (location.hash || '').replace(/^#/, '');
+  _navFromHistory = true;
+  if (raw.includes('?')) {
+    if (_maybeOpenDocFromHash()) return;
+    _navFromHistory = true;
+    loadView('dashboard');
+  } else {
+    loadView(raw || 'dashboard');
+  }
+});
 
 // route → window var name that the owning module reads to preselect a row
 // on load. Coupled to the same set as app/utils/doc_links.py _DOC_ROUTES —
@@ -673,11 +713,15 @@ function _openInAppLinkInNewTab(e) {
 document.addEventListener('click', _openInAppLinkInNewTab);
 document.addEventListener('auxclick', _openInAppLinkInNewTab);
 
+// Returns true when a deep-link was recognised and loadView() was dispatched,
+// false otherwise. _bootRouteFromHash uses the result to fall back to the
+// dashboard home for unrecognised #<route>?<query> hashes instead of leaving
+// the main pane blank.
 function _maybeOpenDocFromHash() {
   const raw = (location.hash || '').replace(/^#/, '');
-  if (!raw) return;
+  if (!raw) return false;
   const qIdx = raw.indexOf('?');
-  if (qIdx < 0) return;
+  if (qIdx < 0) return false;
   const route = raw.slice(0, qIdx);
   const qp = new URLSearchParams(raw.slice(qIdx + 1));
 
@@ -689,15 +733,16 @@ function _maybeOpenDocFromHash() {
   if (typeof REPORT_DEFS !== 'undefined' && REPORT_DEFS[route]) {
     window._repPrefill = Object.fromEntries(qp.entries());
     loadView(route);
-    return;
+    return true;
   }
 
   const openId = parseInt(qp.get('open'), 10);
-  if (!openId) return;
+  if (!openId) return false;
   const varName = _DOC_ROUTE_TO_PRESELECT[route];
-  if (!varName) return;
+  if (!varName) return false;
   window[varName] = openId;
   loadView(route);
+  return true;
 }
 
 // Home view content — shown on initial login and whenever the user clicks the
@@ -1261,6 +1306,19 @@ const FORM_VIEWS = new Set([
 async function loadView(view) {
   const main = document.getElementById("main-content");
   clearSidebarActiveItems();
+
+  // Reflect this view in location.hash so the browser Back/Forward buttons
+  // walk the in-app view history. _navFromHistory is set by the popstate
+  // listener and the initial-boot dispatch so we don't push a duplicate
+  // entry when WE are the handler of the navigation, not its cause.
+  const _fromHistory = _navFromHistory;
+  _navFromHistory = false;
+  if (!_fromHistory) {
+    const current = (location.hash || '').replace(/^#/, '').split('?')[0];
+    if (current !== view) {
+      try { history.pushState({ view }, '', '#' + view); } catch (_) {}
+    }
+  }
 
   // Stop any running keep-alive before evaluating the new view
   stopKeepAlive();
