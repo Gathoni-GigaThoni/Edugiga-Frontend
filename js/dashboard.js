@@ -801,6 +801,18 @@ function _dashEsc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// JWT role claims arrive as a slug ("super_admin") or an all-caps constant
+// ("BURSAR"); surface them in the Welcome header as "Super Admin" / "Bursar".
+function _dashFormatRole(role) {
+  if (!role) return '';
+  return String(role)
+    .toLowerCase()
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
 // Cache of the full student roster for this dashboard visit — populated once
 // by _dashLoadStudentsAndStats() and reused by doDashStudentSearch() so the
 // stats tiles and the search widget don't each fetch the whole roster.
@@ -809,14 +821,22 @@ let _dashStudentsCache = null;
 function renderDashboardHome(container) {
   if (!container) return;
   _dashStudentsCache = null; // re-fetch fresh counts every time the dashboard home is (re)shown
-  const name  = (typeof _cspGetCurrentUserName === 'function' ? _cspGetCurrentUserName() : '') || '';
+  // Prefer a real display name; otherwise fall back to the role, not the email.
+  // _cspGetCurrentUserName() exposes the email as a last resort for places that
+  // need SOME attribution string, but we don't want it in the Welcome header.
+  const realName = currentUser ? (
+    currentUser.full_name || currentUser.name ||
+    ((currentUser.first_name || '') + ' ' + (currentUser.last_name || '')).trim()
+  ) : '';
+  const roleLabel = _dashFormatRole(currentUser && currentUser.role);
+  const greet = realName || roleLabel;
   const today = new Date().toLocaleDateString('en-GB', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   container.innerHTML = `
     <div id="dash-home-root">
       <div class="dash-hero">
         <div class="dash-hero-inner">
           <p class="dash-hero-eyebrow">Dashboard</p>
-          <h2 class="dash-hero-title">Welcome back${name ? ', ' + _dashEsc(name) : ''}</h2>
+          <h2 class="dash-hero-title">Welcome back${greet ? ', ' + _dashEsc(greet) : ''}</h2>
           <p class="dash-hero-subtitle">Seven Oaks International School &middot; ${today}</p>
         </div>
       </div>
