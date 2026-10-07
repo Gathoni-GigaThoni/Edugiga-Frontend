@@ -200,6 +200,10 @@ const _SIDEBAR_ITEM_MODULE_KEYS = {
 
   // Communication
   'sidebar-com-parent-docs':              'communication',
+
+  // Administration
+  'sidebar-adm-users':                    'administration.users',
+  'sidebar-adm-roles':                    'administration.roles',
 };
 
 function _applyFlyoutPermissions() {
@@ -593,14 +597,12 @@ function showDashboard() {
             </ul>
           </div>
 
-          ${isSuperAdmin ? `
           <div class="flyout-module-body" id="flyout-body-administration" data-label="Administration" hidden>
             <ul id="admin-dropdown" class="dropdown-menu">
-              <li onclick="loadView('user-management')">User Management</li>
-              <li onclick="loadView('admin-roles')">Roles</li>
+              <li id="sidebar-adm-users" onclick="loadView('user-management')">User Management</li>
+              <li id="sidebar-adm-roles" onclick="loadView('admin-roles')">Roles</li>
             </ul>
           </div>
-          ` : ''}
 
         </div>
       </div>
