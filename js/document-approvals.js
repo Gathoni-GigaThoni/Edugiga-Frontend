@@ -29,6 +29,24 @@ function _daDate(v) {
   const d = new Date(v);
   return isNaN(d) ? v : d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
+// "Submitted By" / "Approved By" (etc.) used to render a bare "Staff #<id>",
+// which told the approver nothing about who they were signing off a document
+// from. Resolve the id against the HR staff cache that _reqEnsureStaffCache
+// populates and lead with the person's designation (role title) so the
+// approver sees "Bursar — Jane Doe" rather than "Staff #42".
+function _daStaffRoleLabel(id) {
+  if (id == null) return '—';
+  const cache = (typeof _reqStaffCache !== 'undefined' && _reqStaffCache) || [];
+  const e = cache.find(x => String(x.id) === String(id));
+  if (!e) return `Staff #${_daEsc(id)}`;
+  const name = `${e.first_name || ''} ${e.last_name || ''}`.trim();
+  const role = e.designation || e.job_title || e.role || '';
+  if (role && name) return `${_daEsc(role)} — ${_daEsc(name)}`;
+  if (role) return _daEsc(role);
+  if (name) return _daEsc(name);
+  return `Staff #${_daEsc(id)}`;
+}
+
 function _daBadge(status) {
   const cls = status === 'approved' ? 'badge-approved' : status === 'rejected' ? 'badge-rejected' : 'badge-draft';
   return `<span class="${cls}" style="padding:3px 10px;border-radius:12px;font-size:0.78rem;font-weight:600;">${_daEsc((status || '—').replace(/_/g, ' '))}</span>`;
@@ -111,7 +129,11 @@ async function _daPrefetchDocuments(items) {
 
   const jobs = [];
   if (reqIds.length && typeof _reqEnsureSuppliersCache === 'function') jobs.push(_reqEnsureSuppliersCache());
-  if ((reqIds.length || pcaIds.length || advIds.length) && typeof _reqEnsureStaffCache === 'function') jobs.push(_reqEnsureStaffCache());
+  // Submitted By / Approved By / Grant Created By exist on every DAS row, so
+  // the staff cache is needed whenever the list has any items — not only for
+  // requisitions / petty cash / advances where it was already pulled in to
+  // name the Applicant / Employee.
+  if (items.length && typeof _reqEnsureStaffCache === 'function') jobs.push(_reqEnsureStaffCache());
   if (intReqIds.length && typeof _invEnsureStoresCache === 'function') jobs.push(_invEnsureStoresCache());
   // Student, fee item and year names. /lookups/students and fee-items answer to
   // document_approval since BE c111ffd (academic years to any staff), so a
@@ -348,7 +370,13 @@ async function _daRenderQueueSplit(mountEl) {
     searchFields: [],
     col1Label: 'Document', col2Label: 'Status',
     col1: item => `${_daTypeBadge(item.document_type)} ${_daEsc(_daResolveDoc(item).title)}`,
-    col2: () => _daBadge('pending'),
+    // The queue USED to be pending-only (so this was hardcoded), but it can
+    // now hand back rows the BE has moved past pending — e.g. a document
+    // another approver signed off while this user was looking at the list.
+    // Showing the real status + an approver attribution in the detail pane
+    // lets the current approver see they do not need to act, and by whom it
+    // was decided.
+    col2: item => _daBadge(item.status || 'pending'),
     rowLabel: item => _daEsc(_daResolveDoc(item).title),
     rowSub: item => `${_daEsc(_daTypeLabel(item.document_type))} — ${_daEsc(_daResolveDoc(item).sub)}`,
     idKey: 'id',
@@ -597,7 +625,7 @@ const _daDetailFields = [
   { label: 'Grant Status', key: 'document_id', hideWhen: item => item.document_type !== 'founder_discount' || !_daFounderDiscountCache[item.document_id],
     fmt: (v, item) => { const g = _daFounderDiscountCache[item.document_id]; return (typeof _founderStatusBadge === 'function') ? _founderStatusBadge(g) : _daEsc(g.status); } },
   { label: 'Grant Created By', key: 'document_id', hideWhen: item => item.document_type !== 'founder_discount' || !_daFounderDiscountCache[item.document_id],
-    fmt: (v, item) => { const g = _daFounderDiscountCache[item.document_id]; return g.created_by != null ? `Staff #${_daEsc(g.created_by)}` : '—'; } },
+    fmt: (v, item) => { const g = _daFounderDiscountCache[item.document_id]; return _daStaffRoleLabel(g.created_by); } },
   { label: 'Grant Reason', key: 'document_id', fullWidth: true, hideWhen: item => item.document_type !== 'founder_discount' || !_daFounderDiscountCache[item.document_id],
     fmt: (v, item) => _daEsc(_daFounderDiscountCache[item.document_id].reason || '—') },
   { label: 'Grant Notes', key: 'document_id', fullWidth: true, hideWhen: item => item.document_type !== 'founder_discount' || !_daFounderDiscountCache[item.document_id],
@@ -607,9 +635,9 @@ const _daDetailFields = [
   { label: 'Grant Details', key: 'document_id', fullWidth: true, hideWhen: item => item.document_type !== 'founder_discount' || !_daFounderDiscountHidden[`founder_discount:${item.document_id}`],
     fmt: () => `<span style="color:var(--grey-600,#5F6B7C);">Your role can't read this grant, so only the approval record is shown. You can still approve or reject it.</span>` },
   { label: 'Status',        key: 'status',        fmt: v => _daBadge(v) },
-  { label: 'Submitted By',  key: 'submitted_by',  fmt: v => v != null ? `Staff #${v}` : '—' },
+  { label: 'Submitted By',  key: 'submitted_by',  fmt: v => _daStaffRoleLabel(v) },
   { label: 'Submitted At',  key: 'submitted_at',  fmt: v => _daDate(v) },
-  { label: 'Approved By',   key: 'approved_by',   fmt: v => v != null ? `Staff #${v}` : '—' },
+  { label: 'Approved By',   key: 'approved_by',   fmt: v => _daStaffRoleLabel(v) },
   { label: 'Approved At',   key: 'approved_at',   fmt: v => _daDate(v) },
   { label: 'Rejection Reason', key: 'rejection_reason', fmt: v => v || '—' },
   { label: 'Notes',         key: 'notes',         fmt: v => v || '—' },
@@ -657,7 +685,13 @@ function _daDetailActions(item) {
     </div>` : '';
 
   if (item.status !== 'pending') {
-    return `<div style="color:var(--grey-600);font-size:0.9rem;">This item has already been ${_daEsc(item.status)}.</div>`;
+    // Tell the current approver what happened and by whom. approved_by holds
+    // the actor for both an approval and a rejection (DAS has no separate
+    // rejected_by field), so the attribution reads the same for either side.
+    const who = item.approved_by != null ? _daStaffRoleLabel(item.approved_by) : '';
+    const when = item.approved_at ? ` on ${_daDate(item.approved_at)}` : '';
+    const by = who && who !== '—' ? ` by ${who}` : '';
+    return `<div style="color:var(--grey-600);font-size:0.9rem;">This item has already been ${_daEsc(item.status)}${by}${when}.</div>`;
   }
   const isSubmitter = currentUser && item.submitted_by != null && String(currentUser.id) === String(item.submitted_by);
   let html = failBanner;
