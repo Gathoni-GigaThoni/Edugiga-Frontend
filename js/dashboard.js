@@ -624,22 +624,29 @@ function showDashboard() {
 }
 
 // ====================================================================
-// Hash router — in-app navigation is reflected in location.hash so the
-// browser Back/Forward buttons walk the view history. Before this, every
-// screen lived at the same URL; Back popped the one entry that preceded
-// the app (the login page), which looked like a sudden logout.
+// Hash router — in-app navigation is reflected in location.hash + a
+// history state object so the browser Back/Forward buttons walk the
+// view history AND restore which flyout was open at each step. Before
+// this, every screen lived at the same URL; Back popped the one entry
+// that preceded the app (the login page), which looked like a sudden
+// logout. The flyout dimension matters because the user typically opens
+// a flyout, then clicks an item inside it: Back from that item should
+// re-open the flyout menu (so a sibling pick is one click away), not
+// slingshot straight to the dashboard home.
 // _maybeOpenDocFromHash still owns the #<route>?<query> shape; this
 // router owns the plain #<view> shape and glues both to popstate.
 // ====================================================================
 let _navFromHistory = false;
+let _currentView = 'dashboard';
 
 function _bootRouteFromHash() {
   const raw = (location.hash || '').replace(/^#/, '');
   _navFromHistory = true; // the initial dispatch isn't a new nav; don't push
   if (raw.includes('?')) {
-    if (_maybeOpenDocFromHash()) return;
-    // Unrecognised deep link — fall through to the dashboard home rather than
-    // leaving #main-content blank.
+    if (_maybeOpenDocFromHash()) {
+      _anchorInitialHistoryState();
+      return;
+    }
     _navFromHistory = true;
     loadView('dashboard');
   } else if (raw) {
@@ -647,13 +654,52 @@ function _bootRouteFromHash() {
   } else {
     loadView('dashboard');
   }
+  _anchorInitialHistoryState();
 }
 
-window.addEventListener('popstate', () => {
+// The browser hands us a null state on the very first entry (direct load /
+// deep link). Replace it with a structured state so our popstate handler
+// has symmetrical shape at every index, including when Back ultimately
+// reaches the initial entry.
+function _anchorInitialHistoryState() {
+  try {
+    history.replaceState(
+      { view: _currentView, flyout: activeModule || null },
+      '',
+      location.hash || ''
+    );
+  } catch (_) {}
+}
+
+window.addEventListener('popstate', (ev) => {
   // Only route when the dashboard shell is mounted — the login page shares
   // this origin, and a popstate landing there would hit a #main-content that
   // doesn't exist.
   if (!document.getElementById('main-content')) return;
+
+  const state = ev.state;
+  if (state && typeof state === 'object' && 'view' in state) {
+    // Restore flyout first so the view's sidebar-active markers paint
+    // onto a flyout that is already in the right state.
+    const targetFlyout = state.flyout || null;
+    if (targetFlyout !== activeModule) {
+      if (targetFlyout) {
+        _navFromHistory = true;
+        openFlyout(targetFlyout);
+      } else {
+        closeFlyout();
+      }
+    }
+    const targetView = state.view || 'dashboard';
+    if (targetView !== _currentView) {
+      _navFromHistory = true;
+      loadView(targetView);
+    }
+    return;
+  }
+
+  // Fallback for a bare hash with no state object (manual URL edit,
+  // bookmark from an older build, or a #<route>?<query> deep link).
   const raw = (location.hash || '').replace(/^#/, '');
   _navFromHistory = true;
   if (raw.includes('?')) {
@@ -877,6 +923,7 @@ function openFlyout(moduleKey) {
     showToast("You don't have access to this module.", 'error');
     return;
   }
+  const prevModule = activeModule;
   activeModule = moduleKey;
 
   document.querySelectorAll('.rail-item').forEach(btn => {
@@ -890,6 +937,22 @@ function openFlyout(moduleKey) {
 
   document.getElementById('flyout-panel').removeAttribute('hidden');
   document.body.classList.add('flyout-open');
+
+  // Record the flyout-open step in history so Back from a view inside the
+  // flyout returns the user to the flyout menu, not past it to the home.
+  // Skip when popstate drove this (we're RESTORING history, not extending it)
+  // and when the same flyout was already open (toggle no-op guard).
+  const _fromHistory = _navFromHistory;
+  _navFromHistory = false;
+  if (!_fromHistory && prevModule !== moduleKey) {
+    try {
+      history.pushState(
+        { view: _currentView, flyout: moduleKey },
+        '',
+        '#' + (_currentView || 'dashboard')
+      );
+    } catch (_) {}
+  }
 }
 
 function closeFlyout() {
@@ -1309,18 +1372,23 @@ async function loadView(view) {
   const main = document.getElementById("main-content");
   clearSidebarActiveItems();
 
-  // Reflect this view in location.hash so the browser Back/Forward buttons
-  // walk the in-app view history. _navFromHistory is set by the popstate
-  // listener and the initial-boot dispatch so we don't push a duplicate
-  // entry when WE are the handler of the navigation, not its cause.
+  // Reflect this view in location.hash + a structured history state so
+  // the browser Back/Forward buttons walk the in-app view history AND
+  // restore which flyout was open at each step. _navFromHistory is set
+  // by the popstate listener and the initial-boot dispatch so we don't
+  // push a duplicate entry when WE are the handler of the navigation,
+  // not its cause.
   const _fromHistory = _navFromHistory;
   _navFromHistory = false;
   if (!_fromHistory) {
     const current = (location.hash || '').replace(/^#/, '').split('?')[0];
     if (current !== view) {
-      try { history.pushState({ view }, '', '#' + view); } catch (_) {}
+      try {
+        history.pushState({ view, flyout: activeModule || null }, '', '#' + view);
+      } catch (_) {}
     }
   }
+  _currentView = view;
 
   // Stop any running keep-alive before evaluating the new view
   stopKeepAlive();
