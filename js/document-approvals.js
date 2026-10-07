@@ -29,22 +29,36 @@ function _daDate(v) {
   const d = new Date(v);
   return isNaN(d) ? v : d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
-// "Submitted By" / "Approved By" (etc.) used to render a bare "Staff #<id>",
-// which told the approver nothing about who they were signing off a document
-// from. Resolve the id against the HR staff cache that _reqEnsureStaffCache
-// populates and lead with the person's designation (role title) so the
-// approver sees "Bursar — Jane Doe" rather than "Staff #42".
+// "Submitted By" / "Approved By" render the role of the login, not the full
+// name — the approver cares which role signed off, not whose personal name
+// is attached. (Name was briefly folded in as "Role — Name" but that read as
+// if the system was naming the document's beneficiary rather than its
+// submitter, which was the actual complaint the beneficiary_label column
+// now answers to.) Falls back to the full name only when the role is
+// unknown, and finally to "Staff #<id>" when the staff cache lookup misses.
 function _daStaffRoleLabel(id) {
   if (id == null) return '—';
   const cache = (typeof _reqStaffCache !== 'undefined' && _reqStaffCache) || [];
   const e = cache.find(x => String(x.id) === String(id));
   if (!e) return `Staff #${_daEsc(id)}`;
-  const name = `${e.first_name || ''} ${e.last_name || ''}`.trim();
   const role = e.designation || e.job_title || e.role || '';
-  if (role && name) return `${_daEsc(role)} — ${_daEsc(name)}`;
   if (role) return _daEsc(role);
+  const name = `${e.first_name || ''} ${e.last_name || ''}`.trim();
   if (name) return _daEsc(name);
   return `Staff #${_daEsc(id)}`;
+}
+
+// Submitted By on DAS rows: a null submitted_by means the overdue-invoice
+// sweep (not a human) created the row; the FE spells that out so the audit
+// trail isn't misread as a missing submitter.
+function _daSubmitterLabel(id, item) {
+  if (id == null) {
+    if (item && item.document_type === 'fee_invoice') {
+      return '<em>System (overdue sweep)</em>';
+    }
+    return '—';
+  }
+  return _daStaffRoleLabel(id);
 }
 
 function _daBadge(status) {
@@ -378,7 +392,11 @@ async function _daRenderQueueSplit(mountEl) {
     // was decided.
     col2: item => _daBadge(item.status || 'pending'),
     rowLabel: item => _daEsc(_daResolveDoc(item).title),
-    rowSub: item => `${_daEsc(_daTypeLabel(item.document_type))} — ${_daEsc(_daResolveDoc(item).sub)}`,
+    rowSub: item => {
+      const subParts = [_daTypeLabel(item.document_type), _daResolveDoc(item).sub];
+      if (item.beneficiary_label) subParts.push(item.beneficiary_label);
+      return subParts.filter(Boolean).map(_daEsc).join(' — ');
+    },
     idKey: 'id',
     detailFields: _daDetailFields,
     renderAdd: el => {
@@ -572,6 +590,13 @@ const _daDetailFields = [
   { label: "What's being approved", key: 'reference_text', fullWidth: true,
     hideWhen: item => !item.reference_text,
     fmt: v => _daEsc(v) },
+  // Beneficiary / "who or what this is for" — composed by the BE at submit
+  // time (build_beneficiary_label, migration r2s3t4u5v6w7). Separate from
+  // reference_text so the approver sees the subject of the document in its
+  // own column instead of having to parse the dense amount+status summary.
+  { label: 'Concerns', key: 'beneficiary_label',
+    hideWhen: item => !item.beneficiary_label,
+    fmt: v => _daEsc(v) },
   { label: 'Document Type', key: 'document_type', fmt: v => _daTypeLabel(v) },
   { label: 'Reference',     key: 'document_id',  fmt: (v, item) => _daResolveDoc(item).title },
   { label: 'Amount',        key: 'document_id',  fmt: (v, item) => { const a = _daResolveDoc(item).amount; return a != null ? _daMoney(a) : '—'; } },
@@ -635,7 +660,7 @@ const _daDetailFields = [
   { label: 'Grant Details', key: 'document_id', fullWidth: true, hideWhen: item => item.document_type !== 'founder_discount' || !_daFounderDiscountHidden[`founder_discount:${item.document_id}`],
     fmt: () => `<span style="color:var(--grey-600,#5F6B7C);">Your role can't read this grant, so only the approval record is shown. You can still approve or reject it.</span>` },
   { label: 'Status',        key: 'status',        fmt: v => _daBadge(v) },
-  { label: 'Submitted By',  key: 'submitted_by',  fmt: v => _daStaffRoleLabel(v) },
+  { label: 'Submitted By',  key: 'submitted_by',  fmt: (v, item) => _daSubmitterLabel(v, item) },
   { label: 'Submitted At',  key: 'submitted_at',  fmt: v => _daDate(v) },
   { label: 'Approved By',   key: 'approved_by',   fmt: v => _daStaffRoleLabel(v) },
   { label: 'Approved At',   key: 'approved_at',   fmt: v => _daDate(v) },
